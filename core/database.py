@@ -27,7 +27,10 @@ import sqlite3
 import time
 import logging
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+# 【修复v21.47】统一使用北京时间，避免时区混乱导致每日重置错误
+_CST = timezone(timedelta(hours=8))
 from core.logging_util import get_logger
 
 logger = get_logger("database")
@@ -264,7 +267,7 @@ class DB:
         尝试增加寻宝积分。每天最多计1次，连续7天凑齐7分可领奖。
         返回 (当前分数, 今日是否已计, 连续天数)
         """
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(_CST).strftime("%Y-%m-%d")  # 【修复v21.47】使用北京时间
         with _db_lock:
             c = self.conn.cursor()
             c.execute("INSERT OR IGNORE INTO puzzle_scores VALUES (?,0)", (uid,))
@@ -410,18 +413,20 @@ class DB:
                          WHERE ts>?""", (since,))
             return c.fetchall()
 
-    def get_unconfirmed_messages(self, window: int = 3600):
+    def get_unconfirmed_messages(self, window: int = 86400):
         """返回window时间内未被回复的追踪消息（探测原消息是否还在）。
         
-        【审查修复】尊重"豁免保护"：只有replied=0的消息才需要探测。
-        用户回复了机器人的消息应该获得豁免，不应被探测和删除。
+        【审查修复v21.47】
+        - 窗口从1小时扩大到24小时，修复23小时探测盲区
+        - 按时间倒序，确保优先探测新消息
+        - 尊重"豁免保护"：只有replied=0的消息才需要探测
         """
         now = int(time.time())
         since = now - window
         with _db_lock:
             c = self.conn.cursor()
             c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE ts>? AND user_msg_id>0 AND replied=0""", (since,))
+                         WHERE ts>? AND user_msg_id>0 AND replied=0 ORDER BY ts DESC""", (since,))
             return c.fetchall()
 
     def delete_tracked(self, bot_msg_id: int, chat_id: int = 0):

@@ -220,8 +220,7 @@ def _job_burn_probe(rm):
     global _last_saved_model_idx
     try:
         ts = int(time.time())
-        with rm.locked('db'):
-            unconfirmed = rm.db.get_unconfirmed_messages(3600)  # 1小时窗口
+        unconfirmed = rm.db.get_unconfirmed_messages()  # 【修复v21.47】24小时窗口，默认参数
         
         if unconfirmed:
             logger.info(f"🔥 阅后即焚探测：{len(unconfirmed)}条消息待检查")
@@ -410,10 +409,15 @@ def _job_leak(rm):
 
 
 def _job_backup(rm):
-    """数据库备份（每小时）"""
+    """数据库备份（每小时）。
+    
+    【修复v21.47】移除外层锁，利用SQLite自带的WAL热备机制。
+    SQLite的.backup() API本身就是为不锁死业务而设计的，外层加锁反而会导致
+    备份期间所有消息处理被阻塞（几秒到十几秒的卡顿）。
+    """
     try:
-        with rm.locked('db'):
-            _do_backup(rm.db.db_file)
+        # 直接备份，不阻塞主业务
+        _do_backup(rm.db.db_file)
     except Exception as e:
         logger.error(f"数据库备份失败：{e}")
 
