@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════╗
-║  main.py  ·  Mory 私域超级分身机器人  v21.44                              ║
+║  main.py  ·  Mory 私域超级分身机器人  v21.46                              ║
 ║                                                                            ║
 ║  架构：模块化 | 多模型无缝轮换 | 线程安全 | 无感智能化运营                   ║
 ║  入口：python main.py                                                       ║
@@ -188,23 +188,30 @@ from modules.auto_tasks import start_background
 from modules.content    import (handle_easter_eggs, handle_photo,
                                   draw_tarot, get_fortune, is_late_night)
 
-# ── 连续对话追踪（内存字典）───────────────────────────────────────
+# ── 连续对话追踪（内存字典 + 线程安全）────────────────────────────
 # key=uid, value={"count": int, "last_time": float}
 # 用于：绿茶风反问（保持对话）+ 连续对话后的转化引导植入
 _conv_tracker = {}
+_conv_lock = Lock()  # 【修复v21.46】防止多线程并发修改字典导致RuntimeError
 _CONV_TIMEOUT = 300  # 5分钟无对话则计数清零
 _conv_last_cleanup = 0  # 上次清理时间戳
 
 def _cleanup_conv_tracker():
-    """清理超时的对话追踪条目（每10分钟执行一次）"""
+    """清理超时的对话追踪条目（每10分钟执行一次，线程安全）"""
     global _conv_last_cleanup
     now = time.time()
     if now - _conv_last_cleanup < 600:
         return
     _conv_last_cleanup = now
-    expired = [uid for uid, v in _conv_tracker.items() if now - v["last_time"] > _CONV_TIMEOUT]
-    for uid in expired:
-        del _conv_tracker[uid]
+    with _conv_lock:  # 【修复v21.46】加锁遍历和删除
+        expired = [uid for uid, v in _conv_tracker.items() if now - v["last_time"] > _CONV_TIMEOUT]
+        for uid in expired:
+            del _conv_tracker[uid]
+
+# ── 视奸雷达冷却机制（内存字典 + 线程安全）────────────────────────
+# 防止同一用户频繁触发导致管理员被刷屏
+_radar_cooldown = {}  # key=uid, value=上次触发时间戳
+_RADAR_COOLDOWN = 3600  # 1小时冷却时间
 
 # ── 配置读写 ──────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.join(base_dir, "config.json")  # 基于脚本目录的绝对路径
@@ -667,16 +674,25 @@ def _dispatch(m):
         clear_logging_context()
         return
 
-    # ── P7：视奸雷达（价格关键词通知管理员）─────────────────────────
+    # ── P7：视奸雷达（价格关键词通知管理员 + 冷却机制）────────────
     price_kws = ["多少钱", "价格", "怎么买", "门槛", "开通", "会员"]
     if any(k in msg for k in price_kws) and is_group:
-        try:
-            bot.send_message(
-                CONFIG["ADMIN_ID"],
-                f"👀 视奸雷达\n{uname}({uid}) 提到了费用相关词\n💡 该用户可能对付费服务有兴趣"
-            )
-        except Exception as e:
-            logger.warning(f"视奸雷达通知失败：{e}")
+        # 【修复v21.46】冷却机制：同一用户1小时内只通知一次
+        now_radar = time.time()
+        last_trigger = _radar_cooldown.get(uid, 0)
+        should_notify = now_radar - last_trigger > _RADAR_COOLDOWN
+        
+        if should_notify:
+            try:
+                bot.send_message(
+                    CONFIG["ADMIN_ID"],
+                    f"👀 视奸雷达\n{uname}({uid}) 提到了费用相关词\n💡 该用户可能对付费服务有兴趣"
+                )
+                _radar_cooldown[uid] = now_radar  # 更新冷却时间
+            except Exception as e:
+                logger.warning(f"视奸雷达通知失败：{e}")
+        
+        # 留资打捞不受冷却限制，每次都执行
         db.set_cart(uid)
         db.log_conversion_event(uid, "touched")
 
@@ -730,29 +746,31 @@ def _dispatch(m):
         clear_logging_context()
         return
 
-    # ── 连续对话追踪（仅群聊 @/回复 机器人时计数）─────────────────
+    # ── 连续对话追踪（仅群聊 @/回复 机器人时计数，线程安全）─────────
     conv_count = 0
     if is_group and (is_at or is_reply) and mode == "normal":
         now_ts = time.time()
         _cleanup_conv_tracker()
-        if uid in _conv_tracker:
-            if now_ts - _conv_tracker[uid]["last_time"] > _CONV_TIMEOUT:
-                _conv_tracker[uid] = {"count": 1, "last_time": now_ts}  # 超时归零
+        with _conv_lock:  # 【修复v21.46】保护字典读写操作
+            if uid in _conv_tracker:
+                if now_ts - _conv_tracker[uid]["last_time"] > _CONV_TIMEOUT:
+                    _conv_tracker[uid] = {"count": 1, "last_time": now_ts}  # 超时归零
+                else:
+                    _conv_tracker[uid]["count"] += 1
+                    _conv_tracker[uid]["last_time"] = now_ts
             else:
-                _conv_tracker[uid]["count"] += 1
-                _conv_tracker[uid]["last_time"] = now_ts
-        else:
-            _conv_tracker[uid] = {"count": 1, "last_time": now_ts}
-        conv_count = _conv_tracker[uid]["count"]
+                _conv_tracker[uid] = {"count": 1, "last_time": now_ts}
+            conv_count = _conv_tracker[uid]["count"]
 
-    # 打字延迟模拟（真人感：固定5-10秒随机，不再按字数计算）
-    delay = random.uniform(5, 10)
+    # 【修复v21.46】移除阻塞式sleep，改为发送typing状态即可
+    # AI请求本身就需要几秒钟，天然就是"打字延迟"，无需额外sleep
+    # 原因：time.sleep(5-10秒) 会霸占线程池，导致高并发时Bot假死
     bot.send_chat_action(chat_id, "typing")
-    time.sleep(delay)
 
-    # 调用AI（群聊normal模式时启用Function Calling，让AI能主动触发转化动作）
+    # 【修复v21.46】Function Calling 触发逻辑：群聊normal模式即可触发
+    # 移除了 "not is_at and not is_reply" 限制，允许用户在@或回复时也能触发营销工具
     use_tools = None
-    if is_group and mode == "normal" and not is_at and not is_reply:
+    if is_group and mode == "normal":
         use_tools = _get_function_tools()  # 定义在文件顶部
     
     resp = ai.ask(msg, mode=mode, tools=use_tools)
