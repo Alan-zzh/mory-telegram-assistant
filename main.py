@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════╗
-║  main.py  ·  Mory 私域超级分身机器人  v21.47                              ║
+║  main.py  ·  Mory 私域超级分身机器人  v4.0                              ║
 ║                                                                            ║
 ║  架构：模块化 | 多模型无缝轮换 | 线程安全 | 无感智能化运营                   ║
 ║  入口：python main.py                                                       ║
@@ -420,6 +420,33 @@ def on_voice(m):
                 
     except Exception as e:
         logger.error(f"语音处理异常：{e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 【v4.0 新增】全局回复嗅探器 - 必须在其他handler之前注册
+# 专门解决"用户回复了，但系统不认"的致命Bug
+# ═══════════════════════════════════════════════════════════════════════
+@bot.message_handler(func=lambda m: m.reply_to_message is not None)
+def global_reply_sniffer(message):
+    """
+    【全局回复嗅探器 v4.0】
+    专门解决"用户回复了，但系统不认"的致命Bug。
+    只要检测到用户是在回复机器人，立刻秒级更新数据库状态。
+    """
+    try:
+        if message.reply_to_message.from_user.is_bot:
+            # 用户在回复机器人
+            bot_msg_id = message.reply_to_message.message_id
+            chat_id = message.chat.id
+            # 标记数据库：该消息已被回复，获得"免死金牌"
+            db.mark_replied(bot_msg_id, chat_id)
+            logger.info(f"✅ 成功捕获用户回复！豁免 bot_msg_id={bot_msg_id}")
+    except Exception as e:
+        logger.warning(f"全局回复嗅探器异常：{e}")
+    
+    # 嗅探完毕后，必须放行！让其他业务逻辑继续处理这条消息
+    # 返回 False 意味着这个 handler 不吃掉这条消息
+    return False
 
 
 # ── 流失打捞 ──────────────────────────────────────────────────────────

@@ -277,17 +277,23 @@ def handle_photo(bot, m, config: dict):
         # 半透明水印层
         overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
+        # 【v4.0 修复】字体加载添加多级兜底，防止跨平台崩溃
         try:
-            # 优先用中文字体
+            # 优先用中文字体（Linux）
             font = ImageFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
                                       int(img.width / 15))
         except OSError:
             try:
+                # 尝试 Linux 常见字体
                 font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                                           int(img.width / 15))
             except OSError:
-                logger.warning("字体加载失败，使用默认字体")
-                font = ImageFont.load_default()
+                try:
+                    # 尝试 Windows 常见字体
+                    font = ImageFont.truetype("arial.ttf", int(img.width / 15))
+                except OSError:
+                    logger.warning("⚠️ 实体字体加载失败，强制使用内存默认字体 (打码样式可能较简陋)")
+                    font = ImageFont.load_default()
 
         text = "🔒 订阅解锁完整版 @MorychannelBot"
         bbox = draw.textbbox((0, 0), text, font=font)
