@@ -8,11 +8,14 @@
 
 ## 📌 目录
 
-1. **[v21.44] Bot 409 Conflict冲突**
-2. **[v21.44] 阅后即焚追踪污染问题**
-3. [v21.43] 新闻播报发两条 + 背刺泄密频率过高
-4. [v21.42] 阅后即焚两大功能失效
-5. [历史] Bot状态显示"已停止"
+1. **[v21.47] 隐藏地雷修复（3项）**
+2. **[v21.46] 终极代码审查修复（5项）**
+3. **[v21.45] 竞态探测刷屏Bug**
+4. **[v21.44] Bot 409 Conflict冲突**
+5. **[v21.44] 阅后即焚追踪污染问题**
+6. [v21.43] 新闻播报发两条 + 背刺泄密频率过高
+7. [v21.42] 阅后即焚两大功能失效
+8. [历史] Bot状态显示"已停止"
 
 ---
 
@@ -366,4 +369,182 @@ Dashboard显示bot状态为"已停止"，但实际进程在正常运行。
 
 ---
 
-*文档版本：v21.44 | 最后更新：2026-04-18*
+---
+
+## [v21.47] Bug #6：隐藏地雷修复（3项）
+
+> 最后更新：2026-04-19
+
+### Bug #6.1：时区撕裂导致每日重置错误
+
+**问题描述**：每日寻宝/签到在北京时间08:00才重置，而非00:00。
+
+**根因分析**：`database.py` 使用 `datetime.now()` (UTC时区)，而服务器在海外（UTC+0），导致用户"今天"和服务器"今天"存在8小时时差。
+
+**修复方案**：
+```python
+# database.py 顶部添加北京时间时区
+from datetime import datetime, timedelta, timezone
+_CST = timezone(timedelta(hours=8))
+
+# inc_puzzle_score 方法中
+today = datetime.now(_CST).strftime("%Y-%m-%d")  # 使用北京时间
+```
+
+**涉及文件**：`core/database.py`
+
+---
+
+### Bug #6.2：阅后即焚23小时探测盲区
+
+**问题描述**：用户触发Bot回复后，在第2-23小时内删除原消息，Bot回复永远不会被删除。
+
+**根因分析**：
+- 探测窗口：1小时（3600秒）
+- 孤儿清理：24小时（86400秒）
+- 中间23小时是"三不管地带"
+
+**修复方案**：
+```python
+# database.py get_unconfirmed_messages 方法
+def get_unconfirmed_messages(self, window: int = 86400):  # 默认改为24小时
+    # 添加 ORDER BY ts DESC，优先探测新消息
+    c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
+                 WHERE ts>? AND user_msg_id>0 AND replied=0 ORDER BY ts DESC""", (since,))
+```
+
+**涉及文件**：`core/database.py`, `modules/auto_tasks.py`
+
+---
+
+### Bug #6.3：备份任务阻塞所有消息处理
+
+**问题描述**：数据库备份期间（几秒到十几秒），所有消息处理被挂起，用户感觉Bot卡顿。
+
+**根因分析**：`auto_tasks.py` 的 `_job_backup` 外层加了 `rm.locked('db')` 互斥锁，SQLite的 `.backup()` API 本身支持热备，不需要外层加锁。
+
+**修复方案**：
+```python
+def _job_backup(rm):
+    """数据库备份（每小时）"""
+    try:
+        # 直接备份，不阻塞主业务
+        _do_backup(rm.db.db_file)
+    except Exception as e:
+        logger.error(f"数据库备份失败：{e}")
+```
+
+**涉及文件**：`modules/auto_tasks.py`
+
+---
+
+## [v21.46] Bug #7：终极代码审查修复（5项）
+
+> 最后更新：2026-04-19
+
+### Bug #7.1：线程池耗尽炸弹
+
+**问题描述**：高并发时Bot假死，不再响应任何消息。
+
+**根因分析**：`time.sleep(5-10秒)` 霸占线程池的50个工作线程，导致新消息无法处理。
+
+**修复方案**：移除阻塞式sleep，AI请求本身即为"打字延迟"。
+
+**涉及文件**：`main.py`
+
+---
+
+### Bug #7.2：内存字典竞态崩溃
+
+**问题描述**：多线程并发修改 `_conv_tracker` 可能导致 `RuntimeError: dictionary changed size during iteration`。
+
+**根因分析**：50个线程并发读写全局字典，`_cleanup_conv_tracker` 中的 `del` 操作可能与读取操作冲突。
+
+**修复方案**：
+```python
+# 添加全局锁
+_conv_lock = Lock()
+
+# _cleanup_conv_tracker 中
+with _conv_lock:
+    expired = [uid for uid, v in _conv_tracker.items() ...]
+    for uid in expired:
+        del _conv_tracker[uid]
+
+# P10阶段对话追踪中
+with _conv_lock:
+    if uid in _conv_tracker:
+        ...
+```
+
+**涉及文件**：`main.py`
+
+---
+
+### Bug #7.3：Function Calling触发逻辑限制过严
+
+**问题描述**：用户@机器人时被限制使用营销工具，无法发送价格表。
+
+**根因分析**：原代码 `if is_group and mode == "normal" and not is_at and not is_reply` 限制了@场景。
+
+**修复方案**：移除 `is_at/is_reply` 限制，改为：
+```python
+if is_group and mode == "normal":
+    use_tools = _get_function_tools()
+```
+
+**涉及文件**：`main.py`
+
+---
+
+### Bug #7.4：视奸雷达无冷却机制
+
+**问题描述**：同一用户频繁触发价格关键词，管理员被刷屏。
+
+**根因分析**：无冷却机制，每次触发都发送通知。
+
+**修复方案**：
+```python
+_radar_cooldown = {}  # key=uid, value=上次触发时间戳
+_RADAR_COOLDOWN = 3600  # 1小时冷却
+
+# P7视奸雷达中
+if any(k in msg for k in price_kws) and is_group:
+    now_radar = time.time()
+    last_trigger = _radar_cooldown.get(uid, 0)
+    should_notify = now_radar - last_trigger > _RADAR_COOLDOWN
+    
+    if should_notify:
+        # 发送通知...
+        _radar_cooldown[uid] = now_radar
+```
+
+**涉及文件**：`main.py`
+
+---
+
+## [v21.45] Bug #8：竞态探测消息未删除
+
+**问题描述**：Bot每回复一句话，管理员私聊就会收到一条该用户的消息转发，被刷屏。
+
+**根因分析**：`mory_bot.py` 的 `reply_and_track` 方法中，`forward_message` 返回的探测消息没有删除。
+
+**修复方案**：
+```python
+# 竞态兜底探测
+probe = self._bot.forward_message(
+    self._admin_id, cid, user_msg_id, 
+    disable_notification=True
+)
+# 探测成功说明原消息还在，立刻删掉探测消息
+try:
+    self._bot.delete_message(self._admin_id, probe.message_id)
+except Exception:
+    pass
+```
+
+**涉及文件**：`core/mory_bot.py`
+
+---
+
+*文档版本：v21.47 | 最后更新：2026-04-19*
