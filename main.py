@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════╗
-║  main.py  ·  Mory 私域超级分身机器人  v21.43                              ║
+║  main.py  ·  Mory 私域超级分身机器人  v21.44                              ║
 ║                                                                            ║
 ║  架构：模块化 | 多模型无缝轮换 | 线程安全 | 无感智能化运营                   ║
 ║  入口：python main.py                                                       ║
@@ -180,6 +180,7 @@ import telebot
 # ── 导入各模块 ────────────────────────────────────────────────────────
 from core.ai_engine import AIEngine, calc_typing_delay
 from core.database  import DB
+from core.mory_bot import MoryBot  # 【架构重构v21.44】显式机器人封装层
 from modules.admin_cmds import handle_admin
 from modules.group_mgr  import (handle_new_members, check_banned_words,
                                   check_spam, handle_left_member, detect_keywords)
@@ -210,24 +211,73 @@ CONFIG_FILE = os.path.join(base_dir, "config.json")  # 基于脚本目录的绝�
 _config_lock = Lock()
 
 def load_config() -> dict:
+    """加载配置文件，并从数据库覆盖动态状态"""
+    cfg = {}
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             ver = cfg.get("_CONFIG_VERSION", "未知")
             logger.info(f"📋 配置版本：v{ver}")
-            return cfg
         except Exception as e:
             logger.error(f"配置读取失败：{e}")
-    return {}
+    
+    # 【架构重构v21.44】从数据库加载动态状态，覆盖配置文件
+    # 动态状态包括：当前模型索引、图片池、语音池等运行时数据
+    _load_dynamic_states(cfg)
+    
+    return cfg
+
+def _load_dynamic_states(cfg: dict):
+    """从数据库加载动态状态到配置"""
+    global db
+    if db is None:
+        return
+    
+    # 从数据库读取动态状态
+    dynamic_keys = [
+        "CURRENT_MODEL_INDEX",
+        "IMAGE_POOL", 
+        "VOICE_POOL",
+        "_LAST_LEAK_WEEK"
+    ]
+    
+    for key in dynamic_keys:
+        db_value = db.get_system_state(key)
+        if db_value is not None:
+            # 根据配置文件的类型决定如何解析
+            if key in ("CURRENT_MODEL_INDEX",):
+                cfg[key] = int(db_value) if db_value else 0
+            elif key in ("IMAGE_POOL", "VOICE_POOL"):
+                try:
+                    cfg[key] = json.loads(db_value)
+                except:
+                    cfg[key] = []
+            elif key == "_LAST_LEAK_WEEK":
+                cfg[key] = int(db_value) if db_value else -1
+            else:
+                cfg[key] = db_value
+            logger.debug(f"📌 动态状态加载: {key}={cfg[key]}")
 
 def save_config():
+    """保存配置到文件，并同步动态状态到数据库"""
+    global db
     with _config_lock:
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(CONFIG, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"配置保存失败：{e}")
+    
+    # 【架构重构v21.44】同步动态状态到数据库
+    if db is not None:
+        dynamic_keys = ["CURRENT_MODEL_INDEX", "IMAGE_POOL", "VOICE_POOL", "_LAST_LEAK_WEEK"]
+        for key in dynamic_keys:
+            if key in CONFIG:
+                value = CONFIG[key]
+                if isinstance(value, (list, dict)):
+                    value = json.dumps(value)
+                db.set_system_state(key, value)
 
 CONFIG = load_config()
 
@@ -245,9 +295,13 @@ if not CONFIG.get("API_KEY") or CONFIG["API_KEY"] == "YOUR_DASHSCOPE_API_KEY_HER
     logger.critical("❌ API_KEY 未填写！请编辑 config.json 后重启。")
     sys.exit(1)
 
+
 # ── 初始化核心组件 ────────────────────────────────────────────────────
 db  = DB(os.path.join(base_dir, "mory.db"))
 ai  = AIEngine(CONFIG)
+
+# 【架构重构v21.44】数据库初始化后，重新加载动态状态到 CONFIG
+_load_dynamic_states(CONFIG)
 bot = telebot.TeleBot(CONFIG["TOKEN"], threaded=True, num_threads=50)
 
 # 【修复】全局缓存bot自身信息，只调用1次get_me()
@@ -310,90 +364,8 @@ except Exception as e:
 # ── 启动后台自动任务 ──────────────────────────────────────────────────
 start_background(bot, CONFIG, db, ai, save_config)
 
-# ── 全局群聊回复包装器（自动追踪阅后即焚）───────────────────────────
-# 给bot对象注入tracked_reply方法，所有模块都可以用bot.tracked_reply(m, text)
-# 群聊自动追踪阅后即焚，私聊不追踪
-_original_reply_to = bot.reply_to
-
-def _tracked_reply(message, text, **kwargs):
-    """包装版reply_to：群聊自动追踪阅后即焚。
-    
-    竞态条件处理：
-    - 如果原消息已被群管删除（400 "message to be replied not found"），
-      自动降级为普通发送（不带引用），确保回复不丢失。
-    """
-    cid = message.chat.id
-    user_msg_id = message.message_id
-    
-    try:
-        sent = _original_reply_to(message, text, **kwargs)
-    except Exception as e:
-        err_str = str(e).lower()
-        # 原消息已被删 → 降级为普通消息发送
-        if any(kw in err_str for kw in ["message to be replied not found", 
-                                          "not found", "bad request: message",
-                                          "message_id_invalid"]):
-            logger.warning(f"⚡ 原消息{user_msg_id}已被删，降级为普通发送")
-            try:
-                # 不带reply参数，直接发送文本
-                sent = bot.send_message(cid, text, **{k:v for k,v in kwargs.items() 
-                                                       if k != 'reply_to_message_id'})
-                # 【修复】降级消息不需要阅后即焚追踪（原消息已删），直接返回
-                logger.info(f"⚡ 降级发送成功（原消息{user_msg_id}已删），跳过追踪")
-                return sent
-            except Exception as fb_err:
-                logger.error(f"❌ 降级发送也失败：{fb_err}")
-                return None
-        else:
-            logger.error(f"tracked_reply 失败（非竞态）：{e}")
-            import traceback
-            logger.error(f"📌 详情：{traceback.format_exc()}")
-            return None
-    
-    if not sent:
-        return sent
-    
-    logger.info(f"📌 【阅后即焚】_tracked_reply被调用: chat={cid}, "
-                 f"sent={sent is not None}, bot_msg_id={getattr(sent, 'message_id', 'N/A')}, "
-                 f"user_msg_id={user_msg_id}")
-    
-    if cid < 0:  # 群聊ID为负数
-        bot_msg_id = sent.message_id
-        
-        if bot_msg_id and user_msg_id:
-            db.track_reply(bot_msg_id, cid, user_msg_id)
-            logger.info(f"📌 阅后即焚追踪成功：bot_msg={bot_msg_id} chat={cid} user_msg={user_msg_id}")
-            
-            # 竞态兜底探测：立即forward检查原消息是否还在
-            try:
-                admin_id = CONFIG.get("ADMIN_ID", 0)
-                if admin_id:
-                    bot.forward_message(admin_id, cid, user_msg_id, disable_notification=True)
-            except Exception as race_err:
-                err_str2 = str(race_err).lower()
-                if any(kw in err_str2 for kw in ["not found", "message_id_invalid", 
-                                                   "bad request", "forbidden", 
-                                                   "chat", "deleted"]):
-                    # 原消息已删 → 删掉刚发的机器人回复
-                    for r_try in range(3):
-                        try:
-                            bot.delete_message(cid, int(bot_msg_id))
-                            db.delete_tracked(bot_msg_id)
-                            logger.info(f"⚡ 阅后即焚(竞态): 原消息{user_msg_id}已删→清理{bot_msg_id}")
-                            break
-                        except Exception as del_e2:
-                            del_str = str(del_e2).lower()
-                            if any(kw in del_str for kw in ["not found", "message to delete"]):
-                                db.delete_tracked(bot_msg_id)
-                                break
-                            elif r_try < 2:
-                                import time as _t3; _t3.sleep(1 + r_try)
-    else:
-        logger.debug(f"📌 跳过追踪（私聊chat={cid}）")
-    
-    return sent
-
-bot.reply_to = _tracked_reply
+# 【架构重构v21.44】初始化 MoryBot 封装层（替代 Monkey Patch）
+mory_bot = MoryBot(bot, db, CONFIG)
 
 # ════════════════════════ 消息处理器 ══════════════════════════════════
 
@@ -689,7 +661,7 @@ def _dispatch(m):
         return
 
     # ── P6：管理员专属指令（含绑定主人）─────────────────────────────
-    admin_result = handle_admin(bot, m, CONFIG, db, ai, save_config)
+    admin_result = handle_admin(bot, mory_bot, CONFIG, db, ai, save_config)
     if admin_result:
         logger.info(f"👑 管理员指令执行成功 uid={uid} msg={msg[:30]}")
         clear_logging_context()
@@ -709,7 +681,7 @@ def _dispatch(m):
         db.log_conversion_event(uid, "touched")
 
     # ── P8：固定彩蛋响应 ──────────────────────────────────────────────
-    if handle_easter_eggs(bot, m, CONFIG, db):
+    if handle_easter_eggs(mory_bot, m, CONFIG, db):
         clear_logging_context()
         return
 
@@ -723,12 +695,12 @@ def _dispatch(m):
 
     # ── P9.3：天气/城市共情（快速硬编码回复，不影响后续AI）──────────
     if analysis.get("weather_empathy") and is_group:
-        bot.reply_to(m, analysis["weather_empathy"])  # monkey-patch自动追踪
+        mory_bot.reply_and_track(m, analysis["weather_empathy"])  # 【架构v21.44】显式追踪
 
     # ── P9.5：黑话/行话自动科普（不影响正常AI回复，5%概率触发防刷屏）──
     if analysis.get("slang_reply") and is_group:
         if random.randint(1, 20) == 1:  # 5%概率触发科普，避免刷屏
-            bot.reply_to(m, analysis["slang_reply"])  # monkey-patch自动追踪
+            mory_bot.reply_and_track(m, analysis["slang_reply"])  # 【架构v21.44】显式追踪
 
     # ── P10：AI回复逻辑 ───────────────────────────────────────────────
     mode = analysis["mode"]
@@ -754,7 +726,7 @@ def _dispatch(m):
 
     # 生物钟警告（凌晨0-5点）
     if is_late_night() and is_group:
-        bot.reply_to(m, "这么晚不睡觉，身体不要啦？快去梦里找老板～ 😴")  # monkey-patch自动追踪
+        mory_bot.reply_and_track(m, "这么晚不睡觉，身体不要啦？快去梦里找老板～ 😴")  # 【架构v21.44】显式追踪
         clear_logging_context()
         return
 
@@ -830,9 +802,9 @@ def _dispatch(m):
                     if hook_text:
                         resp += f"\n\n{hook_text.strip()}"
 
-        sent = bot.reply_to(m, resp)
+        sent = mory_bot.reply_and_track(m, resp)
 
-        # 注：阅后即焚追踪由 monkey-patch 的 _tracked_reply 自动处理，无需手动调用
+        # 【架构v21.44】阅后即焚追踪由 MoryBot.reply_and_track() 显式处理
         
         # 私聊消息转发给管理员（脱敏处理：不发送原始内容）
         if is_priv:

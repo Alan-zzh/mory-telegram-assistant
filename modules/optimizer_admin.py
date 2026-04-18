@@ -38,10 +38,10 @@ def handle_optimize_cmd(bot, message, ai_engine, config: dict):
     try:
         opt = _get_optimizer()
         if not opt or not opt.enabled:
-            bot.reply_to(message, "⚡ 优化引擎未启用或初始化失败")
+            mory_bot.reply_and_track(message, "⚡ 优化引擎未启用或初始化失败")
             return True
     except Exception as e:
-        bot.reply_to(message, f"⚠️ 优化引擎异常：{e}")
+        mory_bot.reply_and_track(message, f"⚠️ 优化引擎异常：{e}")
         return True
     
     # ════ /optimize_status ════════════════════════════════
@@ -117,14 +117,14 @@ def handle_optimize_cmd(bot, message, ai_engine, config: dict):
                 f"拒绝: {r['total_rejected']}"
             )
         
-        bot.reply_to(message, text)
+        mory_bot.reply_and_track(message, text)
         return True
     
     # ════ /optimize_cache ════════════════════════════════
     elif cmd in ("/optimize_cache", "/oc"):
         if arg and arg.lower() in ("clear", "clean", "reset", "清空", "清除"):
             count = opt.cache.invalidate()
-            bot.reply_to(message, f"🗑️ 已清除全部缓存（{count}条）")
+            mory_bot.reply_and_track(message, f"🗑️ 已清除全部缓存（{count}条）")
             return True
         
         stats = opt.cache.get_stats()
@@ -147,7 +147,7 @@ def handle_optimize_cmd(bot, message, ai_engine, config: dict):
             text += "\n_暂无缓存数据，等待AI调用后自动积累_\n"
         
         text += "\n💡 提示：用 `/optimize_cache clear` 可手动清空缓存"
-        bot.reply_to(message, text)
+        mory_bot.reply_and_track(message, text)
         return True
     
     # ════ /optimize_reset ════════════════════════════════
@@ -158,22 +158,22 @@ def handle_optimize_cmd(bot, message, ai_engine, config: dict):
             broken = [name for name, info in all_status.items() 
                       if info["state"] in ("open", "half_open")]
             if not broken:
-                bot.reply_to(message, "✅ 当前没有模型处于熔断状态，无需重置。")
+                mory_bot.reply_and_track(message, "✅ 当前没有模型处于熔断状态，无需重置。")
             else:
                 lines = ["🔴 **以下模型已被熔断：**\n"]
                 for name in broken:
                     info = opt.circuit.get_status(name)
                     lines.append(f"• `{name}` — 连续失败{info['fail_count']}次\n"
                                f"  用 `/optimize_reset {name}` 重置")
-                bot.reply_to(message, "\n".join(lines))
+                mory_bot.reply_and_track(message, "\n".join(lines))
             return True
         
         # 重置指定模型
         model_name = arg
         if opt.circuit.reset(model_name):
-            bot.reply_to(message, f"✅ 熔断器已重置：`{model_name}`\n该模型将恢复正常使用。")
+            mory_bot.reply_and_track(message, f"✅ 熔断器已重置：`{model_name}`\n该模型将恢复正常使用。")
         else:
-            bot.reply_to(message, f"ℹ️ `{model_name}` 不在熔断记录中，无需重置。")
+            mory_bot.reply_and_track(message, f"ℹ️ `{model_name}` 不在熔断记录中，无需重置。")
         return True
     
     return False

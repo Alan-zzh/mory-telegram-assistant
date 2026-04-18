@@ -702,7 +702,7 @@ def _handle_view_all_config(msg: str, config: dict, bot, m) -> bool:
     # 查看指令/帮助 -> 显示大白话说明
     help_keywords = ["查看指令", "帮助", "help", "怎么用", "有哪些指令", "教我怎么用", "指令说明"]
     if msg.strip() in help_keywords:
-        bot.reply_to(m, _build_friendly_help())
+        mory_bot.reply_and_track(m, _build_friendly_help())
         logger.info("用户查看指令说明")
         return True
     
@@ -761,7 +761,7 @@ def _handle_view_all_config(msg: str, config: dict, bot, m) -> bool:
         lines.append("")
         lines.append("💡 发送「查看指令」看大白话版使用说明")
         
-        bot.reply_to(m, "\n".join(lines))
+        mory_bot.reply_and_track(m, "\n".join(lines))
         logger.info("用户查看完整配置清单")
         return True
     
@@ -805,7 +805,7 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn) -> bool:
         if alias in feature:
             config[key] = is_enable
             save_config_fn()
-            bot.reply_to(m, f"✅ 已{action}「{ALL_CONFIGS.get(key, {}).get('name', key)}」")
+            mory_bot.reply_and_track(m, f"✅ 已{action}「{ALL_CONFIGS.get(key, {}).get('name', key)}」")
             logger.info(f"{'ON' if is_enable else 'OFF'}: {key}")
             return True
     
@@ -814,7 +814,7 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn) -> bool:
         if info["type"] == "boolean" and info["name"].replace("功能", "") in feature:
             config[key] = is_enable
             save_config_fn()
-            bot.reply_to(m, f"✅ 已{action}「{info['name']}」")
+            mory_bot.reply_and_track(m, f"✅ 已{action}「{info['name']}」")
             logger.info(f"{'ON' if is_enable else 'OFF'}: {key}")
             return True
     
@@ -868,7 +868,7 @@ def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn) -> boo
         current["messages_per_minute"] = int(val)
         config[key] = current
         save_config_fn()
-        bot.reply_to(m, f"✅ 已修改「{info['name']}」为每分钟 {int(val)} 条")
+        mory_bot.reply_and_track(m, f"✅ 已修改「{info['name']}」为每分钟 {int(val)} 条")
         logger.info(f"修改{key}: {val}")
         return True
     
@@ -882,7 +882,7 @@ def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn) -> boo
         unit = "点"
     display_val = f"{val}{unit}" if unit else str(val)
     
-    bot.reply_to(m, f"✅ 已修改「{info['name']}」为 {display_val}")
+    mory_bot.reply_and_track(m, f"✅ 已修改「{info['name']}」为 {display_val}")
     logger.info(f"修改{key}: {val}")
     return True
 
@@ -916,7 +916,7 @@ def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn) -> bool:
         if text:
             config["WELCOME_TEXT"] = text
             save_config_fn()
-            bot.reply_to(m, f"✅ 欢迎语已更新：{text[:50]}{'...' if len(text)>50 else ''}")
+            mory_bot.reply_and_track(m, f"✅ 欢迎语已更新：{text[:50]}{'...' if len(text)>50 else ''}")
             logger.info(f"修改欢迎语: {text[:50]}")
             return True
     
@@ -927,7 +927,7 @@ def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn) -> bool:
             word = match.group(1).strip()
             config["PUZZLE_WORD"] = word
             save_config_fn()
-            bot.reply_to(m, f"✅ 碎片暗号已设为「{word}」")
+            mory_bot.reply_and_track(m, f"✅ 碎片暗号已设为「{word}」")
             logger.info(f"修改暗号: {word}")
             return True
     
@@ -938,7 +938,7 @@ def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn) -> bool:
             text = match.group(1).strip()
             config["GREETING_TEMPLATE"] = text
             save_config_fn()
-            bot.reply_to(m, f"✅ 早安模板已更新")
+            mory_bot.reply_and_track(m, f"✅ 早安模板已更新")
             return True
     
     if "晚安模板" in msg:
@@ -947,7 +947,7 @@ def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn) -> bool:
             text = match.group(1).strip()
             config["GOODNIGHT_TEMPLATE"] = text
             save_config_fn()
-            bot.reply_to(m, f"✅ 晚安模板已更新")
+            mory_bot.reply_and_track(m, f"✅ 晚安模板已更新")
             return True
     
     return False
@@ -984,17 +984,17 @@ def _handle_list_operations(msg: str, config: dict, bot, m, save_config_fn) -> b
                 items.append(word)
                 config[key] = items
                 save_config_fn()
-                bot.reply_to(m, f"✅ 已增加反感词「{word}」")
+                mory_bot.reply_and_track(m, f"✅ 已增加反感词「{word}」")
             else:
-                bot.reply_to(m, f"⚠️ 「{word}」已在列表中")
+                mory_bot.reply_and_track(m, f"⚠️ 「{word}」已在列表中")
         else:
             if word in items:
                 items.remove(word)
                 config[key] = items
                 save_config_fn()
-                bot.reply_to(m, f"✅ 已删除反感词「{word}」")
+                mory_bot.reply_and_track(m, f"✅ 已删除反感词「{word}」")
             else:
-                bot.reply_to(m, f"⚠️ 「{word}」不在列表中")
+                mory_bot.reply_and_track(m, f"⚠️ 「{word}」不在列表中")
         return True
     
     # 敏感词
@@ -1019,17 +1019,17 @@ def _handle_list_operations(msg: str, config: dict, bot, m, save_config_fn) -> b
                 items.append(word)
                 config[key] = items
                 save_config_fn()
-                bot.reply_to(m, f"✅ 已增加敏感词「{word}」")
+                mory_bot.reply_and_track(m, f"✅ 已增加敏感词「{word}」")
             else:
-                bot.reply_to(m, f"⚠️ 「{word}」已在列表中")
+                mory_bot.reply_and_track(m, f"⚠️ 「{word}」已在列表中")
         else:
             if word in items:
                 items.remove(word)
                 config[key] = items
                 save_config_fn()
-                bot.reply_to(m, f"✅ 已删除敏感词「{word}」")
+                mory_bot.reply_and_track(m, f"✅ 已删除敏感词「{word}」")
             else:
-                bot.reply_to(m, f"⚠️ 「{word}」不在列表中")
+                mory_bot.reply_and_track(m, f"⚠️ 「{word}」不在列表中")
         return True
     
     return False
@@ -1049,11 +1049,11 @@ def _handle_model_switch(msg: str, config: dict, bot, m, save_config_fn) -> bool
             config["CURRENT_MODEL_INDEX"] = idx
             save_config_fn()
             model_name = pools[idx].get("name", f"模型{idx+1}")
-            bot.reply_to(m, f"✅ 已切换到第{idx+1}个模型：{model_name}")
+            mory_bot.reply_and_track(m, f"✅ 已切换到第{idx+1}个模型：{model_name}")
             logger.info(f"切换模型: {model_name}")
             return True
         else:
-            bot.reply_to(m, f"⚠️ 模型序号超出范围(1-{len(pools)})")
+            mory_bot.reply_and_track(m, f"⚠️ 模型序号超出范围(1-{len(pools)})")
             return True
     
     # 按名称切换
@@ -1063,7 +1063,7 @@ def _handle_model_switch(msg: str, config: dict, bot, m, save_config_fn) -> bool
         if model_name and model_name in msg:
             config["CURRENT_MODEL_INDEX"] = i
             save_config_fn()
-            bot.reply_to(m, f"✅ 已切换到模型：{model_name}")
+            mory_bot.reply_and_track(m, f"✅ 已切换到模型：{model_name}")
             logger.info(f"切换模型: {model_name}")
             return True
     

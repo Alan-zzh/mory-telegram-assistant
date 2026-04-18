@@ -90,7 +90,7 @@ def get_fortune() -> str:
 
 
 # ─────────────────────── 彩蛋快速响应 ─────────────────────────────────
-def handle_easter_eggs(bot, m, config: dict, db) -> bool:
+def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
     """
     处理固定彩蛋（不需要AI，立刻响应）。
     返回True表示已消费，主分发器不再处理。
@@ -102,7 +102,7 @@ def handle_easter_eggs(bot, m, config: dict, db) -> bool:
 
     # 契合度测试
     if "契合度" in msg:
-        bot.reply_to(m,
+        mory_bot.reply_and_track(m,
             f"✨ 星盘扫描中...\n\n"
             f"结论：你的灵魂和 {bot_name} 老板契合度高达 **99.9%**！\n"
             f"你简直就是为她量身定制的守护者！💫")
@@ -116,12 +116,12 @@ def handle_easter_eggs(bot, m, config: dict, db) -> bool:
             f"🎲 描述一下你梦里的{bot_name}老板是什么样的？",
             f"🎲 用3个词形容你眼中的{bot_name}老板！",
         ]
-        bot.reply_to(m, random.choice(dares))
+        mory_bot.reply_and_track(m, random.choice(dares))
         return True
 
     # Mory密码彩蛋
     if f"{bot_name}密码" in msg or "密码" == msg.strip():
-        bot.reply_to(m, f"🤫 嘘... 奖励你一个专属飞吻 💋\n悄悄告诉你，{bot_name}老板今天心情特别好哦～")
+        mory_bot.reply_and_track(m, f"🤫 嘘... 奖励你一个专属飞吻 💋\n悄悄告诉你，{bot_name}老板今天心情特别好哦～")
         return True
 
     # 碎片寻宝
@@ -129,17 +129,17 @@ def handle_easter_eggs(bot, m, config: dict, db) -> bool:
     if puzzle_word in msg and m.chat.type != "private":
         score, already_today, consecutive = db.inc_puzzle_score(uid)
         if already_today:
-            bot.reply_to(m,
+            mory_bot.reply_and_track(m,
                 f"👀 你今天已经收集过暗号了～\n"
                 f"当前进度：{score}/7（连续{consecutive}天）\n"
                 f"坚持每天来一次，凑齐7天就能领盲盒奖励哦！🎁")
         elif score >= 7:
-            bot.reply_to(m,
+            mory_bot.reply_and_track(m,
                 f"🎉 恭喜你连续{consecutive}天收集齐了暗号！\n"
                 f"快去私聊{bot_name}老板领专属盲盒奖励吧～ 🎁\n"
                 f"（进度已重置，可以重新开始新一轮收集～）")
         else:
-            bot.reply_to(m,
+            mory_bot.reply_and_track(m,
                 f"🔍 发现暗号碎片！今日收集成功～\n"
                 f"当前进度：{score}/7（已连续{consecutive}天）\n"
                 f"每天在群里提到「{puzzle_word}」即可收集一次～")
@@ -152,11 +152,11 @@ def handle_easter_eggs(bot, m, config: dict, db) -> bool:
             wake_time = parts[1]
             if ":" in wake_time and len(wake_time) == 5:
                 db.set_wake_up(uid, wake_time)
-                bot.reply_to(m,
+                mory_bot.reply_and_track(m,
                     f"⏰ 记下啦～ 以后每天 {wake_time} "
                     f"小助理会准时叫你起床哦！好好休息～")
                 return True
-        bot.reply_to(m, "⚠️ 格式：/叫醒 08:30")
+        mory_bot.reply_and_track(m, "⚠️ 格式：/叫醒 08:30")
         return True
 
     # 价格表查询
@@ -226,7 +226,7 @@ def handle_easter_eggs(bot, m, config: dict, db) -> bool:
         lines.append("@MorychannelBot 自助下单 | 联系小助理咨询")
         lines.append("未成年禁入 | 理智消费")
 
-        bot.reply_to(m, "\n".join(lines))
+        mory_bot.reply_and_track(m, "\n".join(lines))
         db.set_cart(uid)
         db.log_conversion_event(uid, "interested")
         return True
@@ -241,12 +241,12 @@ def handle_easter_eggs(bot, m, config: dict, db) -> bool:
             if pts >= 500: level = 4
             elif pts >= 100: level = 3
             elif pts >= 20: level = 2
-            bot.reply_to(m,
+            mory_bot.reply_and_track(m,
                 f"🎖 你的当前等级：{level_names.get(level, '新人')}\n"
                 f"积分：{pts} 分\n\n"
                 f"发言+1分 | 购买+10分 | 邀请+5分")
         else:
-            bot.reply_to(m, "🌱 你还是新人，多发言积累积分吧～")
+            mory_bot.reply_and_track(m, "🌱 你还是新人，多发言积累积分吧～")
         return True
 
     return False
@@ -303,12 +303,12 @@ def handle_photo(bot, m, config: dict):
 
         bot.send_photo(gid, bio,
                        caption=f"{config['BOT_NAME']}老板发新图啦～ 想看无遮挡版？你懂的～ 🔥")
-        bot.reply_to(m, "✅ 打码完成并已推群")
+        mory_bot.reply_and_track(m, "✅ 打码完成并已推群")
         logger.info("📸 图片打码推群成功")
 
     except Exception as e:
         logger.error(f"图片打码失败：{e}")
-        bot.reply_to(m, f"⚠️ 图像处理失败：{str(e)[:60]}")
+        mory_bot.reply_and_track(m, f"⚠️ 图像处理失败：{str(e)[:60]}")
 
 
 # ─────────────────────── 生物钟警告 ──────────────────────────────────

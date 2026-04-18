@@ -58,7 +58,7 @@ from modules.natural_cmd import handle_natural_admin
 logger = get_logger("admin_cmds")
 
 
-def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
+def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool:
     """
     处理管理员专属指令。
     返回 True 表示已消费该消息，主分发器不再继续处理。
@@ -96,10 +96,10 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
         if config.get("ADMIN_ID", 0) == 0 or uid == config.get("ADMIN_ID", 0):
             config["ADMIN_ID"] = uid
             save_config_fn()
-            bot.reply_to(m, f"✅ 绑定成功！主人ID：{uid}")
+            mory_bot.reply_and_track(m, f"✅ 绑定成功！主人ID：{uid}")
             logger.info(f"👑 绑定管理员：{uid}")
         else:
-            bot.reply_to(m, "⛔ 已有主人，无法绑定。")
+            mory_bot.reply_and_track(m, "⛔ 已有主人，无法绑定。")
         return True
 
     # ── 添加管理员 ──────────────────────────────────────────────────────
@@ -117,15 +117,15 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                 if admin_id not in admin_ids:
                     admin_ids.append(admin_id)
             if target_uid in admin_ids:
-                bot.reply_to(m, f"⚠️ {target_name} 已经是管理员了。")
+                mory_bot.reply_and_track(m, f"⚠️ {target_name} 已经是管理员了。")
             else:
                 admin_ids.append(target_uid)
                 config["ADMIN_IDS"] = admin_ids
                 save_config_fn()
-                bot.reply_to(m, f"✅ 已将 {target_name}({target_uid}) 添加为管理员。")
+                mory_bot.reply_and_track(m, f"✅ 已将 {target_name}({target_uid}) 添加为管理员。")
                 logger.info(f"👑 添加管理员：{target_name}({target_uid})")
         else:
-            bot.reply_to(m, "⚠️ 请回复某人的消息后发送「添加管理员」。")
+            mory_bot.reply_and_track(m, "⚠️ 请回复某人的消息后发送「添加管理员」。")
         return True
 
     # ── 查看管理员列表 ──────────────────────────────────────────────────
@@ -139,13 +139,13 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
         if admin_id and admin_id not in admin_ids:
             admin_ids.append(admin_id)
         if not admin_ids:
-            bot.reply_to(m, "⚠️ 当前没有管理员。")
+            mory_bot.reply_and_track(m, "⚠️ 当前没有管理员。")
         else:
             lines = [f"👑 管理员列表（共{len(admin_ids)}人）："]
             for i, aid in enumerate(admin_ids, 1):
                 role = "👑 主人" if aid == admin_id else "🛡️ 管理员"
                 lines.append(f"  {i}. {role}：{aid}")
-            bot.reply_to(m, "\n".join(lines))
+            mory_bot.reply_and_track(m, "\n".join(lines))
         return True
 
     # ── 以下所有指令只允许主人执行 ────────────────────────────────────────
@@ -170,10 +170,10 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             # 清空旧字段避免冲突
             config.pop("SYSTEM_PROMPT", None)
             save_config_fn()
-            bot.reply_to(m, f"✅ 核心人设已更新：\n{new_persona[:100]}{'...' if len(new_persona)>100 else ''}")
+            mory_bot.reply_and_track(m, f"✅ 核心人设已更新：\n{new_persona[:100]}{'...' if len(new_persona)>100 else ''}")
             logger.info(f"📝 核心人设已更新")
         else:
-            bot.reply_to(m, "⚠️ 格式：设置人设 [人设内容]")
+            mory_bot.reply_and_track(m, "⚠️ 格式：设置人设 [人设内容]")
         return True
 
     # ── 查看人设（不走AI，直接读config）─────────────────────────────────
@@ -202,7 +202,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
         extra = msg[5:].strip()
         config["KNOWLEDGE"] += f"\n{extra}"
         save_config_fn()
-        bot.reply_to(m, "✅ 知识库已追加。")
+        mory_bot.reply_and_track(m, "✅ 知识库已追加。")
         return True
 
     # ── 查看资料/知识库（不走AI，直接读config）─────────────────────────
@@ -227,9 +227,9 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             assert 0 <= val <= 100
             config["REPLY_CHANCE"] = val
             save_config_fn()
-            bot.reply_to(m, f"✅ 群聊随机回复概率已设为 {val}%")
+            mory_bot.reply_and_track(m, f"✅ 群聊随机回复概率已设为 {val}%")
         except (ValueError, AssertionError):
-            bot.reply_to(m, "⚠️ 格式：设置概率 [0-100]")
+            mory_bot.reply_and_track(m, "⚠️ 格式：设置概率 [0-100]")
         return True
 
     # ── 查看全部配置（不走AI，一次性总览）──────────────────────────────
@@ -269,12 +269,12 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                 target_id = int(parts[1].lstrip("@"))
                 content = parts[2]
                 bot.send_message(target_id, f"📢 {config['BOT_NAME']}老板说：\n\n{content}")
-                bot.reply_to(m, f"✅ 已私信用户 ID: {target_id}")
+                mory_bot.reply_and_track(m, f"✅ 已私信用户 ID: {target_id}")
                 logger.info(f"📨 代发→{target_id}：{content[:50]}")
             except Exception as e:
-                bot.reply_to(m, f"⚠️ 发送失败：{e}")
+                mory_bot.reply_and_track(m, f"⚠️ 发送失败：{e}")
         else:
-            bot.reply_to(m, "⚠️ 格式：代发 @用户ID 消息内容")
+            mory_bot.reply_and_track(m, "⚠️ 格式：代发 @用户ID 消息内容")
         return True
 
     # ── 代发到主群 ───────────────────────────────────────────────────────
@@ -282,10 +282,10 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
         content = msg[4:].strip()
         try:
             bot.send_message(config["GROUP_ID"], content)
-            bot.reply_to(m, "✅ 已发到主群。")
+            mory_bot.reply_and_track(m, "✅ 已发到主群。")
             logger.info(f"📢 代发群：{content[:50]}")
         except Exception as e:
-            bot.reply_to(m, f"⚠️ 失败：{e}")
+            mory_bot.reply_and_track(m, f"⚠️ 失败：{e}")
         return True
 
     # ── 代发到频道 ───────────────────────────────────────────────────────
@@ -293,7 +293,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
         content = msg[5:].strip()
         channels = config.get("CHANNEL_IDS", [])
         if not channels:
-            bot.reply_to(m, "⚠️ 未配置频道ID，请在 config.json 的 CHANNEL_IDS 中添加。")
+            mory_bot.reply_and_track(m, "⚠️ 未配置频道ID，请在 config.json 的 CHANNEL_IDS 中添加。")
         else:
             ok, fail = 0, 0
             for cid in channels:
@@ -303,7 +303,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                 except Exception as e:
                     fail += 1
                     logger.warning(f"推送频道失败 cid={cid}：{e}")
-            bot.reply_to(m, f"✅ 已推送 {ok} 个频道，失败 {fail} 个。")
+            mory_bot.reply_and_track(m, f"✅ 已推送 {ok} 个频道，失败 {fail} 个。")
         return True
 
     # ── 投票 ─────────────────────────────────────────────────────────────
@@ -316,12 +316,12 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             if len(options) >= 2:
                 try:
                     bot.send_poll(config["GROUP_ID"], question, options, is_anonymous=False)
-                    bot.reply_to(m, "✅ 投票已在群里发起。")
+                    mory_bot.reply_and_track(m, "✅ 投票已在群里发起。")
                     logger.info(f"🗳️ 投票：{question}")
                 except Exception as e:
-                    bot.reply_to(m, f"⚠️ 投票失败：{e}")
+                    mory_bot.reply_and_track(m, f"⚠️ 投票失败：{e}")
         else:
-            bot.reply_to(m, "⚠️ 格式：投票 问题 选项1 选项2 选项3")
+            mory_bot.reply_and_track(m, "⚠️ 格式：投票 问题 选项1 选项2 选项3")
         return True
 
     # ── 每日简报 / /report ───────────────────────────────────────────────
@@ -350,11 +350,11 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             try:
                 target_id = int(id_str)
             except ValueError:
-                bot.reply_to(m, "⚠️ 格式：查看画像 @用户ID 或 查看画像 用户数字ID")
+                mory_bot.reply_and_track(m, "⚠️ 格式：查看画像 @用户ID 或 查看画像 用户数字ID")
                 return True
         else:
             # 没有指定用户，展示最近活跃TOP5画像简报
-            bot.reply_to(m, "📊 正在生成最近活跃用户的画像简报...")
+            mory_bot.reply_and_track(m, "📊 正在生成最近活跃用户的画像简报...")
             profiles = db.get_all_user_profiles()[:5]
             if not profiles:
                 bot.send_message(chat_id, "暂无用户数据。")
@@ -380,7 +380,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
         # 查看指定用户画像
         profile = db.get_user_profile(target_id)
         if not profile:
-            bot.reply_to(m, f"⚠️ 未找到用户 {target_id} 的数据。")
+            mory_bot.reply_and_track(m, f"⚠️ 未找到用户 {target_id} 的数据。")
             return True
         level_names = {1: "新人🌱", 2: "活跃⭐", 3: "VIP💎", 4: "至尊👑"}
         keywords = profile["keywords"].replace(",", "、") if profile["keywords"] else "暂无标签"
@@ -431,9 +431,9 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             config["CURRENT_MODEL_INDEX"] = idx
             save_config_fn()
             ai.current_idx = idx
-            bot.reply_to(m, f"✅ 已切换到模型：{model_name}")
+            mory_bot.reply_and_track(m, f"✅ 已切换到模型：{model_name}")
         else:
-            bot.reply_to(m, f"⚠️ 未找到该模型。可用：\n" + "\n".join(names))
+            mory_bot.reply_and_track(m, f"⚠️ 未找到该模型。可用：\n" + "\n".join(names))
         return True
 
     # ── 模型恢复（从黑名单恢复被拉黑的模型）──────────────────────────
@@ -444,16 +444,16 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             if ai._restore_model(model_name):
                 save_config_fn()
                 ai.current_idx = config.get("CURRENT_MODEL_INDEX", ai.current_idx)
-                bot.reply_to(m, f"✅ 模型 {model_name} 已从黑名单恢复，可正常使用")
+                mory_bot.reply_and_track(m, f"✅ 模型 {model_name} 已从黑名单恢复，可正常使用")
             else:
-                bot.reply_to(m, f"⚠️ {model_name} 不在黑名单中")
+                mory_bot.reply_and_track(m, f"⚠️ {model_name} 不在黑名单中")
         else:
             # 没指定模型，显示黑名单列表
             blacklisted = list(ai.blacklisted)
             if blacklisted:
-                bot.reply_to(m, f"🚫 被拉黑的模型：\n" + "\n".join(f"  {m}" for m in blacklisted) + "\n\n格式：模型恢复 [模型名]")
+                mory_bot.reply_and_track(m, f"🚫 被拉黑的模型：\n" + "\n".join(f"  {m}" for m in blacklisted) + "\n\n格式：模型恢复 [模型名]")
             else:
-                bot.reply_to(m, "✅ 当前没有被拉黑的模型")
+                mory_bot.reply_and_track(m, "✅ 当前没有被拉黑的模型")
         return True
 
     # ── 查看当前模型 ─────────────────────────────────────────────────────
@@ -493,9 +493,9 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
         try:
             target = int(msg.split()[1].lstrip("@"))
             db.blacklist_add(target, "管理员手动拉黑")
-            bot.reply_to(m, f"✅ 用户 {target} 已加入黑名单。")
+            mory_bot.reply_and_track(m, f"✅ 用户 {target} 已加入黑名单。")
         except (ValueError, IndexError):
-            bot.reply_to(m, "⚠️ 格式：/blacklist @用户ID")
+            mory_bot.reply_and_track(m, "⚠️ 格式：/blacklist @用户ID")
         return True
 
     # ── 禁言 ─────────────────────────────────────────────────────────────
@@ -515,9 +515,9 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                         until_date=until_date)
                 except Exception as e:
                     logger.warning(f"禁言操作失败 uid={target}：{e}")
-                bot.reply_to(m, f"✅ 已禁言用户 {target} {minutes} 分钟。")
+                mory_bot.reply_and_track(m, f"✅ 已禁言用户 {target} {minutes} 分钟。")
             except (ValueError, IndexError):
-                bot.reply_to(m, "⚠️ 格式：/mute @用户ID 分钟数")
+                mory_bot.reply_and_track(m, "⚠️ 格式：/mute @用户ID 分钟数")
         return True
 
     # ── 清群无人理（立刻删掉群里所有无人互动的机器人消息）──────────────
@@ -620,11 +620,11 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                 except Exception as e:
                     logger.error(f"🧹 阶段二失败：{e}")
 
-            bot.reply_to(m, f"🧹 已清理 {deleted} 条无人互动的消息"
+            mory_bot.reply_and_track(m, f"🧹 已清理 {deleted} 条无人互动的消息"
                           f"{'，' + str(failed) + '条删除失败' if failed > 0 else ''}。")
             logger.info(f"🧹 清群无人理完成：删除{deleted}条，失败{failed}条")
         except Exception as e:
-            bot.reply_to(m, f"⚠️ 清理失败：{e}")
+            mory_bot.reply_and_track(m, f"⚠️ 清理失败：{e}")
             logger.error(f"🧹 清群无人理失败：{e}")
         return True
 
@@ -643,11 +643,11 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                 except Exception as e:
                     failed += 1
                     logger.warning(f"🧹 删除失败 bot={bot_msg_id}: {e}")
-            bot.reply_to(m, f"🧹 已清理 {deleted} 条机器人回复（最近24小时内）"
+            mory_bot.reply_and_track(m, f"🧹 已清理 {deleted} 条机器人回复（最近24小时内）"
                               f"{'，' + str(failed) + '条已失效' if failed else ''}。"
                               f"（追踪库中共{len(rows)}条）")
         except Exception as e:
-            bot.reply_to(m, f"⚠️ 清理失败：{e}")
+            mory_bot.reply_and_track(m, f"⚠️ 清理失败：{e}")
             logger.error(f"🧹 清全部回复失败：{e}")
         return True
 
@@ -691,7 +691,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             else:
                 hint = "正常！后台每3分钟自动探测删除"
 
-            bot.reply_to(m,
+            mory_bot.reply_and_track(m,
                 f"📊 阅后即焚诊断 [{now}] v{version}\n"
                 f"━━━━━━━━━━━━━━━━━\n"
                 f"🧪 {db_test}\n"
@@ -704,7 +704,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             )
             logger.info(f"📊 查追踪：总数={total} 无人理={unreplied} 孤儿={len(orphan_rows)} db_test={test_ok} patch={patch_test}")
         except Exception as e:
-            bot.reply_to(m, f"⚠️ 查询失败：{e}")
+            mory_bot.reply_and_track(m, f"⚠️ 查询失败：{e}")
             logger.error(f"📊 查追踪失败：{e}")
         return True
 
@@ -718,16 +718,16 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             _ensure_structured(config)
             style = config.get("STYLE_APPEND", "")
             if len(style) > 3000:
-                bot.reply_to(m, "⚠️ 风格追加已经很长了，请先用「进化 重置风格」清理一下再调教～")
+                mory_bot.reply_and_track(m, "⚠️ 风格追加已经很长了，请先用「进化 重置风格」清理一下再调教～")
                 return True
             # 追加热词到风格区域
             new_section = f"\n- 热词库更新：{new_words}"
             config["STYLE_APPEND"] = style + new_section
             save_config_fn()
-            bot.reply_to(m, f"✅ 热词已添加：「{new_words[:50]}{'...' if len(new_words)>50 else ''}」\n下次回复就会自然用上了～")
+            mory_bot.reply_and_track(m, f"✅ 热词已添加：「{new_words[:50]}{'...' if len(new_words)>50 else ''}」\n下次回复就会自然用上了～")
             logger.info(f"🔥 加热词：{new_words[:30]}")
         else:
-            bot.reply_to(m, "⚠️ 格式：加热词 [词汇1 词汇2 词汇3]")
+            mory_bot.reply_and_track(m, "⚠️ 格式：加热词 [词汇1 词汇2 词汇3]")
         return True
 
     # ── 查热词：查看当前热词库 ──────────────────────────────────────
@@ -754,15 +754,15 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             _ensure_structured(config)
             style = config.get("STYLE_APPEND", "")
             if len(style) > 3000:
-                bot.reply_to(m, "⚠️ 风格追加已经很长了，请先用「进化 重置风格」清理一下再调教～")
+                mory_bot.reply_and_track(m, "⚠️ 风格追加已经很长了，请先用「进化 重置风格」清理一下再调教～")
                 return True
             style_instruction = f"\n【{datetime.now().strftime('%m/%d %H:%M')}风格调整】：从现在开始，说话风格调整为：{style_desc}。保持这个调整直到主人再次修改。"
             config["STYLE_APPEND"] = style + style_instruction
             save_config_fn()
-            bot.reply_to(m, f"✅ 风格已调整为：「{style_desc[:40]}」\n下次对话立刻见效～")
+            mory_bot.reply_and_track(m, f"✅ 风格已调整为：「{style_desc[:40]}」\n下次对话立刻见效～")
             logger.info(f"🎨 改风格：{style_desc[:30]}")
         else:
-            bot.reply_to(m, "⚠️ 格式：改风格 [风格描述]\n例：改风格 更骚一点\n例：改风格 变温柔知性\n例：改风格 更毒舌更傲娇")
+            mory_bot.reply_and_track(m, "⚠️ 格式：改风格 [风格描述]\n例：改风格 更骚一点\n例：改风格 变温柔知性\n例：改风格 更毒舌更傲娇")
         return True
 
     # ── 学知识：让机器人学习新知识（写入ADDED_KNOWLEDGE，不影响业务知识库）──
@@ -773,10 +773,10 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             added = config.get("ADDED_KNOWLEDGE", "")
             config["ADDED_KNOWLEDGE"] = added + "\n" + knowledge
             save_config_fn()
-            bot.reply_to(m, f"✅ 已学会：「{knowledge[:60]}{'...' if len(knowledge)>60 else ''}」")
+            mory_bot.reply_and_track(m, f"✅ 已学会：「{knowledge[:60]}{'...' if len(knowledge)>60 else ''}」")
             logger.info(f"📚 学习新知识：{knowledge[:30]}")
         else:
-            bot.reply_to(m, "⚠️ 格式：学习 [知识内容]\n或：学知识 [知识内容]")
+            mory_bot.reply_and_track(m, "⚠️ 格式：学习 [知识内容]\n或：学知识 [知识内容]")
         return True
 
     # ── 忘记：从追加知识中移除某内容 ───────────────────────────────
@@ -804,12 +804,12 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                     removed_count += removed
             save_config_fn()
             if removed_count > 0:
-                bot.reply_to(m, f"✅ 已删除包含「{keyword}」的 {removed_count} 条内容")
+                mory_bot.reply_and_track(m, f"✅ 已删除包含「{keyword}」的 {removed_count} 条内容")
             else:
-                bot.reply_to(m, f"⚠️ 没找到包含「{keyword}」的内容")
+                mory_bot.reply_and_track(m, f"⚠️ 没找到包含「{keyword}」的内容")
             logger.info(f"🗑️ 忘记知识：{keyword} (删除{removed_count}条)")
         else:
-            bot.reply_to(m, "⚠️ 格式：忘记 [关键词]\n例：忘记 VIP")
+            mory_bot.reply_and_track(m, "⚠️ 格式：忘记 [关键词]\n例：忘记 VIP")
         return True
 
     # ── 进化：高级动态配置修改 ─────────────────────────────────────
@@ -826,12 +826,12 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                     assert 0 <= val <= 100
                     config["REPLY_CHANCE"] = val
                     save_config_fn()
-                    bot.reply_to(m, f"✅ 回复概率已改为 {val}%")
+                    mory_bot.reply_and_track(m, f"✅ 回复概率已改为 {val}%")
                     logger.info(f"🧬 进化-概率: {val}%")
                 except (ValueError, AssertionError):
-                    bot.reply_to(m, "⚠️ 格式：进化概率 [0-100]")
+                    mory_bot.reply_and_track(m, "⚠️ 格式：进化概率 [0-100]")
             else:
-                bot.reply_to(m, f"当前回复概率：{config.get('REPLY_CHANCE', 10)}%\n格式：进化概率 [0-100]")
+                mory_bot.reply_and_track(m, f"当前回复概率：{config.get('REPLY_CHANCE', 10)}%\n格式：进化概率 [0-100]")
             return True
         
         if evo_cmd.startswith("模型"):
@@ -846,15 +846,15 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
                     config["CURRENT_MODEL_INDEX"] = idx
                     save_config_fn()
                     ai.current_idx = idx
-                    bot.reply_to(m, f"✅ 已切换到：{model_name}")
+                    mory_bot.reply_and_track(m, f"✅ 已切换到：{model_name}")
                     logger.info(f"🧬 进化-模型: {model_name}")
                 else:
-                    bot.reply_to(m, f"⚠️ 未找到该模型。可用：\n" + "\n".join(names))
+                    mory_bot.reply_and_track(m, f"⚠️ 未找到该模型。可用：\n" + "\n".join(names))
             else:
                 cur_idx = config.get("CURRENT_MODEL_INDEX", 0)
                 pool = config.get("MODEL_POOLS", {}).get("llm", config.get("MODEL_POOL", []))
                 cur_name = pool[cur_idx]["name"] if pool and cur_idx < len(pool) else "?"
-                bot.reply_to(m, f"当前模型：{cur_name}\n格式：进化模型 [模型名]")
+                mory_bot.reply_and_track(m, f"当前模型：{cur_name}\n格式：进化模型 [模型名]")
             return True
         
         if evo_cmd == "重置人设":
@@ -863,7 +863,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             config["ADDED_KNOWLEDGE"] = ""
             config.pop("SYSTEM_PROMPT", None)  # 清除旧字段
             save_config_fn()
-            bot.reply_to(m, "✅ 风格追加和追加知识已清空，核心人设保持不变")
+            mory_bot.reply_and_track(m, "✅ 风格追加和追加知识已清空，核心人设保持不变")
             logger.info("🧬 进化-重置风格")
             return True
         
@@ -873,7 +873,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             old_style = config.get("STYLE_APPEND", "")
             config["STYLE_APPEND"] = ""
             save_config_fn()
-            bot.reply_to(m, f"✅ 风格追加已清空（共{len(old_style)}字），核心人设不变")
+            mory_bot.reply_and_track(m, f"✅ 风格追加已清空（共{len(old_style)}字），核心人设不变")
             logger.info("🧬 进化-重置风格")
             return True
         
@@ -883,7 +883,7 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             old_added = config.get("ADDED_KNOWLEDGE", "")
             config["ADDED_KNOWLEDGE"] = ""
             save_config_fn()
-            bot.reply_to(m, f"✅ 追加知识已清空（共{len(old_added)}字），业务知识库不变")
+            mory_bot.reply_and_track(m, f"✅ 追加知识已清空（共{len(old_added)}字），业务知识库不变")
             logger.info("🧬 进化-重置知识")
             return True
         
@@ -927,15 +927,15 @@ def handle_admin(bot, m, config: dict, db, ai, save_config_fn) -> bool:
             _ensure_structured(config)
             style = config.get("STYLE_APPEND", "")
             if len(style) > 3000:
-                bot.reply_to(m, "⚠️ 风格追加已经很长了，请先用「进化 重置风格」清理一下再调教～")
+                mory_bot.reply_and_track(m, "⚠️ 风格追加已经很长了，请先用「进化 重置风格」清理一下再调教～")
                 return True
             evo_text = f"\n【进化指令-{datetime.now().strftime('%m/%d %H:%M')}】：{evo_cmd}"
             config["STYLE_APPEND"] = style + evo_text
             save_config_fn()
-            bot.reply_to(m, f"🧬 已进化：「{evo_cmd[:60]}{'...' if len(evo_cmd)>60 else ''}」\n下次对话立刻生效")
+            mory_bot.reply_and_track(m, f"🧬 已进化：「{evo_cmd[:60]}{'...' if len(evo_cmd)>60 else ''}」\n下次对话立刻生效")
             logger.info(f"🧬 进化-自定义: {evo_cmd[:30]}")
         else:
-            bot.reply_to(
+            mory_bot.reply_and_track(
                 m,
                 "🧬 动态进化系统\n"
                 "━━━━━━━━━━━━━━\n"

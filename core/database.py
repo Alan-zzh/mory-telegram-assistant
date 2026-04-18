@@ -142,6 +142,14 @@ class DB:
                 window_start INTEGER
             )""")
 
+            # 【架构重构v21.44】系统动态状态表
+            # 替代 config.json 中的动态字段（如 CURRENT_MODEL_INDEX, IMAGE_POOL 等）
+            c.execute("""CREATE TABLE IF NOT EXISTS system_states (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at INTEGER
+            )""")
+
             # ── 兼容性迁移：旧数据库缺少的列自动补齐 ──────────────────
             try:
                 self.conn.execute("SELECT replied FROM reply_tracking LIMIT 0")
@@ -655,3 +663,47 @@ class DB:
                 "active_time": active_time
             })
         return profiles
+
+    # ─────────────────────────────── 系统动态状态 ─────────────────────────
+    def get_system_state(self, key: str, default=None):
+        """
+        获取系统动态状态（从数据库读取，替代 config.json 中的动态字段）。
+        
+        Args:
+            key: 状态键名
+            default: 默认值（不存在时返回）
+        
+        Returns:
+            状态值（字符串），或 default
+        
+        使用场景：
+            - CURRENT_MODEL_INDEX: 当前使用的模型索引
+            - IMAGE_POOL: 图片池缓存
+            - VOICE_POOL: 语音池缓存
+            - _LAST_LEAK_WEEK: 上次背刺泄密的周号
+        """
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("SELECT value FROM system_states WHERE key=?", (key,))
+            row = c.fetchone()
+            if row:
+                return row[0]
+            return default
+
+    def set_system_state(self, key: str, value):
+        """
+        设置系统动态状态（写入数据库，不修改 config.json）。
+        
+        Args:
+            key: 状态键名
+            value: 状态值（会自动转为字符串存储）
+        """
+        with _db_lock:
+            ts = int(time.time())
+            self.conn.execute(
+                "INSERT OR REPLACE INTO system_states (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, str(value), ts)
+            )
+            self.conn.commit()
+            logger.debug(f"📌 系统状态更新: {key}={value}")
+
