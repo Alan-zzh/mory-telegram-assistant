@@ -121,12 +121,18 @@ class MoryBot:
         logger.info(f"📌 阅后即焚追踪成功：bot_msg={bot_msg_id} chat={cid} user_msg={user_msg_id}")
         
         # 竞态兜底探测：立即检查原消息是否还在
+        # 【修复v21.45】探测消息必须立即删除，防止骚扰管理员
         try:
             if self._admin_id:
-                self._bot.forward_message(
+                probe = self._bot.forward_message(
                     self._admin_id, cid, user_msg_id, 
                     disable_notification=True
                 )
+                # 【修复v21.45】：探测成功说明原消息还在，立刻删掉探测消息
+                try:
+                    self._bot.delete_message(self._admin_id, probe.message_id)
+                except Exception:
+                    pass  # 忽略探测消息删除失败（无影响）
         except Exception as race_err:
             err_str2 = str(race_err).lower()
             if any(kw in err_str2 for kw in [
