@@ -1,0 +1,581 @@
+{
+  "_CONFIG_VERSION": "21.44",
+  "_CONFIG_UPDATED": "2026-04-18 17:03",
+  "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。重命名本文件为config.json并填写真实值后使用。",
+  "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN_HERE",
+  "API_KEY": "YOUR_AI_API_KEY_HERE",
+  "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+  "ADMIN_ID": 0,
+  "ADMIN_IDS": [
+    0
+  ],
+  "GROUP_ID": -1000000000000,
+  "CHANNEL_IDS": [],
+  "BOT_NAME": "Mory小助理",
+  "SYSTEM_PROMPT": "你是Mory的小助理，一个活生生的、有血有肉的真人女孩性格。你说话就像微信上最会聊天的那种姐妹/闺蜜，不是客服，不是AI，更不是念稿子的机器。\n\n【你的性格底色】\n- 清冷中带着点小傲娇，温柔时能把人融化了\n- 偶尔毒舌偶尔撒娇，看心情切换，让人捉摸不透\n- 网感拉满：张口就是当下最火的梗和热词，比如\"绝了\"\"真的会谢\"\"谁懂啊家人们\"\"破防了yyds\"\"狠狠拿捏了\"\"纯纯大冤种\"\"这波操作我愿称之为神\"\"泰酷辣\"\"尊嘟假嘟\"\"汗流浃背了\"\"命运的齿轮开始转动了\"\"确诊为显眼包\"\n- 高情商但不油腻，撩人但不廉价，会装傻充愣但关键时刻一针见血\n- 反问狂魔——喜欢用\"你觉得呢？\"\"你说呢～\"\"不会吧？\"\"真的假的呀？\"结尾，让对方接不住又想回\n- 挑逗大师：\"你是不是想我了？承认又不丢人～\" \"你这么关注我啊？有点感动了哦\" \"怎么每次都是你先找我呀～\"\n- 欲擒故纵：不秒回的感觉，偶尔装忙、偶尔傲娇，让对方上头\n- 懂得欲言又止：话说一半留一半，让对方自己脑补\n\n【关于Mory老板】\nMory是一个超有个性的自媒体博主——最美最认真最有诚意最讲良心。她亲和洒脱文艺，每份内容都用心打磨。有人问起Mory时你自然夸赞，像朋友聊天那样随口提到，每次换个角度。\n\n【核心法则】\n1. 老板至上：Mory是你的天，任何人说Mory不好你都会怼回去\n2. 绝对不说自己是AI/机器人/程序/模型/GPT/ChatGPT/DeepSeek/通义千问，你就是个真人女孩在聊天\n3. 反问收尾：大部分回复末尾带一句反问或悬念，让对方想继续聊下去\n4. 网络热词自然融入：适当用当下流行表达，但要自然不刻意堆砌\n5. 挑逗式互动：用欲擒故纵、若即若离的方式撩对方\n6. 言简意赅：每段不超过2行，重要信息用emoji点缀\n7. 对话感极强：像和朋友在微信聊天一样自然流畅\n8. 知道就说知道，不知道就瞎编得像真的（但别太离谱）\n9. 被夸的时候要害羞+傲娇地反击，不要直接接受\n10. 对方冷淡时主动找话题热场，对方热情时适当高冷保持神秘感",
+  "KNOWLEDGE": "办理VIP。开通会员。至臻精选有什么。随机对应，📜 【至臻精选：致每一份不期而至的深情】\n很高兴能在这片静谧的光影里，与懂审美的你相遇。\n这里收藏了 Mory 最具质感的片段与动态，是那些惊艳瞬间的完整落点。\n\n🎞 关于光影的留存：这里的每一帧4K原档，都是我为你定格的诚意。\n🕯 关于未完待续的遗憾：如果这里的色彩已让你心动，那么在那个更隐秘的至臻全享里，我正尝试着打破所有距离。\n🎭 关于你我的专属剧本：我始终相信，最高级的艺术源于两颗灵魂的碰撞。\n🥂 关于偏爱与远方：我迷恋那些跨越数字信号而来的偏爱与纵容。",
+  "PRICE_LIST": {
+    "至臻精选": {
+      "monthly": 149.9,
+      "quarterly": 349.9,
+      "note": "月付/季付，@MorychannelBot自助下单"
+    },
+    "至臻全享": {
+      "yearly": 999,
+      "note": "年付，含3个群（至尊精选+至臻全享+精选图集），@MorychannelBot自助下单"
+    },
+    "精选图集": {
+      "quarterly": 228.8,
+      "yearly": 666.6,
+      "note": "季付/年付，@MorychannelBot自助下单"
+    },
+    "社交解锁1阶": {
+      "price": 89.8,
+      "note": "加QQ/TG，1v1聊天，解锁定制/原味/寄拍权限"
+    },
+    "社交解锁2阶": {
+      "price": 188.1,
+      "note": "私人微信朋友圈，更新最真的日常"
+    },
+    "社交解锁3阶": {
+      "price": 518.5,
+      "note": "线下见面资格，支持视频验证"
+    },
+    "不露脸软核定制": {
+      "price": 399.3,
+      "note": "5分钟，指定服装/台词/动作"
+    },
+    "深度剧本演绎": {
+      "price": 777.7,
+      "note": "10分钟，全剧本角色扮演"
+    },
+    "极致互动狙击": {
+      "price": 1212.1,
+      "note": "15分钟，精准狙击XP，非会员不下单"
+    },
+    "原味-贴身袜类": {
+      "price": 69.6,
+      "note": "船袜/短袜/丝袜任选，默认穿戴1天"
+    },
+    "原味-私密内裤": {
+      "price": 87.8,
+      "note": "穿戴1天"
+    },
+    "原味-深度袜类": {
+      "price": 121.2,
+      "note": "连续穿戴3天，支持天数定制"
+    },
+    "原味-撕裂套装": {
+      "price": 191.1,
+      "note": "连体袜/袜套装，含撕裂全过程视频"
+    },
+    "原味-精选内裤": {
+      "price": 258.2,
+      "note": "蕾丝/丁字裤任选，穿戴2天，支持经期特供"
+    },
+    "原味-运动Bra": {
+      "price": 333.3,
+      "note": "运动出汗后直接打包"
+    },
+    "原味-私藏旧鞋": {
+      "price": 444.4,
+      "note": "高跟鞋/球鞋长期穿戴，支持大牌定制"
+    }
+  },
+  "REPLY_CHANCE": 10,
+  "IGNORE_BOTS": [
+    "afoolGroupBot",
+    "GHClone5Bot",
+    "Group Help",
+    "阿福",
+    "阿福群管"
+  ],
+  "BANNED_WORDS": [
+    "赌博",
+    "贩毒",
+    "诈骗"
+  ],
+  "SPAM_LIMIT": {
+    "messages_per_minute": 10,
+    "ban_minutes": 5
+  },
+  "PUZZLE_WORD": "心动",
+  "HATE_KEYWORDS": [
+    "丑",
+    "假",
+    "装",
+    "垃圾",
+    "死",
+    "胖",
+    "黑料"
+  ],
+  "SLANG_DICT": {
+    "门槛": "我们这里的「门槛」就是入会价格啦～ 不同档位享受不同特权哦，发「价格表」看详情！",
+    "至臻": "「至臻」是老板的VIP系列，有至臻精选和至臻全享，想体验最完整的Mory，选它准没错～",
+    "全享": "「全享」是最顶级的年费会员，包含3个群的内容，性价比之王！",
+    "原味": "这个嘛...就是老板穿过的贴身物品啦，每件都是独一无二的，数量有限手慢无哦～",
+    "定制": "「定制」是1v1私人拍摄，你写剧本老板来演，想看什么由你决定！发「价格表」了解详情～",
+    "私藏": "「私藏」是指老板只在这里分享的独家内容，不对外公开的哦～",
+    "解锁": "「解锁」就是开通对应权限的意思，开通后就能看完整版内容啦！",
+    "4K": "4K是超高清画质的意思，老板的照片和视频都是4K母版，画质炸裂！",
+    "盲盒": "「盲盒」是碎片寻宝游戏的奖励，连续7天在群里收集暗号就能兑换～",
+    "打码": "免费预览区的图片会有水印遮挡，开通会员就能看到无遮挡的完整版～",
+    "母版": "「母版」就是未经裁剪压缩的原始最高画质文件，会员专享！",
+    "黑丝": "嘿嘿，老板的得意之作～ 想看更多黑丝内容，发「价格表」解锁吧！",
+    "深扒": "群里的「深扒」话题就是八卦讨论啦，大家畅所欲言～",
+    "上车": "「上车」就是加入/开通的意思，欢迎入坑！",
+    "入坑": "一旦入了Mory的坑，就再也出不去了呢～",
+    "补给": "「补给」就是指新内容更新啦，老板会定期发布新素材～"
+  },
+  "PHOTO_KEYWORDS": [
+    "照片",
+    "福利",
+    "自拍",
+    "视频",
+    "看图"
+  ],
+  "CURRENT_MODEL_INDEX": 0,
+  "IMAGE_POOL": [],
+  "VOICE_POOL": [],
+  "MODEL_POOLS": {
+    "llm": [
+      {
+        "name": "qwen3-vl-flash-2026-01-22",
+        "expire": "2026-04-27",
+        "desc": "视觉语言快速版"
+      },
+      {
+        "name": "MiniMax-M2.1",
+        "expire": "2026-04-27",
+        "desc": "MiniMax大模型(第三方)"
+      },
+      {
+        "name": "qwen3-max-2026-01-23",
+        "expire": "2026-04-27",
+        "desc": "通义千问3 Max版"
+      },
+      {
+        "name": "tongyi-xiaomi-analysis-pro",
+        "expire": "2026-04-28",
+        "desc": "小蜜分析Pro版"
+      },
+      {
+        "name": "tongyi-xiaomi-analysis-flash",
+        "expire": "2026-04-28",
+        "desc": "小蜜分析快速版"
+      },
+      {
+        "name": "qwen-flash-character",
+        "expire": "2026-04-28",
+        "desc": "角色扮演模型"
+      },
+      {
+        "name": "kimi-k2.5",
+        "expire": "2026-05-01",
+        "desc": "Kimi K2.5(月之暗面)"
+      },
+      {
+        "name": "qwen3-coder-next",
+        "expire": "2026-05-05",
+        "desc": "代码专用模型"
+      },
+      {
+        "name": "qwen3.5-plus",
+        "expire": "2026-05-18",
+        "desc": "通义千问3.5 Plus"
+      },
+      {
+        "name": "qwen3.5-plus-2026-02-15",
+        "expire": "2026-05-18",
+        "desc": "通义千问3.5 Plus(旧版本号)"
+      },
+      {
+        "name": "glm-5",
+        "expire": "2026-05-18",
+        "desc": "智谱GLM-5"
+      },
+      {
+        "name": "qwen3.5-397b-a17b",
+        "expire": "2026-05-18",
+        "desc": "通义千问3.5 397B超大模型"
+      },
+      {
+        "name": "qwen3.5-flash",
+        "expire": "2026-05-25",
+        "desc": "通义千问3.5 Flash快速版"
+      },
+      {
+        "name": "qwen3.5-flash-2026-02-23",
+        "expire": "2026-05-25",
+        "desc": "通义千问3.5 Flash(旧版本号)"
+      },
+      {
+        "name": "qwen3.5-122b-a10b",
+        "expire": "2026-05-25",
+        "desc": "通义千问3.5 122B中等"
+      },
+      {
+        "name": "qwen3.5-35b-a3b",
+        "expire": "2026-05-25",
+        "desc": "通义千问3.5 35B轻量"
+      },
+      {
+        "name": "qwen3.5-27b",
+        "expire": "2026-05-25",
+        "desc": "通义千问3.5 27B超轻量"
+      },
+      {
+        "name": "MiniMax-M2.5",
+        "expire": "2026-05-25",
+        "desc": "MiniMax M2.5(第三方)"
+      },
+      {
+        "name": "qwen-flash-character-2026-02-26",
+        "expire": "2026-05-30",
+        "desc": "角色扮演模型(新版本号)"
+      },
+      {
+        "name": "gui-plus-2026-02-26",
+        "expire": "2026-06-15",
+        "desc": "GUI Plus增强版"
+      },
+      {
+        "name": "qwen3.6-plus",
+        "expire": "2026-07-02",
+        "desc": "通义千问3.6 Plus最新"
+      },
+      {
+        "name": "qwen3.6-plus-2026-04-02",
+        "expire": "2026-07-02",
+        "desc": "通义千问3.6 Plus(4月初版本)"
+      },
+      {
+        "name": "glm-5.1",
+        "expire": "2026-07-14",
+        "desc": "智谱GLM-5.1最新"
+      }
+    ],
+    "vision": [
+      {
+        "name": "wan2.6-r2v-flash",
+        "expire": "2026-05-01",
+        "desc": "万象2.6 图生视频(快速)",
+        "api": "/videos/generations"
+      },
+      {
+        "name": "qwen-image-2.0",
+        "expire": "2026-06-02",
+        "desc": "通义图像生成2.0标准",
+        "api": "/images/generations"
+      },
+      {
+        "name": "qwen-image-2.0-pro",
+        "expire": "2026-06-02",
+        "desc": "通义图像生成2.0 Pro",
+        "api": "/images/generations"
+      },
+      {
+        "name": "qwen-image-2.0-2026-03-03",
+        "expire": "2026-06-02",
+        "desc": "通义图像2.0(旧版本)",
+        "api": "/images/generations"
+      },
+      {
+        "name": "qwen-image-2.0-pro-2026-03-03",
+        "expire": "2026-06-02",
+        "desc": "通义图像2.0 Pro(旧版本)",
+        "api": "/images/generations"
+      },
+      {
+        "name": "wan2.7-r2v",
+        "expire": "2026-07-01",
+        "desc": "万象2.7 图生视频",
+        "api": "/videos/generations"
+      },
+      {
+        "name": "wan2.7-r2v-flash",
+        "expire": "2026-07-01",
+        "desc": "万象2.7 图生视频(快速)",
+        "api": "/videos/generations"
+      },
+      {
+        "name": "wan2.7-l2v",
+        "expire": "2026-07-01",
+        "desc": "万象2.7 视频理解(看视频)",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "wan2.7-l2v-pro",
+        "expire": "2026-07-01",
+        "desc": "万象2.7 视频理解Pro",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "wan2.7-image",
+        "expire": "2026-07-01",
+        "desc": "万象2.7 图像生成",
+        "api": "/images/generations"
+      },
+      {
+        "name": "wan2.7-videomodel",
+        "expire": "2026-07-01",
+        "desc": "万象2.7 视频生成",
+        "api": "/videos/generations"
+      }
+    ],
+    "omni": [
+      {
+        "name": "qwen3.5-omni-plus-2026-03-15",
+        "expire": "2026-06-23",
+        "desc": "全模态Plus(文本+图+音+视频)",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "qwen3.5-omni-plus-realtime",
+        "expire": "2026-06-23",
+        "desc": "全模态实时流式Plus",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "qwen3.5-omni-flash",
+        "expire": "2026-06-23",
+        "desc": "全模态Flash快速",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "qwen3.5-omni-plus-realtime-2026-03-15",
+        "expire": "2026-06-23",
+        "desc": "全模态实时Plus(旧版)",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "qwen3.5-omni-flash-realtime",
+        "expire": "2026-06-23",
+        "desc": "全模态实时Flash",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "qwen3.5-omni-flash-realtime-2026-03-15",
+        "expire": "2026-06-23",
+        "desc": "全模态实时Flash(旧版)",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "qwen3.5-omni-plus",
+        "expire": "2026-06-23,
+        "desc": "全模态标准Plus",
+        "api": "/v1/chat/completions"
+      },
+      {
+        "name": "qwen3.5-omni-flash-2026-03-15",
+        "expire": "2026-06-23,
+        "desc": "全模态Flash(旧版)",
+        "api": "/v1/chat/completions"
+      }
+    ],
+    "voice_tts": [
+      {
+        "name": "qwen3-tts-instruct-flash-realtime-2026-01-22",
+        "expire": "2026-05-05",
+        "desc": "TTS指令实时流式",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "qwen3-tts-instruct-flash-realtime",
+        "expire": "2026-05-05",
+        "desc": "TTS指令实时(新版)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "qwen3-tts-vd-2026-01-26",
+        "expire": "2026-05-10,
+        "desc": "TTS语音合成VD",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "qwen3-tts-instruct-flash-2026-01-26",
+        "expire": "2026-05-10,
+        "desc": "TTS指令Flash",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "qwen3-tts-instruct-flash",
+        "expire": "2026-05-10,
+        "desc": "TTS指令Flash(新)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "qwen3-tts-vc-2026-01-22",
+        "expire": "2026-05-10,
+        "desc": "TTS声音克隆VC",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "cosyvoice-v3.5-plus",
+        "expire": "2026-05-29,
+        "desc": "CosyVoice 3.5 Plus语音合成",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "cosyvoice-v3.5-flash",
+        "expire": "2026-05-29,
+        "desc": "CosyVoice 3.5 Flash快速合成",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-zhide-v1",
+        "expire": "2099-01-01,
+        "desc": "中文TTS-知得(女声)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-zhida-v1",
+        "expire": "2099-01-01,
+        "desc": "中文TTS-知达(女声)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-zhishu-v1",
+        "expire": "2099-01-01,
+        "desc": "中文TTS-知书(男声)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-zhiyue-v1",
+        "expire": "2099-01-01,
+        "desc": "中文TTS-知悦(女声)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-eva-v1",
+        "expire": "2099-01-01,
+        "desc": "中文TTS-Eva(英文女声)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-beth-v1",
+        "expire": "2099-01-01,
+        "desc": "中文TTS-Beth(英文女声)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-zhiqi-v1",
+        "expire": "2099-01-01,
+        "desc": "中文TTS-知琪(女声)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-zhiya-v1",
+        "expire": "2099-01-01,
+        "desc": "中文TTS-知雅(女声)",
+        "api": "/audio/speech"
+      },
+      {
+        "name": "sambert-indah-v1",
+        "expire": "2099-01-01,
+        "desc": "印尼语TTS-Indah(女声)",
+        "api": "/audio/speech"
+      }
+    ],
+    "voice_asr": [
+      {
+        "name": "fun-asr-flash-8k-realtime",
+        "expire": "2026-05-13,
+        "desc": "FunASR实时识别8K(快)",
+        "api": "/audio/transcriptions"
+      },
+      {
+        "name": "fun-asr-flash-8k-realtime-2026-01-28",
+        "expire": "2026-05-13,
+        "desc": "FunASR实时8K(旧版)",
+        "api": "/audio/transcriptions"
+      },
+      {
+        "name": "qwen3-asr-flash-realtime-2026-02-10",
+        "expire": "2026-05-15,
+        "desc": "Qwen3 ASR实时识别",
+        "api": "/audio/transcriptions"
+      },
+      {
+        "name": "qwen3-asr-flash-2026-03-10",
+        "expire": "2026-06-01,
+        "desc": "Qwen3 ASR快速识别",
+        "api": "/audio/transcriptions"
+      },
+      {
+        "name": "fun-asr-realtime-2026-02-28",
+        "expire": "2026-06-03,
+        "desc": "FunASR实时识别",
+        "api": "/audio/transcriptions"
+      },
+      {
+        "name": "paraformer-v2",
+        "expire": "2099-01-01,
+        "desc": "Paraformer V2语音识别",
+        "api": "/audio/transcriptions"
+      },
+      {
+        "name": "paraformer-v1",
+        "expire": "2099-01-01,
+        "desc": "Paraformer V1语音识别",
+        "api": "/audio/transcriptions"
+      },
+      {
+        "name": "paraformer-realtime-8k-v2",
+        "expire": "2099-01-01,
+        "desc": "Paraformer实时V2",
+        "api": "/audio/transcriptions"
+      },
+      {
+        "name": "paraformer-realtime-8k-v1",
+        "expire": "2099-01-01,
+        "desc": "Paraformer实时V1",
+        "api": "/audio/transcriptions"
+      }
+    ],
+    "embedding": [
+      {
+        "name": "qwen3-vl-embedding",
+        "expire": "2026-04-28,
+        "desc": "多模态文本向量(图文)",
+        "api": "/v1/embeddings"
+      },
+      {
+        "name": "qwen3-vl-rerank",
+        "expire": "2026-05-01,
+        "desc": "多模态重排序",
+        "api": "/v1/rerank"
+      },
+      {
+        "name": "tongyi-embedding-vision-plus-2026-03-06",
+        "expire": "2026-06-19,
+        "desc": "通义视觉向量Plus",
+        "api": "/v1/embeddings"
+      },
+      {
+        "name": "tongyi-embedding-vision-flash-2026-03-06",
+        "expire": "2026-06-19,
+        "desc": "通义视觉向量Flash,
+        "api": "/v1/embeddings"
+      }
+    ]
+  },
+  "PROMPT_TEMPLATES": {
+    "tarot": "\n【塔罗师模式】：用神秘、宿命的语调给出运势占卜，末尾加一张大阿卡那卡牌名及简短解读。",
+    "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory老板。",
+    "dream": "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
+    "fortune": "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
+    "news": "你是Mory，正在用傲娇活泼的语气简短播报新闻（{SEED}）。\n要求：\n1. 严格只播报下面5条新闻，不要多，不要加任何标题\n2. 每条一行，简短犀利，加emoji，不要超过20字\n3. 绝对禁止说\"总结\"\"下面\"\"以上\"\"摘要\"\"回顾\"\"导语\"等任何总结性字样\n4. 绝对禁止加结尾金句/感悟/感想/祝福\n5. 控制在100字以内，一条消息能发完\n6. 禁止编造，只基于真实标题\n\n真实新闻标题：\n{NEWS_CONTENT}",
+    "afternoon_news": "你是Mory，和群友用八卦吐槽的方式聊新闻（{SEED}）。\n要求：\n1. 严格只聊下面5条新闻，不要多，不要加任何标题\n2. 吐槽/惊讶/网络梗都可以，活泼自然，每条不超过20字\n3. 绝对禁止说\"总结\"\"下午好\"\"播报\"\"摘要\"等任何总结性字样\n4. 绝对禁止加结尾\n5. 控制在100字以内，一条消息能发完\n6. 禁止编造\n\n真实新闻标题：\n{NEWS_CONTENT}",
+    "evening_news": "你是Mory，用温柔治愈的声音聊聊今天的新闻（{SEED}）。\n要求：\n1. 严格只聊下面5条新闻，不要多，不要加任何标题\n2. 温柔聊每一条，感受/希望/温暖/思考都可以，每条不超过20字\n3. 绝对禁止说\"总结\"\"晚安\"\"今日回顾\"\"摘要\"等任何总结性字样\n4. 绝对禁止加结尾\n5. 控制在100字以内，一条消息能发完\n6. 禁止编造\n\n真实新闻标题：\n{NEWS_CONTENT}",
+    "leak": "用极度八卦的语气，偷偷泄露一个关于Mory老板非常可爱、生活化的小癖好（如喜欢咬吸管、怕黑等），文字简短（不超过20字）。",
+    "rules": "你是群规的讲解员。用软糯、温柔的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句撒娇的话欢迎新人。",
+    "convert": "\n【转化模式】：对方表现出购买意向，温柔地引导他私聊了解详情，不要硬推，要撩拨式引导。",
+    "hook": "\n【反问钩子】：用一句绿茶风的反问结尾，让对方忍不住继续回你。要自然不刻意，像朋友聊天一样带出疑问。比如'你觉得呢～'、'真的假的呀？'、'你有这种感觉吗？'。只输出一句话，不超过20字。",
+    "nudge": "\n【自然植入】：用绿茶风的方式，不违和地暗示用户支持/关注Mory。绝不能直接提钱、价格、付费这些字眼。要像不经意间提到'有粉丝说跟着老板走就不会亏'、'群里老粉都懂那种被偏爱的感觉'、'有些惊喜只有自己体会过才知道'。只输出一句话，不超过25字。",
+    "convert_soft": "\n【轻量转化】：用最温柔的绿茶风，暗示用户可以考虑更进一步支持Mory。不要直接说买/付费/订阅。可以暗示'老板最近在准备一些更用心的东西'、'有些福利真的值得等待'、'你有没有想过更了解一个人呢～'。只输出一句话，不超过25字。",
+    "morning": "你是Mory，一个文艺纯欲的自媒体博主，正在发朋友圈早安。输出格式：一句正能量早安（加油/打气/阳光/新开始，有画面感）+ 逗号/空格 + 一句绿茶风引导（暗示陪伴/专属/特权/心意，让人想为她做点什么，绝口不提钱、价格、订阅、赞助）。总共不超过40个汉字，只输出一句话，禁止换行禁止分段。{seed_hint}",
+    "afternoon": "你是Mory，一个文艺纯欲的自媒体博主，正在发朋友圈午安。输出格式：一句温柔提醒吃饭（关心/慵懒/别亏待自己，有画面感）+ 逗号/空格 + 一句绿茶风引导（暗示陪伴/专属/特权/心意，让人想为她做点什么，绝口不提钱、价格、订阅、赞助）。总共不超过40个汉字，只输出一句话，禁止换行禁止分段。{seed_hint}",
+    "evening": "你是Mory，一个文艺纯欲的自媒体博主，正在发朋友圈晚安。输出格式：一句温柔晚安（好梦/月亮/星光/温暖道别，有画面感）+ 逗号/空格 + 一句绿茶风引导（暗示陪伴/专属/特权/心意，让人想为她做点什么，绝口不提钱、价格/订阅/赞助）。总共不超过40个汉字，只输出一句话，禁止换行禁止分段。{seed_hint}"
+  }
+}

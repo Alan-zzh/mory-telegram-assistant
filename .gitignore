@@ -3,6 +3,10 @@
 .env
 config.json
 *.db
+*.log
+mory.db
+bot_reply.txt
+bot_msgs.txt
 
 # Python
 __pycache__/
@@ -12,7 +16,6 @@ venv/
 *.egg-info/
 
 # 日志和备份
-*.log
 backups/
 backup_deploy/
 backup/
