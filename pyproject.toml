@@ -1,0 +1,30 @@
+[project]
+name = "mory小助理"
+version = "21.38"
+description = "Mory小助理 Telegram Bot"
+
+[tool.basedpyright]
+typeCheckingMode = "basic"
+
+[tool.basedpyright.diagnostics]
+# 忽略第三方库的类型问题（pyTelegramBotAPI等）
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportMissingParameterType = false
+reportUnknownArgumentType = false
+reportExplicitAny = false
+reportUnusedCallResult = false
+
+# Dict弃用警告（Python 3.9+推荐dict，但不影响运行）
+reportDeprecated = false
+
+# 隐式字符串拼接（风格问题，不影响功能）
+reportImplicitStringConcatenation = false
+
+[tool.basedpyright.include]
+include = ["**/*.py"]
+exclude = ["**/venv/**", "**/__pycache__/**", "**/backups/**"]
+
+[tool.basedpyright.pythonVersion]
+version = "3.12"
