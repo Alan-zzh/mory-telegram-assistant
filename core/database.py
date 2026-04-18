@@ -358,30 +358,18 @@ class DB:
             return c.fetchall()
 
     def get_orphan_messages(self, window: int = 86400):
-        """返回超过window秒未被确认的消息（自动清理），返回后自动从DB删除。
+        """返回超过window秒未被回复的孤儿消息。
         
-        【修复v21.42】不再依赖replied状态，因为auto_mark_group_active会将历史消息标记为已回复。
-        现在基于时间窗口来判定孤儿消息。
-        
-        注意：超过24小时的孤儿消息，其原消息可能还在群里，
-        所以不删除bot消息，只从数据库清除记录。
+        【审查修复】只有replied=0的消息才算孤儿。
+        用户回复了机器人的消息应该获得豁免，不应被清理。
+        注意：不再自动删除数据库记录，由调用方处理（保持职责分离）。
         """
         cutoff = int(time.time()) - window
         with _db_lock:
             c = self.conn.cursor()
-            # 【修复】基于时间窗口判定孤儿，不依赖replied状态
-            # 只清理数据库记录，不实际删除bot消息（避免误删还在回复链中的消息）
             c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE ts<? AND user_msg_id>0""", (cutoff,))
-            rows = c.fetchall()
-            if rows:
-                # 【修复v21.42】只清理数据库记录，不再删除bot消息
-                # 因为超过24小时的消息，原消息可能还在群里
-                for bot_mid, cid, user_mid in rows:
-                    self.conn.execute("DELETE FROM reply_tracking WHERE bot_msg_id=? AND chat_id=?",
-                                     (bot_mid, cid))
-                self.conn.commit()
-            return rows
+                         WHERE ts<? AND user_msg_id>0 AND replied=0""", (cutoff,))
+            return c.fetchall()
 
     def get_unreplied_messages(self):
         """返回所有未被回复的机器人消息（不限时间，用于清群无人理）"""
@@ -404,29 +392,6 @@ class DB:
                          WHERE replied=0 AND ts<?""", (cutoff,))
             return c.fetchall()
 
-    def auto_mark_group_active(self, chat_id: int, before_ts: int):
-        """群里有新消息时，自动将该群中 before_ts 之前的未回复消息标记为已回复。
-        核心逻辑：群里有人说话 = 群是活跃的，机器人之前发的内容不算「无人理」。
-        
-        【修复v21.42】只标记探测窗口内（10分钟）的消息，避免历史消息被误标记
-        导致孤儿清理永远清理不到它们。
-        """
-        # 探测窗口10分钟（600秒），只标记最近的消息
-        window = 600
-        cutoff = before_ts - window
-        if cutoff < before_ts - 86400:  # 最长不超过24小时
-            cutoff = before_ts - window
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""UPDATE reply_tracking SET replied=1
-                         WHERE chat_id=? AND replied=0 AND ts>? AND ts<?""",
-                      (chat_id, cutoff, before_ts))
-            affected = c.rowcount
-            if affected > 0:
-                self.conn.commit()
-                logger.info(f"📌 群活跃自动标记: chat={chat_id} {affected}条消息标记为已回复(窗口{window}s)")
-            return affected
-
     def get_all_tracked_messages(self, window: int = 86400):
         """返回窗口内的所有追踪消息（不限replied状态，用于清全部回复）"""
         now = int(time.time())
@@ -438,18 +403,17 @@ class DB:
             return c.fetchall()
 
     def get_unconfirmed_messages(self, window: int = 3600):
-        """返回window时间内所有追踪的消息（探测原消息是否还在）。
+        """返回window时间内未被回复的追踪消息（探测原消息是否还在）。
         
-        【修复v21.42】不再依赖replied状态，因为auto_mark_group_active会将历史消息标记为已回复，
-        导致孤儿探测永远清理不到它们。现在基于时间窗口查询，独立于replied状态。
+        【审查修复】尊重"豁免保护"：只有replied=0的消息才需要探测。
+        用户回复了机器人的消息应该获得豁免，不应被探测和删除。
         """
         now = int(time.time())
         since = now - window
         with _db_lock:
             c = self.conn.cursor()
-            # 【修复】不依赖replied状态，基于时间窗口查询所有待探测消息
             c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE ts>? AND user_msg_id>0""", (since,))
+                         WHERE ts>? AND user_msg_id>0 AND replied=0""", (since,))
             return c.fetchall()
 
     def delete_tracked(self, bot_msg_id: int, chat_id: int = 0):
@@ -460,19 +424,6 @@ class DB:
             else:
                 self.conn.execute("DELETE FROM reply_tracking WHERE bot_msg_id=?", (bot_msg_id,))
             self.conn.commit()
-
-    def refresh_tracked(self, bot_msg_id: int, chat_id: int):
-        """刷新追踪记录的时间戳，避免被重复探测。
-        
-        当原消息探测成功（消息还在）时调用，更新ts为当前时间，
-        这样该消息就不会在孤儿清理窗口内被清理。
-        """
-        ts = int(time.time())
-        with _db_lock:
-            self.conn.execute("UPDATE reply_tracking SET ts=? WHERE bot_msg_id=? AND chat_id=?",
-                           (ts, bot_msg_id, chat_id))
-            self.conn.commit()
-            logger.debug(f"📌 刷新追踪记录: bot={bot_msg_id} chat={chat_id} ts={ts}")
 
     # ─────────────────────────────── 等级/积分 ───────────────────────────
     def get_user_points(self, uid: int):

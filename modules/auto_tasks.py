@@ -96,7 +96,6 @@ def _task_loop(rm):
             time_str = now.strftime("%H:%M")
 
             # ── 1. 每日新闻播报（实时获取，简短5条）───────────────
-            global _news_cache
             with rm.locked('config'):
                 gid = rm.config.get("GROUP_ID", 0)
 
@@ -220,14 +219,18 @@ def _task_loop(rm):
                             logger.warning(f"叫醒服务发送失败 uid={uid}：{e}")
 
             # ── 3. 阅后即焚：24h孤儿清理 ────────────────────────────────
-            # 【修复v21.42】只清理数据库记录，不再删除bot消息
-            # 超过24小时的消息，原消息可能还在群里作为上下文，删除bot消息可能影响阅读
-            with rm.locked('db'):
+            # 【审查修复】恢复真正的24h孤儿删除功能
+            # 超过24小时无人回复的消息，应该同时删除bot消息和数据库记录
+            with rm.locked_multi(['bot', 'db']):
                 orphans = rm.db.get_orphan_messages(86400)
                 if orphans:
-                    logger.info(f"🗑️ 阅后即焚孤儿清理：{len(orphans)}条记录从DB清除（bot消息保留）")
+                    logger.info(f"🗑️ 阅后即焚孤儿清理：{len(orphans)}条消息待删除")
                     for bot_mid, cid, user_mid in orphans:
-                        rm.db.delete_tracked(bot_mid)
+                        try:
+                            rm.bot.delete_message(cid, int(bot_mid))
+                        except Exception as del_err:
+                            logger.debug(f"阅后即焚孤儿消息已不存在: bot={bot_mid} err={del_err}")
+                        rm.db.delete_tracked(bot_mid, cid)
 
             # ── 4. 阅后即焚：原消息探测（每3分钟一次）────────────────────
             #    对近1小时未被回复的机器人消息，用 forward 探测原消息是否还在
@@ -264,10 +267,7 @@ def _task_loop(rm):
                                     rm.bot.delete_message(rm.config["ADMIN_ID"], probe.message_id)
                                 except Exception as e:
                                     logger.warning(f"清理探测转发消息失败：{e}")
-                            # 【修复v21.42】原消息还在，刷新追踪记录的时间戳
-                            # 这样该消息就不会在孤儿清理窗口内被清理
-                            with rm.locked('db'):
-                                rm.db.refresh_tracked(bot_mid, cid)
+                            # 原消息还在，不管即可（不需要刷新时间戳）
                             delete_success = True
                             break  # 原消息还在，跳出重试
                         except Exception as e:

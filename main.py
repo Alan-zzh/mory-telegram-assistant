@@ -672,11 +672,6 @@ def _dispatch(m):
     if m.reply_to_message and m.reply_to_message.from_user.id == BOT_ID:
         db.mark_replied(m.reply_to_message.message_id, chat_id)
 
-    # ── P1.5：群活跃自动标记已回复 ───────────────────────────────────
-    #    群里有人发消息 = 群是活跃的 → 该群之前发的机器人消息不算「无人理」
-    if is_group:
-        now_ts = int(time.time())
-        db.auto_mark_group_active(chat_id, now_ts)
 
     # ── P3：黑名单词过滤 ──────────────────────────────────────────────
     if is_group and check_banned_words(bot, m, CONFIG, db):
