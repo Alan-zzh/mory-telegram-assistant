@@ -1,57 +1,73 @@
 # 🤖 Mory小助理 · Telegram群管机器人
 
-> **快速入口**：查看 docs/README.md 了解完整项目说明
-> **技术调试**：查看 AI_DEBUG_HISTORY.md 了解技术细节
-
----
-
-## 📁 文档结构
+## 📁 项目结构
 
 ```
-根目录（核心文档）
-├── CHANGELOG.md          ← 更新日志（必读）
-├── AI_DEBUG_HISTORY.md   ← 技术调试手册（必读）
-└── docs/                 ← 归档文档
-    ├── README.md         ← 项目说明
-    ├── CHANGELOG.md      ← 完整更新历史
-    └── ...
+mory小助理/
+├── main.py              # 机器人主入口
+├── config.json           # 配置文件（Token、管理员ID等）
+├── requirements.txt      # Python依赖
+├── start.sh              # VPS启动脚本
+├── 一键部署.bat          # Windows一键部署
+├── core/                 # 核心模块
+│   ├── ai_engine.py      # AI对话引擎
+│   ├── database.py       # 数据库操作
+│   ├── mory_bot.py       # 机器人封装
+│   └── ...
+├── modules/              # 功能模块
+│   ├── auto_tasks.py     # 定时任务（阅后即焚等）
+│   ├── content.py        # 内容处理
+│   └── ...
+└── dashboard/            # 网页后台
+    └── app.py            # Flask控制台
 ```
-
----
 
 ## 🚀 快速开始
 
-### 部署到VPS
+### VPS部署
 ```bash
-python vps_deploy.py
-# 或
-.\vps_one_click_update.bat update
+# 1. 安装依赖
+pip install -r requirements.txt
+
+# 2. 配置
+cp config.example.json config.json
+# 编辑 config.json 填入你的 BOT_TOKEN 和 ADMIN_ID
+
+# 3. 启动
+bash start.sh start
 ```
 
-### 检查Bot状态
+### 查看日志
 ```bash
-ssh root@43.159.168.175
-# 密码: 066Sh9$YhG#Let
-
-ps aux | grep main.py | grep -v grep
-tail -100 /root/mory/mory.log
+bash start.sh log
 ```
 
-### 重启Bot
+### VPS管理
 ```bash
-cd /root/mory
-pkill -9 -f 'main.py'
-nohup python3 main.py > bot.log 2>&1 &
+bash start.sh status   # 查看状态
+bash start.sh restart  # 重启
+bash start.sh stop     # 停止
 ```
 
----
+## ⚙️ 配置说明
 
-## ⚠️ 重要提醒
+编辑 `config.json`：
+```json
+{
+  "BOT_TOKEN": "你的TelegramBotToken",
+  "ADMIN_ID": 你的用户ID,
+  ...
+}
+```
 
-1. **修改database.py后要转LF行尾** - Windows默认CRLF会导致SQL错误
-2. **Bot无法访问群历史消息** - 需手动删除历史消息
-3. **reply_tracking表为空是正常的** - 只有Bot回复群消息才会创建记录
+## 📝 文档
 
----
+- `CHANGELOG.md` - 更新日志
+- `AI_DEBUG_HISTORY.md` - 技术调试手册
 
-*更多信息请查看 docs/README.md*
+## 🔧 技术栈
+
+- Python 3
+- pyTelegramBotAPI
+- SQLite (WAL模式)
+- Flask (Dashboard)
