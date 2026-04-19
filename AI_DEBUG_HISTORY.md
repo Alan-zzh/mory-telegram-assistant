@@ -28,7 +28,7 @@
 
 ### 核心功能
 1. **阅后即焚** - 群聊消息24小时无人回复自动删除
-2. **回复嗅探** - 嗅探逻辑内置于 `_dispatch()` 函数最开始处（v4.0.3修复）
+2. **回复嗅探** - 由 `ReplySnifferMiddleware` 底层中间件统一捕获（v4.1.0升级）
 3. **AI对话** - 基于通义千问的群聊AI助手
 4. **自动任务** - 早安问候、新闻播报、醋意挽回等
 
@@ -36,7 +36,12 @@
 **重要规则**：pyTelegramBotAPI 的 `@bot.message_handler` 是**独占式**的。
 - 如果一个 handler 的 `func` 条件匹配，该消息**不会**继续流转到其他 handler
 - 绝对不能把业务逻辑放在独立的 handler 里然后 `return False`！
-- 正确做法：在 `master_handler` 或 `_dispatch` 函数内处理，不要用独立 handler 包装
+- 正确做法：使用 `BaseMiddleware` 拦截所有消息，或在 `master_handler`/`_dispatch` 内处理
+
+### ⚠️ v4.1.0 架构升级要点
+**问题**：用户的图片/语音/贴纸回复不会被 `master_handler` 捕获
+**原因**：`content_types=["text", "new_chat_members"]` 会过滤掉其他类型消息
+**解决方案**：使用 `BaseMiddleware` 的 `ReplySnifferMiddleware` 类，在所有 handler 之前统一拦截所有类型消息
 
 ### 关键表结构
 ```sql
@@ -354,5 +359,28 @@ python vps_deploy.py
 **3. auto_tasks 空转浪费**
 - 根因：`_job_burn_probe` 已降级为空函数，但每分钟依然被调度
 - 修复：调度频率改为每5分钟一次
+
+---
+
+## [2026-04-19] v4.1.0 三次审计修复
+
+### 发现的问题
+
+**1. BaseMiddleware 中间件 - 解决"机器人眼瞎"问题**
+- 问题：用户的图片/语音/贴纸回复不会被 `master_handler` 捕获
+- 原因：`content_types=["text", "new_chat_members"]` 会过滤掉其他类型消息
+- 解决方案：引入 `ReplySnifferMiddleware` 底层中间件
+  - 继承自 `telebot.handler_backends.BaseMiddleware`
+  - 在 `pre_process` 中拦截所有类型的消息
+  - 在消息到达任何 handler 之前统一捕获回复嗅探
+- 涉及：`main.py` 新增 `ReplySnifferMiddleware` 类 + `bot.setup_middleware(db)`
+
+**2. 清理重复嗅探逻辑**
+- 问题：`_dispatch` 函数中仍有嗅探代码，与中间件功能重复
+- 解决：删除 `_dispatch` 中的嗅探代码，统一由中间件处理
+
+**3. APScheduler Cron 语法确认**
+- 确认：`minute="*/5"` 语法正确
+- `_job_burn_probe` 已是空操作，不消耗 API 配额
 
 ---

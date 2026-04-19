@@ -374,6 +374,37 @@ start_background(bot, CONFIG, db, ai, save_config)
 # 【架构重构v21.44】初始化 MoryBot 封装层（替代 Monkey Patch）
 mory_bot = MoryBot(bot, db, CONFIG)
 
+# ── 【v4.1.0 架构升级】BaseMiddleware 全局底层嗅探器 ──────────────────────
+# 解决"用户用图片/语音/贴纸回复机器人，但机器人眼瞎看不见"的致命死角
+# 中间件在消息到达任何 handler 之前先执行，无视 content_type
+from telebot.handler_backends import BaseMiddleware
+
+class ReplySnifferMiddleware(BaseMiddleware):
+    """
+    【架构师核心组件：全局底层嗅探器 v4.1.0】
+    - 在所有消息进入业务逻辑前进行底层拦截
+    - 无论用户发送的是文字、图片、语音、贴纸，只要回复了机器人，必定被捕获
+    - 彻底解决"阅后即焚误杀"问题
+    """
+    def __init__(self, db_instance):
+        self.update_types = ['message']
+        self.db = db_instance
+
+    def pre_process(self, message, data):
+        # 捕获用户对机器人的回复（无视消息类型）
+        if message.reply_to_message and message.reply_to_message.from_user.id == BOT_ID:
+            try:
+                self.db.mark_replied(message.reply_to_message.message_id, message.chat.id)
+                logger.info(f"🛡️ [底层嗅探] 捕获回复，豁免阅后即焚: bot_msg_id={message.reply_to_message.message_id}")
+            except Exception as e:
+                logger.warning(f"[底层嗅探] 异常: {e}")
+
+    def post_process(self, message, data, exception):
+        pass
+
+# 挂载中间件（必须在所有 @bot.message_handler 之前）
+bot.setup_middleware(ReplySnifferMiddleware(db))
+
 # ════════════════════════ 消息处理器 ══════════════════════════════════
 
 # ── 图片打码 ──────────────────────────────────────────────────────────
@@ -646,16 +677,9 @@ def _dispatch(m):
             CONFIG["GROUP_ID"] = chat_id
             save_config()
 
-    # ── 【核心修复v4.0.3】全局回复嗅探器（内置于dispatch，不独占handler）
-    #    检测用户是否在回复机器人消息，如果是则秒级标记豁免
-    #    ⚠️ 必须放在所有业务逻辑之前执行，确保消息能继续流转
-    if m.reply_to_message and m.reply_to_message.from_user.id == BOT_ID:
-        try:
-            bot_msg_id = m.reply_to_message.message_id
-            db.mark_replied(bot_msg_id, chat_id)
-            logger.info(f"✅ [全局嗅探] 成功捕获用户回复！豁免 bot_msg_id={bot_msg_id}")
-        except Exception as e:
-            logger.warning(f"全局回复嗅探器异常：{e}")
+    # ── 【v4.1.0 架构升级】嗅探逻辑已迁移至 BaseMiddleware 统一处理
+    #    中间件在所有 handler 之前执行，无视消息类型（文字/图片/语音/贴纸）
+    #    详见文件顶部的 ReplySnifferMiddleware 类
 
 
     # ── P3：黑名单词过滤 ──────────────────────────────────────────────

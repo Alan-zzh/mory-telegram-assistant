@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-04-19 | v4.1.0 | 架构级深度除虫与死角覆盖
+
+### 🔴 致命Bug修复（三次审计发现）
+
+**1. 引入 BaseMiddleware 中间件，彻底解决"机器人眼瞎"问题**
+- 问题：用户的图片/语音/贴纸回复不会被 `master_handler` 捕获（该 handler 只处理文字）
+- 原因：`@bot.message_handler(content_types=["text", "new_chat_members"])` 会过滤掉其他类型消息
+- 解决：引入 `ReplySnifferMiddleware` 底层中间件，在所有 handler 之前统一拦截所有类型消息
+- 涉及：`main.py` 新增 ReplySnifferMiddleware 类 + `bot.setup_middleware()`
+
+**2. 清理重复嗅探逻辑**
+- 问题：`_dispatch` 函数中仍有嗅探代码，与中间件功能重复
+- 解决：删除 `_dispatch` 中的嗅探代码，统一由中间件处理
+- 涉及：`main.py` 第649-658行
+
+**3. APScheduler Cron 语法确认**
+- 当前状态：`minute="*/5"`（每5分钟执行一次）
+- 确认：语法正确，无需修改。`_job_burn_probe` 已是空操作，不消耗 API 配额
+
+---
+
 ## 2026-04-19 | v4.0.3 | 深度审查"二审"修复
 
 ### 🔴 致命Bug修复（二次审计发现）
