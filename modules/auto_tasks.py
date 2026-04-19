@@ -436,8 +436,9 @@ def _start_with_apscheduler(rm):
     # 叫醒服务（每分钟）
     scheduler.add_job(_job_wakeup_check, "cron", minute="*", args=[rm], id="wakeup_check")
     
-    # 阅后即焚（每3分钟）
-    scheduler.add_job(_job_burn_probe, "cron", minute="*", args=[rm], id="burn_probe")
+    # 阅后即焚探测（每5分钟 - v4.0.3降频以节省API配额）
+    # 注意：_job_burn_probe 已降级为空操作，主要依赖孤儿清理TTL机制
+    scheduler.add_job(_job_burn_probe, "cron", minute="*/5", args=[rm], id="burn_probe")
     
     # 每小时任务
     scheduler.add_job(_job_burn_orphan, "cron", minute=0, args=[rm], id="burn_orphan")

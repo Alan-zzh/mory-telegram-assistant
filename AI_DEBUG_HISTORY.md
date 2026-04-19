@@ -28,9 +28,15 @@
 
 ### 核心功能
 1. **阅后即焚** - 群聊消息24小时无人回复自动删除
-2. **回复嗅探** - global_reply_sniffer 实时捕获用户回复，秒级标记免死
+2. **回复嗅探** - 嗅探逻辑内置于 `_dispatch()` 函数最开始处（v4.0.3修复）
 3. **AI对话** - 基于通义千问的群聊AI助手
 4. **自动任务** - 早安问候、新闻播报、醋意挽回等
+
+### ⚠️ pyTelegramBotAPI Handler 机制警示
+**重要规则**：pyTelegramBotAPI 的 `@bot.message_handler` 是**独占式**的。
+- 如果一个 handler 的 `func` 条件匹配，该消息**不会**继续流转到其他 handler
+- 绝对不能把业务逻辑放在独立的 handler 里然后 `return False`！
+- 正确做法：在 `master_handler` 或 `_dispatch` 函数内处理，不要用独立 handler 包装
 
 ### 关键表结构
 ```sql
@@ -325,4 +331,28 @@ python vps_deploy.py
 
 ---
 
-*最后更新：2026-04-18 23:15*
+*最后更新：2026-04-19*
+
+---
+
+## [2026-04-19] v4.0.3 二次审计修复
+
+### 发现的问题
+
+**1. 消息路由"黑洞" - 独立 handler 独占消息**
+- 根因：之前把 `global_reply_sniffer` 做成独立的 `@bot.message_handler`，pyTelegramBotAPI 的 handler 是独占式的，消息被嗅探器捕获后不会继续流转
+- 教训：pyTelegramBotAPI 的 `func` 条件匹配后，消息不会自动流转到下一个 handler
+- 修复：删除独立 handler，将嗅探逻辑内置于 `_dispatch()` 函数最开始处
+
+**2. Dashboard 三重安全隐患**
+- 根因：secret_key 每次重启随机生成、端口绑定 0.0.0.0、密码有默认提示值
+- 修复：
+  - secret_key 从环境变量读取，固定不变
+  - 端口改为 127.0.0.1，强制要求 Nginx 反向代理
+  - 密码无默认值提示，必须设置环境变量
+
+**3. auto_tasks 空转浪费**
+- 根因：`_job_burn_probe` 已降级为空函数，但每分钟依然被调度
+- 修复：调度频率改为每5分钟一次
+
+---

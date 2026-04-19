@@ -376,29 +376,6 @@ mory_bot = MoryBot(bot, db, CONFIG)
 
 # ════════════════════════ 消息处理器 ══════════════════════════════════
 
-# 【v4.0 强制注入：全局回复嗅探器】
-# ⚠️ 必须放在所有其他 handler 的最前面！
-@bot.message_handler(func=lambda m: m.reply_to_message is not None)
-def global_reply_sniffer(m):
-    """
-    【全局回复嗅探器 v4.0】
-    专门解决"用户回复了，但系统不认"的致命Bug。
-    只要检测到用户是在回复机器人，立刻秒级更新数据库状态。
-    """
-    try:
-        if m.reply_to_message.from_user.is_bot:
-            # 用户在回复机器人
-            bot_msg_id = m.reply_to_message.message_id
-            chat_id = m.chat.id
-            # 标记数据库：该消息已被回复，获得"免死金牌"
-            db.mark_replied(bot_msg_id, chat_id)
-            logger.info(f"✅ [全局嗅探] 成功捕获用户回复！豁免 bot_msg_id={bot_msg_id}")
-    except Exception as e:
-        logger.warning(f"全局回复嗅探器异常：{e}")
-    
-    # 嗅探完毕后，必须放行！让其他业务逻辑继续处理这条消息
-    return False
-
 # ── 图片打码 ──────────────────────────────────────────────────────────
 @bot.message_handler(content_types=["photo"])
 def on_photo(m):
@@ -669,9 +646,16 @@ def _dispatch(m):
             CONFIG["GROUP_ID"] = chat_id
             save_config()
 
-    # ── 解除阅后即焚锁定（用户回复了机器人的消息）─────────────────────
+    # ── 【核心修复v4.0.3】全局回复嗅探器（内置于dispatch，不独占handler）
+    #    检测用户是否在回复机器人消息，如果是则秒级标记豁免
+    #    ⚠️ 必须放在所有业务逻辑之前执行，确保消息能继续流转
     if m.reply_to_message and m.reply_to_message.from_user.id == BOT_ID:
-        db.mark_replied(m.reply_to_message.message_id, chat_id)
+        try:
+            bot_msg_id = m.reply_to_message.message_id
+            db.mark_replied(bot_msg_id, chat_id)
+            logger.info(f"✅ [全局嗅探] 成功捕获用户回复！豁免 bot_msg_id={bot_msg_id}")
+        except Exception as e:
+            logger.warning(f"全局回复嗅探器异常：{e}")
 
 
     # ── P3：黑名单词过滤 ──────────────────────────────────────────────

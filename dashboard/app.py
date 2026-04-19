@@ -26,7 +26,9 @@ from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH
 
 # ============ Flask应用 ============
 app = Flask(__name__)
-app.secret_key = os.environ.get("DASHBOARD_SECRET", os.urandom(32).hex())
+# 【v4.0.3 安全修复】使用固定 Secret，防止重启导致所有管理员被踢下线
+# 生产环境必须设置 DASHBOARD_SECRET 环境变量
+app.secret_key = os.environ.get("DASHBOARD_SECRET", "mory_secure_static_key_2026_dev_only")
 
 # ============ 数据库工具 ============
 def get_db():
@@ -139,10 +141,10 @@ def login_required(f):
 def api_login():
     data = request.get_json() or {}
     pw = data.get("password", "")
-    # 【v4.0.2 安全修复】密码从环境变量读取，不硬编码
-    # 启动前设置：export DASHBOARD_PASSWORD=你的强密码
-    admin_pw = os.environ.get("DASHBOARD_PASSWORD", "mory2026")  # 默认值仅用于开发
-    if pw == admin_pw:
+    # 【v4.0.3 安全修复】密码从环境变量读取
+    # ⚠️ 生产环境必须设置 DASHBOARD_PASSWORD 环境变量！
+    admin_pw = os.environ.get("DASHBOARD_PASSWORD")
+    if admin_pw and pw == admin_pw:
         session["logged_in"] = True
         session["login_time"] = datetime.now().isoformat()
         return jsonify({"ok": True})
@@ -2674,8 +2676,14 @@ def index():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  🚀 Mory Dashboard Pro v4.0")
-    print("  🌐 http://localhost:5000")
-    print("  🔐 密码: mory2026")
+    print("  🚀 Mory Dashboard Pro v4.0.3")
+    print("  🌐 监听地址: http://127.0.0.1:5000")
+    print("")
+    print("  ⚠️  安全提醒：")
+    print("     1. 必须通过 Nginx 反向代理访问 (不要直接暴露5000端口)")
+    print("     2. 必须设置环境变量 DASHBOARD_PASSWORD=你的强密码")
+    print("     3. 必须设置环境变量 DASHBOARD_SECRET=随机字符串")
     print("=" * 60)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # 【v4.0.3 安全修复】绑定 127.0.0.1，禁止公网直接访问
+    # 必须通过 Nginx 反向代理：proxy_pass http://127.0.0.1:5000;
+    app.run(host="127.0.0.1", port=5000, debug=False)
