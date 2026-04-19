@@ -384,3 +384,28 @@ python vps_deploy.py
 - `_job_burn_probe` 已是空操作，不消耗 API 配额
 
 ---
+
+## [2026-04-19] v4.1.1 审查驳回：拒绝无效重构
+
+### 事件
+收到声称来自"全栈软件架构中枢"的 v5.0 重构建议。
+
+### 审查结论
+**该报告存在致命错误，会让机器人重新变瞎！**
+
+| 报告建议 | 实际后果 |
+|----------|----------|
+| 添加独立 `global_reply_listener` handler + `return False` | **重回黑洞问题！** pyTelegramBotAPI handler 独占消息 |
+| 简化 `mory_bot.py` 删除追踪逻辑 | 破坏已有稳定架构 |
+
+### 关键教训
+1. **pyTelegramBotAPI handler 机制**：消息被一个 handler 捕获后，`return False` **不会**让消息继续流转到下一个 handler
+2. **BaseMiddleware 是唯一解决方案**：必须在 `pre_process` 中拦截所有消息类型
+3. **不要轻信"架构审查"**：即使是看似专业的报告，也要核实技术细节
+
+### 执行操作
+1. ✅ 驳回无效重构建议
+2. ✅ 确认现有代码架构扎实
+3. ✅ 清理调试碎片（删除 5 个 check_burn*.py）
+
+---
