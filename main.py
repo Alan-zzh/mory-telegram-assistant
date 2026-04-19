@@ -376,6 +376,29 @@ mory_bot = MoryBot(bot, db, CONFIG)
 
 # ════════════════════════ 消息处理器 ══════════════════════════════════
 
+# 【v4.0 强制注入：全局回复嗅探器】
+# ⚠️ 必须放在所有其他 handler 的最前面！
+@bot.message_handler(func=lambda m: m.reply_to_message is not None)
+def global_reply_sniffer(m):
+    """
+    【全局回复嗅探器 v4.0】
+    专门解决"用户回复了，但系统不认"的致命Bug。
+    只要检测到用户是在回复机器人，立刻秒级更新数据库状态。
+    """
+    try:
+        if m.reply_to_message.from_user.is_bot:
+            # 用户在回复机器人
+            bot_msg_id = m.reply_to_message.message_id
+            chat_id = m.chat.id
+            # 标记数据库：该消息已被回复，获得"免死金牌"
+            db.mark_replied(bot_msg_id, chat_id)
+            logger.info(f"✅ [全局嗅探] 成功捕获用户回复！豁免 bot_msg_id={bot_msg_id}")
+    except Exception as e:
+        logger.warning(f"全局回复嗅探器异常：{e}")
+    
+    # 嗅探完毕后，必须放行！让其他业务逻辑继续处理这条消息
+    return False
+
 # ── 图片打码 ──────────────────────────────────────────────────────────
 @bot.message_handler(content_types=["photo"])
 def on_photo(m):
@@ -422,33 +445,6 @@ def on_voice(m):
         logger.error(f"语音处理异常：{e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 【v4.0 新增】全局回复嗅探器 - 必须在其他handler之前注册
-# 专门解决"用户回复了，但系统不认"的致命Bug
-# ═══════════════════════════════════════════════════════════════════════
-@bot.message_handler(func=lambda m: m.reply_to_message is not None)
-def global_reply_sniffer(message):
-    """
-    【全局回复嗅探器 v4.0】
-    专门解决"用户回复了，但系统不认"的致命Bug。
-    只要检测到用户是在回复机器人，立刻秒级更新数据库状态。
-    """
-    try:
-        if message.reply_to_message.from_user.is_bot:
-            # 用户在回复机器人
-            bot_msg_id = message.reply_to_message.message_id
-            chat_id = message.chat.id
-            # 标记数据库：该消息已被回复，获得"免死金牌"
-            db.mark_replied(bot_msg_id, chat_id)
-            logger.info(f"✅ 成功捕获用户回复！豁免 bot_msg_id={bot_msg_id}")
-    except Exception as e:
-        logger.warning(f"全局回复嗅探器异常：{e}")
-    
-    # 嗅探完毕后，必须放行！让其他业务逻辑继续处理这条消息
-    # 返回 False 意味着这个 handler 不吃掉这条消息
-    return False
-
-
 # ── 流失打捞 ──────────────────────────────────────────────────────────
 @bot.message_handler(content_types=["left_chat_member"])
 def on_left(m):
@@ -460,11 +456,10 @@ def on_left(m):
 
 # ── 阅后即焚说明 ──────────────────────────────────────────────────────
 #    pyTelegramBotAPI 不支持 deleted_messages_handler（监听消息被删事件）。
-#    完整方案已移至 modules/auto_tasks.py 的后台探测循环：
-#      - 每3分钟对近10分钟内的追踪消息进行 forward 探测
-#      - 如果原消息已被删/撤回 → 立即删除机器人的回复
-#      - 24h无人回复的孤儿消息 → 自动清理
-#    效果与 deleted_messages_handler 一致，延迟约3-5分钟。
+#    【v4.0 架构升级】
+#      1. main.py 的 global_reply_sniffer 实时捕获用户回复，秒级标记 replied=1
+#      2. auto_tasks.py 的 _job_burn_orphan 每小时清理 24h 未回复的孤儿消息
+#    彻底废除 forward_message 探测，避免 429 Rate Limit 封号风险。
 
 
 # ── Function Calling 工具定义 ──────────────────────────────────────

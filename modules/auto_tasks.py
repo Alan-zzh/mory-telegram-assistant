@@ -216,91 +216,24 @@ def _job_wakeup_check(rm):
 
 
 def _job_burn_probe(rm):
-    """阅后即焚探测（每3分钟）"""
-    global _last_saved_model_idx
+    """
+    阅后即焚探测（降级为被动清理版 - 彻底避免 API 封禁）
+    
+    【v4.0 架构师强制修复】
+    废弃疯狂转发的竞态探测，直接依赖 main.py 的 global_reply_sniffer 实时标记。
+    孤儿清理完全由 _job_burn_orphan 的 TTL 机制接管。
+    """
     try:
-        ts = int(time.time())
-        unconfirmed = rm.db.get_unconfirmed_messages()  # 【修复v21.47】24小时窗口，默认参数
+        # 【降级策略】：不再用 forward_message 探测
+        # 原因：每3分钟对20条消息做forward探测 = 每小时400次API调用
+        #       → 必然触发 Telegram 429 Rate Limit → 整队卡死
         
-        if unconfirmed:
-            logger.info(f"🔥 阅后即焚探测：{len(unconfirmed)}条消息待检查")
+        # 方案：直接跳过探测，依赖以下两个机制：
+        # 1. main.py 的 global_reply_sniffer 实时标记 replied=1
+        # 2. _job_burn_orphan 每小时清理 24小时未回复的孤儿
         
-        flood_wait = False
-        loop_start = time.time()
-        MAX_PROBE_TIME = 30  # 单轮探测最多30秒
-        
-        for bot_mid, cid, user_mid in unconfirmed[:20]:
-            if time.time() - loop_start > MAX_PROBE_TIME:
-                logger.warning("⚠️ 阅后即焚探测超时(>30s)，提前退出")
-                break
-            if flood_wait:
-                break
-            if user_mid == 0:
-                continue
-            
-            delete_success = False
-            for _retry in range(3):
-                try:
-                    with rm.locked_multi(['bot', 'config']):
-                        probe = rm.bot.forward_message(
-                            rm.config["ADMIN_ID"], cid, user_mid,
-                            disable_notification=True
-                        )
-                        try:
-                            rm.bot.delete_message(rm.config["ADMIN_ID"], probe.message_id)
-                        except Exception as e:
-                            logger.warning(f"清理探测转发消息失败：{e}")
-                    delete_success = True
-                    break
-                except Exception as e:
-                    err = str(e).lower()
-                    
-                    if "too many requests" in err:
-                        logger.warning("⚠️ 触发Telegram频率限制，暂停本轮探测")
-                        flood_wait = True
-                        break
-                    
-                    forward_failed_keywords = [
-                        "not found", "message_id_invalid", "bad request",
-                        "forbidden", "chat", "deleted"
-                    ]
-                    if any(kw in err for kw in forward_failed_keywords):
-                        for del_retry in range(3):
-                            try:
-                                with rm.locked_multi(['bot', 'db']):
-                                    rm.bot.delete_message(cid, int(bot_mid))
-                                    rm.db.delete_tracked(bot_mid)
-                                logger.info(
-                                    f"✅ 阅后即焚成功触发(第{del_retry+1}次) "
-                                    f"bot_msg={bot_mid} chat={cid} "
-                                    f"原因: 原消息{user_mid}已删 [{err[:80]}]"
-                                )
-                                delete_success = True
-                                break
-                            except Exception as del_err:
-                                del_err_str = str(del_err).lower()
-                                if any(kw in del_err_str for kw in [
-                                    "not found", "message to delete not found",
-                                    "message_id_invalid"
-                                ]):
-                                    with rm.locked('db'):
-                                        rm.db.delete_tracked(bot_mid)
-                                    logger.info(
-                                        f"⚠️ 阅后即焚: bot_msg={bot_mid} 已不存在, "
-                                        f"已清除追踪记录 (原消息{user_mid}已删)"
-                                    )
-                                    delete_success = True
-                                    break
-                                elif del_retry < 2:
-                                    time.sleep(2 * (del_retry + 1))
-                        
-                        if delete_success:
-                            break
-                    else:
-                        logger.warning(f"🔥 阅后即焚探测异常 bot={bot_mid}: {err[:200]}")
-                        break
-            
-            time.sleep(0.5)
+        logger.debug("🔄 _job_burn_probe 探测逻辑已由 v4.0 静默，将由 TTL 孤儿清理接管")
+        return
     except Exception as e:
         logger.error(f"阅后即焚探测失败：{e}")
 

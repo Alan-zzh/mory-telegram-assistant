@@ -139,7 +139,10 @@ def login_required(f):
 def api_login():
     data = request.get_json() or {}
     pw = data.get("password", "")
-    if pw == "mory2026":
+    # 【v4.0.2 安全修复】密码从环境变量读取，不硬编码
+    # 启动前设置：export DASHBOARD_PASSWORD=你的强密码
+    admin_pw = os.environ.get("DASHBOARD_PASSWORD", "mory2026")  # 默认值仅用于开发
+    if pw == admin_pw:
         session["logged_in"] = True
         session["login_time"] = datetime.now().isoformat()
         return jsonify({"ok": True})
