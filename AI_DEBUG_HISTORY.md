@@ -32,6 +32,28 @@
 3. **AI对话** - 基于通义千问的群聊AI助手
 4. **自动任务** - 早安问候、新闻播报、醋意挽回等
 
+---
+
+## 📋 待办清单（跨会话自动执行）
+
+> ⚠️ **新会话开始时，AI 必须先检查此处，如有未完成项则继续执行。**
+
+### ✅ 已完成：根目录重度污染清理（v4.2.0）
+- **完成时间**：2026-04-19
+- **归档数量**：86 个文件
+- **结果**：根目录从 70+ 文件精简到 25 个核心文件
+
+### 🟡 可选：PM2 进程管理（替代 kill_bot.py）
+- **问题**：`kill_bot.py` 和 `restart_bot.py` 过于业余
+- **解决方案**：在 VPS 上安装 PM2
+  ```bash
+  npm install -g pm2
+  pm2 start main.py --name mory-bot --interpreter python3
+  ```
+- **好处**：崩溃自动重启，无需手动杀进程
+
+---
+
 ### ⚠️ pyTelegramBotAPI Handler 机制警示
 **重要规则**：pyTelegramBotAPI 的 `@bot.message_handler` 是**独占式**的。
 - 如果一个 handler 的 `func` 条件匹配，该消息**不会**继续流转到其他 handler
