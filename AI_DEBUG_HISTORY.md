@@ -43,6 +43,11 @@
 - **归档数量**：86 个文件
 - **结果**：根目录从 70+ 文件精简到 25 个核心文件
 
+### ✅ 已完成：VPS 同步部署（v4.2.0）
+- **完成时间**：2026-04-19
+- **操作**：`sync_and_restart.py` 脚本同步到 VPS 并重启机器人
+- **结果**：机器人运行中 PID=2251911，内存 43.125MB，数据库 100K
+
 ### 🟡 可选：PM2 进程管理（替代 kill_bot.py）
 - **问题**：`kill_bot.py` 和 `restart_bot.py` 过于业余
 - **解决方案**：在 VPS 上安装 PM2
@@ -51,6 +56,13 @@
   pm2 start main.py --name mory-bot --interpreter python3
   ```
 - **好处**：崩溃自动重启，无需手动杀进程
+
+### ⚠️ VPS 部署说明
+- **VPS 代码部署方式**：不是通过 git pull，而是通过 `_archive_scripts/sync_and_restart.py` 脚本
+- **VPS 上没有 .git 仓库**：git pull 会报 `fatal: not a git repository`
+- **当前部署方式**：使用 `bash start.sh restart` 直接重启（读取本地已有代码）
+
+---
 
 ---
 
