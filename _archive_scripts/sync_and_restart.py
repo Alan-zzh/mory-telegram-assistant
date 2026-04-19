@@ -11,8 +11,10 @@ import codecs
 # 解决 Windows GBK 控制台编码问题
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-# 读取密码
-env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+# 读取密码（向上两级到项目根目录）
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(script_dir))
+env_file = os.path.join(project_root, ".env")
 vps_pass = None
 
 if os.path.exists(env_file):
