@@ -167,7 +167,8 @@ def api_stats_overview():
     stats = {
         "total_users": 0, "today_active": 0, "week_active": 0, "month_active": 0,
         "total_group_msgs": 0, "total_private_msgs": 0,
-        "online_trend": [], "hourly_dist": {}, "conversion_funnel": {}
+        "online_trend": [], "hourly_dist": {}, "conversion_funnel": {},
+        "group_stats": {}, "channel_stats": {}  # 【v4.2.3】群统计和频道统计
     }
     
     # 从本地数据库读取
@@ -221,6 +222,29 @@ def api_stats_overview():
         """).fetchall()
         for row in r:
             stats["hourly_dist"][int(row[0]) if row[0] else 0] = row[1]
+        
+        # 【v4.2.3】群统计
+        try:
+            r = conn.execute("""SELECT COALESCE(SUM(joined_count),0), COALESCE(SUM(left_count),0), COALESCE(SUM(net_count),0)
+                               FROM group_stats WHERE date >= date('now', '-7 days')""").fetchone()
+            stats["group_stats"] = {
+                "week_joined": r[0] if r else 0,
+                "week_left": r[1] if r else 0,
+                "week_net": r[2] if r else 0,
+            }
+        except:
+            stats["group_stats"] = {"week_joined": 0, "week_left": 0, "week_net": 0}
+        
+        # 【v4.2.3】频道统计
+        try:
+            r = conn.execute("SELECT COUNT(*), COALESCE(SUM(current_views),0) FROM channel_tracking").fetchone()
+            stats["channel_stats"] = {
+                "total_posts": r[0] if r else 0,
+                "total_views": r[1] if r else 0,
+                "avg_views": r[1] // max(r[0], 1) if r else 0,
+            }
+        except:
+            stats["channel_stats"] = {"total_posts": 0, "total_views": 0, "avg_views": 0}
         
         conn.close()
     except Exception as e:
@@ -1425,6 +1449,33 @@ async function renderOverview(el) {
         </div>
         <div class="text-2xl font-bold ${vps.bot_running ? 'text-green-400' : 'text-red-400'}">${vps.bot_running ? '运行中' : '已停止'}</div>
         <div class="text-gray-500 text-xs mt-2">内存 ${vps.bot_memory || 'N/A'} · ${vps.uptime || 'N/A'}</div>
+      </div>
+      
+      <div class="glass-card p-6">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-gray-400 text-sm">本周群动态</span>
+          <div class="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+            <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0"/>
+            </svg>
+          </div>
+        </div>
+        <div class="text-2xl font-bold text-green-400">+${d.group_stats?.week_net || 0}</div>
+        <div class="text-gray-500 text-xs mt-2">入群 ${d.group_stats?.week_joined || 0} / 离群 ${d.group_stats?.week_left || 0}</div>
+      </div>
+      
+      <div class="glass-card p-6">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-gray-400 text-sm">内容表现</span>
+          <div class="w-10 h-10 rounded-lg bg-orange-500/20 flex items-center justify-center">
+            <svg class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+            </svg>
+          </div>
+        </div>
+        <div class="text-2xl font-bold text-orange-400">${fmtNumber(d.channel_stats?.total_views || 0)}</div>
+        <div class="text-gray-500 text-xs mt-2">总浏览 · 均 ${d.channel_stats?.avg_views || 0}/条</div>
       </div>
     </div>
     

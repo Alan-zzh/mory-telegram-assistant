@@ -18,6 +18,9 @@
 ║    9. 数据库备份（每小时一次）                                         ║
 ║    10. TTL历史数据清理（每小时一次）                                    ║
 ║    11. 配置保存（仅模型索引变化时）                                     ║
+║    12. 频道浏览量更新（每小时）                                        ║
+║    13. 每日数据报告（9:10 私聊HTML）  ← v4.2.4                       ║
+║    14. 每日塔罗搭讪（15:00 30%概率）← v4.2.5新增                    ║
 ║                                                                        ║
 ║  启动方式：start_background(bot, config, db, ai, save_config)         ║
 ╚══════════════════════════════════════════════════════════════════════════╝
@@ -196,8 +199,44 @@ def _job_greeting_evening(rm):
         logger.error(f"晚安问候失败：{e}")
 
 
+def _generate_wakeup_message(uid: int, now: datetime, rm) -> str:
+    """AI生成个性化叫醒语"""
+    seed = uid + int(now.timestamp())
+    hour = now.hour
+    
+    prompt = f"""你是Mory老板，一个贴心的小姐姐。现在是北京时间{hour}点。
+
+给用户生成一条叫醒消息，要求：
+1. 30-50字，撒娇撩人风格
+2. 像闺蜜私聊一样自然
+3. 随机选择一个场景/理由叫醒他
+4. 结尾要有emoji
+5. seed={seed}，每次必须不同
+
+禁止：
+- 不要太长，控制在50字以内
+- 不要重复相同的开头"""
+
+    try:
+        with rm.locked('ai'):
+            msg = rm.ai.ask(prompt, mode="wakeup", seed=seed)
+        if msg and len(msg) > 10:
+            return msg.strip()
+    except:
+        pass
+    
+    # 备用文案
+    fallbacks = [
+        "起床啦哥哥～ 太阳晒屁股了，新的一天也要充满活力哦！☀️",
+        "嘿～该起来啦！再睡就要错过好运了哦～🌞",
+        "哥哥醒醒～小Mory都醒了，你还在赖床吗？快起来嘛～💪",
+        "早安呀哥哥！新的一天，新的运气，快起来迎接美好吧～✨",
+    ]
+    return random.choice(fallbacks)
+
+
 def _job_wakeup_check(rm):
-    """叫醒服务检查（每分钟）"""
+    """叫醒服务检查（每分钟）- AI生成个性化叫醒语"""
     try:
         now = datetime.now(_CST)
         time_str = now.strftime("%H:%M")
@@ -206,9 +245,9 @@ def _job_wakeup_check(rm):
             for uid, wake_time in rm.db.get_all_wake_ups():
                 if wake_time == time_str:
                     try:
-                        rm.bot.send_message(uid,
-                            "起床啦哥哥～ 太阳晒屁股了，"
-                            f"新的一天也要像爱{rm.config['BOT_NAME']}老板一样充满活力哦！☀️")
+                        wake_msg = _generate_wakeup_message(uid, now, rm)
+                        rm.bot.send_message(uid, wake_msg)
+                        logger.info(f"⏰ 叫醒服务：uid={uid}")
                     except Exception as e:
                         logger.warning(f"叫醒服务发送失败 uid={uid}：{e}")
     except Exception as e:
@@ -255,8 +294,46 @@ def _job_burn_orphan(rm):
         logger.error(f"阅后即焚孤儿清理失败：{e}")
 
 
+def _generate_reactivate_message(uid: int, rm) -> str:
+    """AI生成醋意挽回消息"""
+    seed = uid + int(time.time()) // 86400  # 每天固定
+    
+    prompt = f"""你是Mory老板，一个有点小醋意的小姐姐。
+
+一个用户已经3天没来聊天了，你要写一条消息把他叫回来。
+
+要求：
+1. 40-60字，撒娇吃醋风格
+2. 像闺蜜私聊一样，带点小委屈小醋意
+3. 不要太直白，要撩人要心痒痒
+4. 可以暗示：你是不是有别人了/你是不是把我忘了/是不是我哪里不够好
+5. 结尾要有emoji
+6. seed={seed}，每次必须不同
+
+禁止：
+- 不要出现"3天"这个具体数字
+- 不要太长，控制在60字以内"""
+
+    try:
+        with rm.locked('ai'):
+            msg = rm.ai.ask(prompt, mode="reactivate", seed=seed)
+        if msg and len(msg) > 10:
+            return msg.strip()
+    except:
+        pass
+    
+    # 备用文案
+    fallbacks = [
+        "哥哥这几天去哪了呀？是不是有新欢了？Mory都想你了呢...快回来嘛～💕",
+        "你是不是把人家忘了呀...好几天都不来找我，是不是外面有别的猫猫了？😢",
+        "诶？哥哥是不是把我忘了...好伤心哦，有空回来陪Mory聊聊天嘛～🥺",
+        "哼！都不来找我，是不是觉得我不可爱了？快回来让我看看你！👀",
+    ]
+    return random.choice(fallbacks)
+
+
 def _job_reactivate(rm):
-    """醋意挽回（每小时）"""
+    """醋意挽回（每小时）- AI生成个性化消息"""
     try:
         ts = int(time.time())
         three_days_ago = ts - 259200
@@ -266,9 +343,8 @@ def _job_reactivate(rm):
             for uid, _name in inactive[:3]:
                 if random.random() < 0.25:
                     try:
-                        rm.bot.send_message(uid,
-                            f"哥哥，这几天去哪了？是不是去看别的妹妹了？"
-                            f"{rm.config['BOT_NAME']}老板都问起你了哼！")
+                        reactivate_msg = _generate_reactivate_message(uid, rm)
+                        rm.bot.send_message(uid, reactivate_msg)
                         rm.db.reset_last_active(uid)
                         logger.info(f"💌 醋意挽回：{uid}")
                     except Exception as e:
@@ -277,15 +353,53 @@ def _job_reactivate(rm):
         logger.error(f"醋意挽回失败：{e}")
 
 
+def _generate_cart_recovery_message(uid: int, rm) -> str:
+    """AI生成购物车挽回消息"""
+    seed = uid + int(time.time()) // 43200  # 每半天固定
+    
+    prompt = f"""你是Mory老板，一个贴心的小姐姐。
+
+一个用户昨天问了门槛/价格但没付费就走了，你要写一条消息把他叫回来。
+
+要求：
+1. 40-60字，撒娇但不卑微
+2. 像闺蜜私聊一样自然撩人
+3. 不要直接提"门槛"或"价格"，要隐晦表达
+4. 可以暗示：是不是有什么顾虑/是不是钱不够/是不是不好意思
+5. 要让人感觉来了会有好事发生
+6. 结尾要有emoji
+7. seed={seed}，每次必须不同
+
+禁止：
+- 不要出现"门槛"、"价格"、"付费"、"钱"这些词
+- 不要太长，控制在60字以内"""
+
+    try:
+        with rm.locked('ai'):
+            msg = rm.ai.ask(prompt, mode="cart_recovery", seed=seed)
+        if msg and len(msg) > 10:
+            return msg.strip()
+    except:
+        pass
+    
+    # 备用文案
+    fallbacks = [
+        "哥哥昨天问完就跑了...是不是有什么顾虑呀？有什么想问的尽管问嘛，Mory帮你解答～😊",
+        "是不是钱不够呀？没关系呀，先来聊聊天嘛～说不定有惊喜哦！💕",
+        "哥哥昨天是不是不好意思呀？放心，Mory很温柔的，来嘛来嘛～🌸",
+        "昨天问了就不理人家了...Mory可是专门在想哥哥呢，快回来嘛～✨",
+    ]
+    return random.choice(fallbacks)
+
+
 def _job_cart_recovery(rm):
-    """购物车挽回（每小时）"""
+    """购物车挽回（每小时）- AI生成个性化消息"""
     try:
         with rm.locked_multi(['db', 'bot', 'config']):
             for uid in rm.db.get_expired_carts(86400):
                 try:
-                    rm.bot.send_message(uid,
-                        f"哥哥昨天问了门槛又没来，是{rm.config['BOT_NAME']}哪里不够好吗？"
-                        f"来陪小助理聊聊天嘛～")
+                    cart_msg = _generate_cart_recovery_message(uid, rm)
+                    rm.bot.send_message(uid, cart_msg)
                     rm.db.log_conversion_event(uid, "interested")
                     logger.info(f"🛒 购物车挽回：{uid}")
                 except Exception as e:
@@ -389,6 +503,493 @@ def _job_save_config(rm):
         logger.error(f"配置保存失败：{e}")
 
 
+def _job_channel_views(rm):
+    """【v4.2.3】更新群消息浏览量（每小时）"""
+    try:
+        from core.logging_util import get_logger
+        logger = get_logger("auto_tasks")
+        
+        # 获取最近24小时内的追踪消息
+        tracked = rm.db.get_channel_tracking(limit=50)
+        
+        for chat_id, msg_id, content_type, posted_at, current_views in tracked:
+            try:
+                # 获取当前浏览量
+                msg_info = rm.bot.forward_message(
+                    rm.config.get("ADMIN_ID", 0), 
+                    chat_id, 
+                    msg_id,
+                    disable_notification=True
+                )
+                if msg_info and hasattr(msg_info, 'views'):
+                    new_views = msg_info.views
+                    if new_views > current_views:
+                        rm.db.update_channel_views(chat_id, msg_id, new_views)
+                        logger.info(f"📊 频道浏览量更新: chat={chat_id} msg={msg_id} views={new_views}")
+            except Exception as e:
+                logger.debug(f"获取浏览量失败: chat={chat_id} msg={msg_id} err={e}")
+        
+        logger.info("✅ 频道浏览量更新任务完成")
+    except Exception as e:
+        logger.error(f"频道浏览量更新失败：{e}")
+
+
+def _job_daily_report(rm):
+    """【v4.2.4】每日数据报告（私聊发送HTML格式）"""
+    try:
+        admin_id = rm.config.get("ADMIN_ID", 0)
+        if not admin_id:
+            return
+        
+        now = datetime.now(_CST)
+        today = now.strftime("%Y-%m-%d")
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        
+        # 获取群动态数据
+        group_stats_today = rm.db.get_group_stats_by_date(today)
+        group_stats_yesterday = rm.db.get_group_stats_by_date(yesterday)
+        
+        # 解析今日群数据
+        joined_today = left_today = net_today = 0
+        for row in group_stats_today:
+            if len(row) >= 6:
+                joined_today += row[2] or 0
+                left_today += row[3] or 0
+                net_today += row[4] or 0
+        
+        # 解析昨日群数据
+        joined_yest = left_yest = net_yest = 0
+        for row in group_stats_yesterday:
+            if len(row) >= 6:
+                joined_yest += row[2] or 0
+                left_yest += row[3] or 0
+                net_yest += row[4] or 0
+        
+        # 获取频道内容数据
+        channel_stats = rm.db.get_channel_stats_summary()
+        total_views = 0
+        tracked_count = 0
+        avg_views = 0
+        if channel_stats:
+            total_views = channel_stats.get("total_views", 0)
+            tracked_count = channel_stats.get("tracked_count", 0)
+            avg_views = channel_stats.get("avg_views", 0)
+        
+        # 构建HTML报告
+        emoji_up = "🔼"
+        emoji_down = "🔽"
+        emoji_neutral = "➖"
+        
+        # 计算趋势
+        join_trend = "📈" if joined_today > joined_yest else ("📉" if joined_today < joined_yest else "➖")
+        left_trend = "📈" if left_today > left_yest else ("📉" if left_today < left_yest else "➖")
+        net_trend = "📈" if net_today > net_yest else ("📉" if net_today < net_yest else "➖")
+        
+        html_report = f"""📊 <b>Mory数据日报</b> · {today}
+
+━━━━━━━━━━━━━━━━━━
+
+🏠 <b>群动态</b>
+├ 今日入群：{joined_today} {join_trend}
+├ 今日离群：{left_today} {left_trend}
+└ 净增人数：{net_today:+d} {net_trend}
+
+━━━━━━━━━━━━━━━━━━
+
+📈 <b>内容表现</b>
+├ 追踪消息：{tracked_count} 条
+├ 总浏览量：{total_views:,}
+└ 平均浏览：{avg_views:.0f}
+
+━━━━━━━━━━━━━━━━━━
+
+🌙 昨日同期参考
+├ 入群 {joined_yest} / 离群 {left_yest}
+└ 净增 {net_yest:+d}
+
+━━━━━━━━━━━━━━━━━━
+<i>系统自动生成 · Mory小助理 v4.2.4</i>"""
+        
+        # 发送私聊报告
+        with rm.locked('bot'):
+            rm.bot.send_message(admin_id, html_report, parse_mode="HTML")
+        
+        logger.info(f"✅ 每日数据报告已发送: 入群{joined_today} 离群{left_today} 净增{net_today} 浏览{total_views}")
+    except Exception as e:
+        logger.error(f"每日数据报告失败：{e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 塔罗缓存：同一人同一天结果固定（北京时间为准）
+# ═══════════════════════════════════════════════════════════════════════════
+_tarot_daily_cache: Dict[str, Dict] = {}  # {user_id_date: {...}}
+
+
+def _get_tarot_cache(uid: int, dt: datetime) -> Dict:
+    """获取/生成某用户当日的塔罗运势（北京时间）"""
+    cst_now = dt.astimezone(_CST)
+    date_key = cst_now.strftime("%Y-%m-%d")
+    cache_key = f"{uid}_{date_key}"
+    
+    if cache_key not in _tarot_daily_cache:
+        # 生成新数据并缓存
+        _tarot_daily_cache[cache_key] = _generate_tarot_data(uid)
+    
+    return _tarot_daily_cache[cache_key]
+
+
+def _get_fallback_hook(theme: str, uname: str) -> str:
+    """撩人转化文案 - 绿茶口吻，引导VIP/赞助大哥"""
+    # 绿茶风格变体库（高度随机组合）
+    starters = [
+        "哎呀哥哥~",
+        "嘿嘿哥哥~",
+        "诶嘿哥哥~",
+        "呜呼哥哥~",
+        "哈喽哥哥~",
+        "悄悄说哥哥~",
+    ]
+    
+    bodies = [
+        "这运势还有后半段呢~",
+        "说实话完整版比这准多了~",
+        "你这牌其实还有隐藏信息~",
+        "VIP版本待遇完全不一样哦~",
+        "普通版只是开胃菜~",
+        "赞助大哥说完整版才叫准~",
+        "小Mory手里还有更准的版本呢~",
+        "完整版只有赞助大哥才看得到~",
+    ]
+    
+    endings = [
+        "你懂我意思吧~",
+        "你懂的~",
+        "悄悄告诉你哦~",
+        "别告诉别人嘿嘿~",
+        "来嘛来嘛~",
+        "害羞捂脸~",
+        "等你哦~",
+        "支持一下嘛~",
+        "嘿嘿~",
+        "好不好嘛~",
+        "好不啦~",
+        "帮帮忙嘛~",
+    ]
+    
+    # 随机组合，高度个性化
+    starter = random.choice(starters)
+    body = random.choice(bodies)
+    ending = random.choice(endings)
+    
+    # 30%概率只说两句，更简短随机
+    if random.random() < 0.3:
+        return f"{starter} {body} {ending}"
+    else:
+        # 三段式，但随机决定是否加"所以"
+        connector = random.choice(["所以呀~", "所以嘛~", "所以呢~", "那你要不要~", ""])
+        return f"{starter} {body} {connector}{ending}"
+
+
+def _generate_tarot_data(seed_uid: int) -> Dict:
+    """根据用户ID生成稳定的塔罗数据（牌名预设，其余由AI生成）"""
+    rng = random.Random(seed_uid)  # 用用户ID做种子，同一人永远同结果
+    
+    # 牌名和主题预设（保持神秘感和随机性）
+    themes = ["整体运势", "爱情运势", "财运", "工作运", "健康运", "桃花运"]
+    fortune_theme = rng.choice(themes)
+    
+    major = ["愚者", "魔术师", "女祭司", "女皇", "皇帝", "教皇", "恋人", "战车",
+             "力量", "隐士", "命运之轮", "正义", "吊人", "死神", "节制", "恶魔",
+             "塔", "星星", "月亮", "太阳", "审判", "世界"]
+    suits = ["权杖", "圣杯", "宝剑", "金币"]
+    card_name = rng.choice(major + [f"{s}{rng.randint(1,10)}" for s in suits])
+    card_position = rng.choice(["正位", "逆位"])
+    
+    # 基础数据（供AI prompt使用）
+    return {
+        "theme": fortune_theme,
+        "card": card_name,
+        "position": card_position,
+        "seed": seed_uid,  # 传给AI用
+    }
+
+
+def _generate_tarot_ai_content(tarot: Dict, seed: int, rm) -> Dict:
+    """调用AI生成完整的塔罗运势内容"""
+    seed_for_ai = seed or random.randint(100000, 999999)
+    
+    prompt = f"""你是Mory老板，一个神秘又懂人心的塔罗师。
+
+根据以下信息，为用户生成一段塔罗运势：
+
+【运势类型】：{tarot['theme']}
+【塔罗牌】：{tarot['card']} {tarot['position']}
+
+请生成以下内容（严格按格式，emoji和内容都不能为空）：
+
+1. 牌面描述（一句话，15-25字，带emoji）
+2. 今日解读（2-3句话，50-80字，有画面感，带emoji）
+3. 今日建议（一句话行动指引，20字以内，带emoji）
+4. 幸运色（只写颜色，2-4字）
+5. 幸运方位（只写方位，2-4字）
+6. 幸运数字（3个数字，用逗号隔开，如：7, 23, 45）
+7. 贵人星座（只写星座名，2-4字）
+8. 幸运时段（只写时间段，5-8字，如：上午9-11点）
+
+seed={seed_for_ai}
+要求：每次seed不同，生成内容必须完全不同。"""
+
+    try:
+        with rm.locked('ai'):
+            ai_response = rm.ai.ask(prompt, mode="tarot_interpret", seed=seed_for_ai)
+        
+        if not ai_response or len(ai_response) < 50:
+            raise ValueError("AI返回内容太短")
+        
+        # 解析AI返回的内容
+        content = _parse_tarot_ai_response(ai_response, tarot)
+        return content
+    except Exception as e:
+        logger.warning(f"AI生成塔罗内容失败，使用备用方案: {e}")
+        return _get_fallback_tarot_content(tarot)
+
+
+def _parse_tarot_ai_response(ai_response: str, tarot: Dict) -> Dict:
+    """解析AI返回的塔罗内容"""
+    lines = ai_response.strip().split('\n')
+    result = {
+        "theme": tarot['theme'],
+        "card": tarot['card'],
+        "position": tarot['position'],
+        "mood": "✨",  # 默认
+        "meaning": "今日运势平稳...",  # 默认
+        "advice": "保持好心情",  # 默认
+        "result": "会有好事发生",  # 默认
+        "color": "蓝色",  # 默认
+        "dir": "东方",  # 默认
+        "nums": "7, 23, 45",  # 默认
+        "star": "天秤座",  # 默认
+        "time": "上午9-11点",  # 默认
+    }
+    
+    # 简单解析：按行匹配
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # 牌面描述
+        if any(x in line for x in ['牌面', '描述', '🌟', '✨']) and len(line) < 50:
+            result["mood"] = line
+        
+        # 今日解读
+        elif any(x in line for x in ['解读', '今日', '📖', '💫']) and len(line) > 30:
+            result["meaning"] = line
+        
+        # 建议
+        elif any(x in line for x in ['建议', '行动', '💡', '🌱']) and len(line) < 40:
+            result["advice"] = line
+        
+        # 幸运色
+        elif any(x in line for x in ['幸运色', '颜色', '🌈', '🎨']):
+            # 提取颜色词
+            colors = ["白色", "黑色", "红色", "蓝色", "绿色", "紫色", "粉色", "金色", "橙色", "黄色"]
+            for c in colors:
+                if c in line:
+                    result["color"] = c
+                    break
+        
+        # 方位
+        elif any(x in line for x in ['方位', '方向', '📍', '🧭']):
+            dirs = ["东方", "西方", "南方", "北方", "东南", "东北", "西南", "西北", "东", "南", "西", "北"]
+            for d in dirs:
+                if d in line:
+                    result["dir"] = d
+                    break
+        
+        # 数字
+        elif any(x in line for x in ['数字', '🔢', '💰']) and any(c.isdigit() for c in line):
+            import re
+            nums = re.findall(r'\d+', line)
+            if len(nums) >= 3:
+                result["nums"] = f"{nums[0]}, {nums[1]}, {nums[2]}"
+        
+        # 星座
+        elif any(x in line for x in ['星座', '贵人', '⭐', '🌟']):
+            stars = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", 
+                     "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"]
+            for s in stars:
+                if s in line:
+                    result["star"] = s
+                    break
+        
+        # 时段
+        elif any(x in line for x in ['时段', '时间', '⏰', '🕐']):
+            result["time"] = line
+    
+    return result
+
+
+def _get_fallback_tarot_content(tarot: Dict) -> Dict:
+    """备用塔罗内容（AI失败时使用）"""
+    rng = random.Random(tarot.get('seed', 42))
+    
+    meanings = {
+        "正位": ["内心充满希望，适合开展新计划", "感情上可能有惊喜", 
+                "财运上升，适合投资", "人际关系和谐"],
+        "逆位": ["有些迷茫，需要冷静思考", "感情上可能有误会",
+                "财务上要谨慎", "工作上可能遇小阻碍"]
+    }
+    
+    colors = ["白色", "黑色", "红色", "蓝色", "绿色", "紫色", "粉色", "金色"]
+    dirs = ["东方", "西方", "南方", "北方", "东南", "东北"]
+    stars = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座"]
+    
+    return {
+        "theme": tarot['theme'],
+        "card": tarot['card'],
+        "position": tarot['position'],
+        "mood": "✨ 牌面呈现吉祥之象",
+        "meaning": rng.choice(meanings[tarot['position']]),
+        "advice": rng.choice(["大胆尝试新事物", "多倾听少说话", "主动出击别犹豫"]),
+        "result": rng.choice(["会有意外收获", "会有贵人相助", "会有好运降临"]),
+        "color": rng.choice(colors),
+        "dir": rng.choice(dirs),
+        "nums": f"{rng.randint(1,99)}, {rng.randint(1,99)}, {rng.randint(1,99)}",
+        "star": rng.choice(stars),
+        "time": rng.choice(["早上9-11点", "下午15-17点", "晚上19-21点"]),
+    }
+
+
+def _job_tarot_flirt(rm):
+    """【v4.2.5】每日塔罗搭讪（30%概率，针对群里活跃用户）
+    
+    【特性】
+    - 同一人同一天结果固定（北京时间为准）
+    - 高度随机：40%短版 / 60%长版
+    - 卡片式排版，手机一屏可看完
+    """
+    try:
+        # 30%概率触发
+        if random.random() > 0.30:
+            return
+        
+        gid = rm.config.get("GROUP_ID", 0)
+        admin_id = rm.config.get("ADMIN_ID", 0)
+        if not gid or not admin_id:
+            return
+        
+        logger.info("🎴 触发每日塔罗搭讪任务")
+        
+        # 获取群成员
+        try:
+            members = rm.bot.get_chat_member_count(gid)
+            if members < 5:
+                return
+        except:
+            pass
+        
+        # 获取最近50条群消息，找出发言用户
+        recent_users = {}
+        try:
+            history = rm.bot.get_chat_history(gid, limit=50)
+            for msg in history:
+                if msg.from_user and msg.from_user.id != admin_id:
+                    uid = msg.from_user.id
+                    uname = msg.from_user.first_name or msg.from_user.username or "哥哥"
+                    if msg.text or msg.caption:
+                        text = msg.text or msg.caption
+                        if text and len(text) > 3 and len(text) < 200:
+                            recent_users[uid] = (uname, text)
+        except Exception as e:
+            logger.debug(f"获取群历史失败：{e}")
+            return
+        
+        if not recent_users:
+            return
+        
+        # 随机选一个用户和消息
+        uid, (uname, user_msg) = random.choice(list(recent_users.items()))
+        
+        logger.info(f"🎴 塔罗搭讪目标: {uname} 说: {user_msg[:30]}")
+        
+        # 获取该用户今日运势（北京时间缓存）
+        tarot_base = _get_tarot_cache(uid, datetime.now())
+        
+        # 调用AI生成完整运势内容
+        tarot = _generate_tarot_ai_content(tarot_base, uid, rm)
+        
+        # 开场白
+        opener_text = random.choice(['哥哥～', '嘿～', '在吗～', '哎～', '诶～'])
+        opener_action = random.choice(['看到你说的', '刷到你这句', '你刚才说'])
+        
+        # AI生成隐晦撩人转化结尾（绝不能提会员/付费/订阅）
+        convert_seed = random.randint(10000, 99999)
+        convert_prompt = f"""你是Mory老板，一个神秘又懂人心的塔罗师。
+
+给刚测完「{tarot['theme']}」的「{uname}」写一句撩人私信引导语。
+
+要求（必须全部满足）：
+1. 30-45字，像闺蜜私聊一样自然暧昧
+2. 暗示有专属的、更准的、只有老粉才知道的东西
+3. 绝对不能出现：会员、付费、订阅、解锁、钱、开通、VIP、专属版 这些词
+4. 要撩人，让人心痒痒的想追问
+5. 每次seed不同，生成内容必须不重复
+6. 不要emoji结尾
+
+seed={convert_seed}"""
+        
+        try:
+            with rm.locked('ai'):
+                convert_hint = rm.ai.ask(convert_prompt, mode="convert_hook", seed=convert_seed)
+            if not convert_hint or len(convert_hint) < 10:
+                convert_hint = _get_fallback_hook(tarot['theme'], uname)
+        except:
+            convert_hint = _get_fallback_hook(tarot['theme'], uname)
+        
+        # 构建HTML卡片消息（高度随机：40%短版 / 60%长版）
+        short_mode = random.random() < 0.4
+        
+        if short_mode:
+            # ══ 短版：极简卡片，约100字
+            html_reply = f"""🎴 <b>{tarot['card']} {tarot['position']}</b>
+
+@{uname} {opener_text} {opener_action}「{user_msg[:10]}」~
+
+📖 {tarot['meaning']}
+
+🌈 {tarot['color']} · 📍 {tarot['dir']} · 🔢 {tarot['nums'].split(',')[0]}
+
+{convert_hint}"""
+        else:
+            # ══ 长版：完整卡片，约150字
+            html_reply = f"""🎴 <b>{tarot['theme']}</b> · {tarot['card']} {tarot['position']}
+
+@{uname} {opener_text} {opener_action}「{user_msg[:10]}」~
+
+📖 <b>牌面</b>：{tarot['mood']}，{tarot['meaning']}
+
+💡 <b>今日建议</b>：{tarot['advice']}，{tarot['result']}
+
+🌈 <b>幸运色</b>：{tarot['color']}
+📍 <b>方位</b>：{tarot['dir']}
+🔢 <b>数字</b>：{tarot['nums']}
+⭐ <b>贵人</b>：{tarot['star']}
+⏰ <b>时段</b>：{tarot['time']}
+
+{convert_hint}"""
+        
+        # 发送HTML格式消息
+        try:
+            with rm.locked('bot'):
+                rm.bot.send_message(gid, html_reply, parse_mode="HTML")
+            logger.info(f"🎴 塔罗搭讪成功: @{uname}")
+        except Exception as e:
+            logger.error(f"发送塔罗消息失败：{e}")
+        except Exception as e:
+            logger.error(f"塔罗搭讪失败：{e}")
+
+
 def _do_backup(db_file: str):
     """执行数据库备份，保留最近7天（168份）"""
     os.makedirs("backup", exist_ok=True)
@@ -428,6 +1029,12 @@ def _start_with_apscheduler(rm):
     scheduler.add_job(_job_news_afternoon, "cron", hour=13, minute=5, args=[rm], id="news_afternoon")
     scheduler.add_job(_job_news_evening, "cron", hour=20, minute=35, args=[rm], id="news_evening")
     
+    # 每日数据报告（v4.2.4）- 私聊发送
+    scheduler.add_job(_job_daily_report, "cron", hour=9, minute=10, args=[rm], id="daily_report")
+    
+    # 每日塔罗搭讪（v4.2.5）- 随机30%概率
+    scheduler.add_job(_job_tarot_flirt, "cron", hour=15, minute=0, args=[rm], id="tarot_flirt")
+    
     # 问候
     scheduler.add_job(_job_greeting_morning, "cron", hour=8, minute=5, args=[rm], id="greeting_morning")
     scheduler.add_job(_job_greeting_afternoon, "cron", hour=12, minute=35, args=[rm], id="greeting_afternoon")
@@ -447,6 +1054,7 @@ def _start_with_apscheduler(rm):
     scheduler.add_job(_job_backup, "cron", minute=15, args=[rm], id="backup")
     scheduler.add_job(_job_ttl_cleanup, "cron", minute=20, args=[rm], id="ttl_cleanup")
     scheduler.add_job(_job_save_config, "cron", minute=30, args=[rm], id="save_config")
+    scheduler.add_job(_job_channel_views, "cron", minute=25, args=[rm], id="channel_views")  # 【v4.2.3】浏览量更新
     
     # 背刺泄密（每周三0点）
     scheduler.add_job(_job_leak, "cron", day_of_week="wed", hour=0, minute=0, args=[rm], id="leak")

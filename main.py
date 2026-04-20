@@ -457,7 +457,7 @@ def on_voice(m):
 @bot.message_handler(content_types=["left_chat_member"])
 def on_left(m):
     try:
-        handle_left_member(bot, m, CONFIG)
+        handle_left_member(bot, m, CONFIG, db)  # 【v4.2.3】传入db用于统计
     except Exception as e:
         logger.error(f"流失打捞异常：{e}")
 
@@ -854,14 +854,19 @@ def _dispatch(m):
 
         # 【架构v21.44】阅后即焚追踪由 MoryBot.reply_and_track() 显式处理
         
-        # 私聊消息转发给管理员（脱敏处理：不发送原始内容）
+        # 私聊消息转发给管理员（显示完整内容 + 一键直达用户私聊）
         if is_priv:
             try:
                 admin_id = CONFIG.get("ADMIN_ID", 0)
                 if admin_id and uid != admin_id:
+                    # 原始消息截断显示（过长则省略）
+                    msg_display = msg[:200] + "..." if len(msg) > 200 else msg
+                    resp_display = resp[:500] + "..." if len(resp) > 500 else resp
                     bot.send_message(admin_id,
-                        f"📩 私聊通知\n👤 {uname}({uid}) [消息已隐藏]\n"
-                        f"🤖 AI已回复（{len(resp)}字）")
+                        f"📩 私聊通知\n"
+                        f"👤 [{uname}](tg://user?id={uid})\n"
+                        f"💬 你：{msg_display}\n"
+                        f"🤖 Mory回复：{resp_display}")
             except Exception as e:
                 logger.warning(f"私聊转发通知失败 uid={uid}：{e}")
         

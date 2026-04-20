@@ -55,6 +55,7 @@ def handle_new_members(bot, m, config: dict, db):
             continue  # 机器人自己进群不触发
         db.upsert_user(user.id, user.first_name or "新人", "group")
         db.add_points(user.id, 0)  # 初始化等级记录
+        db.record_group_join(m.chat.id)  # 【v4.2.3】记录入群统计
 
         welcome = f"""👋 欢迎 {user.first_name or '亲爱的'} 加入！
 
@@ -150,12 +151,14 @@ def check_spam(bot, m, config: dict, db) -> bool:
     return False
 
 
-def handle_left_member(bot, m, config: dict):
+def handle_left_member(bot, m, config: dict, db=None):
     """流失打捞：用户离群"""
     uid = m.left_chat_member.id
     if uid == _get_bot_id(bot):
         return
     name = m.left_chat_member.first_name or "亲爱的"
+    if db:
+        db.record_group_left(m.chat.id)  # 【v4.2.3】记录离群统计
     try:
         bot.send_message(uid,
             f"😢 {name}，你真的要走吗？\n\n"
@@ -254,13 +257,38 @@ def detect_keywords(msg: str, config: dict) -> dict:
             result["slang_reply"] = f"📖 新人科普：「{slang}」的意思是——\n{explanation}"
             break  # 只匹配第一个，避免一条消息触发多条科普
 
-    # 用户偏好画像
-    if any(k in msg for k in ["腿", "黑丝", "丝袜"]):
-        result["keyword_tag"] = "偏好黑丝/腿控"
-    elif any(k in msg for k in ["声音", "音频", "听"]):
-        result["keyword_tag"] = "偏好声音内容"
-    elif any(k in msg for k in ["视频", "动态", "gif"]):
-        result["keyword_tag"] = "偏好视频内容"
+    # 用户偏好画像（扩展版 v4.2.3）
+    # 优先级：精准词 > 模糊词，避免一条消息打多个标签
+    _tag_rules = [
+        # 内容偏好
+        (["腿", "黑丝", "丝袜", "美腿"], "偏好黑丝/腿控"),
+        (["声音", "音频", "语音", "听"], "偏好声音内容"),
+        (["视频", "动态", "gif", "短视频"], "偏好视频内容"),
+        (["原味", "原版", "原始"], "偏好原味内容"),
+        (["定制", "专属", "定做"], "偏好定制服务"),
+        (["图片", "照片", "写真", "图集"], "偏好图片集"),
+        (["直播", "真人", "实时"], "偏好直播内容"),
+        # 行为偏好
+        (["多少钱", "价格", "怎么买", "门槛", "开通", "会员", "订阅"], "付费意向-询问价格"),
+        (["优惠", "折扣", "便宜", "划算", "活动", "特价"], "付费意向-关注优惠"),
+        (["看看", "想看", "给我", "发一下", "有没有"], "付费意向-主动索要看货"),
+        (["付款", "支付", "转账", "红包", "支付宝", "微信"], "付费意向-准备付款"),
+        (["先看看", "再考虑", "犹豫", "纠结"], "付费意向-犹豫中"),
+        # 互动偏好
+        (["早安", "晚安", "早上好", "睡了"], "高活跃-日常问候"),
+        (["签到", "打卡", "每日"], "高活跃-签到用户"),
+        (["塔罗", "占卜", "抽牌", "运势"], "高活跃-娱乐互动"),
+        (["老板", "Mory", "小助理"], "高认同-提及品牌"),
+        # 情感状态
+        (["累", "困", "疲惫", "辛苦"], "情感状态-疲惫"),
+        (["开心", "高兴", "快乐", "爽"], "情感状态-开心"),
+        (["无聊", "没事干", "闲着"], "情感状态-无聊"),
+        (["失恋", "难受", "难过", "崩溃", "压力"], "情感状态-负面情绪"),
+    ]
+    for keywords, tag in _tag_rules:
+        if any(k in msg for k in keywords):
+            result["keyword_tag"] = tag
+            break
 
     # 仇恨词检测
     if any(k in msg for k in config.get("HATE_KEYWORDS", [])):

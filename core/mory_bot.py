@@ -108,6 +108,9 @@ class MoryBot:
         if sent:
             bot_msg_id = sent.message_id
             self._db.track_reply(bot_msg_id, cid, user_msg_id)
+            # 【v4.2.3】记录频道/群消息用于追踪浏览量
+            if cid < 0:  # 群聊ID是负数
+                self._db.track_channel_message(cid, bot_msg_id, "text")
             logger.info(f"📌 阅后即焚记录入库：bot_msg={bot_msg_id} chat={cid} user_msg={user_msg_id}")
         
         return sent
