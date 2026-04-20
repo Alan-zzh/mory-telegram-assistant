@@ -211,6 +211,7 @@ def _cleanup_conv_tracker():
 # ── 视奸雷达冷却机制（内存字典 + 线程安全）────────────────────────
 # 防止同一用户频繁触发导致管理员被刷屏
 _radar_cooldown = {}  # key=uid, value=上次触发时间戳
+_radar_lock = Lock()  # 【修复v4.3.1】防止多线程并发修改字典导致RuntimeError
 _RADAR_COOLDOWN = 3600  # 1小时冷却时间
 
 # ── 配置读写 ──────────────────────────────────────────────────────────
@@ -707,10 +708,13 @@ def _dispatch(m):
     # ── P7：视奸雷达（价格关键词通知管理员 + 冷却机制）────────────
     price_kws = ["多少钱", "价格", "怎么买", "门槛", "开通", "会员"]
     if any(k in msg for k in price_kws) and is_group:
-        # 【修复v21.46】冷却机制：同一用户1小时内只通知一次
+        # 【修复v4.3.1】冷却机制：同一用户1小时内只通知一次（加锁防并发）
         now_radar = time.time()
-        last_trigger = _radar_cooldown.get(uid, 0)
-        should_notify = now_radar - last_trigger > _RADAR_COOLDOWN
+        with _radar_lock:  # 【修复v4.3.1】加锁防止并发写入崩溃
+            last_trigger = _radar_cooldown.get(uid, 0)
+            should_notify = now_radar - last_trigger > _RADAR_COOLDOWN
+            if should_notify:
+                _radar_cooldown[uid] = now_radar  # 更新冷却时间
         
         if should_notify:
             try:
@@ -718,7 +722,6 @@ def _dispatch(m):
                     CONFIG["ADMIN_ID"],
                     f"👀 视奸雷达\n{uname}({uid}) 提到了费用相关词\n💡 该用户可能对付费服务有兴趣"
                 )
-                _radar_cooldown[uid] = now_radar  # 更新冷却时间
             except Exception as e:
                 logger.warning(f"视奸雷达通知失败：{e}")
         
@@ -886,8 +889,10 @@ if __name__ == "__main__":
     cur_model = (CONFIG.get("MODEL_POOLS", {}).get("llm", CONFIG.get("MODEL_POOL", [{}]))[CONFIG.get("CURRENT_MODEL_INDEX", 0)]
                  .get("name", "N/A"))
     reply_chance = CONFIG.get("REPLY_CHANCE", 10)
+    # 【修复v4.3.1】自动同步config.json的版本号
+    config_version = CONFIG.get("_CONFIG_VERSION") or CONFIG.get("VERSION", "未知")
     logger.info("=" * 60)
-    logger.info(f"🚀 {bot_name} 私域超级分身  v{CONFIG.get('_CONFIG_VERSION', '21.35')}  启动！")
+    logger.info(f"🚀 {bot_name} 私域超级分身  v{config_version}  启动！")
     logger.info(f"🤖 当前模型：{cur_model}")
     logger.info(f"👑 管理员ID：{CONFIG.get('ADMIN_ID', 0)}")
     logger.info(f"👥 主群ID：{CONFIG.get('GROUP_ID', 0)}")

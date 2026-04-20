@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-04-20 | v4.3.1 | 稳定性优化
+
+### 紧急修复
+
+**API_KEY 配置冲突**
+- `ai_engine.py` 的 `analyze_image` 函数原读取 `DASHSCOPE_KEY`，但 `main.py` 初始化时映射到 `API_KEY`
+- 修复：统一读取 `API_KEY`，兼容旧 `DASHSCOPE_KEY` 字段
+
+**线程安全加固**
+- `main.py` 的视奸雷达冷却字典 `_radar_cooldown` 在多线程环境下未加锁
+- 修复：添加 `_radar_lock` 互斥锁，防止并发修改导致 RuntimeError
+
+### 代码清理
+- 删除 `ai_engine.py` 中重复定义的 `_is_model_expired` 调用链（保留带过期检查的版本）
+
+### 提示优化
+- 启动版本显示自动同步 `config.json` 的版本号
+- 优先读取 `_CONFIG_VERSION`，兼容 `VERSION` 字段
+
+---
+
 ## 2026-04-20 | v4.3.0 | 功能大版本更新
 
 ### 🆕 新增功能

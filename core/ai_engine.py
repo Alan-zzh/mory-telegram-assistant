@@ -283,37 +283,6 @@ class AIEngine:
                 return True
         return False
 
-    def _next_available_model(self, pool_name: str = "llm"):
-        """切换到指定池的下一个可用（非黑名单）模型（线程安全）"""
-        pool = self.model_pools.get(pool_name, self.model_pool)
-        with self._lock:
-            total = len(pool)
-            if total == 0:
-                return
-            
-            # 获取当前池的索引
-            if pool_name in self._pool_indices:
-                idx = self._pool_indices[pool_name]
-            else:
-                idx = self.current_idx if pool_name == "llm" else 0
-            
-            for _ in range(total):
-                idx = (idx + 1) % total
-                candidate = pool[idx]["name"]
-                if not self._is_blacklisted(candidate):
-                    self._pool_indices[pool_name] = idx
-                    # LLM池同步更新旧字段
-                    if pool_name == "llm":
-                        self.current_idx = idx
-                        self.config["CURRENT_MODEL_INDEX"] = idx
-                    logger.warning(f"🔄 [{pool_name}] 模型切换 → {candidate}")
-                    return
-            
-            # 所有模型都被拉黑了
-            logger.error(f"🚫 [{pool_name}] 所有模型均已被拉黑！请检查API余额或用「模型恢复」恢复")
-        if pool_name == "llm":
-            self.config["CURRENT_MODEL_INDEX"] = 0
-
     def _is_model_expired(self, model_info: dict) -> bool:
         """检查模型是否已过期（返回True表示过期）"""
         expire_str = model_info.get("expire", "")
@@ -672,10 +641,11 @@ def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
     # 选择第一个可用的vision模型
     model_info = vision_pool[0]
     model_name = model_info.get("name", "")
-    api_key = config.get("DASHSCOPE_KEY", "")
+    # 【修复v4.3.1】统一读取API_KEY，兼容旧DASHSCOPE_KEY
+    api_key = config.get("API_KEY") or config.get("DASHSCOPE_KEY", "")
     
-    if not api_key:
-        logger.warning("⚠️ DASHSCOPE_KEY未配置，跳过图片分析")
+    if not api_key or api_key in ("", "YOUR_DASHSCOPE_API_KEY_HERE"):
+        logger.warning("⚠️ API_KEY未配置，跳过图片分析")
         return None
     
     # 构建图片base64
