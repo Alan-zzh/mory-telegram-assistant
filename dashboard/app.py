@@ -42,6 +42,18 @@ def _check_rate_limit(ip: str, max_requests: int = 60, window_seconds: int = 60)
         return False
     return True
 
+# 注意：@app.before_request 装饰器必须在 app 定义之后注册，见下方
+
+# ============ Flask应用 ============
+app = Flask(__name__)
+# 【v4.3.2修复F-02】移除硬编码默认值，未设置DASHBOARD_SECRET则拒绝启动
+app.secret_key = os.environ.get("DASHBOARD_SECRET")
+if not app.secret_key or len(app.secret_key) < 16:
+    print("❌ 致命错误：DASHBOARD_SECRET 环境变量未设置或太短（至少16位）！")
+    print("   请设置：export DASHBOARD_SECRET=$(python3 -c 'import secrets;print(secrets.token_hex(32))')")
+    sys.exit(1)
+
+# 【v4.3.2修复S-10/S-11】在app定义后注册全局安全检查
 @app.before_request
 def _security_check():
     """全局安全检查：CSRF + 速率限制"""
@@ -64,12 +76,6 @@ def _security_check():
         if not request.headers.get('X-Requested-With'):
             return jsonify({"ok": False, "msg": "CSRF校验失败"}), 403
     return None
-
-# ============ Flask应用 ============
-app = Flask(__name__)
-# 【v4.0.3 安全修复】使用固定 Secret，防止重启导致所有管理员被踢下线
-# 生产环境必须设置 DASHBOARD_SECRET 环境变量
-app.secret_key = os.environ.get("DASHBOARD_SECRET", "mory_secure_static_key_2026_dev_only")
 
 # ============ 数据库工具 ============
 def get_db():

@@ -253,9 +253,13 @@ class DB:
             c.execute("""INSERT OR IGNORE INTO users
                 (uid, name, first_seen, last_active) VALUES (?,?,?,?)""",
                 (uid, name, ts, ts))
-            col = "group_messages" if msg_type == "group" else "private_messages"
-            c.execute(f"UPDATE users SET last_active=?, {col}={col}+1, name=? WHERE uid=?",
-                      (ts, name, uid))
+            # 【v4.3.2修复S-08】移除f-string拼接SQL列名，改用if/else分支
+            if msg_type == "group":
+                c.execute("UPDATE users SET last_active=?, group_messages=group_messages+1, name=? WHERE uid=?",
+                          (ts, name, uid))
+            else:
+                c.execute("UPDATE users SET last_active=?, private_messages=private_messages+1, name=? WHERE uid=?",
+                          (ts, name, uid))
             self.conn.commit()
 
     def get_user(self, uid: int):
@@ -375,6 +379,8 @@ class DB:
             c.execute("SELECT uid FROM cart_recovery WHERE ts<?", (cutoff,))
             rows = [r[0] for r in c.fetchall()]
             if rows:
+                # 【v4.3.2修复S-09】添加长度限制，防止IN子句过长
+                rows = rows[:100]
                 self.conn.execute(f"DELETE FROM cart_recovery WHERE uid IN ({','.join('?'*len(rows))})",
                                  rows)
                 self.conn.commit()
@@ -865,16 +871,19 @@ class DB:
         """获取频道统计摘要"""
         with _db_lock:
             c = self.conn.cursor()
-            # 总消息数
+            # 【v4.3.2修复S-02】每次execute后立即保存fetchone结果，不重复调用
             c.execute("SELECT COUNT(*) FROM channel_tracking")
-            total_posts = c.fetchone()[0] if c.fetchone() else 0
+            row = c.fetchone()
+            total_posts = row[0] if row else 0
             # 总浏览量
             c.execute("SELECT COALESCE(SUM(current_views),0) FROM channel_tracking")
-            total_views = c.fetchone()[0] if c.fetchone() else 0
+            row = c.fetchone()
+            total_views = row[0] if row else 0
             # 今日发布数
             today = datetime.now(_CST).strftime("%Y-%m-%d")
             c.execute("SELECT COUNT(*) FROM channel_tracking WHERE date(posted_at, 'unixepoch')=?", (today,))
-            today_posts = c.fetchone()[0] if c.fetchone() else 0
+            row = c.fetchone()
+            today_posts = row[0] if row else 0
             # 平均浏览量
             avg_views = total_views // max(total_posts, 1)
         return {

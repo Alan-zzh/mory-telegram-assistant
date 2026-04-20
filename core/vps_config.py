@@ -26,11 +26,11 @@ def _env(key: str, default: str = "") -> str:
 
 
 VPS = {
-    "host": _env("VPS_HOST", "43.159.168.175"),
+    "host": _env("VPS_HOST", ""),  # 【v4.3.2修复F-03】移除硬编码IP默认值
     "port": int(_env("VPS_PORT", "22")),
     "user": _env("VPS_USER", "root"),
     "pass": _env("VPS_SSH_PASS", ""),
-    "root": "/root/mory",
+    "root": _env("VPS_PATH", "/root/mory"),  # 【v4.3.2修复】路径也从环境变量读取
 }
 
 # 快捷访问
