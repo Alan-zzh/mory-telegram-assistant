@@ -314,13 +314,70 @@ class AIEngine:
         if pool_name == "llm":
             self.config["CURRENT_MODEL_INDEX"] = 0
 
+    def _is_model_expired(self, model_info: dict) -> bool:
+        """检查模型是否已过期（返回True表示过期）"""
+        expire_str = model_info.get("expire", "")
+        if not expire_str:
+            return False
+        try:
+            expire_date = datetime.strptime(expire_str, "%Y-%m-%d")
+            now = datetime.now()
+            if expire_date < now:
+                logger.info(f"⏰ 模型 {model_info['name']} 已过期 ({expire_str})，将跳过")
+                return True
+        except Exception:
+            pass
+        return False
+
     def _ensure_valid_model(self, pool_name: str = "llm"):
-        """确保指定池的当前模型可用，如果被拉黑则自动切到下一个"""
+        """确保指定池的当前模型可用，如果被拉黑或过期则自动切到下一个"""
         pool = self.model_pools.get(pool_name, self.model_pool)
         idx = self._pool_indices.get(pool_name, self.current_idx)
-        if pool and idx < len(pool) and self._is_blacklisted(pool[idx]["name"]):
-            logger.warning(f"⚠️ [{pool_name}] 当前模型{pool[idx]['name']}已拉黑，自动切换")
-            self._next_available_model(pool_name)
+        
+        # 检查：被拉黑 或 已过期
+        if pool and idx < len(pool):
+            model_name = pool[idx]["name"]
+            if self._is_blacklisted(model_name):
+                logger.warning(f"⚠️ [{pool_name}] 当前模型{model_name}已拉黑，自动切换")
+                self._next_available_model(pool_name)
+            elif self._is_model_expired(pool[idx]):
+                # 过期模型视同拉黑
+                self._blacklist_model(model_name, f"已过期 {pool[idx].get('expire', '')}")
+                self._next_available_model(pool_name)
+
+    def _next_available_model(self, pool_name: str = "llm"):
+        """切换到指定池的下一个可用（非黑名单、非过期）模型（线程安全）"""
+        pool = self.model_pools.get(pool_name, self.model_pool)
+        with self._lock:
+            total = len(pool)
+            if total == 0:
+                return
+            
+            # 获取当前池的索引
+            if pool_name in self._pool_indices:
+                idx = self._pool_indices[pool_name]
+            else:
+                idx = self.current_idx if pool_name == "llm" else 0
+            
+            for _ in range(total):
+                idx = (idx + 1) % total
+                candidate = pool[idx]["name"]
+                # 跳过：黑名单 或 过期
+                if self._is_blacklisted(candidate):
+                    continue
+                if self._is_model_expired(pool[idx]):
+                    continue
+                # 找到可用模型
+                self._pool_indices[pool_name] = idx
+                # LLM池同步更新旧字段
+                if pool_name == "llm":
+                    self.current_idx = idx
+                    self.config["CURRENT_MODEL_INDEX"] = idx
+                logger.warning(f"🔄 [{pool_name}] 模型切换 → {candidate}")
+                return
+            
+            # 所有模型都被拉黑或过期了
+            logger.error(f"🚫 [{pool_name}] 所有模型均已拉黑或过期！请检查API余额或更新模型配置")
 
     def _build_persona(self, mode: str, seed: int = 0, news_content: str = "") -> str:
         """根据模式动态拼装 system prompt，seed用于防重复
