@@ -201,7 +201,7 @@ class DB:
 
             self.conn.commit()
 
-            # ── 性能索引（IF NOT EXISTS 幂等）──────────────────────────
+            # ── 性能索引（IF NOT EXISTS 幂等）【v4.2.8增强：添加replied索引防止全表扫描】─
             _indexes = [
                 "CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)",
                 "CREATE INDEX IF NOT EXISTS idx_users_conv ON users(conversion_status)",
@@ -209,6 +209,7 @@ class DB:
                 "CREATE INDEX IF NOT EXISTS idx_track_ts ON reply_tracking(ts)",
                 "CREATE INDEX IF NOT EXISTS idx_track_chat ON reply_tracking(chat_id)",
                 "CREATE INDEX IF NOT EXISTS idx_track_bot_chat ON reply_tracking(bot_msg_id, chat_id)",
+                "CREATE INDEX IF NOT EXISTS idx_track_replied ON reply_tracking(ts, replied)",  # 【v4.2.8新增】加速孤儿消息查询
                 "CREATE INDEX IF NOT EXISTS idx_cart_ts ON cart_recovery(ts)",
                 "CREATE INDEX IF NOT EXISTS idx_mute_until ON mute_records(mute_until)",
                 "CREATE INDEX IF NOT EXISTS idx_wake_uid ON wake_up(uid)",
@@ -218,7 +219,7 @@ class DB:
                 self.conn.execute(_idx_sql)
             self.conn.commit()
 
-        logger.info("✅ 数据库初始化完成（含10个性能索引）")
+        logger.info("✅ 数据库初始化完成（含11个性能索引）")
 
     # ─────────────────────────────── 用户 ────────────────────────────────
     def upsert_user(self, uid: int, name: str, msg_type: str = "group"):

@@ -755,77 +755,129 @@ seed={seed_for_ai}
 
 
 def _parse_tarot_ai_response(ai_response: str, tarot: Dict) -> Dict:
-    """解析AI返回的塔罗内容"""
+    """
+    解析AI返回的塔罗内容（正则增强版）
+    
+    【v4.2.8修复】采用正则表达式精准捕获，防止AI输出格式不标准导致的解析失败
+    """
+    import re
+    
     lines = ai_response.strip().split('\n')
+    full_text = ai_response.strip()
+    
     result = {
         "theme": tarot['theme'],
         "card": tarot['card'],
         "position": tarot['position'],
-        "mood": "✨",  # 默认
-        "meaning": "今日运势平稳...",  # 默认
-        "advice": "保持好心情",  # 默认
+        "mood": "✨ 今日牌面呈现吉祥之象",  # 默认
+        "meaning": "今日运势平稳，保持积极心态...",  # 默认
+        "advice": "保持好心情，顺势而为",  # 默认
         "result": "会有好事发生",  # 默认
-        "color": "蓝色",  # 默认
-        "dir": "东方",  # 默认
-        "nums": "7, 23, 45",  # 默认
-        "star": "天秤座",  # 默认
-        "time": "上午9-11点",  # 默认
+        "color": None,  # 待解析
+        "dir": None,   # 待解析
+        "nums": None,  # 待解析
+        "star": None,  # 待解析
+        "time": None,  # 待解析
     }
     
-    # 简单解析：按行匹配
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        
-        # 牌面描述
-        if any(x in line for x in ['牌面', '描述', '🌟', '✨']) and len(line) < 50:
-            result["mood"] = line
-        
-        # 今日解读
-        elif any(x in line for x in ['解读', '今日', '📖', '💫']) and len(line) > 30:
-            result["meaning"] = line
-        
-        # 建议
-        elif any(x in line for x in ['建议', '行动', '💡', '🌱']) and len(line) < 40:
-            result["advice"] = line
-        
-        # 幸运色
-        elif any(x in line for x in ['幸运色', '颜色', '🌈', '🎨']):
-            # 提取颜色词
-            colors = ["白色", "黑色", "红色", "蓝色", "绿色", "紫色", "粉色", "金色", "橙色", "黄色"]
-            for c in colors:
-                if c in line:
-                    result["color"] = c
+    # ─── 正则表达式精准匹配 ─────────────────────────────────────────────
+    
+    # 1. 牌面描述：匹配 "牌面：" 或 "描述：" 后面的内容
+    mood_match = re.search(r'(?:牌面描述?|[:：].*?)[:：]\s*(.+?)(?:\n|$)', full_text)
+    if mood_match:
+        result["mood"] = mood_match.group(1).strip()
+    else:
+        # 容错：找包含🌟或✨的长句
+        for line in lines:
+            if ('🌟' in line or '✨' in line) and len(line) > 15:
+                result["mood"] = line.strip()
+                break
+    
+    # 2. 今日解读：匹配 "解读：" 或 "今日解读：" 后面的内容
+    meaning_match = re.search(r'(?:今日)?(?:解读?|💫|📖)[:：]\s*(.+?)(?:\n|$)', full_text)
+    if meaning_match:
+        result["meaning"] = meaning_match.group(1).strip()
+    else:
+        # 容错：找最长的句子作为解读
+        candidates = [l.strip() for l in lines if 30 < len(l.strip()) < 100]
+        if candidates:
+            result["meaning"] = candidates[0]
+    
+    # 3. 建议：匹配 "建议：" 后面的内容
+    advice_match = re.search(r'(?:今日)?(?:建议?|💡|🌱)[:：]\s*(.+?)(?:\n|$)', full_text)
+    if advice_match:
+        result["advice"] = advice_match.group(1).strip()
+    else:
+        # 容错：找短句
+        for line in lines:
+            if len(line.strip()) < 30 and ('💡' in line or '🌱' in line):
+                result["advice"] = line.strip()
+                break
+    
+    # 4. 幸运色：匹配 "色：" 后面的颜色词
+    color_match = re.search(r'(?:幸运)?(?:色|🌈|🎨)[:：]\s*(\S{1,4})', full_text)
+    if not color_match:
+        # 直接在全文中找颜色词
+        colors = ["白色", "黑色", "红色", "蓝色", "绿色", "紫色", "粉色", "金色", "橙色", "黄色", "青色", "棕色"]
+        for c in colors:
+            if c in full_text:
+                result["color"] = c
+                break
+    if color_match:
+        result["color"] = color_match.group(1).strip()
+    if not result["color"]:
+        result["color"] = "蓝色"  # 最终兜底
+    
+    # 5. 幸运方位
+    dir_match = re.search(r'(?:幸运)?(?:方位?|方向?|📍|🧭)[:：]\s*(\S{1,4})', full_text)
+    if not dir_match:
+        dirs = ["东方", "西方", "南方", "北方", "东南", "东北", "西南", "西北", "东", "南", "西", "北"]
+        for d in dirs:
+            if d in full_text:
+                result["dir"] = d
+                break
+    if dir_match:
+        result["dir"] = dir_match.group(1).strip()
+    if not result["dir"]:
+        result["dir"] = "东方"  # 最终兜底
+    
+    # 6. 幸运数字：提取3个数字
+    nums = re.findall(r'\b(\d{1,3})\b', full_text)
+    nums = [n for n in nums if 1 <= int(n) <= 99][:3]  # 只取1-99范围内的数字，最多3个
+    if len(nums) >= 3:
+        result["nums"] = f"{nums[0]}, {nums[1]}, {nums[2]}"
+    else:
+        result["nums"] = "7, 23, 45"  # 兜底
+    
+    # 7. 贵人星座
+    star_match = re.search(r'(?:贵人)?(?:星座?|⭐|🌟)[:：]\s*(\S{2,4}座?)', full_text)
+    if not star_match:
+        stars = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", 
+                 "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座",
+                 "白羊", "金牛", "双子", "巨蟹", "狮子", "处女", 
+                 "天秤", "天蝎", "射手", "摩羯", "水瓶", "双鱼"]
+        for s in stars:
+            if s in full_text:
+                result["star"] = s if "座" in s else s + "座"
+                break
+    if star_match:
+        result["star"] = star_match.group(1).strip()
+    if not result["star"]:
+        result["star"] = "天秤座"  # 兜底
+    
+    # 8. 幸运时段
+    time_match = re.search(r'(?:幸运)?(?:时段?|时间?|⏰|🕐)[:：]\s*(.+?)(?:\n|$)', full_text)
+    if time_match:
+        result["time"] = time_match.group(1).strip()
+    else:
+        # 容错：找包含时间关键词的行
+        for line in lines:
+            if any(x in line for x in ['点', '时', '早', '午', '晚', '上', '下']):
+                if len(line.strip()) < 15:
+                    result["time"] = line.strip()
                     break
-        
-        # 方位
-        elif any(x in line for x in ['方位', '方向', '📍', '🧭']):
-            dirs = ["东方", "西方", "南方", "北方", "东南", "东北", "西南", "西北", "东", "南", "西", "北"]
-            for d in dirs:
-                if d in line:
-                    result["dir"] = d
-                    break
-        
-        # 数字
-        elif any(x in line for x in ['数字', '🔢', '💰']) and any(c.isdigit() for c in line):
-            import re
-            nums = re.findall(r'\d+', line)
-            if len(nums) >= 3:
-                result["nums"] = f"{nums[0]}, {nums[1]}, {nums[2]}"
-        
-        # 星座
-        elif any(x in line for x in ['星座', '贵人', '⭐', '🌟']):
-            stars = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", 
-                     "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"]
-            for s in stars:
-                if s in line:
-                    result["star"] = s
-                    break
-        
-        # 时段
-        elif any(x in line for x in ['时段', '时间', '⏰', '🕐']):
-            result["time"] = line
+    if not result["time"]:
+        result["time"] = "上午9-11点"  # 兜底
     
     return result
 
