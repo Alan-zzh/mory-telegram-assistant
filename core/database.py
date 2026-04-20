@@ -177,6 +177,14 @@ class DB:
                 UNIQUE(chat_id, message_id)
             )""")
 
+            # 【v4.3.0新增】用户勋章表
+            c.execute("""CREATE TABLE IF NOT EXISTS user_badges (
+                uid INTEGER,
+                badge_id TEXT,
+                earned_at INTEGER,
+                PRIMARY KEY (uid, badge_id)
+            )""")
+
             # ── 兼容性迁移：旧数据库缺少的列自动补齐 ──────────────────
             try:
                 self.conn.execute("SELECT replied FROM reply_tracking LIMIT 0")
@@ -860,6 +868,52 @@ class DB:
             "today_posts": today_posts,
             "avg_views": avg_views
         }
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 【v4.3.0新增】活跃勋章系统
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def earn_badge(self, uid: int, badge_id: str) -> bool:
+        """
+        授予用户勋章（已拥有则忽略）
+        
+        Args:
+            uid: 用户ID
+            badge_id: 勋章ID
+        
+        Returns:
+            True表示新获得勋章，False表示已有
+        """
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("SELECT 1 FROM user_badges WHERE uid=? AND badge_id=?", (uid, badge_id))
+            if c.fetchone():
+                return False  # 已有
+            c.execute("INSERT INTO user_badges VALUES (?,?,?)", (uid, badge_id, int(time.time())))
+            self.conn.commit()
+            logger.info(f"🏅 授予勋章: uid={uid} badge={badge_id}")
+            return True
+
+    def get_user_badges(self, uid: int) -> list:
+        """获取用户所有勋章"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("SELECT badge_id, earned_at FROM user_badges WHERE uid=? ORDER BY earned_at DESC", (uid,))
+            return c.fetchall()
+
+    def get_all_badges_leaderboard(self, limit: int = 10) -> list:
+        """获取拥有最多勋章的用户排行榜"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""
+                SELECT u.uid, u.name, COUNT(b.badge_id) as badge_count
+                FROM users u
+                LEFT JOIN user_badges b ON u.uid = b.uid
+                GROUP BY u.uid
+                ORDER BY badge_count DESC
+                LIMIT ?
+            """, (limit,))
+            return c.fetchall()
 
 
 

@@ -407,11 +407,11 @@ bot.setup_middleware(ReplySnifferMiddleware(db))
 
 # ════════════════════════ 消息处理器 ══════════════════════════════════
 
-# ── 图片打码 ──────────────────────────────────────────────────────────
+# ── 图片处理（打码+识图）───────────────────────────────────────────────
 @bot.message_handler(content_types=["photo"])
 def on_photo(m):
     try:
-        handle_photo(bot, m, CONFIG)
+        handle_photo(bot, m, CONFIG, ai)
     except Exception as e:
         logger.error(f"图片处理异常：{e}")
 

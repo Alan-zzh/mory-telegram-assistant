@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  mory:
+    build: .
+    container_name: mory-assistant
+    restart: unless-stopped
+    
+    # 环境变量（从.env文件读取）
+    env_file:
+      - .env
+    
+    # 持久化数据卷
+    volumes:
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+      - ./mory.db:/app/mory.db
+    
+    # 时区设置
+    environment:
+      - TZ=Asia/Shanghai
+    
+    # 网络模式
+    network_mode: bridge
+    
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('https://api.telegram.org')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

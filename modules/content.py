@@ -28,6 +28,7 @@
 
 import random
 import logging
+import time
 import requests
 from io import BytesIO
 from datetime import datetime, timezone, timedelta
@@ -252,47 +253,65 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
     return False
 
 
-# ─────────────────────── 图片打码推送 ─────────────────────────────────
-def handle_photo(bot, m, config: dict):
-    """老板发图片→自动打水印→推群"""
-    if m.from_user.id != config["ADMIN_ID"]:
+# ─────────────────────── 图片处理（打码+识图） ─────────────────────────────
+def handle_photo(bot, m, config: dict, ai=None):
+    """
+    【v4.3.0重构】图片处理：
+    - 管理员发图片 → 打码推群
+    - 普通用户发图片 → AI识图撩人回复
+    """
+    uid = m.from_user.id
+    is_admin = uid == config["ADMIN_ID"]
+    
+    # 获取图片数据（通用）
+    try:
+        file_info = bot.get_file(m.photo[-1].file_id)
+        try:
+            img_bytes = bot.download_file(file_info.file_path)
+        except Exception:
+            img_bytes = requests.get(
+                f"https://api.telegram.org/file/bot{config['TOKEN']}/{file_info.file_path}"
+            ).content
+    except Exception as e:
+        logger.error(f"图片下载失败：{e}")
         return
+    
+    # 管理员：打码推群
+    if is_admin:
+        _handle_admin_photo(bot, m, config, img_bytes)
+        return
+    
+    # 普通用户：AI识图撩人回复
+    if ai and config.get("ENABLE_VISION_REPLY", True):
+        _handle_user_photo_vision(bot, m, config, img_bytes, ai)
+
+
+def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes):
+    """管理员图片 → 打码推群"""
     gid = config.get("GROUP_ID", 0)
     if gid == 0:
         return
 
     try:
         from PIL import Image, ImageDraw, ImageFont
-        file_info = bot.get_file(m.photo[-1].file_id)
-        # 用 telebot 内置下载方法，避免 token 暴露在 URL 中
-        try:
-            img_bytes = bot.download_file(file_info.file_path)
-        except Exception:
-            # 降级：旧版兼容（某些 telebot 版本不支持 download_file）
-            img_bytes = requests.get(
-                f"https://api.telegram.org/file/bot{config['TOKEN']}/{file_info.file_path}"
-            ).content
         img = Image.open(BytesIO(img_bytes)).convert("RGBA")
 
         # 半透明水印层
         overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
-        # 【v4.0 修复】字体加载添加多级兜底，防止跨平台崩溃
+        
+        # 字体加载多级兜底
         try:
-            # 优先用中文字体（Linux）
             font = ImageFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
                                       int(img.width / 15))
         except OSError:
             try:
-                # 尝试 Linux 常见字体
                 font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                                           int(img.width / 15))
             except OSError:
                 try:
-                    # 尝试 Windows 常见字体
                     font = ImageFont.truetype("arial.ttf", int(img.width / 15))
                 except OSError:
-                    logger.warning("⚠️ 实体字体加载失败，强制使用内存默认字体 (打码样式可能较简陋)")
                     font = ImageFont.load_default()
 
         text = "🔒 订阅解锁完整版 @MorychannelBot"
@@ -317,9 +336,166 @@ def handle_photo(bot, m, config: dict):
         mory_bot.reply_and_track(m, f"⚠️ 图像处理失败：{str(e)[:60]}")
 
 
+def _handle_user_photo_vision(bot, m, config: dict, img_bytes: bytes, ai):
+    """
+    【v4.3.0新增】用户图片 → AI识图撩人回复
+    
+    让Mory能"看懂"用户发的照片，并给出走心的撩人评论
+    """
+    from core.ai_engine import analyze_image
+    
+    uid = m.from_user.id
+    uname = m.from_user.first_name or "哥哥"
+    cid = m.chat.id
+    
+    # 随机概率触发（避免每张图都分析，节省token）
+    if random.random() > config.get("VISION_REPLY_RATE", 0.3):
+        logger.debug(f"👁️ 图片识图随机跳过: uid={uid}")
+        return
+    
+    # AI识图prompt
+    prompt = f"""你是Mory老板，一个可爱又有点小色色的闺蜜。
+
+用户「{uname}」在群里发了一张照片，请用傲娇又撩人的语气评价这张照片。
+
+要求：
+1. 30-60字，像闺蜜私聊一样自然
+2. 根据照片内容具体评价（不要泛泛而谈）
+3. 可以调侃、撩人、吃醋、羡慕等情绪
+4. 结尾要有emoji
+5. 绝对不要提"AI"、"识别"、"分析"等字眼
+6. 不要重复相同的开头
+
+【图片】：用户发的照片"""
+    
+    try:
+        # 调用AI识图
+        analysis = analyze_image(img_bytes, prompt, config)
+        
+        if analysis and len(analysis) > 5:
+            # 根据回复长度计算typing延迟
+            from core.ai_engine import calc_typing_delay
+            delay = calc_typing_delay(analysis)
+            
+            # 显示typing状态
+            bot.send_chat_action(cid, "typing")
+            time.sleep(delay)
+            
+            # 发送AI回复
+            bot.reply_to(m, analysis)
+            logger.info(f"👁️ AI识图回复成功: uid={uid}")
+        else:
+            logger.debug(f"👁️ AI识图返回为空，跳过")
+            
+    except Exception as e:
+        logger.error(f"👁️ AI识图失败: {e}")
+
+
 # ─────────────────────── 生物钟警告 ──────────────────────────────────
 def is_late_night() -> bool:
     """凌晨0-5点（强制使用北京时间，避免VPS时区偏差）"""
     cst = timezone(timedelta(hours=8))
     h = datetime.now(cst).hour
     return 0 <= h < 5
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 【v4.3.0新增】活跃勋章系统
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 勋章定义
+BADGES = {
+    # 活跃类勋章
+    "early_bird": {"name": "早起鸟", "emoji": "🐦", "desc": "每天8点前发消息"},
+    "night_owl": {"name": "夜猫子", "emoji": "🦉", "desc": "每天23点后发消息"},
+    "social_butterfly": {"name": "社牛", "emoji": "🦋", "desc": "群消息超过100条"},
+    "chatty_cathy": {"name": "话痨", "emoji": "💬", "desc": "单日消息超过50条"},
+    
+    # 互动类勋章
+    "first_fan": {"name": "铁粉", "emoji": "❤️", "desc": "连续7天活跃"},
+    "super_fan": {"name": "超级铁粉", "emoji": "💖", "desc": "连续30天活跃"},
+    "og_member": {"name": "OG会员", "emoji": "👑", "desc": "加入超过30天"},
+    
+    # 特殊类勋章
+    "treasure_hunter": {"name": "寻宝达人", "emoji": "💎", "desc": "碎片寻宝满7天"},
+    "tarot_master": {"name": "塔罗师", "emoji": "🔮", "desc": "查看运势超过10次"},
+    "lucky_star": {"name": "幸运星", "emoji": "⭐", "desc": "被随机点名3次"},
+    
+    # 消费类勋章
+    "early_adopter": {"name": "尝鲜客", "emoji": "🚀", "desc": "首日体验会员"},
+    "loyal_customer": {"name": "老会员", "emoji": "💎", "desc": "连续付费超过3个月"},
+}
+
+
+def check_and_award_badges(uid: int, db, msg_count_today: int = 0) -> list:
+    """
+    【v4.3.0新增】检查并授予用户勋章
+    
+    Args:
+        uid: 用户ID
+        db: 数据库管理器
+        msg_count_today: 今日消息数（可选）
+    
+    Returns:
+        新获得的勋章列表（用于播报）
+    """
+    new_badges = []
+    now = datetime.now(_CST)
+    hour = now.hour
+    
+    # 早起鸟：8点前发消息
+    if hour < 8:
+        if db.earn_badge(uid, "early_bird"):
+            new_badges.append("early_bird")
+    
+    # 夜猫子：23点后发消息
+    if hour >= 23:
+        if db.earn_badge(uid, "night_owl"):
+            new_badges.append("night_owl")
+    
+    # 话痨：单日消息超过50条
+    if msg_count_today > 50:
+        if db.earn_badge(uid, "chatty_cathy"):
+            new_badges.append("chatty_cathy")
+    
+    # 社牛：群消息超过100条
+    if msg_count_today > 100:
+        if db.earn_badge(uid, "social_butterfly"):
+            new_badges.append("social_butterfly")
+    
+    return new_badges
+
+
+def format_badges_display(badges: list) -> str:
+    """格式化勋章展示"""
+    if not badges:
+        return ""
+    
+    lines = ["🏅 你的勋章墙："]
+    for badge_id, earned_at in badges:
+        badge = BADGES.get(badge_id, {})
+        emoji = badge.get("emoji", "🏅")
+        name = badge.get("name", badge_id)
+        lines.append(f"  {emoji} {name}")
+    
+    return "\n".join(lines)
+
+
+def get_badge_summary_text(db, uid: int) -> str:
+    """获取用户勋章汇总（用于/我的等级等命令）"""
+    badges = db.get_user_badges(uid)
+    
+    if not badges:
+        return "🏅 你还没有获得任何勋章，继续活跃吧！"
+    
+    lines = ["🏅 你的勋章墙："]
+    for badge_id, earned_at in badges[:5]:  # 最多显示5个
+        badge = BADGES.get(badge_id, {})
+        emoji = badge.get("emoji", "🏅")
+        name = badge.get("name", badge_id)
+        lines.append(f"  {emoji} {name}")
+    
+    if len(badges) > 5:
+        lines.append(f"\n...还有 {len(badges) - 5} 个勋章，发送「我的勋章」查看全部")
+    
+    return "\n".join(lines)

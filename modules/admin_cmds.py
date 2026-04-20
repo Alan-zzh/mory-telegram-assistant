@@ -954,6 +954,31 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             )
         return True
 
+    # ── 【v4.3.0新增】热更新配置 ─────────────────────────────────────
+    if msg.strip() in ("热更新", "重载配置", "reload", "/reload"):
+        try:
+            # 重新读取config.json文件
+            import os
+            config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
+            with open(config_path, "r", encoding="utf-8") as f:
+                new_config = json.load(f)
+            
+            # 更新config（保留内存中已修改的动态字段）
+            preserved_keys = ["CURRENT_MODEL_INDEX", "_LAST_LEAK_WEEK", "_POOL_INDICES"]
+            for key in preserved_keys:
+                if key in config:
+                    new_config[key] = config[key]
+            
+            config.clear()
+            config.update(new_config)
+            
+            mory_bot.reply_and_track(m, "✅ 配置热更新成功！\n\n📝 以下配置已重新加载：\n• 人设和知识库\n• 回复概率\n• 开关设置\n• 模型池配置\n\n💡 动态状态已保留，无需重启。")
+            logger.info("📝 管理员触发配置热更新")
+        except Exception as e:
+            mory_bot.reply_and_track(m, f"⚠️ 热更新失败：{e}")
+            logger.error(f"热更新失败：{e}")
+        return True
+
     return False
 
 

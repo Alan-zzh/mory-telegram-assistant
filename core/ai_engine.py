@@ -633,3 +633,97 @@ def calc_typing_delay(text: str) -> float:
     cn = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
     en = len([w for w in text.split() if any(c.isalpha() for c in w)])
     return max(2.0, min(12.0, cn * 0.5 + en * 0.3))
+
+
+# ─────────────────────── AI图片识图分析 ─────────────────────────────────
+def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
+    """
+    【v4.3.0新增】AI识图分析 - 让Mory能"看懂"群友发的图片
+    
+    Args:
+        image_bytes: 图片二进制数据
+        prompt: 分析提示词
+        config: 配置字典
+    
+    Returns:
+        AI对图片的分析回复，或None（失败时）
+    """
+    import base64
+    import json
+    
+    # 获取vision池的模型
+    pools = config.get("MODEL_POOLS", {})
+    vision_pool = pools.get("vision", [])
+    
+    # 如果没有vision池，尝试用llm池（部分模型也支持多模态）
+    if not vision_pool:
+        llm_pool = pools.get("llm", [])
+        # 筛选支持vision的LLM模型
+        for m in llm_pool:
+            name = m.get("name", "").lower()
+            if any(x in name for x in ["vl", "vision", "qwen", "omni", "qwen2"]):
+                vision_pool.append(m)
+                break
+    
+    if not vision_pool:
+        logger.warning("⚠️ 没有可用的视觉模型，跳过图片分析")
+        return None
+    
+    # 选择第一个可用的vision模型
+    model_info = vision_pool[0]
+    model_name = model_info.get("name", "")
+    api_key = config.get("DASHSCOPE_KEY", "")
+    
+    if not api_key:
+        logger.warning("⚠️ DASHSCOPE_KEY未配置，跳过图片分析")
+        return None
+    
+    # 构建图片base64
+    img_base64 = base64.b64encode(image_bytes).decode("utf-8")
+    
+    # 通义千问视觉接口（使用chat completions格式）
+    # 注意：不同模型的接口格式可能不同，这里用通用格式
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    # 构造多模态消息
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}},
+                {"type": "text", "text": prompt}
+            ]
+        }
+    ]
+    
+    # 通义千问API地址
+    base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    
+    payload = {
+        "model": model_name,
+        "messages": messages,
+        "max_tokens": 300
+    }
+    
+    try:
+        resp = requests.post(
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            if "choices" in data and data["choices"]:
+                content = data["choices"][0]["message"].get("content", "")
+                return content
+        else:
+            logger.warning(f"⚠️ 图片分析API失败: {resp.status_code} - {resp.text[:200]}")
+    except Exception as e:
+        logger.error(f"❌ 图片分析异常: {e}")
+    
+    return None
