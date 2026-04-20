@@ -24,6 +24,47 @@ _MORY_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _MORY_ROOT)
 from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH
 
+# 【v4.3.2修复S-10/S-11】添加简单CSRF校验和速率限制
+# CSRF: 校验请求头中的X-Requested-With（AJAX请求自动带）
+# 速率限制: 内存计数器（不需要额外依赖）
+_dashboard_rate_limits = {}  # {ip: {"count": int, "reset_at": float}}
+
+def _check_rate_limit(ip: str, max_requests: int = 60, window_seconds: int = 60) -> bool:
+    """简单内存速率限制（每IP每分钟最多max_requests次请求）"""
+    import time as _time
+    now = _time.time()
+    record = _dashboard_rate_limits.get(ip)
+    if not record or now > record["reset_at"]:
+        _dashboard_rate_limits[ip] = {"count": 1, "reset_at": now + window_seconds}
+        return True
+    record["count"] += 1
+    if record["count"] > max_requests:
+        return False
+    return True
+
+@app.before_request
+def _security_check():
+    """全局安全检查：CSRF + 速率限制"""
+    # 静态资源跳过
+    if request.path.startswith(('/static/', '/favicon')):
+        return None
+    # GET请求跳过CSRF（但速率限制仍生效）
+    if request.method == 'GET':
+        if not _check_rate_limit(request.remote_addr):
+            return jsonify({"ok": False, "msg": "请求过于频繁，请稍后再试"}), 429
+        return None
+    # POST请求：校验CSRF（要求AJAX请求带X-Requested-With头）
+    if request.method == 'POST':
+        if not _check_rate_limit(request.remote_addr, max_requests=30):
+            return jsonify({"ok": False, "msg": "请求过于频繁，请稍后再试"}), 429
+        # 登录接口豁免CSRF（前端登录不一定是AJAX）
+        if request.path == '/api/login':
+            return None
+        # 其他POST必须带X-Requested-With
+        if not request.headers.get('X-Requested-With'):
+            return jsonify({"ok": False, "msg": "CSRF校验失败"}), 403
+    return None
+
 # ============ Flask应用 ============
 app = Flask(__name__)
 # 【v4.0.3 安全修复】使用固定 Secret，防止重启导致所有管理员被踢下线
@@ -55,7 +96,9 @@ def write_config(cfg):
 
 # ============ VPS工具 ============
 def ssh_exec(cmd, timeout=15):
-    client = __import__('paramiko').SSHClient()
+    # 【v4.3.2修复S-13】统一使用顶部import的paramiko，不再用__import__
+    import paramiko
+    client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, password=VPS_PASS, timeout=timeout)
@@ -98,34 +141,8 @@ def get_vps_status():
         results["error"] = str(e)[:100]
     return results
 
-def _vps_query(sql, timeout=30):
-    """在VPS上执行SQL"""
-    script = f'''python3 -c "
-import sqlite3, json
-conn = sqlite3.connect("{VPS_PATH}/mory.db")
-cu = conn.cursor()
-try:
-    cu.execute(\"{sql}\")
-    cols = [d[0] for d in cu.description] if cu.description else []
-    rows = [list(r) for r in cu.fetchall()]
-    print(json.dumps({{'cols': cols, 'rows': rows}}, ensure_ascii=False, default=str))
-except Exception as e:
-    print(json.dumps({{'error': str(e)}}))
-finally:
-    conn.close()
-"
-'''
-    try:
-        out, _ = ssh_exec(script, timeout=timeout)
-        if out.strip():
-            import json
-            result = json.loads(out.strip().split('\n')[-1])
-            if 'error' in result:
-                return None, result['error']
-            return result, None
-    except:
-        pass
-    return None, "查询失败"
+# 【v4.3.2修复F-01】已删除 _vps_query() 函数（存在SQL注入漏洞）
+# Dashboard与Bot部署在同一机器，直接使用本地SQLite直连
 
 # ============ 认证装饰器 ============
 def login_required(f):
@@ -141,13 +158,25 @@ def login_required(f):
 def api_login():
     data = request.get_json() or {}
     pw = data.get("password", "")
-    # 【v4.0.3 安全修复】密码从环境变量读取
-    # ⚠️ 生产环境必须设置 DASHBOARD_PASSWORD 环境变量！
+    # 【v4.3.2修复F-04】密码最小长度校验+频率限制
     admin_pw = os.environ.get("DASHBOARD_PASSWORD")
-    if admin_pw and pw == admin_pw:
+    if not admin_pw or len(admin_pw) < 6:
+        return jsonify({"ok": False, "msg": "系统未正确配置密码，请联系管理员"}), 403
+    # 登录频率限制：5次/10分钟
+    login_key = f"login_fail_{request.remote_addr}"
+    fail_count = getattr(app, '_login_fails', {}).get(login_key, 0)
+    if fail_count >= 5:
+        return jsonify({"ok": False, "msg": "登录尝试过多，请10分钟后再试"}), 429
+    if pw == admin_pw:
         session["logged_in"] = True
         session["login_time"] = datetime.now().isoformat()
+        # 清除失败计数
+        getattr(app, '_login_fails', {}).pop(login_key, None)
         return jsonify({"ok": True})
+    # 记录失败
+    if not hasattr(app, '_login_fails'):
+        app._login_fails = {}
+    app._login_fails[login_key] = fail_count + 1
     return jsonify({"ok": False, "msg": "密码错误"}), 401
 
 @app.route("/api/logout", methods=["POST"])

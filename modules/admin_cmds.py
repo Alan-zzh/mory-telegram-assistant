@@ -485,7 +485,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
                        "/optimize_cache", "/oc",
                        "/optimize_reset", "/or")):
         from modules.optimizer_admin import handle_optimize_cmd
-        handle_optimize_cmd(bot, m, ai, config)
+        handle_optimize_cmd(bot, mory_bot, m, ai, config)  # 【v4.3.2修复S-04】传入mory_bot
         return True
 
     # ── 黑名单管理 ───────────────────────────────────────────────────────

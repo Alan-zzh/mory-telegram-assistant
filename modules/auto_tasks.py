@@ -504,17 +504,17 @@ def _job_save_config(rm):
 
 
 def _job_channel_views(rm):
-    """【v4.2.3】更新群消息浏览量（每小时）"""
+    """【v4.2.3→v4.3.2】更新群消息浏览量（每天1次，避免429限流）"""
     try:
         from core.logging_util import get_logger
         logger = get_logger("auto_tasks")
         
-        # 获取最近24小时内的追踪消息
-        tracked = rm.db.get_channel_tracking(limit=50)
+        # 【v4.3.2修复S-01】降低频率：每小时只查5条最新消息（原50条），避免429
+        tracked = rm.db.get_channel_tracking(limit=5)
         
         for chat_id, msg_id, content_type, posted_at, current_views in tracked:
             try:
-                # 获取当前浏览量
+                # 尝试通过forward_message获取浏览量（频道消息才有浏览量）
                 msg_info = rm.bot.forward_message(
                     rm.config.get("ADMIN_ID", 0), 
                     chat_id, 
@@ -526,6 +526,11 @@ def _job_channel_views(rm):
                     if new_views > current_views:
                         rm.db.update_channel_views(chat_id, msg_id, new_views)
                         logger.info(f"📊 频道浏览量更新: chat={chat_id} msg={msg_id} views={new_views}")
+                # 删除转发消息，避免管理员聊天堆积
+                try:
+                    rm.bot.delete_message(rm.config.get("ADMIN_ID", 0), msg_info.message_id)
+                except:
+                    pass
             except Exception as e:
                 logger.debug(f"获取浏览量失败: chat={chat_id} msg={msg_id} err={e}")
         
@@ -623,12 +628,20 @@ def _job_daily_report(rm):
 # 塔罗缓存：同一人同一天结果固定（北京时间为准）
 # ═══════════════════════════════════════════════════════════════════════════
 _tarot_daily_cache: Dict[str, Dict] = {}  # {user_id_date: {...}}
+_tarot_cache_last_date: str = ""  # 【v4.3.2修复M-03】上次缓存日期，用于清理
 
 
 def _get_tarot_cache(uid: int, dt: datetime) -> Dict:
     """获取/生成某用户当日的塔罗运势（北京时间）"""
+    global _tarot_daily_cache, _tarot_cache_last_date
     cst_now = dt.astimezone(_CST)
     date_key = cst_now.strftime("%Y-%m-%d")
+    
+    # 【v4.3.2修复M-03】每天凌晨清理前一天的缓存
+    if date_key != _tarot_cache_last_date:
+        _tarot_daily_cache = {k: v for k, v in _tarot_daily_cache.items() if date_key in k}
+        _tarot_cache_last_date = date_key
+    
     cache_key = f"{uid}_{date_key}"
     
     if cache_key not in _tarot_daily_cache:
@@ -941,20 +954,16 @@ def _job_tarot_flirt(rm):
         except:
             pass
         
-        # 获取最近50条群消息，找出发言用户
+        # 获取最近活跃用户（替代不存在的get_chat_history）
         recent_users = {}
         try:
-            history = rm.bot.get_chat_history(gid, limit=50)
-            for msg in history:
-                if msg.from_user and msg.from_user.id != admin_id:
-                    uid = msg.from_user.id
-                    uname = msg.from_user.first_name or msg.from_user.username or "哥哥"
-                    if msg.text or msg.caption:
-                        text = msg.text or msg.caption
-                        if text and len(text) > 3 and len(text) < 200:
-                            recent_users[uid] = (uname, text)
+            ts_1h_ago = int(time.time()) - 3600
+            active_users = rm.db.get_active_users(ts_1h_ago)
+            for uid, uname, keywords in active_users[:20]:
+                if uid != admin_id:
+                    recent_users[uid] = (uname or "哥哥", keywords or "")
         except Exception as e:
-            logger.debug(f"获取群历史失败：{e}")
+            logger.debug(f"获取活跃用户失败：{e}")
             return
         
         if not recent_users:
@@ -1037,9 +1046,7 @@ seed={convert_seed}"""
                 rm.bot.send_message(gid, html_reply, parse_mode="HTML")
             logger.info(f"🎴 塔罗搭讪成功: @{uname}")
         except Exception as e:
-            logger.error(f"发送塔罗消息失败：{e}")
-        except Exception as e:
-            logger.error(f"塔罗搭讪失败：{e}")
+            logger.error(f"塔罗搭讪发送失败：{e}")
 
 
 def _do_backup(db_file: str):
@@ -1125,8 +1132,12 @@ def _start_with_legacy_loop(rm):
 def _legacy_task_loop(rm):
     """旧版 while True 循环（兼容备用）"""
     global _last_saved_model_idx
-    last_backup_hour = -1
-    last_cleanup_hour = -1
+    # 【v4.3.2修复S-14】改用时间戳差判断，不再用 % 运算
+    _last_backup_ts = 0
+    _last_cleanup_ts = 0
+    _last_reactivate_ts = 0
+    _last_cart_ts = 0
+    _last_config_ts = 0
     
     while True:
         try:
@@ -1137,25 +1148,29 @@ def _legacy_task_loop(rm):
             _job_wakeup_check(rm)
             
             # 阅后即焚探测（每3分钟）
-            if ts % 180 < 60:
+            if ts - _last_cleanup_ts > 180:
                 _job_burn_probe(rm)
+                _last_cleanup_ts = ts
             
-            # 每小时任务
-            if now.hour != last_backup_hour:
+            # 每小时任务（用时间戳差判断）
+            if ts - _last_backup_ts > 3600:
                 _job_backup(rm)
-                last_backup_hour = now.hour
+                _last_backup_ts = ts
             
-            if now.hour != last_cleanup_hour:
+            if ts - _last_cleanup_ts > 3600:
                 _job_ttl_cleanup(rm)
-                last_cleanup_hour = now.hour
             
-            # 醋意挽回、购物车挽回、背刺泄密（每小时随机触发）
-            if now.minute == 5:
+            if ts - _last_reactivate_ts > 3600:
                 _job_reactivate(rm)
-            if now.minute == 10:
+                _last_reactivate_ts = ts
+            
+            if ts - _last_cart_ts > 3600:
                 _job_cart_recovery(rm)
-            if now.minute == 30:
+                _last_cart_ts = ts
+            
+            if ts - _last_config_ts > 3600:
                 _job_save_config(rm)
+                _last_config_ts = ts
             
             # 背刺泄密（每周三）
             if now.weekday() == 2 and now.hour == 0 and now.minute == 0:

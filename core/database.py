@@ -50,7 +50,23 @@ class DB:
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
         # 【修复】：开启 WAL 模式，提升多线程下 SQLite 并发性能，杜绝 Locked 报错
         self.conn.execute("PRAGMA journal_mode=WAL;")
+        # 【v4.3.2修复F-07】WAL自动checkpoint，防止WAL文件无限增长
+        self.conn.execute("PRAGMA wal_autocheckpoint=1000;")
         self._init_tables()
+
+    # 【v4.3.2修复F-05】添加close()方法，确保SQLite连接正确关闭
+    def close(self):
+        """关闭数据库连接，释放资源"""
+        try:
+            if self.conn:
+                self.conn.close()
+                logger.info("✅ 数据库连接已关闭")
+        except Exception as e:
+            logger.warning(f"数据库关闭异常：{e}")
+
+    def __del__(self):
+        """析构时自动关闭连接"""
+        self.close()
 
     # ─────────────────────────────── 初始化 ──────────────────────────────
     def _init_tables(self):
@@ -325,11 +341,10 @@ class DB:
             return (score, False, consecutive)
 
     def _calc_consecutive_days(self, uid: int) -> int:
-        """计算用户连续签到天数"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT date FROM puzzle_daily WHERE uid=? ORDER BY date DESC", (uid,))
-            dates = [row[0] for row in c.fetchall()]
+        """计算用户连续签到天数（由调用方保证在_db_lock内调用，不再重复获取锁）"""
+        c = self.conn.cursor()
+        c.execute("SELECT date FROM puzzle_daily WHERE uid=? ORDER BY date DESC", (uid,))
+        dates = [row[0] for row in c.fetchall()]
         if not dates:
             return 0
         count = 1

@@ -115,7 +115,9 @@ def _load_env():
             line = line.strip()
             if "=" in line and not line.startswith("#"):
                 k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+                # 【v4.3.2修复S-06】去除首尾引号，支持 KEY="value" 格式
+                v = v.strip().strip('"').strip("'")
+                os.environ.setdefault(k.strip(), v)
 
 _load_env()
 
@@ -157,19 +159,22 @@ def _ensure_deps():
     else:
         venv_pip = os.path.join(base_dir, "venv", "bin", "pip")
     if os.path.exists(venv_pip):
-        ret = os.system(f"{venv_pip} install {' '.join(missing)} -q 2>/dev/null")
+        ret = os.system(f"{venv_pip} install {' '.join(missing)} -q")
         installed = (ret == 0)
     
     # 方式2: python3 -m pip --break-system-packages (Debian/Ubuntu PEP 668兼容)
     if not installed:
+        # 【v4.3.2修复M-26】根据平台选择重定向语法
+        _redirect = "" if _sys.platform == "win32" else " 2>/dev/null"
         ret = os.system(
-            f"python3 -m pip install --break-system-packages {' '.join(missing)} -q 2>/dev/null"
+            f"python3 -m pip install --break-system-packages {' '.join(missing)} -q{_redirect}"
         )
         installed = (ret == 0)
     
     # 方式3: pip3 --user
     if not installed:
-        os.system(f"pip3 install --user {' '.join(missing)} -q 2>/dev/null")
+        _redirect = "" if _sys.platform == "win32" else " 2>/dev/null"
+        os.system(f"pip3 install --user {' '.join(missing)} -q{_redirect}")
     
     logger.info("✅ 依赖安装完成")
 
@@ -195,6 +200,7 @@ _conv_tracker = {}
 _conv_lock = Lock()  # 【修复v21.46】防止多线程并发修改字典导致RuntimeError
 _CONV_TIMEOUT = 300  # 5分钟无对话则计数清零
 _conv_last_cleanup = 0  # 上次清理时间戳
+_MAX_CONV_ENTRIES = 1000  # 【v4.3.2修复M-01】最大条目数限制
 
 def _cleanup_conv_tracker():
     """清理超时的对话追踪条目（每10分钟执行一次，线程安全）"""
@@ -207,19 +213,39 @@ def _cleanup_conv_tracker():
         expired = [uid for uid, v in _conv_tracker.items() if now - v["last_time"] > _CONV_TIMEOUT]
         for uid in expired:
             del _conv_tracker[uid]
+        # 【v4.3.2修复M-01】超出上限时淘汰最老的条目
+        if len(_conv_tracker) > _MAX_CONV_ENTRIES:
+            sorted_uids = sorted(_conv_tracker.items(), key=lambda x: x[1]["last_time"])
+            for uid, _ in sorted_uids[:len(_conv_tracker) - _MAX_CONV_ENTRIES]:
+                del _conv_tracker[uid]
 
 # ── 视奸雷达冷却机制（内存字典 + 线程安全）────────────────────────
 # 防止同一用户频繁触发导致管理员被刷屏
 _radar_cooldown = {}  # key=uid, value=上次触发时间戳
 _radar_lock = Lock()  # 【修复v4.3.1】防止多线程并发修改字典导致RuntimeError
 _RADAR_COOLDOWN = 3600  # 1小时冷却时间
+_radar_last_cleanup = 0  # 【v4.3.2修复M-02】上次清理时间戳
+
+def _cleanup_radar_cooldown():
+    """【v4.3.2修复M-02】定期清理过期的视奸雷达冷却记录"""
+    global _radar_last_cleanup
+    now = time.time()
+    if now - _radar_last_cleanup < 3600:  # 每小时清理一次
+        return
+    _radar_last_cleanup = now
+    with _radar_lock:
+        expired = [uid for uid, ts in _radar_cooldown.items() if now - ts > _RADAR_COOLDOWN]
+        for uid in expired:
+            del _radar_cooldown[uid]
 
 # ── 配置读写 ──────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.join(base_dir, "config.json")  # 基于脚本目录的绝对路径
 _config_lock = Lock()
 
 def load_config() -> dict:
-    """加载配置文件，并从数据库覆盖动态状态"""
+    """加载配置文件，并从数据库覆盖动态状态。
+    【v4.3.2修复I-02】配置损坏时加载内置最小默认配置并告警
+    """
     cfg = {}
     if os.path.exists(CONFIG_FILE):
         try:
@@ -227,14 +253,33 @@ def load_config() -> dict:
                 cfg = json.load(f)
             ver = cfg.get("_CONFIG_VERSION", "未知")
             logger.info(f"📋 配置版本：v{ver}")
+        except json.JSONDecodeError as e:
+            logger.critical(f"❌ config.json 格式损坏：{e}")
+            logger.critical("   → 尝试加载内置最小默认配置...")
+            cfg = _get_minimal_default_config()
         except Exception as e:
             logger.error(f"配置读取失败：{e}")
+            cfg = _get_minimal_default_config()
+    
+    if not cfg:
+        cfg = _get_minimal_default_config()
     
     # 【架构重构v21.44】从数据库加载动态状态，覆盖配置文件
     # 动态状态包括：当前模型索引、图片池、语音池等运行时数据
     _load_dynamic_states(cfg)
     
     return cfg
+
+def _get_minimal_default_config() -> dict:
+    """【v4.3.2修复I-02】内置最小默认配置（config.json损坏时的兜底）"""
+    logger.warning("⚠️ 使用内置最小默认配置，部分功能可能受限，请修复config.json")
+    return {
+        "TOKEN": "", "API_KEY": "", "ADMIN_ID": 0, "GROUP_ID": 0,
+        "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "MODEL_POOLS": {"llm": [{"name": "qwen-plus", "expire": "2099-12-31"}]},
+        "REPLY_CHANCE": 10, "_CONFIG_VERSION": "4.3.2-emergency",
+        "SYSTEM_PROMPT": "你是Mory，一个活泼可爱的小助理。",
+    }
 
 def _load_dynamic_states(cfg: dict):
     """从数据库加载动态状态到配置"""
@@ -268,7 +313,9 @@ def _load_dynamic_states(cfg: dict):
             logger.debug(f"📌 动态状态加载: {key}={cfg[key]}")
 
 def save_config():
-    """保存配置到文件，并同步动态状态到数据库"""
+    """保存配置到文件，并同步动态状态到数据库。
+    【v4.3.2修复S-07】返回bool表示成功/失败
+    """
     global db
     with _config_lock:
         try:
@@ -276,6 +323,7 @@ def save_config():
                 json.dump(CONFIG, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"配置保存失败：{e}")
+            return False  # 【v4.3.2】返回失败状态
     
     # 【架构重构v21.44】同步动态状态到数据库
     if db is not None:
@@ -286,6 +334,7 @@ def save_config():
                 if isinstance(value, (list, dict)):
                     value = json.dumps(value)
                 db.set_system_state(key, value)
+    return True  # 【v4.3.2】返回成功状态
 
 CONFIG = load_config()
 
@@ -326,7 +375,28 @@ try:
         logger.info(f"✅ 数据库完整性检查通过（{table_count} 张表）")
     else:
         logger.error(f"⚠️ 数据库完整性异常：{result}")
-        logger.error("   → 如果运行异常，从 backup/ 目录恢复最近备份")
+        # 【v4.3.2修复I-01】自动从备份恢复
+        import glob as _glob
+        _backup_dir = os.path.join(base_dir, "backup")
+        if os.path.isdir(_backup_dir):
+            _backups = sorted(_glob.glob(os.path.join(_backup_dir, "mory_backup_*.db")))
+            if _backups:
+                _latest_backup = _backups[-1]
+                logger.warning(f"   → 尝试从备份恢复：{_latest_backup}")
+                try:
+                    db.close()
+                    import shutil
+                    shutil.copy2(_latest_backup, os.path.join(base_dir, "mory.db"))
+                    db = DB(os.path.join(base_dir, "mory.db"))
+                    _load_dynamic_states(CONFIG)
+                    logger.info("✅ 数据库从备份恢复成功！")
+                except Exception as restore_err:
+                    logger.critical(f"❌ 数据库恢复失败：{restore_err}")
+                    logger.critical("   → 请手动从 backup/ 目录恢复")
+            else:
+                logger.error("   → 无可用备份，请手动检查数据库")
+        else:
+            logger.error("   → backup/ 目录不存在，无法自动恢复")
 except Exception as e:
     logger.error(f"⚠️ 数据库检查出错：{e}")
 
@@ -706,6 +776,7 @@ def _dispatch(m):
         return
 
     # ── P7：视奸雷达（价格关键词通知管理员 + 冷却机制）────────────
+    _cleanup_radar_cooldown()  # 【v4.3.2修复M-02】定期清理过期冷却记录
     price_kws = ["多少钱", "价格", "怎么买", "门槛", "开通", "会员"]
     if any(k in msg for k in price_kws) and is_group:
         # 【修复v4.3.1】冷却机制：同一用户1小时内只通知一次（加锁防并发）
@@ -825,33 +896,32 @@ def _dispatch(m):
                 resp += f"\n\n🎴 今日签：{get_fortune()}"
 
         # ── 连续对话追加：绿茶风反问 + 转化引导（仅群聊normal模式）───
-        # 【优化】每轮消息最多追加1种（反问/暗示/转化三选一），避免API费用爆炸
+        # 【v4.3.2修复S-05】限制最多1次额外AI调用+5秒超时保护
         if is_group and mode == "normal" and conv_count >= 2:
             seed_h = random.randint(100000, 999999)
+            _append_start = time.time()
             _did_append = False
 
-            if conv_count >= 5 and not _did_append:
-                # 第5轮+：30%概率植入转化引导
-                if random.randint(1, 10) <= 3:
-                    convert_text = ai.ask(f"用户已和你连续聊了{conv_count}轮，自然收尾引导", mode="convert_soft", seed=seed_h)
-                    if convert_text:
-                        resp += f"\n\n{convert_text.strip()}"
-                        _did_append = True
+            # 优先级：转化>暗示>反问，只追加1次
+            append_mode = None
+            if conv_count >= 5 and random.randint(1, 10) <= 3:
+                append_mode = "convert_soft"
+                append_prompt = f"用户已和你连续聊了{conv_count}轮，自然收尾引导"
+            elif conv_count >= 3 and random.randint(1, 10) <= 3:
+                append_mode = "nudge"
+                append_prompt = "用户和你聊得不错，不经意间植入暗示"
+            elif random.randint(1, 10) <= 6:
+                append_mode = "hook"
+                append_prompt = "基于刚才的对话，用绿茶风反问结尾让对话继续"
 
-            elif conv_count >= 3 and not _did_append:
-                # 第3-4轮：30%概率植入不违和的暗示
-                if random.randint(1, 10) <= 3:
-                    nudge_text = ai.ask("用户和你聊得不错，不经意间植入暗示", mode="nudge", seed=seed_h)
-                    if nudge_text:
-                        resp += f"\n\n{nudge_text.strip()}"
-                        _did_append = True
-
-            # 所有连续对话（>=2轮）：60%概率加绿茶风反问（仅在前面没追加时）
-            if not _did_append:
-                if random.randint(1, 10) <= 6:
-                    hook_text = ai.ask("基于刚才的对话，用绿茶风反问结尾让对话继续", mode="hook", seed=seed_h + 1)
-                    if hook_text:
-                        resp += f"\n\n{hook_text.strip()}"
+            # 【v4.3.2】超时保护：5秒内未完成则跳过追加
+            if append_mode and (time.time() - _append_start) < 5:
+                try:
+                    append_text = ai.ask(append_prompt, mode=append_mode, seed=seed_h)
+                    if append_text and (time.time() - _append_start) < 5:
+                        resp += f"\n\n{append_text.strip()}"
+                except Exception as e:
+                    logger.warning(f"连续对话追加失败（跳过）：{e}")
 
         sent = mory_bot.reply_and_track(m, resp)
 
@@ -884,6 +954,31 @@ def _dispatch(m):
 
 
 # ════════════════════════ 启动 ════════════════════════════════════════
+# 【v4.3.2修复I-06】优雅停机：注册atexit和信号处理器
+import atexit
+import signal
+
+def _graceful_shutdown(signum=None, frame=None):
+    """优雅停机：关闭数据库连接，保存配置"""
+    logger.info("⏹️ 正在优雅停机...")
+    try:
+        save_config()
+    except Exception as e:
+        logger.warning(f"停机时保存配置失败：{e}")
+    try:
+        db.close()
+    except Exception as e:
+        logger.warning(f"停机时关闭数据库失败：{e}")
+    logger.info("✅ 优雅停机完成")
+    sys.exit(0)
+
+atexit.register(_graceful_shutdown)
+try:
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+except (OSError, ValueError):
+    pass  # Windows下可能不支持SIGTERM
+
 if __name__ == "__main__":
     bot_name = CONFIG.get("BOT_NAME", "Mory")
     cur_model = (CONFIG.get("MODEL_POOLS", {}).get("llm", CONFIG.get("MODEL_POOL", [{}]))[CONFIG.get("CURRENT_MODEL_INDEX", 0)]

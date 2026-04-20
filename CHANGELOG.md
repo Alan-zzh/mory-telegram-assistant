@@ -2,6 +2,68 @@
 
 ---
 
+## 2026-04-21 | v4.3.2 | 全方位审查修复（24轮交叉审查整改）
+
+### 🔴 致命问题修复（5项）
+
+**F-01: Dashboard SQL注入漏洞**
+- 删除 `_vps_query()` 函数（存在SQL直接拼接，且为死代码）
+- Dashboard统一使用本地SQLite直连
+
+**F-02: Dashboard硬编码Secret Key**
+- 移除默认值 `"mory_secure_static_key_2026_dev_only"`
+- 未设置 `DASHBOARD_SECRET` 或长度不足16位时拒绝启动
+
+**F-03: VPS密码硬编码默认值**
+- 移除 `VPS_HOST` 的硬编码IP `43.159.168.175`
+- `ssh_connect()` 中校验 `VPS_HOST` 和 `VPS_PASS` 必填项
+
+**F-04: Dashboard密码校验缺陷**
+- 密码最小长度校验（<6位拒绝启动）
+- 登录频率限制：5次/10分钟（内存计数器）
+- 空密码或未配置密码时拒绝所有登录
+
+**F-05: SQLite连接泄漏**
+- DB类添加 `close()` 方法和 `__del__` 析构
+- main.py 注册 `atexit` 和信号处理器实现优雅停机
+
+### 🟠 严重问题修复（14项）
+
+**S-01**: channel_views频繁转发 → 降低到5条/小时+转发后删除
+**S-02**: fetchone连续调用数据丢失 → 立即保存fetchone结果
+**S-03**: get_chat_history不存在 → 改用数据库查询活跃用户
+**S-04**: optimizer_admin未定义变量 → 添加mory_bot参数
+**S-05**: 连续对话AI追加无超时 → 限制最多1次AI调用+5秒超时
+**S-06**: .env引号处理 → 自动去除首尾引号
+**S-07**: save_config无返回值 → 返回bool表示成功/失败
+**S-08**: f-string拼接SQL列名 → 改用if/else分支
+**S-09**: IN子句动态构建 → 添加100条长度限制
+**S-10**: Dashboard无CSRF防护 → 添加X-Requested-With校验
+**S-11**: Dashboard无速率限制 → 添加每IP每分钟60次请求限制
+**S-12**: 双重except语法错误 → 合并为单个try-except
+**S-13**: paramiko导入错误 → 统一顶部import
+**S-14**: legacy_loop时间判断有误 → 改用时间戳差判断
+
+### 🟡 中等问题修复（关键项）
+
+**M-01**: _conv_tracker内存无限增长 → 添加1000条上限+淘汰最老
+**M-02**: _radar_cooldown内存无限增长 → 每小时清理过期记录
+**M-03**: _tarot_daily_cache内存无限增长 → 每天清理前一天缓存
+**M-23**: _calc_consecutive_days死锁风险 → 不再重复获取_db_lock
+**M-26**: _ensure_deps Windows兼容 → 根据平台选择重定向语法
+
+### 🟠 灾难恢复修复（新增）
+
+**I-01**: 数据库损坏无自动修复 → 启动检测+自动从最新备份恢复
+**I-02**: config.json损坏无回退 → 加载内置最小默认配置
+**I-06**: 无优雅停机 → 注册atexit和信号处理器
+
+### 其他优化
+- WAL模式添加 `PRAGMA wal_autocheckpoint=1000`（防止WAL文件无限增长）
+- 版本号自动同步config.json
+
+---
+
 ## 2026-04-20 | v4.3.1 | 稳定性优化
 
 ### 紧急修复

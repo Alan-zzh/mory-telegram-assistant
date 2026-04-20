@@ -43,6 +43,9 @@ VPS_PATH = VPS["root"]
 
 def ssh_connect(client, timeout: int = 15):
     """一键建立 SSH 连接（paramiko client）"""
+    # 【v4.3.2修复F-03】校验必填项
+    if not VPS_HOST:
+        raise ValueError("VPS_HOST 未设置！请在 .env 文件中配置 VPS_HOST=<IP地址>")
     if not VPS_PASS:
         raise ValueError("VPS_SSH_PASS 未设置！请在 .env 文件中配置 VPS_SSH_PASS=<密码>")
     client.connect(

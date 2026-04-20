@@ -14,10 +14,12 @@ import logging
 logger = logging.getLogger("optimizer_admin")
 
 
-def handle_optimize_cmd(bot, message, ai_engine, config: dict):
+def handle_optimize_cmd(bot, mory_bot, message, ai_engine, config: dict):
     """
     处理优化相关管理员指令。
     由 admin_cmds.py 调用，返回 True 表示已处理。
+    
+    【v4.3.2修复S-04】新增 mory_bot 参数，解决未定义变量报错
     
     指令格式：
       /optimize_status          — 完整报告

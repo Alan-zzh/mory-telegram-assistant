@@ -11,6 +11,7 @@
 import logging
 import json
 import sys
+import time  # 【v4.3.2修复M-08】补充import time（log_execution需要）
 import traceback
 from threading import local
 from logging.handlers import RotatingFileHandler
@@ -205,8 +206,7 @@ def log_execution(logger_name: str = 'main', level: int = logging.DEBUG):
         return wrapper
     return decorator
 
-# 导入time模块（用于log_execution）
-import time
+# time模块已在文件顶部导入
 
 __all__ = [
     'configure_logging',
