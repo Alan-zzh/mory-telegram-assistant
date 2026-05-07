@@ -14,7 +14,8 @@ import io
 import base64
 import hmac
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+_CST = timezone(timedelta(hours=8))
 from functools import wraps
 from flask import Flask, render_template_string, request, jsonify, session, Response, stream_with_context, g
 from threading import Thread
@@ -29,6 +30,9 @@ from modules.natural_cmd import handle_natural_admin
 # 【v4.3.2修复S-10/S-11】添加简单CSRF校验和速率限制
 _dashboard_rate_limits = {}
 _RATE_LIMIT_MAX_ENTRIES = 10000
+_login_failures = {}
+_LOGIN_LOCKOUT_SECONDS = 600
+_LOGIN_MAX_FAILS = 5
 
 def _check_rate_limit(ip: str, max_requests: int = 60, window_seconds: int = 60) -> bool:
     import time as _time
@@ -50,6 +54,8 @@ def _check_rate_limit(ip: str, max_requests: int = 60, window_seconds: int = 60)
 
 # ============ Flask应用 ============
 app = Flask(__name__)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.secret_key = os.environ.get("DASHBOARD_SECRET")
 if not app.secret_key or len(app.secret_key) < 16:
     print("❌ 致命错误：DASHBOARD_SECRET 环境变量未设置或太短（至少16位）！")
@@ -85,33 +91,20 @@ def close_db(exception):
     if db is not None:
         db.close()
 
-def _ensure_login_failures_table():
-    conn = get_db()
-    conn.execute("""CREATE TABLE IF NOT EXISTS login_failures (
-        ip TEXT PRIMARY KEY,
-        fail_count INTEGER DEFAULT 0,
-        first_fail_at REAL DEFAULT 0,
-        last_fail_at REAL DEFAULT 0
-    )""")
-    conn.commit()
-
 def _get_login_fails(ip):
-    conn = get_db()
-    r = conn.execute("SELECT fail_count, first_fail_at FROM login_failures WHERE ip = ?", (ip,)).fetchone()
-    if r:
-        return {"count": r[0], "first_fail_at": r[1]}
-    return {"count": 0, "first_fail_at": 0}
+    info = _login_failures.get(ip)
+    if not info:
+        return {"count": 0, "first_fail_at": 0}
+    if time.time() - info["first_fail_at"] > _LOGIN_LOCKOUT_SECONDS:
+        del _login_failures[ip]
+        return {"count": 0, "first_fail_at": 0}
+    return info
 
 def _set_login_fails(ip, info):
-    conn = get_db()
-    conn.execute("INSERT OR REPLACE INTO login_failures (ip, fail_count, first_fail_at, last_fail_at) VALUES (?, ?, ?, ?)",
-                 (ip, info["count"], info["first_fail_at"], time.time()))
-    conn.commit()
+    _login_failures[ip] = info
 
 def _clear_login_fails(ip):
-    conn = get_db()
-    conn.execute("DELETE FROM login_failures WHERE ip = ?", (ip,))
-    conn.commit()
+    _login_failures.pop(ip, None)
 
 def read_config():
     cfg_path = os.path.join(_MORY_ROOT, "config.json")
@@ -123,11 +116,17 @@ def read_config():
 
 def write_config(cfg):
     cfg_path = os.path.join(_MORY_ROOT, "config.json")
+    tmp_path = cfg_path + ".tmp"
     try:
-        with open(cfg_path, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, cfg_path)
         return True
     except Exception:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
         return False
 
 # ============ VPS工具 ============
@@ -161,7 +160,7 @@ def get_vps_status():
         client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, password=VPS_PASS, timeout=10)
         stdin, stdout, stderr = client.exec_command("pgrep -f 'main.py' | head -1", timeout=5)
         pid = stdout.read().decode("utf-8", errors="replace").strip()
-        if pid:
+        if pid and pid.isdigit():
             results["bot_running"] = True
             results["bot_pid"] = pid
             stdin, stdout, stderr = client.exec_command(f"ps -p {pid} -o rss= 2>/dev/null || echo ''", timeout=5)
@@ -195,7 +194,6 @@ def api_login():
     if not admin_pw or len(admin_pw) < 6:
         return jsonify({"ok": False, "msg": "系统未正确配置密码，请联系管理员"}), 403
     login_key = request.remote_addr
-    _ensure_login_failures_table()
     fail_info = _get_login_fails(login_key)
     if fail_info["count"] >= 5:
         elapsed = time.time() - fail_info["first_fail_at"]
@@ -310,6 +308,7 @@ def api_stats_users():
         ("private_messages", "asc"): "private_messages ASC", ("private_messages", "desc"): "private_messages DESC",
     }
     order_by = order_by_map.get((sort, order), "last_active DESC")
+    # where_clause 和 order_by 已通过白名单映射校验，无SQL注入风险
     total = conn.execute(f"SELECT COUNT(*) FROM users {where_clause}", params).fetchone()[0]
     offset = (page - 1) * per_page
     rows = conn.execute(f"SELECT * FROM users {where_clause} ORDER BY {order_by} LIMIT ? OFFSET ?", params + [per_page, offset]).fetchall()
@@ -400,6 +399,9 @@ def api_config_update():
     value = data.get("value")
     if not key:
         return jsonify({"ok": False, "msg": "配置项名称不能为空"}), 400
+    allowed_types = (str, int, float, bool, list, dict, type(None))
+    if not isinstance(value, allowed_types):
+        return jsonify({"ok": False, "msg": f"不支持的值类型: {type(value).__name__}"}), 400
     forbidden_exact = {'token', 'password', 'secret', 'api_key', 'admin_id', 'group_id'}
     forbidden_words = {'token', 'password', 'secret'}
     key_parts = set(key.lower().split('_'))
@@ -472,7 +474,7 @@ def api_report_download():
         writer = csv.writer(output)
         writer.writerow(["UID", "用户名", "群消息", "私聊消息", "最后活跃", "标签"])
         for u in users:
-            writer.writerow([u[0], u[1] or '', u[2], u[3], datetime.fromtimestamp(u[4]).strftime("%Y-%m-%d %H:%M") if u[4] else '', u[5] or ''])
+            writer.writerow([u[0], u[1] or '', u[2], u[3], datetime.fromtimestamp(u[4], _CST).strftime("%Y-%m-%d %H:%M") if u[4] else '', u[5] or ''])
         return Response(output.getvalue(), mimetype='text/csv',
                        headers={"Content-Disposition": "attachment;filename=mory_report.csv"})
     except Exception as e:
@@ -628,13 +630,6 @@ let searchQuery = '';
 let sortField = 'last_active';
 let sortOrder = 'desc';
 let _chartData = null;
-
-function escHtml(s) {
-  if (s == null) return '';
-  const d = document.createElement('div');
-  d.textContent = String(s);
-  return d.innerHTML;
-}
 
 function formatTime(ts) {
   if (!ts) return 'N/A';

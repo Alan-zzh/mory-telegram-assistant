@@ -266,7 +266,7 @@ log100)
 autostart)
     cat > /etc/systemd/system/mory_bot.service << EOF
 [Unit]
-Description=Mory Telegram Bot v4.5.8
+Description=Mory Telegram Bot v4.5.33
 After=network.target
 
 [Service]
@@ -283,16 +283,16 @@ StandardError=append:$LOG_FILE
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable mory_bot
-    systemctl start mory_bot
+    systemctl enable mory-assistant
+    systemctl start mory-assistant
     echo "✅ 已设置开机自启并立即启动"
-    echo "💡 查看状态：systemctl status mory_bot"
+    echo "💡 查看状态：systemctl status mory-assistant"
     ;;
 
 # ─── 默认提示 ────────────────────────────────────────────────────
 *)
     echo "═══════════════════════════════════════════"
-    echo "  🤖 Mory v4.5.8 管理脚本"
+    echo "  🤖 Mory v4.5.33 管理脚本"
     echo "═══════════════════════════════════════════"
     echo "  bash start.sh install    首次安装依赖"
     echo "  bash start.sh start      启动机器人"

@@ -39,6 +39,19 @@ class RouterDatabase:
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
 
+    def close(self):
+        """关闭线程本地数据库连接，释放资源"""
+        if hasattr(self._local, 'connection') and self._local.connection is not None:
+            try:
+                self._local.connection.close()
+                self._local.connection = None
+            except Exception as e:
+                logger.warning(f"关闭路由数据库连接异常: {e}")
+
+    def __del__(self):
+        """析构时自动关闭连接"""
+        self.close()
+
     @contextmanager
     def _get_connection(self):
         """

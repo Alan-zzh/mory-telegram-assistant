@@ -42,11 +42,7 @@ class RouterStatistics:
                 row = cursor.fetchone()
                 if row:
                     result = dict(row)
-                    # 计算成功率
-                    if result['total_calls'] > 0:
-                        result['success_rate'] = result['success_count'] / result['total_calls'] * 100
-                    else:
-                        result['success_rate'] = 0
+                    result['success_rate'] = result['success_count'] / result['total_calls'] * 100 if result['total_calls'] else 0
                     return result
                 return None
         except Exception as e:

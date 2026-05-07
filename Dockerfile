@@ -34,4 +34,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('https://api.telegram.org')" || exit 1
 
 # 启动脚本
-CMD ["bash", "start.sh", "start"]
+CMD ["python3", "main.py"]

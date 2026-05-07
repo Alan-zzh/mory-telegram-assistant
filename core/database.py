@@ -1208,16 +1208,17 @@ class DB:
         返回True表示抢占成功，False表示已被抢占（同次或历史执行）"""
         today = datetime.now(_CST).strftime("%Y-%m-%d")
         ts = time.time()
-        try:
-            cur = self.conn.execute(
-                "INSERT OR IGNORE INTO task_log (task_key, exec_date, exec_ts) VALUES (?, ?, ?)",
-                (task_key, today, ts)
-            )
-            self.conn.commit()
-            return cur.rowcount > 0
-        except Exception as e:
-            logger.warning(f"claim_task失败: {e}")
-            return False
+        with _db_lock:
+            try:
+                cur = self.conn.execute(
+                    "INSERT OR IGNORE INTO task_log (task_key, exec_date, exec_ts) VALUES (?, ?, ?)",
+                    (task_key, today, ts)
+                )
+                self.conn.commit()
+                return cur.rowcount > 0
+            except Exception as e:
+                logger.warning(f"claim_task失败: {e}")
+                return False
 
     def is_task_executed_today(self, task_key: str) -> bool:
         """查询任务今日是否已执行"""

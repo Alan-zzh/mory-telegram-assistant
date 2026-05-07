@@ -5,6 +5,7 @@
 pyTelegramBotAPI>=4.14.0,<5.0.0
 requests>=2.31.0,<3.0.0
 apscheduler>=3.10.0,<4.0.0
+python-dotenv>=1.0.0,<2.0.0
 
 # 数据库
 # SQLite为Python内置，无需额外安装
