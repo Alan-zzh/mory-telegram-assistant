@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """
 直接自动部署到VPS - 避免所有转义问题
@@ -177,7 +178,7 @@ def main():
         ssh.close()
         print("\n[SUCCESS] 自动部署完成!")
         print(f"Bot版本: {version}")
-        print("检查日志: ssh root@43.159.168.175 'tail -f /root/mory/mory.log'")
+        print(f"检查日志: ssh root@{host} 'tail -f /root/mory/mory.log'")
         
     except paramiko.AuthenticationException:
         print("[FAIL] SSH认证失败，检查密码")

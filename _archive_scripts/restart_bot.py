@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """重启VPS上的Bot"""
 import sys
 import io

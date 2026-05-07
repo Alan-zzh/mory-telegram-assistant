@@ -129,9 +129,15 @@ def configure_logging(
     
     # 控制台处理器
     if console_output:
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
+        # 检查是否在后台运行（通过 nohup 或其他重定向）
+        # 如果标准输出被重定向到文件，则不添加控制台处理器，避免重复日志
+        if not sys.stdout.isatty():
+            # 非终端环境（如 nohup 后台运行），不添加控制台处理器
+            pass
+        else:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(formatter)
+            root_logger.addHandler(console_handler)
     
     # 屏蔽无关日志
     logging.getLogger('urllib3').setLevel(logging.WARNING)

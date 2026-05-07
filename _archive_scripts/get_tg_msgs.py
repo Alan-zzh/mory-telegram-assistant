@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """获取Telegram群组中的Bot消息并清理"""
 import paramiko, sys, io, os, json
@@ -80,7 +81,7 @@ except Exception as e:
 
 # 4. 尝试获取Bot的群组列表
 print(f"\n🤖 Bot所在群组:")
-stdin, stdout, stderr = ssh.exec_command(f'curl -s "https://api.telegram.org/bot{BOT_TOKEN}/getMyChats" 2>/dev/null || echo "{{\\"ok\\":false}}"', timeout=15)
+stdin, stdout, stderr = ssh.exec_command(f'curl -s "https://api.telegram.org/bot{BOT_TOKEN}/getMyChats" 2>/dev/null || echo "{{/"ok\\":false}}"', timeout=15)
 out = stdout.read().decode('utf-8', errors='replace').strip()
 try:
     data = json.loads(out)

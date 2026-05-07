@@ -1,0 +1,57 @@
+{
+  "accounts": {
+    "qwen": {
+      "0": {
+        "status": "error",
+        "use_count": 1,
+        "error_count": 1,
+        "success_count": 0,
+        "total_tokens": 0,
+        "last_used": 1776965236.1612415
+      }
+    },
+    "openai": {
+      "0": {
+        "status": "active",
+        "use_count": 0,
+        "error_count": 0,
+        "success_count": 0,
+        "total_tokens": 0,
+        "last_used": null
+      }
+    },
+    "anthropic": {
+      "0": {
+        "status": "active",
+        "use_count": 0,
+        "error_count": 0,
+        "success_count": 0,
+        "total_tokens": 0,
+        "last_used": null
+      },
+      "1": {
+        "status": "active",
+        "use_count": 0,
+        "error_count": 0,
+        "success_count": 0,
+        "total_tokens": 0,
+        "last_used": null
+      }
+    },
+    "gemini": {
+      "0": {
+        "status": "active",
+        "use_count": 0,
+        "error_count": 0,
+        "success_count": 0,
+        "total_tokens": 0,
+        "last_used": null
+      }
+    }
+  },
+  "round_robin_index": {
+    "test_provider": 0,
+    "qwen": 0
+  },
+  "last_saved": "2026-04-24T01:27:16.671604"
+}

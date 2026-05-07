@@ -1,37 +1,41 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""同步代码到 VPS 并重启机器人"""
+"""同步代码到 VPS 并重启机器人（v4.5.8 代理脚本）"""
 
-import paramiko
+# 【v4.5.8修复】代理脚本只启动 deploy_vps.py 子进程，避免 import 时误触发部署
+# 保留此文件是为了兼容旧的调用习惯
 import sys
-import io
+import os
+import subprocess
+from pathlib import Path
 
-# 修复输出编码
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+DEPLOY_SCRIPT = Path(__file__).with_name("deploy_vps.py")
 
-# 读取密码
-with open('.env', 'r', encoding='utf-8') as f:
-    for line in f:
-        if 'VPS_SSH_PASS' in line and '=' in line:
-            vps_pass = line.strip().split('=', 1)[1]
-            break
+if DEPLOY_SCRIPT.exists():
+    result = subprocess.run([sys.executable, str(DEPLOY_SCRIPT)])
+    sys.exit(result.returncode)
 
-print('Connecting...')
-client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect('43.159.168.175', port=22, username='root', password=vps_pass, timeout=8)
-
-print('Restarting...')
-_, stdout, stderr = client.exec_command('bash /root/mory/start.sh restart', timeout=15)
-out = stdout.read().decode('utf-8', errors='replace')
-err = stderr.read().decode('utf-8', errors='replace')
-print(out)
-if err.strip():
-    print(err)
-
-print('Status:')
-_, stdout, _ = client.exec_command('bash /root/mory/start.sh status', timeout=10)
-print(stdout.read().decode('utf-8', errors='replace'))
-
-client.close()
-print('OK!')
+print("⚠️ deploy_vps.py 不存在，使用旧版同步逻辑...")
+try:
+    # 降级到旧版逻辑（仅重启）
+    from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH, ssh_connect
+    import paramiko
+    
+    if not VPS_HOST or not VPS_PASS:
+        print("❌ 错误：VPS_HOST 或 VPS_SSH_PASS 未设置！")
+        sys.exit(1)
+    
+    print('Connecting...')
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh_connect(client, timeout=8)
+    
+    print('Restarting...')
+    _, stdout, stderr = client.exec_command(f'bash {VPS_PATH}/start.sh restart', timeout=15)
+    print(stdout.read().decode('utf-8', errors='replace'))
+    
+    client.close()
+    print('OK!')
+except Exception as e:
+    print(f"❌ 同步失败：{e}")
+    sys.exit(1)

@@ -1,0 +1,36 @@
+## 防浪费规则（最高优先级）
+
+1. **先读 .gitignore 和 .cursorrules**：每次会话第一个动作必须是读取这两个文件，了解哪些是临时文件、哪些是业务代码
+2. **只改业务代码**：临时调试脚本、诊断工具、测试文件一律不碰，除非用户明确要求
+3. **发现卡住就中断**：命令/脚本超过 30 秒没输出，立即终止重做，不要干等
+4. **不重复执行失败命令**：同一个命令失败后不要循环重试，先分析原因
+5. **不读不存在的文件**：文件不存在就换路径，不要反复尝试同一个不存在的路径
+6. **定期汇报进度**：每完成一个步骤就汇报，不要闷头空转
+
+# 原有规则
+
+# 忽略所有 Python 缓存和备份目录
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+
+# 忽略备份文件夹
+backup_*/
+
+# 忽略日志文件
+*.log
+
+# 忽略诊断报告
+*diagnostic_report*.md
+*FULL_DIAGNOSIS_REPORT*.txt
+*project_scan_result*.txt
+*AUTO_DIAGNOSIS_REPORT*.md
+
+# 忽略临时调试脚本
+full_diagnose.py
+final_fix.py
+auto_fix.py
+scan_project.py
+scan.py

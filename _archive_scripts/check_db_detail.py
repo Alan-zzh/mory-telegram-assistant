@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """详细检查数据库和配置"""
 import paramiko, sys, io, os, json

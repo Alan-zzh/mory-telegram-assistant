@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """让Bot执行清群无人理指令"""
 import paramiko, sys, io, os, json
@@ -21,7 +22,7 @@ print("=" * 60)
 
 # 1. 以管理员身份在群里发送"清群无人理"指令
 print(f"\n📨 以管理员身份发送'清群无人理'指令...")
-cmd = 'curl -s -X POST "https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage" -H "Content-Type: application/json" -d \'{"chat_id":' + GROUP_ID + ',"text":"清群无人理","from_user_id":' + ADMIN_ID + '}\''
+cmd = 'curl -s -X POST "https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage" -H "Content-Type: application/json" -d '{"chat_id":' + GROUP_ID + ',"text":"清群无人理","from_user_id":' + ADMIN_ID + '}''
 stdin, stdout, stderr = ssh.exec_command(cmd)
 out = stdout.read().decode('utf-8', errors='replace').strip()
 data = json.loads(out)
@@ -36,7 +37,7 @@ if data.get('ok'):
     
     # 2. 删除触发消息
     print(f"\n🗑️ 删除触发消息...")
-    cmd = 'curl -s -X POST "https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage" -H "Content-Type: application/json" -d \'{"chat_id":' + GROUP_ID + ',"message_id":' + str(msg_id) + '}\''
+    cmd = 'curl -s -X POST "https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage" -H "Content-Type: application/json" -d '{"chat_id":' + GROUP_ID + ',"message_id":' + str(msg_id) + '}''
     stdin, stdout, stderr = ssh.exec_command(cmd)
     out = stdout.read().decode('utf-8', errors='replace').strip()
     data = json.loads(out)

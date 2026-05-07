@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 import paramiko, sys, io, os
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -11,7 +12,7 @@ ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 ssh_connect(ssh)
 
 # 检查Token
-stdin, stdout, stderr = ssh.exec_command('cd /root/mory && cat config.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(\"TOKEN:\", d.get(\"TOKEN\",\"NOT_FOUND\")[:30])"', timeout=10)
+stdin, stdout, stderr = ssh.exec_command('cd /root/mory && cat config.json | python3 -c "import sys,json; d=json.load(sys.stdin); print("TOKEN:\", d.get("TOKEN\","NOT_FOUND\")[:30])"', timeout=10)
 out = stdout.read().decode('utf-8', errors='replace').strip()
 err = stderr.read().decode('utf-8', errors='replace').strip()
 print(out)

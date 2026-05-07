@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import paramiko
 import sys
 import io
@@ -18,7 +19,7 @@ print(stdout.read().decode('utf-8', errors='replace'))
 
 # 2. 检查所有SQL语句中的?
 print("\n2. database.py中所有包含?的行:")
-stdin, stdout, stderr = ssh.exec_command('grep -n "?" /root/mory/core/database.py | grep -E "execute|\""')
+stdin, stdout, stderr = ssh.exec_command('grep -n "?" /root/mory/core/database.py | grep -E "execute|""')
 print(stdout.read().decode('utf-8', errors='replace'))
 
 # 3. 检查main.py中的SQL

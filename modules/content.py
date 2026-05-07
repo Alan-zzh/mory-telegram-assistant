@@ -254,7 +254,7 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
 
 
 # ─────────────────────── 图片处理（打码+识图） ─────────────────────────────
-def handle_photo(bot, m, config: dict, ai=None):
+def handle_photo(bot, m, config: dict, mory_bot=None, ai=None):
     """
     【v4.3.0重构】图片处理：
     - 管理员发图片 → 打码推群
@@ -262,7 +262,7 @@ def handle_photo(bot, m, config: dict, ai=None):
     """
     uid = m.from_user.id
     is_admin = uid == config["ADMIN_ID"]
-    
+
     # 获取图片数据（通用）
     try:
         file_info = bot.get_file(m.photo[-1].file_id)
@@ -275,18 +275,18 @@ def handle_photo(bot, m, config: dict, ai=None):
     except Exception as e:
         logger.error(f"图片下载失败：{e}")
         return
-    
+
     # 管理员：打码推群
     if is_admin:
-        _handle_admin_photo(bot, m, config, img_bytes)
+        _handle_admin_photo(bot, m, config, img_bytes, mory_bot)
         return
-    
+
     # 普通用户：AI识图撩人回复
     if ai and config.get("ENABLE_VISION_REPLY", True):
         _handle_user_photo_vision(bot, m, config, img_bytes, ai)
 
 
-def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes):
+def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes, mory_bot):
     """管理员图片 → 打码推群"""
     gid = config.get("GROUP_ID", 0)
     if gid == 0:

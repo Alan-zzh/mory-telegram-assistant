@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 import paramiko, sys, io, os
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -12,7 +13,7 @@ ssh_connect(ssh)
 
 # 查看config.json的keys
 print("config.json 中的所有key:")
-stdin, stdout, stderr = ssh.exec_command('cd /root/mory && python3 -c "import json; c=json.load(open(\"config.json\")); print(list(c.keys()))"', timeout=10)
+stdin, stdout, stderr = ssh.exec_command('cd /root/mory && python3 -c "import json; c=json.load(open("config.json\")); print(list(c.keys()))"', timeout=10)
 out = stdout.read().decode('utf-8', errors='replace').strip()
 print(out)
 

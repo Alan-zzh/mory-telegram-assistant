@@ -83,11 +83,10 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
         admin_ids.append(admin_id)
     
     is_admin = uid in admin_ids
-    
-    # 只有管理员才能使用自然语言配置指令
-    if is_admin:
-        if handle_natural_admin(bot, m, config, save_config_fn):
-            return True
+
+    # 所有用户都能查看帮助指令，但只有管理员能修改配置
+    if handle_natural_admin(bot, m, config, save_config_fn, mory_bot=mory_bot, is_admin=is_admin):
+        return True
 
     # ── 以下为公开指令（任何人可用）────────────────────────────────────
     
@@ -200,7 +199,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
     # ── 投喂资料 ─────────────────────────────────────────────────────────
     if msg.startswith("投喂资料 "):
         extra = msg[5:].strip()
-        config["KNOWLEDGE"] += f"\n{extra}"
+        config["KNOWLEDGE"] = config.get("KNOWLEDGE", "") + f"\n{extra}"
         save_config_fn()
         mory_bot.reply_and_track(m, "✅ 知识库已追加。")
         return True
@@ -269,7 +268,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
                 target_id = int(parts[1].lstrip("@"))
                 content = parts[2]
                 bot.send_message(target_id, f"📢 {config['BOT_NAME']}老板说：\n\n{content}")
-                mory_bot.reply_and_track(m, f"✅ 已私信用户 ID: {target_id}")
+                mory_bot.reply_and_track(m, f"✅ 已私信用户 @{parts[1].lstrip('@')}")
                 logger.info(f"📨 代发→{target_id}：{content[:50]}")
             except Exception as e:
                 mory_bot.reply_and_track(m, f"⚠️ 发送失败：{e}")
@@ -669,7 +668,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
 
             # ── 验证 monkey-patch 是否生效 ──
             try:
-                patch_test = "✅ monkey-patch 已生效" if bot.reply_to.__name__ == "_tracked_reply" else "❌ monkey-patch 未生效！"
+                patch_test = "✅ MoryBot 追踪正常" if hasattr(bot, '_mory_bot_instance') else "⚠️ MoryBot 未挂载"
             except Exception:
                 patch_test = "⚠️ 无法检测"
 

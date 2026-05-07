@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """最终验证 v21.44 修复"""
 import paramiko, sys, io, os
@@ -20,7 +21,7 @@ print("\n📝 代码检查:")
 checks = [
     ('auto_tasks.py - _send_and_track不追踪', 'grep -A3 "def _send_and_track" /root/mory/modules/auto_tasks.py | head -4'),
     ('main.py - 日志级别为INFO', 'grep "logger.info.*阅后即焚" /root/mory/main.py'),
-    ('reply_tracking表状态', 'cd /root/mory && python3 -c "import sqlite3; c=sqlite3.connect(\"mory.db\").cursor(); r=c.execute(\"SELECT COUNT(*) FROM reply_tracking\").fetchone()[0]; print(f\"记录数: {r}\")"'),
+    ('reply_tracking表状态', 'cd /root/mory && python3 -c "import sqlite3; c=sqlite3.connect("mory.db\").cursor(); r=c.execute("SELECT COUNT(*) FROM reply_tracking\").fetchone()[0]; print(f"记录数: {r}\")"'),
 ]
 
 for desc, cmd in checks:

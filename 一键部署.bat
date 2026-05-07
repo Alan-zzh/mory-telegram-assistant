@@ -1,11 +1,32 @@
 @echo off
-chcp 65001 >nul 2>&1
-title Mory小助理 - 一键部署到VPS
+setlocal
+cd /d "%~dp0"
+
+echo ========================================
+echo   Mory v4.5.8 Deploy To VPS
+echo ========================================
 echo.
-echo  ══════════════════════════════════════
-echo   Mory小助理  一键部署到VPS
-echo  ══════════════════════════════════════
+echo [1/2] Checking local VPS config...
+python check_vps_local.py
+if errorlevel 1 (
+    echo.
+    echo [ERROR] VPS config check failed.
+    pause
+    exit /b 1
+)
+
 echo.
-C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe "%~dp0deploy_final.py"
+echo [2/2] Deploying...
+python deploy_vps.py
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Deploy failed.
+    pause
+    exit /b 1
+)
+
 echo.
+echo ========================================
+echo   Deploy finished.
+echo ========================================
 pause

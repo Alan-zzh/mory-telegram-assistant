@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════
-#  Mory v21.23  ·  一键部署+更新脚本  (Ubuntu VPS)
+#  Mory · 一键部署+更新脚本  (Ubuntu VPS)
 #
 #  【数据安全承诺】
 #    - update 命令在重启前会自动备份 config.json 和 mory.db
@@ -26,6 +26,7 @@ PID_FILE="$BOT_DIR/.mory.pid"
 LOG_FILE="$BOT_DIR/mory.log"
 
 cd "$BOT_DIR"
+APP_VERSION=$("$PYTHON" -c "import version; print(version.VERSION)" 2>/dev/null || echo "unknown")
 
 case "$1" in
 
@@ -39,7 +40,11 @@ install)
     python3 -m venv venv
     source venv/bin/activate
     pip install --upgrade pip -q
-    pip install pyTelegramBotAPI requests Pillow -q
+    if [ -f "$BOT_DIR/requirements.txt" ]; then
+        pip install -r "$BOT_DIR/requirements.txt" -q
+    else
+        pip install pyTelegramBotAPI requests Pillow apscheduler flask paramiko -q
+    fi
 
     echo "✅ 安装完成！"
     echo ""
@@ -53,7 +58,7 @@ start)
         exit 0
     fi
 
-    echo "🚀 启动 Mory v21.23..."
+    echo "🚀 启动 Mory $APP_VERSION..."
     
     # 如果有虚拟环境就用，否则用系统python
     if [ -f "$BOT_DIR/venv/bin/python" ]; then
@@ -79,16 +84,48 @@ start)
 
 # ─── 停止 ────────────────────────────────────────────────────────
 stop)
+    # 【v4.5.32】强力清理：先SIGTERM，再SIGKILL，防止多进程残留
+    # 【v4.5.33】修复：精确匹配完整路径+排除mory_media，不误杀其他Bot项目
+    PIDS=""
     if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
-            kill "$PID"
-            rm -f "$PID_FILE"
-            echo "⏹️  机器人已停止 (PID=$PID)"
-        else
-            echo "⚠️  进程不存在，清理PID文件"
-            rm -f "$PID_FILE"
-        fi
+        PIDS=$(cat "$PID_FILE")
+    fi
+    PIDS="$PIDS $(ps -ef | grep '/home/ubuntu/mory_assistant/main.py' | grep -v grep | grep -v mory_media | awk '{print $2}')"
+    PIDS=$(echo "$PIDS" | tr ' ' '\n' | sort -u | grep -v '^$')
+    
+    if [ -n "$PIDS" ]; then
+        for PID in $PIDS; do
+            if kill -0 "$PID" 2>/dev/null; then
+                kill "$PID" 2>/dev/null
+                echo "   ⏳ 发送停止信号 PID=$PID"
+            fi
+        done
+        
+        # 等待最多5秒让进程正常退出
+        for i in $(seq 1 5); do
+            ALL_STOPPED=true
+            for PID in $PIDS; do
+                if kill -0 "$PID" 2>/dev/null; then
+                    ALL_STOPPED=false
+                    break
+                fi
+            done
+            if $ALL_STOPPED; then
+                break
+            fi
+            sleep 1
+        done
+        
+        # 如果还有残留，强制SIGKILL
+        for PID in $PIDS; do
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null
+                echo "    强制杀死残留进程 PID=$PID"
+            fi
+        done
+        sleep 0.5
+        rm -f "$PID_FILE"
+        echo "✅ 所有Bot进程已清理"
     else
         echo "⚠️  机器人未在运行"
     fi
@@ -229,7 +266,7 @@ log100)
 autostart)
     cat > /etc/systemd/system/mory_bot.service << EOF
 [Unit]
-Description=Mory Telegram Bot v21.23
+Description=Mory Telegram Bot v4.5.8
 After=network.target
 
 [Service]
@@ -255,7 +292,7 @@ EOF
 # ─── 默认提示 ────────────────────────────────────────────────────
 *)
     echo "═══════════════════════════════════════════"
-    echo "  🤖 Mory v21.23 管理脚本"
+    echo "  🤖 Mory v4.5.8 管理脚本"
     echo "═══════════════════════════════════════════"
     echo "  bash start.sh install    首次安装依赖"
     echo "  bash start.sh start      启动机器人"

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import paramiko, sys, io, os, time
 from datetime import datetime
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')

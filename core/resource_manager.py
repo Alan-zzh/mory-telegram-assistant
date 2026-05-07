@@ -106,7 +106,7 @@ class ResourceManager:
         """获取保存配置的函数（使用前应通过 locked('config') 加锁）"""
         return self._save_config_fn
     
-    def locked(self, resource_name: str, timeout: float = 5.0):
+    def locked(self, resource_name: str, timeout: float = 30.0):
         """
         返回一个上下文管理器，用于安全地访问指定资源。
         
@@ -144,7 +144,7 @@ class ResourceManager:
         
         return _ResourceLock(lock, timeout)
     
-    def locked_multi(self, resource_names: List[str], timeout: float = 5.0):
+    def locked_multi(self, resource_names: List[str], timeout: float = 30.0):
         """
         同时锁定多个资源（按字母顺序获取锁，避免死锁）。
         
@@ -212,7 +212,7 @@ class ResourceManager:
         
         def _wrapped():
             if resources:
-                with self.locked_multi(resources, timeout=5.0):
+                with self.locked_multi(resources, timeout=30.0):
                     return func(*args, **kwargs)
             else:
                 return func(*args, **kwargs)

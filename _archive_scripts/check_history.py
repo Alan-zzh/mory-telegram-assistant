@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """全面检查VPS上的阅后即焚状态"""
 import paramiko, sys, io, os

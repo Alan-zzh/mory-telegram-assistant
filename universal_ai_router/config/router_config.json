@@ -1,0 +1,413 @@
+{
+  "global": {
+    "default_strategy": "cost",
+    "enable_fallback": true,
+    "log_level": "INFO"
+  },
+  "providers": {
+    "qwen": {
+      "api_type": "tongyi",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "accounts": [
+        {
+          "api_key": "${ENV:DASHSCOPE_KEY}",
+          "name": "通义账号1",
+          "enabled": true
+        }
+      ],
+      "round_robin": true
+    }
+  },
+  "model_pools": {
+    "llm": {
+      "description": "大语言模型池",
+      "models": [
+        {
+          "name": "qwen3.6-flash-2026-04-16",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.00000165,
+          "output_price": 0.0000099,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen3.5-plus-2026-04-20",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 8e-7,
+          "output_price": 0.0000048,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen3.6-plus-2026-04-02",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.00000192,
+          "output_price": 0.00001152,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "glm-5.1",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 8e-7,
+          "output_price": 0.0000024,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen3-max",
+          "provider": "qwen",
+          "cost_level": "high",
+          "input_price": 0.0000025,
+          "output_price": 0.00001,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen3.6-max-preview",
+          "provider": "qwen",
+          "cost_level": "high",
+          "input_price": 0.0000025,
+          "output_price": 0.00001,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        }
+      ]
+    },
+    "llm_light": {
+      "description": "轻量LLM池",
+      "models": [
+        {
+          "name": "qwen3.6-flash-2026-04-16",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.00000165,
+          "output_price": 0.0000099,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        }
+      ]
+    },
+    "llm_standard": {
+      "description": "标准LLM池",
+      "models": [
+        {
+          "name": "qwen3.5-plus-2026-04-20",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 8e-7,
+          "output_price": 0.0000048,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen3.6-plus-2026-04-02",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.00000192,
+          "output_price": 0.00001152,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "glm-5.1",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 8e-7,
+          "output_price": 0.0000024,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        }
+      ]
+    },
+    "llm_premium": {
+      "description": "旗舰LLM池",
+      "models": [
+        {
+          "name": "qwen3-max",
+          "provider": "qwen",
+          "cost_level": "high",
+          "input_price": 0.0000025,
+          "output_price": 0.00001,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen3.6-max-preview",
+          "provider": "qwen",
+          "cost_level": "high",
+          "input_price": 0.0000025,
+          "output_price": 0.00001,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        }
+      ]
+    },
+    "vision": {
+      "description": "视觉模型池",
+      "models": [
+        {
+          "name": "wan2.6-r2v-flash",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.001,
+          "output_price": 0.002,
+          "capabilities": [
+            "text",
+            "chat",
+            "vision"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen-image-2.0",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.0005,
+          "output_price": 0.001,
+          "capabilities": [
+            "text",
+            "chat",
+            "vision"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen-image-2.0-pro",
+          "provider": "qwen",
+          "cost_level": "high",
+          "input_price": 0.001,
+          "output_price": 0.002,
+          "capabilities": [
+            "text",
+            "chat",
+            "vision"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "wan2.7-r2v",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.001,
+          "output_price": 0.002,
+          "capabilities": [
+            "text",
+            "chat",
+            "vision"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "wan2.7-l2v",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.0005,
+          "output_price": 0.0015,
+          "capabilities": [
+            "text",
+            "chat",
+            "vision"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "wan2.7-image",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.0005,
+          "output_price": 0.001,
+          "capabilities": [
+            "text",
+            "chat",
+            "vision"
+          ],
+          "enabled": true
+        }
+      ]
+    },
+    "omni": {
+      "description": "全模态模型池",
+      "models": [
+        {
+          "name": "qwen3.5-omni-flash",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.00001,
+          "output_price": 0.00003,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "qwen3.5-omni-plus",
+          "provider": "qwen",
+          "cost_level": "high",
+          "input_price": 0.00002,
+          "output_price": 0.00006,
+          "capabilities": [
+            "text",
+            "chat"
+          ],
+          "enabled": true
+        }
+      ]
+    },
+    "voice_tts": {
+      "description": "语音合成模型池",
+      "models": [
+        {
+          "name": "qwen3-tts-instruct-flash",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.00005,
+          "output_price": 0.00015,
+          "capabilities": [
+            "audio"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "cosyvoice-v3.5-plus",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.0001,
+          "output_price": 0.0003,
+          "capabilities": [
+            "audio"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "sambert-zhide-v1",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.00005,
+          "output_price": 0.00015,
+          "capabilities": [
+            "audio"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "sambert-zhiya-v1",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.00005,
+          "output_price": 0.00015,
+          "capabilities": [
+            "audio"
+          ],
+          "enabled": true
+        }
+      ]
+    },
+    "voice_asr": {
+      "description": "语音识别模型池",
+      "models": [
+        {
+          "name": "qwen3-asr-flash-realtime-2026-02-10",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.00005,
+          "output_price": 0.0001,
+          "capabilities": [
+            "audio"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "paraformer-v2",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.00005,
+          "output_price": 0.0001,
+          "capabilities": [
+            "audio"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "paraformer-realtime-8k-v2",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.00005,
+          "output_price": 0.0001,
+          "capabilities": [
+            "audio"
+          ],
+          "enabled": true
+        }
+      ]
+    },
+    "embedding": {
+      "description": "向量模型池",
+      "models": [
+        {
+          "name": "tongyi-embedding-vision-plus-2026-03-06",
+          "provider": "qwen",
+          "cost_level": "medium",
+          "input_price": 0.00001,
+          "output_price": 0.00001,
+          "capabilities": [
+            "embedding"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "tongyi-embedding-vision-flash-2026-03-06",
+          "provider": "qwen",
+          "cost_level": "low",
+          "input_price": 0.000005,
+          "output_price": 0.000005,
+          "capabilities": [
+            "embedding"
+          ],
+          "enabled": true
+        }
+      ]
+    }
+  }
+}

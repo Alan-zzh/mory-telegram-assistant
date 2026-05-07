@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """部署 v21.44 阅后即焚修复"""
 import paramiko, sys, io, os, time
@@ -53,7 +54,7 @@ time.sleep(3)
 print("\n🔍 验证...")
 verify_cmds = [
     ('Bot状态', 'cd /root/mory && bash start.sh status'),
-    ('reply_tracking表', 'cd /root/mory && python3 -c "import sqlite3; c=sqlite3.connect(\"mory.db\").cursor(); r=c.execute(\"SELECT COUNT(*) FROM reply_tracking\").fetchone()[0]; print(f\"记录数: {r}\")"'),
+    ('reply_tracking表', 'cd /root/mory && python3 -c "import sqlite3; c=sqlite3.connect("mory.db\").cursor(); r=c.execute("SELECT COUNT(*) FROM reply_tracking\").fetchone()[0]; print(f"记录数: {r}\")"'),
     ('修复验证-主动消息不追踪', 'grep -c "_send_and_track" /root/mory/modules/auto_tasks.py | xargs -I{} echo "函数定义数: {}"'),
     ('修复验证-日志级别', 'grep "阅后即焚" /root/mory/main.py | head -1'),
 ]

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """修复database.py的CRLF问题并上传到VPS"""
 import paramiko

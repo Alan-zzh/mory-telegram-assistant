@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """检查Bot重启后的日志"""
 import paramiko, sys, io, os

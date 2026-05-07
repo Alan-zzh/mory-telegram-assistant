@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Fix auto_tasks.py - remove track_reply from _send_and_track"""
 import paramiko
 

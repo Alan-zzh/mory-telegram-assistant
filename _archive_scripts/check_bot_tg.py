@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 import paramiko, sys, io, os, json
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -11,7 +12,7 @@ ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 ssh_connect(ssh)
 
 # 获取Bot Token
-stdin, stdout, stderr = ssh.exec_command('cd /root/mory && python3 -c "import json; c=json.load(open(\"config.json\")); print(c.get(\"TOKEN\",\"\"))"', timeout=10)
+stdin, stdout, stderr = ssh.exec_command('cd /root/mory && python3 -c "import json; c=json.load(open("config.json\")); print(c.get("TOKEN\","\"))"', timeout=10)
 bot_token = stdout.read().decode('utf-8', errors='replace').strip()
 
 print("=" * 60)

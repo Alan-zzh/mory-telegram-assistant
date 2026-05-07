@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """快速修复SQL语法错误并上传到VPS"""
 import paramiko

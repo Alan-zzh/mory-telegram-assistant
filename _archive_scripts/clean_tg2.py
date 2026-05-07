@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """使用requests直接调用Telegram API获取和清理群组消息"""
 import paramiko, sys, io, os, json, time

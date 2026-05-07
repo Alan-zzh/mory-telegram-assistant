@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """强制清理群组中的Bot历史消息"""
 import paramiko, sys, io, os, json
@@ -168,7 +169,7 @@ print(out)
 
 # 5. 删除触发消息
 print("\n🗑️ 删除触发消息...")
-cmd = f'curl -s -X POST "https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage" -d \'{{"chat_id":{GROUP_ID},"message_id":{trigger_msg_id}}}\''
+cmd = f'curl -s -X POST "https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage" -d '{{"chat_id":{GROUP_ID},"message_id":{trigger_msg_id}}}''
 stdin, stdout, stderr = ssh.exec_command(cmd)
 out = stdout.read().decode('utf-8', errors='replace').strip()
 data = json.loads(out)

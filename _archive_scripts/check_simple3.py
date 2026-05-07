@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """简化诊断"""
 import paramiko
 import sys

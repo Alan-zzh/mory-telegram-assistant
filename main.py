@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════╗
-║  main.py  ·  Mory 私域超级分身机器人  v4.0                              ║
+║  main.py  ·  Mory 私域超级分身机器人  v4.5.0                            ║
 ║                                                                            ║
 ║  架构：模块化 | 多模型无缝轮换 | 线程安全 | 无感智能化运营                   ║
 ║  入口：python main.py                                                       ║
@@ -108,16 +108,19 @@ base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # ── 加载 .env 环境变量（敏感信息不硬编码）────────────────────────────
 def _load_env():
-    """从 .env 文件加载环境变量（.env 不进 git）"""
-    env_file = os.path.join(base_dir, ".env")
-    if os.path.exists(env_file):
-        for line in open(env_file, encoding="utf-8"):
-            line = line.strip()
-            if "=" in line and not line.startswith("#"):
-                k, v = line.split("=", 1)
-                # 【v4.3.2修复S-06】去除首尾引号，支持 KEY="value" 格式
-                v = v.strip().strip('"').strip("'")
-                os.environ.setdefault(k.strip(), v)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(os.path.join(base_dir, ".env"), override=False)
+    except ImportError:
+        env_file = os.path.join(base_dir, ".env")
+        if os.path.exists(env_file):
+            with open(env_file, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if "=" in line and not line.startswith("#"):
+                        k, v = line.split("=", 1)
+                        v = v.strip().strip('"').strip("'")
+                        os.environ.setdefault(k.strip(), v)
 
 _load_env()
 
@@ -187,8 +190,10 @@ from core.ai_engine import AIEngine, calc_typing_delay
 from core.database  import DB
 from core.mory_bot import MoryBot  # 【架构重构v21.44】显式机器人封装层
 from modules.admin_cmds import handle_admin
+from modules.natural_cmd import handle_natural_admin
 from modules.group_mgr  import (handle_new_members, check_banned_words,
-                                  check_spam, handle_left_member, detect_keywords)
+                                  check_spam, handle_left_member, detect_keywords,
+                                  check_ad_content)
 from modules.auto_tasks import start_background
 from modules.content    import (handle_easter_eggs, handle_photo,
                                   draw_tarot, get_fortune, is_late_night)
@@ -277,14 +282,17 @@ def _get_minimal_default_config() -> dict:
         "TOKEN": "", "API_KEY": "", "ADMIN_ID": 0, "GROUP_ID": 0,
         "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "MODEL_POOLS": {"llm": [{"name": "qwen-plus", "expire": "2099-12-31"}]},
-        "REPLY_CHANCE": 10, "_CONFIG_VERSION": "4.3.2-emergency",
+        "REPLY_CHANCE": 10, "_CONFIG_VERSION": "4.5.3",
         "SYSTEM_PROMPT": "你是Mory，一个活泼可爱的小助理。",
     }
 
 def _load_dynamic_states(cfg: dict):
     """从数据库加载动态状态到配置"""
     global db
-    if db is None:
+    try:
+        if db is None:
+            return
+    except NameError:
         return
     
     # 从数据库读取动态状态
@@ -304,7 +312,7 @@ def _load_dynamic_states(cfg: dict):
             elif key in ("IMAGE_POOL", "VOICE_POOL"):
                 try:
                     cfg[key] = json.loads(db_value)
-                except:
+                except Exception:
                     cfg[key] = []
             elif key == "_LAST_LEAK_WEEK":
                 cfg[key] = int(db_value) if db_value else -1
@@ -359,7 +367,7 @@ ai  = AIEngine(CONFIG)
 
 # 【架构重构v21.44】数据库初始化后，重新加载动态状态到 CONFIG
 _load_dynamic_states(CONFIG)
-bot = telebot.TeleBot(CONFIG["TOKEN"], threaded=True, num_threads=50)
+bot = telebot.TeleBot(CONFIG["TOKEN"], threaded=True, num_threads=50, use_class_middlewares=True)
 
 # 【修复】全局缓存bot自身信息，只调用1次get_me()
 _bot_me = bot.get_me()
@@ -439,11 +447,33 @@ except Exception as e:
     import traceback
     logger.error(f"❌ 测试异常详情：{traceback.format_exc()}")
 
+# ── 【v4.4.9新增】初始化默认关键词触发规则 ─────────────────────
+try:
+    logger.info("🔑 检查关键词触发规则...")
+    existing_keywords = db.get_all_keyword_triggers()
+    if len(existing_keywords) == 0:
+        logger.info("🔑 没有找到关键词规则，添加默认规则...")
+        db.add_keyword_trigger("你好", "你好呀！很高兴认识你，有什么我可以帮你的吗？", "static")
+        db.add_keyword_trigger("嗨", "嗨！欢迎呀，想聊点什么呢？", "static")
+        db.add_keyword_trigger("更新", "好的，我来帮你更新！请稍候...", "action", "deploy")
+        logger.info("✅ 已添加默认关键词触发规则")
+    else:
+        logger.info(f"✅ 已找到 {len(existing_keywords)} 条关键词规则")
+except Exception as e:
+    logger.error(f"⚠️  初始化关键词失败: {e}")
+
 # ── 启动后台自动任务 ──────────────────────────────────────────────────
 start_background(bot, CONFIG, db, ai, save_config)
 
 # 【架构重构v21.44】初始化 MoryBot 封装层（替代 Monkey Patch）
 mory_bot = MoryBot(bot, db, CONFIG)
+bot._mory_bot_instance = mory_bot
+
+from core.resource_manager import ResourceManager
+_emergency_rm = ResourceManager(bot=bot, ai=ai, db=db, config=CONFIG, save_config_fn=save_config)
+
+from modules.keyword_trigger import KeywordTrigger
+keyword_trigger = KeywordTrigger(db, mory_bot, ai, CONFIG)
 
 # ── 【v4.1.0 架构升级】BaseMiddleware 全局底层嗅探器 ──────────────────────
 # 解决"用户用图片/语音/贴纸回复机器人，但机器人眼瞎看不见"的致命死角
@@ -482,7 +512,7 @@ bot.setup_middleware(ReplySnifferMiddleware(db))
 @bot.message_handler(content_types=["photo"])
 def on_photo(m):
     try:
-        handle_photo(bot, m, CONFIG, ai)
+        handle_photo(bot, m, CONFIG, mory_bot, ai)
     except Exception as e:
         logger.error(f"图片处理异常：{e}")
 
@@ -705,9 +735,28 @@ def master_handler(m):
         _dispatch(m)
     except Exception as e:
         logger.error(f"❌ 主分发器异常：{e}\n{traceback.format_exc()}")
+        # 全局故障通知：任何未捕获异常都通知管理员
+        try:
+            from modules.auto_tasks import _notify_admin_system_failure
+            _notify_admin_system_failure(_emergency_rm, "主分发器未捕获异常", f"{e}\n{traceback.format_exc()[:200]}", "🚨")
+        except Exception:
+            pass
 
 
 def _dispatch(m):
+    """消息分发核心逻辑（优先级严格控制）"""
+    try:
+        _do_dispatch(m)
+    except Exception as e:
+        logger.error(f"❌ 分发器内部异常：{e}\n{traceback.format_exc()}")
+        try:
+            from modules.auto_tasks import _notify_admin_system_failure
+            _notify_admin_system_failure(_emergency_rm, "分发器内部异常", f"{e}\n{traceback.format_exc()[:200]}", "🚨")
+        except Exception:
+            pass
+
+
+def _do_dispatch(m):
     """消息分发核心逻辑（优先级严格控制）"""
     # ── 【DEBUG】全量消息入口日志（排查收不到@消息的问题） ────────
     _dbg_msg = (m.text or "")[:50]
@@ -739,9 +788,8 @@ def _dispatch(m):
         clear_logging_context()
         return
 
-    # ── P2：更新用户活跃度 / 群ID / 积分 ───────────────────────────────
-    db.upsert_user(uid, uname, "private" if is_priv else "group")
-    db.add_points(uid, 1)  # 发言积分+1
+    # ── P2：更新用户活跃度 / 群ID / 积分（原子操作，防竞态）──────────────
+    db.upsert_user_with_points(uid, uname, "private" if is_priv else "group", pts=1)
     if is_group:
         gid = CONFIG.get("GROUP_ID", 0)
         if gid == 0:  # 只在未设置时才自动记录群ID，已设置过的不覆盖
@@ -758,6 +806,11 @@ def _dispatch(m):
         clear_logging_context()
         return
 
+    # ── P3.5：AI广告检测（v4.5.26新增）───────────────────────────────
+    if is_group and check_ad_content(bot, m, CONFIG, db, ai):
+        clear_logging_context()
+        return
+
     # ── P4：反刷机制 ─────────────────────────────────────────────────
     if is_group and check_spam(bot, m, CONFIG, db):
         clear_logging_context()
@@ -769,11 +822,37 @@ def _dispatch(m):
         return
 
     # ── P6：管理员专属指令（含绑定主人）─────────────────────────────
-    admin_result = handle_admin(bot, mory_bot, CONFIG, db, ai, save_config)
+    admin_result = handle_admin(bot, mory_bot, m, CONFIG, db, ai, save_config)
     if admin_result:
         logger.info(f"👑 管理员指令执行成功 uid={uid} msg={msg[:30]}")
         clear_logging_context()
         return
+
+    # ── P6.3：自然语言配置（管理员可直接在TG里改，普通用户可看说明）───────
+    try:
+        admin_ids = set(CONFIG.get("ADMIN_IDS", []) or [])
+        admin_id = CONFIG.get("ADMIN_ID", 0)
+        if admin_id:
+            admin_ids.add(admin_id)
+        is_admin_user = uid in admin_ids
+        if handle_natural_admin(bot, m, CONFIG, save_config, mory_bot=mory_bot, is_admin=is_admin_user):
+            logger.info(f"🗣️ 自然语言配置已处理 uid={uid} msg={msg[:30]}")
+            clear_logging_context()
+            return
+    except Exception as e:
+        logger.error(f"🗣️ 自然语言配置处理异常: {e}")
+
+    # ── P6.5：关键词触发回复（v4.4.9新增）────────────────────────────
+    if msg:
+        try:
+            admin_id = CONFIG.get("ADMIN_ID", 0)
+            is_admin = (uid == admin_id)
+            if keyword_trigger.handle_message(msg, chat_id, m, bot, is_admin=is_admin):
+                logger.info(f"🔑 关键词触发回复成功 uid={uid} msg={msg[:30]}")
+                clear_logging_context()
+                return
+        except Exception as e:
+            logger.error(f"🔑 关键词触发检测异常: {e}")
 
     # ── P7：视奸雷达（价格关键词通知管理员 + 冷却机制）────────────
     _cleanup_radar_cooldown()  # 【v4.3.2修复M-02】定期清理过期冷却记录
@@ -844,11 +923,15 @@ def _dispatch(m):
         clear_logging_context()
         return
 
-    # 生物钟警告（凌晨0-5点）
+    # 生物钟警告（凌晨0-5点）- AI动态生成撩人回复
     if is_late_night() and is_group:
-        mory_bot.reply_and_track(m, "这么晚不睡觉，身体不要啦？快去梦里找老板～ 😴")  # 【架构v21.44】显式追踪
+        # 随机选择回复策略：60%AI生成 + 40%备用文案（提升多样性）
+        late_night_text = _generate_late_night_warning(ai, uname, is_group, uid)
+        mory_bot.reply_and_track(m, late_night_text)
         clear_logging_context()
         return
+
+
 
     # ── 连续对话追踪（仅群聊 @/回复 机器人时计数，线程安全）─────────
     conv_count = 0
@@ -879,6 +962,13 @@ def _dispatch(m):
     
     resp = ai.ask(msg, mode=mode, tools=use_tools)
 
+    if resp is None and mode != "normal":
+        try:
+            from modules.auto_tasks import _notify_admin_system_failure
+            _notify_admin_system_failure(_emergency_rm, f"AI引擎故障（mode={mode}）", f"用户消息: {msg[:50]}", "🚨")
+        except Exception as notify_err:
+            logger.error(f"故障通知发送失败: {notify_err}")
+
     if resp:
         # ── Function Calling处理：AI主动触发工具 ──
         if isinstance(resp, dict):
@@ -899,10 +989,7 @@ def _dispatch(m):
         # 【v4.3.2修复S-05】限制最多1次额外AI调用+5秒超时保护
         if is_group and mode == "normal" and conv_count >= 2:
             seed_h = random.randint(100000, 999999)
-            _append_start = time.time()
-            _did_append = False
 
-            # 优先级：转化>暗示>反问，只追加1次
             append_mode = None
             if conv_count >= 5 and random.randint(1, 10) <= 3:
                 append_mode = "convert_soft"
@@ -914,12 +1001,20 @@ def _dispatch(m):
                 append_mode = "hook"
                 append_prompt = "基于刚才的对话，用绿茶风反问结尾让对话继续"
 
-            # 【v4.3.2】超时保护：5秒内未完成则跳过追加
-            if append_mode and (time.time() - _append_start) < 5:
+            if append_mode:
                 try:
-                    append_text = ai.ask(append_prompt, mode=append_mode, seed=seed_h)
-                    if append_text and (time.time() - _append_start) < 5:
-                        resp += f"\n\n{append_text.strip()}"
+                    import concurrent.futures
+                    _append_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                    _append_future = _append_executor.submit(
+                        lambda: ai.ask(append_prompt, mode=append_mode, seed=seed_h))
+                    try:
+                        append_text = _append_future.result(timeout=5)
+                        if append_text:
+                            resp += f"\n\n{append_text.strip()}"
+                    except concurrent.futures.TimeoutError:
+                        logger.info("连续对话追加超时（5秒），跳过")
+                    finally:
+                        _append_executor.shutdown(wait=False)
                 except Exception as e:
                     logger.warning(f"连续对话追加失败（跳过）：{e}")
 
@@ -932,14 +1027,17 @@ def _dispatch(m):
             try:
                 admin_id = CONFIG.get("ADMIN_ID", 0)
                 if admin_id and uid != admin_id:
-                    # 原始消息截断显示（过长则省略）
                     msg_display = msg[:200] + "..." if len(msg) > 200 else msg
                     resp_display = resp[:500] + "..." if len(resp) > 500 else resp
+                    _safe_name = uname.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+                    _safe_msg = msg_display.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+                    _safe_resp = resp_display.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
                     bot.send_message(admin_id,
                         f"📩 私聊通知\n"
-                        f"👤 [{uname}](tg://user?id={uid})\n"
-                        f"💬 你：{msg_display}\n"
-                        f"🤖 Mory回复：{resp_display}")
+                        f"👤 <a href=\"tg://user?id={uid}\">{_safe_name}</a>\n"
+                        f"💬 你：{_safe_msg}\n"
+                        f"🤖 Mory回复：{_safe_resp}",
+                        parse_mode="HTML")
             except Exception as e:
                 logger.warning(f"私聊转发通知失败 uid={uid}：{e}")
         
@@ -953,13 +1051,76 @@ def _dispatch(m):
     clear_logging_context()
 
 
+# ── 深夜撩人警告辅助函数（模块级）─────────────────────────────────
+def _generate_late_night_warning(ai, uname, is_group, uid):
+    """
+    生成深夜撩人警告消息（带随机性和人设）
+    
+    策略：60%调用AI生成（带随机seed），40%使用备用文案库
+    这样既保证多样性，又避免每次都要等AI响应
+    """
+    # 40%概率直接使用备用文案（快速响应）
+    if random.random() < 0.4:
+        return _get_late_night_fallback(uname)
+    
+    # 60%概率调用AI生成（带随机seed保证每次不同）
+    try:
+        seed = uid + int(time.time()) % 3600  # 每小时一个seed区间
+        prompt = (
+            f"你是Mory老板，一个贴心又有点小调皮的小姐姐。\n\n"
+            f"现在是凌晨，用户{uname}还在群里发消息不睡觉。\n"
+            f"你要用撩人、关心但不说教的方式提醒他去睡觉。\n\n"
+            f"要求：\n"
+            f"1. 20-30字，像闺蜜私聊一样自然\n"
+            f"2. 带点小撒娇/小醋意/小关心\n"
+            f"3. 可以暗示：熬夜会变丑/对身体不好/明天没精神\n"
+            f"4. 结尾要有emoji（😴💤🌙✨选一个）\n"
+            f"5. seed={seed}，每次必须不同\n\n"
+            f"禁止：\n"
+            f"- 不要说教式语气（如'你应该'、'你必须'）\n"
+            f"- 不要出现'老板'这个词（老板是我自己）\n"
+            f"- 控制在30字以内"
+        )
+        ai_reply = ai.ask(prompt, mode="normal")
+        if ai_reply and len(ai_reply) > 5:
+            return ai_reply.strip()[:100]  # 截断保护
+    except Exception as e:
+        logger.debug(f"AI生成深夜回复失败，使用备用文案：{e}")
+    
+    # AI失败时fallback
+    return _get_late_night_fallback(uname)
+
+
+def _get_late_night_fallback(uname):
+    """备用深夜文案库（高度随机化）"""
+    templates = [
+        f"哎呀{uname}～这么晚还不睡呀？熬夜会掉头发的哦～快去被窝里躲着吧 💤",
+        f"诶嘿～{uname}还在活跃呀？月亮都困得打哈欠了，你也快去休息嘛～🌙",
+        f"{uname}哥哥～再熬下去明天要变熊猫眼了啦！快去梦里找我玩～😴",
+        f"偷偷告诉你哦{uname}～熬夜会变笨的！小Mory可不想明天看到迷糊的你～✨",
+        f"呜呼{uname}～深夜不睡觉是在等谁呀？快闭眼休息啦，明天见～💤",
+        f"{uname}～你是在偷偷熬夜刷手机吗？小心被小Mory抓包哦～快去睡！😴",
+        f"嘿{uname}～夜深啦～星星都困得眨眼了，你也该去被窝里躲着啦～🌙",
+        f"{uname}哥哥～再晚下去要错过好运了！快去睡吧，梦里啥都有～✨",
+        f"哎呀呀{uname}～这么精神呀？小Mory都打哈欠了，你也快去休息嘛～💤",
+        f"{uname}～深夜是皮肤修复的黄金时间哦！快去睡美容觉吧～😴",
+    ]
+    return random.choice(templates)
+
+
 # ════════════════════════ 启动 ════════════════════════════════════════
 # 【v4.3.2修复I-06】优雅停机：注册atexit和信号处理器
 import atexit
 import signal
 
+_shutdown_done = False
+
 def _graceful_shutdown(signum=None, frame=None):
     """优雅停机：关闭数据库连接，保存配置"""
+    global _shutdown_done
+    if _shutdown_done:
+        return
+    _shutdown_done = True
     logger.info("⏹️ 正在优雅停机...")
     try:
         save_config()
@@ -970,7 +1131,8 @@ def _graceful_shutdown(signum=None, frame=None):
     except Exception as e:
         logger.warning(f"停机时关闭数据库失败：{e}")
     logger.info("✅ 优雅停机完成")
-    sys.exit(0)
+    if signum is not None:
+        sys.exit(0)
 
 atexit.register(_graceful_shutdown)
 try:
@@ -981,8 +1143,13 @@ except (OSError, ValueError):
 
 if __name__ == "__main__":
     bot_name = CONFIG.get("BOT_NAME", "Mory")
-    cur_model = (CONFIG.get("MODEL_POOLS", {}).get("llm", CONFIG.get("MODEL_POOL", [{}]))[CONFIG.get("CURRENT_MODEL_INDEX", 0)]
-                 .get("name", "N/A"))
+    _llm_pool = CONFIG.get("MODEL_POOLS", {}).get("llm", CONFIG.get("MODEL_POOL", []))
+    _cur_idx = CONFIG.get("CURRENT_MODEL_INDEX", 0)
+    if not isinstance(_cur_idx, int) or _cur_idx < 0 or _cur_idx >= len(_llm_pool):
+        logger.warning(f"⚠️ 当前模型索引越界，已自动重置：idx={_cur_idx}, pool_size={len(_llm_pool)}")
+        _cur_idx = 0
+        CONFIG["CURRENT_MODEL_INDEX"] = 0
+    cur_model = _llm_pool[_cur_idx].get("name", "N/A") if _llm_pool else "N/A"
     reply_chance = CONFIG.get("REPLY_CHANCE", 10)
     # 【修复v4.3.1】自动同步config.json的版本号
     config_version = CONFIG.get("_CONFIG_VERSION") or CONFIG.get("VERSION", "未知")

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """部署SQL语法修复"""
 import paramiko, sys, io, os

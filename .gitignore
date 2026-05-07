@@ -1,31 +1,50 @@
-# Environment
+# ══════════════════════════════════════════════════════════════════════════
+# Mory小助理 .gitignore
+# ══════════════════════════════════════════════════════════════════════════
+
+# ── 🔴 绝对禁止提交（含密钥/Token/密码）──────────────────────────────────
+config.json
 .env
-*.env
-
-# Database
+.env.*
+!.env.example
+core/vps_config.py.bak
+backups/
 *.db
+*.db-journal
+*.db-wal
 
-# Logs
-*.log
-logs/
+# ── 🟡 敏感脚本（临时诊断/修复用，含VPS密码）─────────────────────────────
+force_*.py
+verify_*.py
+check_*.py
+fix_*.py
+diagnostic*.py
+scan*.py
+deploy_*.py
+full_sync*.py
 
-# Python cache
+# ── 备份 & 临时文件 ──────────────────────────────────────────────────────
+backup_*/
+_archive*/
+_old*/
+_temp*/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.log
+*.tmp
+*.zip
+*.bak
 
-# OS
+# ── 依赖 ─────────────────────────────────────────────────────────────────
+node_modules/
+venv/
+.venv/
+
+# ── IDE & 系统 ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
 .DS_Store
 Thumbs.db
 
-# IDE
-.vscode/
-.idea/
-
-# Backups
-backup/
-backups/
-
-# Archive (not needed for running)
-_archive_scripts/
+# ── AI工作目录（不含业务代码）──────────────────────────────────────────────
+.trae/

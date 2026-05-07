@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """检查Bot权限并使用getUpdates获取消息"""
 import paramiko, sys, io, os, json

@@ -21,6 +21,83 @@ from core.logging_util import get_logger
 logger = get_logger("natural_cmd")
 
 
+def _extract_quoted_text(msg: str) -> str:
+    """优先提取引号或书名号里的内容。"""
+    for pattern in [r'["“”\']([^"“”\']+)["“”\']', r'[「『]([^」』]+)[」』]']:
+        match = re.search(pattern, msg)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _get_special_auto_replies(config: dict) -> list:
+    """确保特定词自动回复配置始终是列表。"""
+    rules = config.get("SPECIAL_AUTO_REPLIES", [])
+    if not isinstance(rules, list):
+        rules = []
+    config["SPECIAL_AUTO_REPLIES"] = rules
+    return rules
+
+
+def _normalize_keywords(text: str) -> list[str]:
+    """把关键词文本拆成数组。"""
+    if not text:
+        return []
+    raw = re.split(r"[，,、/|；;\s]+", text.strip())
+    return [item.strip() for item in raw if item.strip()]
+
+
+def _parse_named_fields(msg: str) -> dict:
+    """解析 名称= / 关键词= / 回复= 这类字段。"""
+    result = {}
+    patterns = {
+        "name": [r"名称\s*[=:：]\s*(.+?)(?=\s+(?:关键词|回复|润色模式|AI模式|启用|$)|$)"],
+        "keywords": [r"关键词\s*[=:：]\s*(.+?)(?=\s+(?:名称|回复|润色模式|AI模式|启用|$)|$)"],
+        "reply": [r"回复\s*[=:：]\s*(.+?)(?=\s+(?:名称|关键词|润色模式|AI模式|启用|$)|$)"],
+        "ai_mode": [r"(?:润色模式|AI模式)\s*[=:：]\s*(.+?)(?=\s+(?:名称|关键词|回复|启用|$)|$)"],
+    }
+    for key, rule_list in patterns.items():
+        for pattern in rule_list:
+            match = re.search(pattern, msg, flags=re.IGNORECASE)
+            if match:
+                result[key] = match.group(1).strip().strip("；;，,。")
+                break
+    return result
+
+
+def _find_special_rule(rules: list, hint: str):
+    """按名称或关键词模糊定位特定回复规则。"""
+    hint = (hint or "").strip().lower()
+    if not hint:
+        return None
+    for rule in rules:
+        name = str(rule.get("name", "")).strip().lower()
+        if name == hint or (hint and hint in name):
+            return rule
+    for rule in rules:
+        for kw in rule.get("keywords", []) or []:
+            kw_text = str(kw).strip().lower()
+            if kw_text == hint or (hint and hint in kw_text):
+                return rule
+    return None
+
+
+def _build_special_reply_summary(rules: list) -> str:
+    """生成特定回复列表摘要。"""
+    if not rules:
+        return "现在还没有设置特定词自动回复。"
+    lines = ["🤖 当前特定词自动回复：", ""]
+    for idx, rule in enumerate(rules, 1):
+        status = "开启" if rule.get("enabled", True) else "关闭"
+        keywords = " / ".join(rule.get("keywords", [])[:6]) or "未设关键词"
+        base_reply = str(rule.get("base_reply", "")).strip()
+        preview = base_reply[:38] + ("..." if len(base_reply) > 38 else "")
+        lines.append(f"{idx}. {rule.get('name', f'规则{idx}')} [{status}]")
+        lines.append(f"   关键词：{keywords}")
+        lines.append(f"   回复：{preview or '未设回复'}")
+    return "\n".join(lines)
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 【v21.38】完整配置清单 - 所有可配置的选项
 # ══════════════════════════════════════════════════════════════════════════
@@ -534,7 +611,7 @@ def _extract_number(text: str) -> float | int | None:
     return None
 
 
-def _parse_hour(text: str) -> int | None:
+def _parse_hour(text: str, msg: str = "") -> int | None:
     """解析小时"""
     patterns = [
         r'(\d{1,2})点',
@@ -551,10 +628,11 @@ def _parse_hour(text: str) -> int | None:
         match = re.search(pattern, text)
         if match:
             hour = int(match.group(1))
-            # 下午/晚上 > 12 的自动转换
-            if '下午' in pattern or '晚上' in pattern:
-                if hour <= 12:
+            if '下午' in msg or '晚上' in msg:
+                if 0 < hour <= 12:
                     hour += 12
+                elif hour == 12 and '晚上' in msg:
+                    hour = 0
             return max(0, min(23, hour))
     return None
 
@@ -563,54 +641,53 @@ def _find_config_key(msg: str) -> str | None:
     """根据消息内容找到对应的配置key"""
     msg_lower = msg.lower()
     
-    # 配置名 -> key 的映射
+    aliases = {
+        "回复概率": "REPLY_CHANCE",
+        "回复几率": "REPLY_CHANCE",
+        "回复延迟": "REPLY_DELAY_MAX",
+        "回复长度": "MAX_MSG_LENGTH",
+        "碎片寻宝": "PUZZLE_ENABLED",
+        "寻宝": "PUZZLE_ENABLED",
+        "暗号": "PUZZLE_WORD",
+        "碎片暗号": "PUZZLE_WORD",
+        "签到": "SIGNUP_ENABLED",
+        "早安": "AUTO_GREETING",
+        "晚安": "AUTO_GOODNIGHT",
+        "新闻": "AUTO_NEWS",
+        "欢迎": "WELCOME_MSG",
+        "撤回": "ANTI_REVOKE",
+        "即焚": "BURN_AFTER",
+        "挽回": "RECOVER_ENABLED",
+        "早安时间": "GREETING_HOUR",
+        "晚安时间": "GOODNIGHT_HOUR",
+        "刷屏": "SPAM_LIMIT",
+        "防刷屏": "SPAM_LIMIT",
+        "创意": "TEMPERATURE",
+        "温度": "TEMPERATURE",
+        "温度参数": "TEMPERATURE",
+        "max_token": "MAX_TOKENS",
+        "token": "MAX_TOKENS",
+        "top-p": "TOP_P",
+        "top_p": "TOP_P",
+        "频率": "FREQUENCY_PENALTY",
+        "存在": "PRESENCE_PENALTY",
+        "模型": "CURRENT_MODEL_INDEX",
+        "欢迎语": "WELCOME_TEXT",
+        "日志": "LOG_LEVEL",
+        "备份": "BACKUP_INTERVAL",
+        "积分": "POINTS_PER_SIGNUP",
+        "贴纸": "REPLY_STICKER_CHANCE",
+        "反感词": "HATE_KEYWORDS",
+        "敏感词": "BANNED_WORDS",
+        "触发词": "AUTO_REPLY_TRIGGERS",
+        "忽略": "IGNORE_BOTS",
+    }
+
     name_to_key = {}
     for key, info in ALL_CONFIGS.items():
         name_to_key[info["name"].lower()] = key
-        # 添加别名
-        aliases = {
-            "回复概率": "REPLY_CHANCE",
-            "回复几率": "REPLY_CHANCE",
-            "回复延迟": "REPLY_DELAY_MAX",
-            "回复长度": "MAX_MSG_LENGTH",
-            "碎片寻宝": "PUZZLE_ENABLED",
-            "寻宝": "PUZZLE_ENABLED",
-            "暗号": "PUZZLE_WORD",
-            "碎片暗号": "PUZZLE_WORD",
-            "签到": "SIGNUP_ENABLED",
-            "早安": "AUTO_GREETING",
-            "晚安": "AUTO_GOODNIGHT",
-            "新闻": "AUTO_NEWS",
-            "欢迎": "WELCOME_MSG",
-            "撤回": "ANTI_REVOKE",
-            "即焚": "BURN_AFTER",
-            "挽回": "RECOVER_ENABLED",
-            "早安时间": "GREETING_HOUR",
-            "晚安时间": "GOODNIGHT_HOUR",
-            "刷屏": "SPAM_LIMIT",
-            "防刷屏": "SPAM_LIMIT",
-            "创意": "TEMPERATURE",
-            "温度": "TEMPERATURE",
-            "温度参数": "TEMPERATURE",
-            "max_token": "MAX_TOKENS",
-            "token": "MAX_TOKENS",
-            "top-p": "TOP_P",
-            "top_p": "TOP_P",
-            "频率": "FREQUENCY_PENALTY",
-            "存在": "PRESENCE_PENALTY",
-            "模型": "CURRENT_MODEL_INDEX",
-            "欢迎语": "WELCOME_TEXT",
-            "日志": "LOG_LEVEL",
-            "备份": "BACKUP_INTERVAL",
-            "积分": "POINTS_PER_SIGNUP",
-            "贴纸": "REPLY_STICKER_CHANCE",
-            "反感词": "HATE_KEYWORDS",
-            "敏感词": "BANNED_WORDS",
-            "触发词": "AUTO_REPLY_TRIGGERS",
-            "忽略": "IGNORE_BOTS",
-        }
-        for alias, key in aliases.items():
-            name_to_key[alias.lower()] = key
+        for alias, akey in aliases.items():
+            name_to_key[alias.lower()] = akey
     
     # 精确匹配
     for name, key in name_to_key.items():
@@ -628,83 +705,154 @@ def _find_config_key(msg: str) -> str | None:
     return None
 
 
-def _build_friendly_help() -> str:
+def _build_friendly_help(is_admin: bool = False) -> str:
     """构建大白话版帮助文本"""
     lines = [
-        "📋 Mory小助理 - 说话就能改配置！",
-        "═" * 36,
+        "📋 Mory小助理 - 说话就能聊！",
+        "═" * 40,
         "",
-        "【💬 你可以这样跟我说】",
-        "",
-        "🔢 调数字（把xxx改成数字）：",
-        "  把回复概率改成30",
-        "    → 机器人主动回复的频率",
-        "  把刷屏限制改成5",
-        "    → 超过5条/分钟就被禁言",
-        "  把签到积分改成20",
-        "    → 签到一次给20积分",
-        "  把最大长度改成1000",
-        "    → 机器人回复最长多少字",
-        "",
-        "🔘 开关功能（开启/关闭 + 功能名）：",
-        "  开启碎片寻宝 / 关闭碎片寻宝",
-        "    → 群里玩寻宝游戏",
-        "  开启签到 / 关闭签到",
-        "    → 用户可以每天签到领积分",
-        "  开启早安 / 关闭早安",
-        "    → 每天早上自动发早安",
-        "  开启晚安 / 关闭晚安",
-        "    → 每天晚上自动发晚安",
-        "  开启新闻 / 关闭新闻",
-        "    → 每天自动推送新闻",
-        "  开启欢迎 / 关闭欢迎",
-        "    → 新人进群自动打招呼",
-        "  开启撤回检测 / 关闭撤回检测",
-        "    → 记录谁撤回了消息",
-        "",
-        "⏰ 调时间（把xxx时间改成几点）：",
-        "  把早安时间改成8点",
-        "    → 早上8点发早安",
-        "  把晚安时间改成23点",
-        "    → 晚上11点发晚安",
-        "",
-        "📝 改文字内容：",
-        "  把暗号改成888",
-        "    → 寻宝暗号改成 888",
-        "  把欢迎语改成欢迎新朋友~",
-        "    → 新人进群的欢迎语",
-        "",
-        "🤖 调AI参数：",
-        "  把温度调成0.5",
-        "    → AI回复的创意程度",
-        "  切换到第2个模型",
-        "    → 换用别的AI模型",
-        "",
-        "📋 加/删列表项：",
-        "  增加敏感词菠菜",
-        "    → 说菠菜会被警告",
-        "  删除敏感词赌博",
-        "    → 把赌博从敏感词删掉",
-        "",
-        "═" * 36,
-        "",
-        "【🔐 只有管理员能用】",
-        "",
-        "发送「查看配置」看看现在都怎么设置的",
-        "",
-        "═" * 36,
     ]
+
+    if not is_admin:
+        lines.extend([
+            "【🤖 我是谁】",
+            "我是Mory，你的智能小助理",
+            "可以陪你聊天、解答问题、帮你解决问题",
+            "",
+            "【💬 怎么跟我聊】",
+            "直接发送消息即可，我会自动回复你",
+            "不用记指令，像跟朋友聊天一样就行~",
+            "",
+            "【🌟 我能帮你】",
+            "• 回答问题、聊天解闷",
+            "• 推荐商品、介绍服务",
+            "• 解决问题、提供帮助",
+            "",
+            "【🎯 怎么开始】",
+            "发送「我要买东西」或「有什么推荐」",
+            "我会一步步引导你找到想要的~",
+            "",
+            "═" * 40,
+            "",
+            "💬 有任何问题，直接问我就是！",
+            "",
+            "═" * 40,
+        ])
+    else:
+        lines.extend([
+            "【🔐 管理员指令】",
+            "",
+            "⚙️ 配置管理：",
+            "  查看配置 / 查看设置",
+            "    → 查看所有配置状态",
+            "  设置概率 [0-100]",
+            "    → 修改群聊随机回复概率",
+            "  绑定主人",
+            "    → 首次设置管理员",
+            "  添加管理员",
+            "    → 回复某人消息来添加其为管理员",
+            "  查看管理员",
+            "    → 查看所有管理员列表",
+            "",
+            "🧠 人设与知识：",
+            "  设置人设 [文本]",
+            "    → 修改机器人的核心人设",
+            "  查看人设",
+            "    → 查看当前人设内容",
+            "  投喂资料 [文本]",
+            "    → 追加业务知识库",
+            "  查看资料",
+            "    → 查看当前知识库内容",
+            "  清空资料",
+            "    → 清空知识库",
+            "",
+            "📢 消息管理：",
+            "  代发 @ID 消息",
+            "    → 私信任意用户",
+            "  代发群 消息",
+            "    → 以机器人名义发到主群",
+            "  代发频道 消息",
+            "    → 推送到所有频道",
+            "  投票 问题 选项",
+            "    → 群里发起投票",
+            "",
+            "📊 数据统计：",
+            "  每日简报 / /report",
+            "    → 生成运营数据简报",
+            "  排行榜 / /rank",
+            "    → 积分排行榜",
+            "  查看画像 @用户ID",
+            "    → 查看用户详细画像",
+            "",
+            "🤖 模型管理：",
+            "  当前模型 / /model",
+            "    → 查看所有模型和当前使用",
+            "  切换模型 [名称]",
+            "    → 手动切换AI模型",
+            "  模型恢复 [模型名]",
+            "    → 从黑名单恢复模型",
+            "",
+            "🚫 群管理：",
+            "  /blacklist @ID",
+            "    → 拉黑用户",
+            "  /mute @ID 分钟",
+            "    → 禁言用户（需机器人为群管理员）",
+            "  清群无人理",
+            "    → 删除群里所有无人回复的机器人消息",
+            "  清全部回复",
+            "    → 删除群里所有机器人的回复",
+            "",
+            "🧬 动态进化：",
+            "  加热词 [词汇...]",
+            "    → 给热词库追加新词汇",
+            "  查热词",
+            "    → 查看当前热词库",
+            "  改风格 [描述]",
+            "    → 快速调整说话风格",
+            "  学知识 [内容]",
+            "    → 让机器人学习新知识",
+            "  忘记 [关键词]",
+            "    → 从知识库中移除内容",
+            "  进化 [指令]",
+            "    → 高级进化：直接修改任意配置项",
+            "",
+            "═" * 40,
+            "",
+            "💡 提示：发送「查看配置」查看当前所有设置",
+            "",
+            "═" * 40,
+        ])
+
     return "\n".join(lines)
 
 
-def _handle_view_all_config(msg: str, config: dict, bot, m) -> bool:
+def _handle_view_all_config(msg: str, config: dict, bot, m, mory_bot=None, is_admin: bool = False) -> bool:
     """处理「查看配置」或「查看指令」请求"""
     # 查看指令/帮助 -> 显示大白话说明
-    help_keywords = ["查看指令", "帮助", "help", "怎么用", "有哪些指令", "教我怎么用", "指令说明"]
-    if msg.strip() in help_keywords:
-        mory_bot.reply_and_track(m, _build_friendly_help())
+    help_keywords = [
+        "查看指令", "帮助", "help", "怎么用", "有哪些指令", "教我怎么用", "指令说明",
+        "你能做什么", "你有什么功能", "有什么指令", "功能列表", "指令列表",
+        "启动指令", "开始指令", "如何使用", "使用说明", "操作指南",
+        "指令", "帮助文档", "使用帮助"
+    ]
+    msg_stripped = msg.strip()
+    if msg_stripped in help_keywords:
+        mory_bot.reply_and_track(m, _build_friendly_help(is_admin=is_admin))
         logger.info("用户查看指令说明")
         return True
+
+    # 自然语言触发（包含关键词）
+    help_patterns = [
+        "有哪些指令", "你能做什么", "什么功能", "功能列表", "指令列表",
+        "怎么用", "如何使用", "使用说明", "操作指南",
+        "有什么指令", "指令是什么", "怎么用你", "你能干嘛"
+    ]
+    msg_lower = msg_stripped.lower()
+    for pattern in help_patterns:
+        if pattern in msg_lower:
+            mory_bot.reply_and_track(m, _build_friendly_help(is_admin=is_admin))
+            logger.info("用户通过自然语言查看指令说明")
+            return True
     
     # 查看配置 -> 显示当前配置状态
     view_keywords = [
@@ -768,7 +916,135 @@ def _handle_view_all_config(msg: str, config: dict, bot, m) -> bool:
     return False
 
 
-def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn) -> bool:
+def _handle_special_auto_reply_config(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
+    """处理特定词自动回复的自然语言配置。"""
+    msg_clean = (msg or "").strip()
+    markers = ["特定回复", "自动回复", "关键词回复", "特定词回复"]
+    if not any(marker in msg_clean for marker in markers):
+        return False
+
+    rules = _get_special_auto_replies(config)
+
+    if any(key in msg_clean for key in ["查看特定回复", "查看自动回复", "查看关键词回复", "看看特定回复", "列出特定回复"]):
+        mory_bot.reply_and_track(m, _build_special_reply_summary(rules))
+        return True
+
+    is_add = msg_clean.startswith(("新增", "添加", "增加"))
+    is_delete = msg_clean.startswith(("删除", "移除", "去掉"))
+    is_modify = msg_clean.startswith(("修改", "编辑", "更新"))
+    is_enable = msg_clean.startswith(("开启", "启用", "打开"))
+    is_disable = msg_clean.startswith(("关闭", "禁用", "停用"))
+
+    if is_add:
+        fields = _parse_named_fields(msg_clean)
+        keywords = _normalize_keywords(fields.get("keywords", ""))
+        reply_text = fields.get("reply") or _extract_quoted_text(msg_clean)
+        if not keywords or not reply_text:
+            mory_bot.reply_and_track(
+                m,
+                "⚠️ 新增特定回复时，至少要告诉我关键词和回复内容。\n例子：新增特定回复 名称=价格咨询 关键词=价钱,价格,多少钱 回复=价格这块我不在群里说太满，你要是想细聊就直接来找我～"
+            )
+            return True
+        rule_name = fields.get("name") or keywords[0]
+        exists = _find_special_rule(rules, rule_name)
+        if exists:
+            mory_bot.reply_and_track(m, f"⚠️ 已经有「{exists.get('name', rule_name)}」这条规则了，直接发“修改特定回复 ...”就行。")
+            return True
+        rules.append({
+            "name": rule_name,
+            "enabled": True,
+            "ai_polish": True,
+            "ai_mode": fields.get("ai_mode", "convert_soft") or "convert_soft",
+            "keywords": keywords,
+            "base_reply": reply_text,
+        })
+        save_config_fn()
+        mory_bot.reply_and_track(m, f"✅ 已新增特定回复「{rule_name}」\n关键词：{' / '.join(keywords)}")
+        return True
+
+    if is_delete:
+        hint = msg_clean
+        for prefix in ["删除", "移除", "去掉"]:
+            hint = hint.replace(prefix, "", 1).strip()
+        for marker in markers:
+            hint = hint.replace(marker, "").strip()
+        rule = _find_special_rule(rules, hint)
+        if not rule:
+            mory_bot.reply_and_track(m, "⚠️ 没找到你要删的那条特定回复，先发“查看特定回复”我给你列出来。")
+            return True
+        rules.remove(rule)
+        save_config_fn()
+        mory_bot.reply_and_track(m, f"✅ 已删除特定回复「{rule.get('name', '未命名规则')}」")
+        return True
+
+    if is_enable or is_disable:
+        hint = msg_clean
+        for prefix in ["开启", "启用", "打开", "关闭", "禁用", "停用"]:
+            hint = hint.replace(prefix, "", 1).strip()
+        for marker in markers:
+            hint = hint.replace(marker, "").strip()
+        rule = _find_special_rule(rules, hint)
+        if not rule:
+            mory_bot.reply_and_track(m, "⚠️ 没找到这条特定回复，先发“查看特定回复”确认一下名字。")
+            return True
+        rule["enabled"] = bool(is_enable)
+        save_config_fn()
+        mory_bot.reply_and_track(m, f"✅ 已{'开启' if is_enable else '关闭'}特定回复「{rule.get('name', '未命名规则')}」")
+        return True
+
+    if is_modify:
+        body = msg_clean
+        for prefix in ["修改", "编辑", "更新"]:
+            body = body.replace(prefix, "", 1).strip()
+        for marker in markers:
+            body = body.replace(marker, "", 1).strip()
+        fields = _parse_named_fields(msg_clean)
+
+        hint = body
+        for token in ["名称", "关键词", "回复", "润色模式", "AI模式", "=", "：", ":"]:
+            idx = hint.find(token)
+            if idx > 0:
+                hint = hint[:idx].strip()
+                break
+        rule = _find_special_rule(rules, hint)
+        if not rule:
+            mory_bot.reply_and_track(m, "⚠️ 没找到你要修改的那条特定回复，先发“查看特定回复”看看现有规则。")
+            return True
+
+        changed = []
+        if fields.get("name"):
+            rule["name"] = fields["name"]
+            changed.append("名称")
+        if fields.get("keywords"):
+            rule["keywords"] = _normalize_keywords(fields["keywords"])
+            changed.append("关键词")
+        if fields.get("reply"):
+            rule["base_reply"] = fields["reply"]
+            changed.append("回复")
+        if fields.get("ai_mode"):
+            rule["ai_mode"] = fields["ai_mode"]
+            changed.append("润色模式")
+        if not changed:
+            quoted = _extract_quoted_text(msg_clean)
+            if quoted:
+                rule["base_reply"] = quoted
+                changed.append("回复")
+
+        if not changed:
+            mory_bot.reply_and_track(
+                m,
+                "⚠️ 我听出来你想改特定回复了，但还缺一点信息。\n例子：修改特定回复 价格咨询 回复=价格这块我一般不在群里说太透，你想知道细一点就来找我。"
+            )
+            return True
+
+        save_config_fn()
+        mory_bot.reply_and_track(m, f"✅ 已更新特定回复「{rule.get('name', '未命名规则')}」：{'、'.join(changed)}")
+        return True
+
+    return False
+
+
+def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
     """处理开关命令"""
     msg_lower = msg.lower()
     
@@ -821,10 +1097,10 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn) -> bool:
     return False
 
 
-def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn) -> bool:
+def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
     """处理数值修改命令"""
     # 检查是否包含"改成"或"改成"
-    if not ("改成" in msg or "改为" in msg or "调成" in msg or "调成" in msg or "改成" in msg):
+    if not ("改成" in msg or "改为" in msg or "调成" in msg):
         return False
     
     # 找到配置key
@@ -841,7 +1117,7 @@ def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn) -> boo
     if info["type"] in ["number", "float"]:
         val = _extract_number(msg)
     elif info["type"] == "hour":
-        val = _parse_hour(msg)
+        val = _parse_hour(msg, msg)
     elif info["type"] == "spam":
         val = _extract_number(msg)
     
@@ -887,7 +1163,7 @@ def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn) -> boo
     return True
 
 
-def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn) -> bool:
+def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
     """处理文本修改命令"""
     if not ("改成" in msg or "改为" in msg or "改成" in msg):
         return False
@@ -953,7 +1229,7 @@ def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn) -> bool:
     return False
 
 
-def _handle_list_operations(msg: str, config: dict, bot, m, save_config_fn) -> bool:
+def _handle_list_operations(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
     """处理列表操作（增加/删除）"""
     is_add = msg.startswith("增加") or msg.startswith("添加") or msg.startswith("新增")
     is_del = msg.startswith("删除") or msg.startswith("移除") or msg.startswith("去掉")
@@ -1035,7 +1311,7 @@ def _handle_list_operations(msg: str, config: dict, bot, m, save_config_fn) -> b
     return False
 
 
-def _handle_model_switch(msg: str, config: dict, bot, m, save_config_fn) -> bool:
+def _handle_model_switch(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
     """处理模型切换"""
     if not any(k in msg for k in ["切换", "使用", "换", "模型"]):
         return False
@@ -1074,39 +1350,47 @@ def _handle_model_switch(msg: str, config: dict, bot, m, save_config_fn) -> bool
 # 主入口
 # ══════════════════════════════════════════════════════════════════════════
 
-def handle_natural_admin(bot, m, config: dict, save_config_fn) -> bool:
+def handle_natural_admin(bot, m, config: dict, save_config_fn, mory_bot=None, is_admin: bool = False) -> bool:
     """
     处理自然语言配置指令。
     返回 True 表示已消费该消息。
     """
     msg = (m.text or "").strip()
-    
+
     if not msg:
         return False
-    
-    # 1. 查看全部配置
-    if _handle_view_all_config(msg, config, bot, m):
+
+    # 1. 查看全部配置（所有用户可用）
+    if _handle_view_all_config(msg, config, bot, m, mory_bot=mory_bot, is_admin=is_admin):
         return True
-    
+
+    # 以下指令需要管理员权限
+    if not is_admin:
+        return False
+
+    # 1.5 特定词自动回复配置
+    if _handle_special_auto_reply_config(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
+        return True
+
     # 2. 开关命令（开启/关闭xxx）
-    if _handle_toggle(msg, config, bot, m, save_config_fn):
+    if _handle_toggle(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
         return True
-    
+
     # 3. 模型切换
-    if _handle_model_switch(msg, config, bot, m, save_config_fn):
+    if _handle_model_switch(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
         return True
-    
+
     # 4. 列表操作（增加/删除xxx）
-    if _handle_list_operations(msg, config, bot, m, save_config_fn):
+    if _handle_list_operations(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
         return True
-    
+
     # 5. 数值修改（把xxx改成yyy）
-    if _handle_modify_number(msg, config, bot, m, save_config_fn):
+    if _handle_modify_number(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
         return True
-    
+
     # 6. 文本修改
-    if _handle_modify_text(msg, config, bot, m, save_config_fn):
+    if _handle_modify_text(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
         return True
-    
+
     # 没有匹配
     return False

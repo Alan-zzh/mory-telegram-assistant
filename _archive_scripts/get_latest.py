@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """获取最新消息ID并发送触发消息"""
 import paramiko, sys, io, os, json
@@ -38,7 +39,7 @@ else:
 
 # 2. 发送触发消息
 print("\n📨 发送触发消息...")
-cmd = 'curl -s -X POST "https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage" -H "Content-Type: application/json" -d \'{"chat_id":' + GROUP_ID + ',"text":"🔍 开始扫描Bot历史消息..."}\''
+cmd = 'curl -s -X POST "https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage" -H "Content-Type: application/json" -d '{"chat_id":' + GROUP_ID + ',"text":"🔍 开始扫描Bot历史消息..."}''
 stdin, stdout, stderr = ssh.exec_command(cmd)
 out = stdout.read().decode('utf-8', errors='replace').strip()
 data = json.loads(out)
@@ -141,7 +142,7 @@ print(out)
 
 # 4. 删除触发消息
 print("\n🗑️ 删除触发消息...")
-cmd = 'curl -s -X POST "https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage" -H "Content-Type: application/json" -d \'{"chat_id":' + GROUP_ID + ',"message_id":' + str(trigger_msg_id) + '}\''
+cmd = 'curl -s -X POST "https://api.telegram.org/bot' + BOT_TOKEN + '/deleteMessage" -H "Content-Type: application/json" -d '{"chat_id":' + GROUP_ID + ',"message_id":' + str(trigger_msg_id) + '}''
 stdin, stdout, stderr = ssh.exec_command(cmd)
 
 ssh.close()

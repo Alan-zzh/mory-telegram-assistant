@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """获取Bot信息和清理Telegram群组中的历史消息"""
 import paramiko, sys, io, os, json, re
@@ -17,7 +18,7 @@ print("=" * 60)
 
 # 1. 获取Bot Token (从config.json)
 print("\n🔑 Bot Token:")
-stdin, stdout, stderr = ssh.exec_command('cd /root/mory && python3 -c "import json; c=json.load(open(\"config.json\")); print(c.get(\"BOT_TOKEN\",\"NOT_FOUND\"))"', timeout=10)
+stdin, stdout, stderr = ssh.exec_command('cd /root/mory && python3 -c "import json; c=json.load(open("config.json\")); print(c.get("BOT_TOKEN\","NOT_FOUND\"))"', timeout=10)
 bot_token = stdout.read().decode('utf-8', errors='replace').strip()
 print(f"  Token前缀: {bot_token[:20]}..." if len(bot_token) > 20 else f"  {bot_token}")
 
@@ -51,7 +52,7 @@ except:
 
 # 4. 获取Bot在该群组中的最近消息
 print(f"\n📜 Bot在群组中的最近消息:")
-stdin, stdout, stderr = ssh.exec_command(f'curl -s "https://api.telegram.org/bot{bot_token}/getChatHistory?chat_id={GROUP_ID}&limit=20&from_message_id=0" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); msgs=d.get(\\"result\\",{{}}).get(\\"messages\\",[]); [print(f\\"  msg_id={{m[\\"message_id\\"]}} from={{m[\\"from\\"] if \\"from\\" in m else \\"N/A\\"}}\\") for m in msgs[:10]]" 2>/dev/null || echo "  获取失败"', timeout=20)
+stdin, stdout, stderr = ssh.exec_command(f'curl -s "https://api.telegram.org/bot{bot_token}/getChatHistory?chat_id={GROUP_ID}&limit=20&from_message_id=0" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); msgs=d.get(/"result\\",{{}}).get(/"messages\\",[]); [print(f/"  msg_id={{m[\\"message_id/"]}} from={{m[\\"from/"] if \\"from/" in m else \\"N/A/"}}\\") for m in msgs[:10]]" 2>/dev/null || echo "  获取失败"', timeout=20)
 out = stdout.read().decode('utf-8', errors='replace').strip()
 print(out if out else "  (无输出)")
 

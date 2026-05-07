@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """修复Bot冲突问题"""
 import paramiko, sys, io, os

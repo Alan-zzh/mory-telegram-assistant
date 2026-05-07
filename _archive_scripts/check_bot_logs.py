@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """检查Bot运行状态和日志"""
 import paramiko, sys, io, os

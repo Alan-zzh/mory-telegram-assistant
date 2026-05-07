@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import paramiko
 import sys
 import io
@@ -24,7 +25,7 @@ try:
     print("reply_tracking记录数:", stdout.read().decode('utf-8', errors='replace'))
     
     # 检查SQL语法
-    stdin, stdout, stderr = ssh.exec_command('grep -n "ts<?\"\"?" /root/mory/core/database.py')
+    stdin, stdout, stderr = ssh.exec_command('grep -n "ts<?"\"?" /root/mory/core/database.py')
     print("双问号检查:", stdout.read().decode('utf-8', errors='replace') or "无")
     
 except Exception as e:

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """检查VPS bot状态"""
 import paramiko
 import os, sys

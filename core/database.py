@@ -173,6 +173,7 @@ class DB:
             c.execute("""CREATE TABLE IF NOT EXISTS group_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
+                chat_id INTEGER DEFAULT 0,
                 joined_count INTEGER DEFAULT 0,
                 left_count INTEGER DEFAULT 0,
                 net_count INTEGER DEFAULT 0,
@@ -201,6 +202,37 @@ class DB:
                 PRIMARY KEY (uid, badge_id)
             )""")
 
+            # 【v4.4.9新增】关键词自动回复表
+            c.execute("""CREATE TABLE IF NOT EXISTS keyword_triggers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                keyword TEXT NOT NULL,
+                reply_text TEXT NOT NULL,
+                reply_type TEXT DEFAULT 'static',
+                action_type TEXT DEFAULT '',
+                enabled INTEGER DEFAULT 1,
+                created_at INTEGER,
+                updated_at INTEGER
+            )""")
+            # 添加关键词索引，加速匹配
+            c.execute("CREATE INDEX IF NOT EXISTS idx_keyword_trigger_enabled ON keyword_triggers(enabled)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS task_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_key TEXT NOT NULL,
+                exec_date TEXT NOT NULL,
+                exec_ts REAL NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_task_log_key_date ON task_log(task_key, exec_date)")
+            
+            # 【v4.5.31】防连发：清理重复记录 + 添加UNIQUE约束
+            try:
+                c.execute("""DELETE FROM task_log WHERE id NOT IN (
+                    SELECT MIN(id) FROM task_log GROUP BY task_key, exec_date
+                )""")
+                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_task_log_unique ON task_log(task_key, exec_date)")
+            except Exception as e:
+                logger.debug(f"task_log唯一索引迁移: {e}")
+
             # ── 兼容性迁移：旧数据库缺少的列自动补齐 ──────────────────
             try:
                 self.conn.execute("SELECT replied FROM reply_tracking LIMIT 0")
@@ -210,8 +242,9 @@ class DB:
 
             # 【修复v21.33】reply_tracking 单主键 → 复合主键迁移
             try:
-                self.conn.execute("PRAGMA table_info(reply_tracking)")
-                cols = [r[1] for r in self.conn.fetchall()]
+                c = self.conn.cursor()
+                c.execute("PRAGMA table_info(reply_tracking)")
+                cols = [r[1] for r in c.fetchall()]
                 if "chat_id" not in cols:
                     self.conn.execute("ALTER TABLE reply_tracking ADD COLUMN chat_id INTEGER")
                     logger.info("🔄 数据库迁移：reply_tracking 补充 chat_id 列")
@@ -222,6 +255,12 @@ class DB:
             except Exception:
                 self.conn.execute("ALTER TABLE users ADD COLUMN conversion_status TEXT DEFAULT 'unknown'")
                 logger.info("🔄 数据库迁移：users 补充 conversion_status 列")
+
+            try:
+                c.execute("SELECT chat_id FROM group_stats LIMIT 1")
+            except Exception:
+                c.execute("ALTER TABLE group_stats ADD COLUMN chat_id INTEGER DEFAULT 0")
+                logger.info("✅ group_stats表已添加chat_id列")
 
             self.conn.commit()
 
@@ -253,13 +292,37 @@ class DB:
             c.execute("""INSERT OR IGNORE INTO users
                 (uid, name, first_seen, last_active) VALUES (?,?,?,?)""",
                 (uid, name, ts, ts))
-            # 【v4.3.2修复S-08】移除f-string拼接SQL列名，改用if/else分支
             if msg_type == "group":
                 c.execute("UPDATE users SET last_active=?, group_messages=group_messages+1, name=? WHERE uid=?",
                           (ts, name, uid))
             else:
                 c.execute("UPDATE users SET last_active=?, private_messages=private_messages+1, name=? WHERE uid=?",
                           (ts, name, uid))
+            self.conn.commit()
+
+    def upsert_user_with_points(self, uid: int, name: str, msg_type: str = "group", pts: int = 1):
+        ts = int(time.time())
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""INSERT OR IGNORE INTO users
+                (uid, name, first_seen, last_active) VALUES (?,?,?,?)""",
+                (uid, name, ts, ts))
+            if msg_type == "group":
+                c.execute("UPDATE users SET last_active=?, group_messages=group_messages+1, name=? WHERE uid=?",
+                          (ts, name, uid))
+            else:
+                c.execute("UPDATE users SET last_active=?, private_messages=private_messages+1, name=? WHERE uid=?",
+                          (ts, name, uid))
+            c.execute("INSERT OR IGNORE INTO user_levels VALUES (?,1,0,?,?)", (uid, ts, ts))
+            c.execute("UPDATE user_levels SET points=points+?, last_active=? WHERE uid=?",
+                      (pts, ts, uid))
+            c.execute("SELECT points FROM user_levels WHERE uid=?", (uid,))
+            total = c.fetchone()[0]
+            level = 1
+            if total >= 500: level = 4
+            elif total >= 100: level = 3
+            elif total >= 20: level = 2
+            c.execute("UPDATE user_levels SET level=? WHERE uid=?", (level, uid))
             self.conn.commit()
 
     def get_user(self, uid: int):
@@ -321,28 +384,32 @@ class DB:
         返回 (当前分数, 今日是否已计, 连续天数)
         """
         today = datetime.now(_CST).strftime("%Y-%m-%d")  # 【修复v21.47】使用北京时间
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("INSERT OR IGNORE INTO puzzle_scores VALUES (?,0)", (uid,))
-            # 检查今天是否已计分
-            c.execute("SELECT 1 FROM puzzle_daily WHERE uid=? AND date=?", (uid, today))
-            if c.fetchone():
-                # 今天已计分
+        try:
+            with _db_lock:
+                c = self.conn.cursor()
+                c.execute("INSERT OR IGNORE INTO puzzle_scores VALUES (?,0)", (uid,))
+                # 检查今天是否已计分
+                c.execute("SELECT 1 FROM puzzle_daily WHERE uid=? AND date=?", (uid, today))
+                if c.fetchone():
+                    # 今天已计分
+                    c.execute("SELECT score FROM puzzle_scores WHERE uid=?", (uid,))
+                    return (c.fetchone()[0], True, 0)
+                # 今天未计分，加分
+                c.execute("INSERT OR REPLACE INTO puzzle_daily VALUES (?,?,?)", (uid, today, int(time.time())))
+                c.execute("UPDATE puzzle_scores SET score=score+1 WHERE uid=?", (uid,))
                 c.execute("SELECT score FROM puzzle_scores WHERE uid=?", (uid,))
-                return (c.fetchone()[0], True, 0)
-            # 今天未计分，加分
-            c.execute("INSERT OR REPLACE INTO puzzle_daily VALUES (?,?,?)", (uid, today, int(time.time())))
-            c.execute("UPDATE puzzle_scores SET score=score+1 WHERE uid=?", (uid,))
-            c.execute("SELECT score FROM puzzle_scores WHERE uid=?", (uid,))
-            score = c.fetchone()[0]
-            # 计算连续天数（连续7天有记录）
-            consecutive = self._calc_consecutive_days(uid)
-            if score >= 7:
-                c.execute("UPDATE puzzle_scores SET score=0 WHERE uid=?", (uid,))
+                score = c.fetchone()[0]
+                # 计算连续天数（连续7天有记录）
+                consecutive = self._calc_consecutive_days(uid)
+                if score >= 7:
+                    c.execute("UPDATE puzzle_scores SET score=0 WHERE uid=?", (uid,))
+                    self.conn.commit()
+                    return (7, False, consecutive)
                 self.conn.commit()
-                return (7, False, consecutive)
-            self.conn.commit()
-            return (score, False, consecutive)
+                return (score, False, consecutive)
+        except Exception as e:
+            logger.error(f"寻宝积分操作失败 uid={uid}: {e}")
+            return (0, False, 0)
 
     def _calc_consecutive_days(self, uid: int) -> int:
         """计算用户连续签到天数（由调用方保证在_db_lock内调用，不再重复获取锁）"""
@@ -420,6 +487,24 @@ class DB:
             c = self.conn.cursor()
             c.execute("""SELECT bot_msg_id, replied FROM reply_tracking
                          WHERE user_msg_id=? AND chat_id=?""", (user_msg_id, chat_id))
+            return c.fetchall()
+
+    def get_recent_unreplied(self, min_age: int = 300, max_age: int = 1800, limit: int = 10):
+        """获取最近未回复的消息（用于探测用户是否删消息）
+        
+        Args:
+            min_age: 最小存活秒数（默认5分钟，避免探测刚发的消息）
+            max_age: 最大存活秒数（默认30分钟）
+            limit: 最多返回条数（防止一次探测太多）
+        """
+        now = int(time.time())
+        since = now - max_age
+        until = now - min_age
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
+                         WHERE ts BETWEEN ? AND ? AND user_msg_id>0 AND replied=0
+                         ORDER BY ts ASC LIMIT ?""", (since, until, limit))
             return c.fetchall()
 
     def get_orphan_messages(self, window: int = 86400):
@@ -511,8 +596,8 @@ class DB:
             c.execute("SELECT points FROM user_levels WHERE uid=?", (uid,))
             total = c.fetchone()[0]
             level = 1
-            if total >= 100: level = 4
-            elif total >= 50: level = 3
+            if total >= 500: level = 4
+            elif total >= 100: level = 3
             elif total >= 20: level = 2
             c.execute("UPDATE user_levels SET level=? WHERE uid=?", (level, uid))
             self.conn.commit()
@@ -881,7 +966,7 @@ class DB:
             total_views = row[0] if row else 0
             # 今日发布数
             today = datetime.now(_CST).strftime("%Y-%m-%d")
-            c.execute("SELECT COUNT(*) FROM channel_tracking WHERE date(posted_at, 'unixepoch')=?", (today,))
+            c.execute("SELECT COUNT(*) FROM channel_tracking WHERE date(posted_at, 'unixepoch', '+8 hours')=?", (today,))
             row = c.fetchone()
             today_posts = row[0] if row else 0
             # 平均浏览量
@@ -892,6 +977,89 @@ class DB:
             "today_posts": today_posts,
             "avg_views": avg_views
         }
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 【v4.5.25】日报增强查询
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def get_daily_active_users(self, date_str: str = None) -> int:
+        """获取指定日期活跃用户数（last_active在当天内的用户）"""
+        if not date_str:
+            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
+        with _db_lock:
+            c = self.conn.cursor()
+            day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
+            day_end = day_start + 86400
+            c.execute("SELECT COUNT(*) FROM users WHERE last_active>=? AND last_active<?", (day_start, day_end))
+            row = c.fetchone()
+            return row[0] if row else 0
+
+    def get_daily_bot_messages(self, date_str: str = None) -> int:
+        """获取指定日期Bot发送的消息数（从channel_tracking表）"""
+        if not date_str:
+            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("SELECT COUNT(*) FROM channel_tracking WHERE date(posted_at, 'unixepoch', '+8 hours')=?", (date_str,))
+            row = c.fetchone()
+            return row[0] if row else 0
+
+    def get_daily_replies(self, date_str: str = None) -> int:
+        """获取指定日期用户回复Bot消息数（从reply_tracking表）"""
+        if not date_str:
+            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
+        with _db_lock:
+            c = self.conn.cursor()
+            day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
+            day_end = day_start + 86400
+            c.execute("SELECT COUNT(*) FROM reply_tracking WHERE ts>=? AND ts<? AND replied=1", (day_start, day_end))
+            row = c.fetchone()
+            return row[0] if row else 0
+
+    def get_group_total_members_latest(self, chat_id: int = 0) -> int:
+        """获取群成员总数（取最近一条记录的total_members）"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("SELECT total_members FROM group_stats WHERE chat_id=? ORDER BY date DESC LIMIT 1", (chat_id,))
+            row = c.fetchone()
+            return row[0] if row and row[0] else 0
+
+    def get_weekly_group_stats(self, start_date: str, end_date: str) -> dict:
+        """获取指定日期范围的群统计汇总"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT COALESCE(SUM(joined_count),0), COALESCE(SUM(left_count),0),
+                         COALESCE(SUM(net_count),0), AVG(total_members)
+                         FROM group_stats WHERE date>=? AND date<=? AND chat_id=0""",
+                     (start_date, end_date))
+            row = c.fetchone()
+            if row:
+                return {"joined": row[0], "left": row[1], "net": row[2], "avg_members": int(row[3] or 0)}
+            return {"joined": 0, "left": 0, "net": 0, "avg_members": 0}
+
+    def get_weekly_channel_member_stats(self, chat_id: int, start_date: str, end_date: str) -> dict:
+        """获取指定频道在日期范围内的成员数变化"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT MIN(total_members), MAX(total_members), AVG(total_members)
+                         FROM group_stats WHERE chat_id=? AND date>=? AND date<=?""",
+                     (chat_id, start_date, end_date))
+            row = c.fetchone()
+            if row and row[2]:
+                return {"min": row[0] or 0, "max": row[1] or 0, "avg": int(row[2])}
+            return {"min": 0, "max": 0, "avg": 0}
+
+    def get_channel_posts_in_range(self, chat_id: int, start_ts: int, end_ts: int) -> dict:
+        """获取频道在时间范围内的发帖和浏览量统计"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT COUNT(*), COALESCE(SUM(current_views),0)
+                         FROM channel_tracking WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
+                     (chat_id, start_ts, end_ts))
+            row = c.fetchone()
+            if row:
+                return {"posts": row[0], "views": row[1], "avg_views": row[1] // max(row[0], 1)}
+            return {"posts": 0, "views": 0, "avg_views": 0}
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 【v4.3.0新增】活跃勋章系统
@@ -939,5 +1107,165 @@ class DB:
             """, (limit,))
             return c.fetchall()
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 【v4.4.9新增】关键词自动回复系统
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def add_keyword_trigger(self, keyword: str, reply_text: str, reply_type: str = "static", action_type: str = ""):
+        """
+        添加关键词触发规则
+        """
+        with _db_lock:
+            ts = int(time.time())
+            c = self.conn.cursor()
+            c.execute("""
+                INSERT INTO keyword_triggers (keyword, reply_text, reply_type, action_type, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+            """, (keyword, reply_text, reply_type, action_type, ts, ts))
+            self.conn.commit()
+            logger.info(f"🔑 添加关键词触发: {keyword}")
+
+    def get_all_keyword_triggers(self) -> list:
+        """获取所有启用的关键词触发规则"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""
+                SELECT id, keyword, reply_text, reply_type, action_type, enabled, created_at, updated_at
+                FROM keyword_triggers
+                WHERE enabled = 1
+                ORDER BY id DESC
+            """)
+            rows = c.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "keyword": r[1],
+                    "reply_text": r[2],
+                    "reply_type": r[3],
+                    "action_type": r[4],
+                    "enabled": r[5],
+                    "created_at": r[6],
+                    "updated_at": r[7]
+                }
+                for r in rows
+            ]
+
+    def delete_keyword_trigger(self, trigger_id: int):
+        """删除关键词触发规则"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("DELETE FROM keyword_triggers WHERE id = ?", (trigger_id,))
+            self.conn.commit()
+            logger.info(f"🔑 删除关键词触发: id={trigger_id}")
+
+    def update_keyword_trigger(self, trigger_id: int, **kwargs):
+        """更新关键词触发规则"""
+        with _db_lock:
+            ts = int(time.time())
+            c = self.conn.cursor()
+            allowed_fields = ["keyword", "reply_text", "reply_type", "action_type", "enabled"]
+            set_clause = []
+            params = []
+            for field, value in kwargs.items():
+                if field in allowed_fields:
+                    set_clause.append(f"{field} = ?")
+                    params.append(value)
+            if not set_clause:
+                return
+            set_clause.append("updated_at = ?")
+            params.extend([ts, trigger_id])
+            sql = f"UPDATE keyword_triggers SET {', '.join(set_clause)} WHERE id = ?"
+            c.execute(sql, params)
+            self.conn.commit()
+            logger.info(f"🔑 更新关键词触发: id={trigger_id}")
+
+    def match_keyword_trigger(self, text: str) -> list:
+        """
+        匹配关键词触发规则（返回匹配到的所有规则，按优先级排序）
+        
+        Args:
+            text: 用户输入的文本
+            
+        Returns:
+            [{"id": int, "keyword": str, ...}]
+        """
+        text_lower = text.lower()
+        all_triggers = self.get_all_keyword_triggers()
+        matched = []
+        for trigger in all_triggers:
+            if trigger["keyword"].lower() in text_lower:
+                matched.append(trigger)
+        return matched
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 【v4.3.9】任务执行日志（持久化去重）
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def claim_task(self, task_key: str) -> bool:
+        """【v4.5.32】数据库级原子抢占：跨进程防重核心防线
+        纯INSERT OR IGNORE + UNIQUE索引，无SELECT（SELECT会引入竞态窗口）
+        SQLite的UNIQUE约束保证跨进程原子性：后到者插入被拒绝
+        返回True表示抢占成功，False表示已被抢占（同次或历史执行）"""
+        today = datetime.now(_CST).strftime("%Y-%m-%d")
+        ts = time.time()
+        try:
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO task_log (task_key, exec_date, exec_ts) VALUES (?, ?, ?)",
+                (task_key, today, ts)
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            logger.warning(f"claim_task失败: {e}")
+            return False
+
+    def is_task_executed_today(self, task_key: str) -> bool:
+        """查询任务今日是否已执行"""
+        today = datetime.now(_CST).strftime("%Y-%m-%d")
+        with _db_lock:
+            try:
+                row = self.conn.execute(
+                    "SELECT 1 FROM task_log WHERE task_key=? AND exec_date=? LIMIT 1",
+                    (task_key, today)
+                ).fetchone()
+                return row is not None
+            except Exception as e:
+                logger.warning(f"is_task_executed_today失败: {e}")
+                return False
+
+    def cleanup_old_task_log(self, days: int = 7):
+        """清理超过N天的任务执行记录"""
+        cutoff = (datetime.now(_CST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with _db_lock:
+            try:
+                cur = self.conn.execute("DELETE FROM task_log WHERE exec_date < ?", (cutoff,))
+                self.conn.commit()
+                if cur.rowcount > 0:
+                    logger.info(f"🧹 清理{cur.rowcount}条过期task_log记录(>{days}天)")
+            except Exception as e:
+                logger.warning(f"cleanup_old_task_log失败: {e}")
+
+    def cleanup_old_records(self, cutoff: int):
+        """清理过期的追踪记录（线程安全）"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("DELETE FROM reply_tracking WHERE ts < ?", (cutoff,))
+            deleted_track = c.rowcount
+            c.execute("DELETE FROM spam_track WHERE COALESCE(window_start,0) < ?", (cutoff,))
+            deleted_spam = c.rowcount
+            c.execute("DELETE FROM puzzle_daily WHERE ts < ?", (cutoff,))
+            deleted_puzzle = c.rowcount
+            self.conn.commit()
+        return deleted_track, deleted_spam, deleted_puzzle
+
+    def get_tracking_stats(self):
+        """获取追踪统计（线程安全）"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("SELECT COUNT(*) FROM reply_tracking")
+            total = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM reply_tracking WHERE replied=0")
+            unreplied = c.fetchone()[0]
+        return total, unreplied
 
 

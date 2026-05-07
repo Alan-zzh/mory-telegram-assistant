@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """使用正确的API获取聊天历史"""
 import paramiko, sys, io, os, json

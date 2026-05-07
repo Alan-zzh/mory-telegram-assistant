@@ -1,0 +1,15 @@
+README.md
+setup.py
+core/__init__.py
+core/account_manager.py
+core/api_adapter.py
+core/config_manager.py
+core/router.py
+core/router_database.py
+core/router_statistics.py
+core/uni_ai.py
+tests/__init__.py
+universal_ai_router.egg-info/PKG-INFO
+universal_ai_router.egg-info/SOURCES.txt
+universal_ai_router.egg-info/dependency_links.txt
+universal_ai_router.egg-info/top_level.txt

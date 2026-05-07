@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """测试群聊消息追踪"""
 import paramiko
 import sys

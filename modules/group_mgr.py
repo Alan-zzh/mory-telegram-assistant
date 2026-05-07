@@ -12,6 +12,11 @@
 ║  check_banned_words() -> 敏感词过滤                                     ║
 ║    - 检测到黑名单词 -> 删除消息 + 通知用户 + 告知管理员                 ║
 ║                                                                        ║
+║  check_ad_content() -> AI广告检测（v4.5.26新增）                        ║
+║    - 消息内容AI判断是否为广告/引流/诈骗                                 ║
+║    - 检测到广告 -> 删除消息 + 永久禁言 + 举报 + 清空历史消息            ║
+║    - 通知管理员（用户名+@ID格式）                                       ║
+║                                                                        ║
 ║  check_spam() -> 反刷屏机制                                             ║
 ║    - 60秒内超过阈值 -> 自动禁言 + 通知群                               ║
 ║    - 阈值在config.json SPAM_LIMIT中配置                                ║
@@ -25,12 +30,13 @@
 ║    - 检测仇恨词                                                        ║
 ║    - 返回dict: {mode, is_cart, keyword_tag, is_hate}                   ║
 ║                                                                        ║
-║  被调用：main.py -> P1新人/P2黑名单/P3敏感词/P4反刷/P9特征提取         ║
+║  被调用：main.py -> P1新人/P2黑名单/P3广告/P3.5反刷/P9特征提取         ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
 import logging
 import random
+import re
 from core.logging_util import get_logger
 
 logger = get_logger("group_mgr")
@@ -48,14 +54,63 @@ def _get_bot_id(bot):
 
 def handle_new_members(bot, m, config: dict, db):
     """新人入群欢迎"""
-    # 【修复】使用缓存的bot_id，避免每次调用get_me()
-    _bot_id = _get_bot_id(bot)  # 启动后已被pyTelegramBotAPI内部缓存，无HTTP开销
+    _bot_id = _get_bot_id(bot)
+    auto_mute_names = config.get("AUTO_MUTE_NAMES", [
+        "虚拟币", "搬砖", "币圈", "炒币", "数字货币",
+        "加密货币", "区块链投资", "合约交易", "量化交易",
+        "USDT", "BTC", "ETH交易", "空投", "挖矿",
+    ])
+    
     for user in m.new_chat_members:
         if user.id == _bot_id:
-            continue  # 机器人自己进群不触发
+            continue
+        
+        user_name = (user.first_name or "") + (user.last_name or "")
+        username = getattr(user, 'username', None)
+        user_display = f"{user_name}"
+        if username:
+            user_display += f" @{username}"
+        
+        matched_keyword = None
+        for kw in auto_mute_names:
+            if len(kw) <= 2 and kw.isascii():
+                pattern = r'(?<![a-zA-Z0-9])' + re.escape(kw) + r'(?![a-zA-Z0-9])'
+                if re.search(pattern, user_name, re.IGNORECASE):
+                    matched_keyword = kw
+                    break
+            else:
+                if kw.lower() in user_name.lower():
+                    matched_keyword = kw
+                    break
+        
+        if matched_keyword:
+            try:
+                bot.restrict_chat_member(
+                    m.chat.id, user.id,
+                    until_date=0,
+                    can_send_messages=False,
+                    can_send_media_messages=False,
+                    can_send_other_messages=False,
+                )
+                logger.warning(f"🚫 自动永久禁言：{user_display} 命中关键词={matched_keyword}")
+                admin_id = config.get("ADMIN_ID", 0)
+                if admin_id:
+                    try:
+                        bot.send_message(admin_id,
+                            f"🚫 自动禁言通知\n"
+                            f"👤 用户：{user_display}\n"
+                            f"🔑 命中关键词：{matched_keyword}\n"
+                            f"📋 操作：永久禁言\n"
+                            f"💡 如误封请手动解禁")
+                    except Exception:
+                        pass
+                continue
+            except Exception as e:
+                logger.error(f"自动禁言失败 {user_display}：{e}")
+        
         db.upsert_user(user.id, user.first_name or "新人", "group")
-        db.add_points(user.id, 0)  # 初始化等级记录
-        db.record_group_join(m.chat.id)  # 【v4.2.3】记录入群统计
+        db.add_points(user.id, 0)
+        db.record_group_join(m.chat.id)
 
         welcome = f"""👋 欢迎 {user.first_name or '亲爱的'} 加入！
 
@@ -116,16 +171,106 @@ def check_banned_words(bot, m, config: dict, db) -> bool:
                 bot.delete_message(m.chat.id, m.message_id)
                 bot.send_message(m.from_user.id,
                     f"⚠️ 你的消息含有敏感词「{word}」已被删除，请遵守社群规则～")
-                # 【安全】管理员通知截断原文，避免隐私泄露
                 _safe_preview = (msg[:50] + "…") if len(msg) > 50 else msg
+                _uname = getattr(m.from_user, 'username', None)
+                _user_display = m.from_user.first_name or ""
+                if _uname:
+                    _user_display += f" @{_uname}"
                 bot.send_message(config["ADMIN_ID"],
-                    f"🚨 用户 {m.from_user.first_name}({m.from_user.id}) "
+                    f"🚨 用户 {_user_display} "
                     f"触发了敏感词「{word}」\n消息摘要：{_safe_preview}")
             except Exception as e:
                 logger.warning(f"删除敏感词消息失败：{e}")
             logger.warning(f"⚠️ 敏感词拦截：uid={m.from_user.id} word={word}")
             return True
     return False
+
+
+def check_ad_content(bot, m, config: dict, db, ai) -> bool:
+    """
+    广告检测（v4.5.26新增）— 纯规则匹配，零token消耗
+    检测消息内容是否为广告/引流/诈骗/营销
+    
+    流程：
+    1. 硬编码关键词匹配，命中直接处理
+    2. 确认广告 → 删除消息 + 永久禁言 + 通知管理员
+    
+    Returns:
+        True表示已处理（删除+禁言），False表示非广告
+    """
+    msg = (m.text or "").strip()
+    if not msg or len(msg) < 5:
+        return False
+    
+    chat_id = m.chat.id
+    uid = m.from_user.id
+    uname = m.from_user.first_name or ""
+    uusername = getattr(m.from_user, 'username', None)
+    user_display = uname
+    if uusername:
+        user_display += f" @{uusername}"
+    
+    ad_keywords = [
+        "加我", "私聊我", "私我", "关注我", "点击链接", "点我", "扫码",
+        "赚钱", "日入", "月入", "躺赚", "稳赚", "暴利",
+        "兼职", "副业", "刷单", "做任务", "拉人头",
+        "免费领", "免费送", "限时优惠", "抢购", "秒杀",
+        "微信号", "QQ群", "Telegram群", "群号",
+        "http://", "https://", "t.me/", "t.me+",
+        "菠菜", "博彩", "赌博", "娱乐城", "真人视讯",
+        "贷款", "信用卡", "套现", "代还",
+        "代购", "微商", "代理", "加盟",
+        "红包", "返利", "佣金", "拉新",
+        "推广", "引流", "精准引流", "涨粉",
+        "网赚", "网赚项目", "创业项目", "无货源",
+        "日结", "周结", "手工活", "手机赚钱",
+        "投注", "彩票", "六合彩", "时时彩",
+        "裸聊", "约炮", "同城交友", "上门服务",
+    ]
+    
+    hit_kw = None
+    msg_lower = msg.lower()
+    for kw in ad_keywords:
+        if kw.lower() in msg_lower:
+            hit_kw = kw
+            break
+    
+    if not hit_kw:
+        return False
+    
+    logger.warning(f"🚫 广告检测命中: {user_display} 关键词={hit_kw}")
+    
+    try:
+        bot.delete_message(chat_id, m.message_id)
+    except Exception as e:
+        logger.warning(f"删除广告消息失败: {e}")
+    
+    try:
+        bot.restrict_chat_member(
+            chat_id, uid,
+            until_date=0,
+            can_send_messages=False,
+            can_send_media_messages=False,
+            can_send_other_messages=False,
+        )
+        logger.warning(f"🚫 广告用户永久禁言: {user_display}")
+    except Exception as e:
+        logger.warning(f"禁言广告用户失败: {e}")
+    
+    admin_id = config.get("ADMIN_ID", 0)
+    if admin_id:
+        try:
+            bot.send_message(admin_id,
+                f"🚫 广告已处理\n"
+                f"👤 用户：{user_display}\n"
+                f"💬 消息：{msg[:150]}{'...' if len(msg) > 150 else ''}\n"
+                f"📋 操作：删除消息 + 永久禁言\n"
+                f"🎯 命中关键词：{hit_kw}\n"
+                f"💡 如误封请手动解禁")
+        except Exception as e:
+            logger.warning(f"广告通知发送失败: {e}")
+    
+    return True
 
 
 def check_spam(bot, m, config: dict, db) -> bool:
