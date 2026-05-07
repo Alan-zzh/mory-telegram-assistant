@@ -752,7 +752,7 @@ class DB:
             c.execute("SELECT last_active FROM users WHERE uid=?", (uid,))
             la_row = c.fetchone()
             if la_row and la_row[0]:
-                hour = datetime.fromtimestamp(la_row[0]).hour
+                hour = datetime.fromtimestamp(la_row[0], _CST).hour
                 if 0 <= hour < 6:
                     user_data["active_time"] = "深夜活跃"
                 elif 6 <= hour < 12:
@@ -792,7 +792,7 @@ class DB:
         
         profiles = []
         for r in rows:
-            hour = datetime.fromtimestamp(r[3]).hour if r[3] else 0
+            hour = datetime.fromtimestamp(r[3], _CST).hour if r[3] else 0
             if 0 <= hour < 6: active_time = "深夜活跃"
             elif 6 <= hour < 12: active_time = "上午活跃"
             elif 12 <= hour < 18: active_time = "下午活跃"

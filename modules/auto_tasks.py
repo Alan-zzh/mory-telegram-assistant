@@ -32,6 +32,7 @@ import glob
 import os
 import threading
 import hashlib
+import html
 from typing import Any, Dict
 from datetime import datetime, timedelta, timezone
 from core.logging_util import get_logger
@@ -601,11 +602,11 @@ def _job_burn_orphan(rm):
     Phase 2: 探测5-30分钟内的未回复消息，检测用户是否已删原消息
     """
     try:
-        # ── Phase 1: 清理超时孤儿（30分钟窗口）──
+        # ── Phase 1: 清理超时孤儿（24小时窗口）──
         logger.info("🔍 [Phase1] 检查超时孤儿消息...")
-        orphans = rm.db.get_orphan_messages(1800)
+        orphans = rm.db.get_orphan_messages(86400)
         if orphans:
-            logger.info(f"🗑️ 发现{len(orphans)}条超时孤儿（>30分钟未回复），开始清理...")
+            logger.info(f"🗑️ 发现{len(orphans)}条超时孤儿（>24小时未回复），开始清理...")
             success_count = 0
             fail_count = 0
             for bot_mid, cid, user_mid in orphans:
@@ -709,6 +710,9 @@ def _job_reactivate(rm):
     """醋意挽回（每小时）- AI生成个性化消息"""
     if not _try_claim_task("reactivate", 3600):
         return
+    if not rm.db.claim_task("reactivate"):
+        logger.info("✅ reactivate 已被抢占（数据库），跳过")
+        return
     try:
         ts = int(time.time())
         three_days_ago = ts - 259200
@@ -771,6 +775,9 @@ def _job_cart_recovery(rm):
     """购物车挽回（每小时）- AI生成个性化消息"""
     if not _try_claim_task("cart_recovery", 3600):
         return
+    if not rm.db.claim_task("cart_recovery"):
+        logger.info("✅ cart_recovery 已被抢占（数据库），跳过")
+        return
     try:
         with rm.locked_multi(['db', 'bot', 'config']):
             for uid in rm.db.get_expired_carts(86400):
@@ -788,6 +795,9 @@ def _job_cart_recovery(rm):
 def _job_leak(rm):
     """背刺泄密（每周一次）"""
     if not _try_claim_task("leak", 86400):
+        return
+    if not rm.db.claim_task("leak"):
+        logger.info("✅ leak 已被抢占（数据库），跳过")
         return
     global _last_saved_model_idx
     try:
@@ -901,11 +911,14 @@ def _job_channel_views(rm):
                 if new_views is not None and new_views > current_views:
                     rm.db.update_channel_views(chat_id, msg_id, new_views)
                     logger.info(f"📊 频道浏览量更新: chat={chat_id} msg={msg_id} views={new_views}")
-                try:
-                    with rm.locked('bot'):
-                        rm.bot.delete_message(rm.config.get("ADMIN_ID", 0), msg_info.message_id)
-                except Exception:
-                    pass
+                if msg_info:
+                    try:
+                        with rm.locked('bot'):
+                            rm.bot.delete_message(rm.config.get("ADMIN_ID", 0), msg_info.message_id)
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"⚠️ forward_message返回None，跳过删除: chat={chat_id} msg={msg_id}")
             except Exception as e:
                 err_str = str(e).lower()
                 if "not found" in err_str or "bad request" in err_str:
@@ -1609,7 +1622,7 @@ seed={convert_seed}"""
             # ══ 短版：约70字，手机一屏看完
             html_reply = f"""🎴 <b>{tarot['card']} {tarot['position']}</b>
 
-@{uname} {opener_text} {opener_action}「{user_msg[:10]}」~
+@{uname} {opener_text} {opener_action}「{html.escape(user_msg[:10])}」~
 
 📖 {tarot['meaning']}
 
@@ -1620,7 +1633,7 @@ seed={convert_seed}"""
             # ══ 长版：约110字（控制在一屏内）
             html_reply = f"""🎴 <b>{tarot['theme']}</b> · {tarot['card']} {tarot['position']}
 
-@{uname} {opener_text} {opener_action}「{user_msg[:10]}」~
+@{uname} {opener_text} {opener_action}「{html.escape(user_msg[:10])}」~
 
 📖 {tarot['meaning']}
 

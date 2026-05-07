@@ -51,11 +51,13 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from core.logging_util import get_logger
 from modules.natural_cmd import handle_natural_admin
 
 logger = get_logger("admin_cmds")
+
+_CST = timezone(timedelta(hours=8))
 
 
 def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool:
@@ -295,7 +297,8 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             mory_bot.reply_and_track(m, "⚠️ 未配置频道ID，请在 config.json 的 CHANNEL_IDS 中添加。")
         else:
             ok, fail = 0, 0
-            for cid in channels:
+            for ch in channels:
+                cid = ch.get("id", 0) if isinstance(ch, dict) else ch
                 try:
                     bot.send_message(cid, content)
                     ok += 1
@@ -384,8 +387,8 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
         level_names = {1: "新人🌱", 2: "活跃⭐", 3: "VIP💎", 4: "至尊👑"}
         keywords = profile["keywords"].replace(",", "、") if profile["keywords"] else "暂无标签"
         fun = profile["funnel"]
-        first_date = datetime.fromtimestamp(profile["first_seen"]).strftime("%Y-%m-%d") if profile["first_seen"] else "未知"
-        last_date = datetime.fromtimestamp(profile["last_active"]).strftime("%Y-%m-%d %H:%M") if profile["last_active"] else "未知"
+        first_date = datetime.fromtimestamp(profile["first_seen"], _CST).strftime("%Y-%m-%d") if profile["first_seen"] else "未知"
+        last_date = datetime.fromtimestamp(profile["last_active"], _CST).strftime("%Y-%m-%d %H:%M") if profile["last_active"] else "未知"
 
         # AI生成个性化营销建议
         suggest = ""
@@ -958,7 +961,8 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
         try:
             # 重新读取config.json文件
             import os
-            config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            config_path = os.path.join(base_dir, "config.json")
             with open(config_path, "r", encoding="utf-8") as f:
                 new_config = json.load(f)
             
@@ -994,7 +998,7 @@ def _send_report(bot, chat_id: int, config: dict, db):
     data = db.get_daily_report()
     funnel = data["funnel"] or (0, 0, 0, 0)
     top5_lines = "\n".join(
-        [f"  {i+1}. {name} — {pts}分" for i, (name, pts) in enumerate(data["top5"])]
+        [f"  {i+1}. {name} — {pts}分" for i, (uid, name, pts, lv) in enumerate(data["top5"])]
     ) or "  暂无"
 
     conv_rate = 0

@@ -102,6 +102,8 @@ from datetime import datetime
 from threading import Lock
 from logging.handlers import RotatingFileHandler
 from core.logging_util import configure_logging, get_logger, set_logging_context, clear_logging_context
+import concurrent.futures
+_append_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="append")
 
 # ── 项目根目录（基于脚本位置，跨目录启动也正确）──
 base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -748,6 +750,7 @@ def _dispatch(m):
     try:
         _do_dispatch(m)
     except Exception as e:
+        clear_logging_context()
         logger.error(f"❌ 分发器内部异常：{e}\n{traceback.format_exc()}")
         try:
             from modules.auto_tasks import _notify_admin_system_failure
@@ -1003,9 +1006,7 @@ def _do_dispatch(m):
 
             if append_mode:
                 try:
-                    import concurrent.futures
-                    _append_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                    _append_future = _append_executor.submit(
+                    _append_future = _append_pool.submit(
                         lambda: ai.ask(append_prompt, mode=append_mode, seed=seed_h))
                     try:
                         append_text = _append_future.result(timeout=5)
@@ -1013,8 +1014,6 @@ def _do_dispatch(m):
                             resp += f"\n\n{append_text.strip()}"
                     except concurrent.futures.TimeoutError:
                         logger.info("连续对话追加超时（5秒），跳过")
-                    finally:
-                        _append_executor.shutdown(wait=False)
                 except Exception as e:
                     logger.warning(f"连续对话追加失败（跳过）：{e}")
 
