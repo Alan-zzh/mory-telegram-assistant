@@ -6,11 +6,12 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v4.5.32"
+VERSION = "v4.5.33"
 
-CONFIG_VERSION = "4.5.32"
+CONFIG_VERSION = "4.5.33"
 
 VERSION_HISTORY = [
+    "v4.5.33: 修复时区处理漏洞(数据库+admin_cmds统一_CST)+线程池资源泄漏(全局_append_pool)+HTML注入安全漏洞(html.escape)+频道配置兼容性+日报数据解构修复+数据库级任务抢占(reactivate/cart_recovery/leak)",
     "v4.5.32: 彻底修复多进程连发(start.sh强力清理SIGKILL+等待退出+防残留)",
     "v4.5.31: 彻底修复连发问题(task_log添加UNIQUE约束+INSERT OR IGNORE+_try_claim_task全局替换+coalesce=True+misfire_grace_time=60)",
     "v4.5.30: 彻底修复连发问题(misfire_grace_time=1秒，错过执行窗口绝不补发)",
