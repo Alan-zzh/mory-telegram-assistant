@@ -31,12 +31,12 @@ import random
 import glob
 import os
 import threading
-import hashlib
 import html
 from typing import Any, Dict
 from datetime import datetime, timedelta, timezone
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
+from core.telegram_stats import get_group_daily_stats, get_channel_daily_stats, test_api_availability
 
 logger = get_logger("auto_tasks")
 
@@ -61,6 +61,224 @@ _task_lock = threading.Lock()
 
 _scheduler_instance = None
 
+
+class _TaskGuard:
+    """
+    【v4.9.1】任务执行守卫 - 并发异常检测与预警
+    
+    核心能力：
+    1. 记录每次任务调用时间戳，同一任务5分钟内被调用≥2次 → 告警管理员
+    2. 记录抢占失败原因，连续失败≥3次 → 告警管理员
+    3. 健康检查时审计数据库task_log，检测异常重复记录
+    """
+    _ALERT_WINDOW_SEC = 300
+    _ALERT_THRESHOLD = 2
+    _CLAIM_FAIL_THRESHOLD = 3
+
+    def __init__(self):
+        self._call_history = {}
+        self._claim_fail_count = {}
+        self._alerted = set()
+        self._lock = threading.Lock()
+        self._rm = None
+
+    def bind(self, rm):
+        self._rm = rm
+
+    def record_call(self, task_name: str):
+        now = int(time.time())
+        with self._lock:
+            if task_name not in self._call_history:
+                self._call_history[task_name] = []
+            self._call_history[task_name].append(now)
+            self._call_history[task_name] = [
+                t for t in self._call_history[task_name]
+                if now - t < self._ALERT_WINDOW_SEC
+            ]
+            count = len(self._call_history[task_name])
+            if count >= self._ALERT_THRESHOLD:
+                alert_key = f"{task_name}_{now // 60}"
+                if alert_key not in self._alerted:
+                    self._alerted.add(alert_key)
+                    logger.warning(
+                        f"🚨 [TaskGuard] {task_name} 在{self._ALERT_WINDOW_SEC}秒内被调用{count}次！疑似并发异常"
+                    )
+                    self._send_alert(
+                        f"🚨 <b>并发异常预警</b>\n"
+                        f"📋 任务：{task_name}\n"
+                        f"⚡ {self._ALERT_WINDOW_SEC}秒内被调用{count}次\n"
+                        f"🕐 时间：{datetime.now(_CST).strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"💡 可能存在并发重复执行，请检查日志"
+                    )
+
+    def record_claim_fail(self, task_name: str, reason: str):
+        with self._lock:
+            self._claim_fail_count[task_name] = self._claim_fail_count.get(task_name, 0) + 1
+            count = self._claim_fail_count[task_name]
+            if count >= self._CLAIM_FAIL_THRESHOLD:
+                alert_key = f"claim_{task_name}_{now // 3600}" if (now := int(time.time())) else f"claim_{task_name}"
+                if alert_key not in self._alerted:
+                    self._alerted.add(alert_key)
+                    logger.warning(
+                        f"🚨 [TaskGuard] {task_name} 连续{count}次抢占失败（{reason}）"
+                    )
+                    self._send_alert(
+                        f"⚠️ <b>任务抢占异常</b>\n"
+                        f"📋 任务：{task_name}\n"
+                        f"🔒 连续{count}次抢占失败\n"
+                        f"📌 原因：{reason}\n"
+                        f"🕐 时间：{datetime.now(_CST).strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"💡 可能是锁未正确释放，请检查数据库task_log"
+                    )
+                self._claim_fail_count[task_name] = 0
+
+    def record_claim_ok(self, task_name: str):
+        with self._lock:
+            self._claim_fail_count.pop(task_name, None)
+
+    def audit_task_log(self, db) -> list:
+        anomalies = []
+        try:
+            today = datetime.now(_CST).strftime("%Y-%m-%d")
+            with _db_lock_from_db(db):
+                rows = db.conn.execute(
+                    "SELECT task_key, COUNT(*) as cnt FROM task_log WHERE exec_date=? GROUP BY task_key HAVING cnt > 1",
+                    (today,)
+                ).fetchall()
+            for task_key, cnt in rows:
+                anomalies.append(f"• {task_key}：今日{cnt}条记录（正常应1条）")
+                logger.warning(f"🚨 [TaskGuard] 数据库异常：{task_key} 今日有{cnt}条task_log记录")
+        except Exception as e:
+            logger.warning(f"⚠️ [TaskGuard] 审计task_log失败: {e}")
+        return anomalies
+
+    def _send_alert(self, msg: str):
+        _fault_reporter.report("任务并发异常", msg, "🚨")
+
+
+_task_guard = _TaskGuard()
+
+
+class _FaultReporter:
+    """
+    【v4.9.2】统一故障通知中心 - 所有故障统一入口，自动Telegram通知+本地兜底
+    
+    严重度分级：
+    - 🚨 P0(瘫痪)：所有模型失败、数据库损坏、Bot崩溃
+    - ⚠️ P1(降级)：层级池不可用、Telegram API异常、任务抢占失败
+    - 📋 P2(轻微)：非核心功能故障
+    
+    防刷机制：同类故障5分钟内不重复通知
+    兜底机制：Telegram通知失败时写入本地 fault_alerts.log，下次成功时补发
+    """
+    _DEDUP_SEC = 300
+    _ALERT_FILE = "fault_alerts.log"
+    _MAX_PENDING = 50
+
+    def __init__(self):
+        self._rm = None
+        self._last_alert = {}
+        self._lock = threading.Lock()
+        self._pending = []
+
+    def bind(self, rm):
+        self._rm = rm
+        self._flush_pending()
+
+    def report(self, category: str, detail: str, severity: str = "⚠️", extra: str = ""):
+        """
+        统一故障上报入口
+        
+        Args:
+            category: 故障类别（如 "AI模型全部失败", "数据库异常", "Telegram API异常"）
+            detail: 故障详情
+            severity: 严重度图标 🚨/⚠️/📋
+            extra: 额外信息（可选）
+        """
+        now = int(time.time())
+        dedup_key = f"{severity}_{category}"
+        with self._lock:
+            if dedup_key in self._last_alert and now - self._last_alert[dedup_key] < self._DEDUP_SEC:
+                logger.debug(f"[FaultReporter] 去重跳过：{category}")
+                return
+            self._last_alert[dedup_key] = now
+
+        ts = datetime.now(_CST).strftime("%Y-%m-%d %H:%M:%S")
+        msg = (
+            f"{severity} <b>{category}</b>\n"
+            f"📝 {detail}\n"
+        )
+        if extra:
+            msg += f"📎 {extra}\n"
+        msg += f"🕐 {ts}"
+
+        logger.warning(f"[FaultReporter] {severity} {category}: {detail}")
+
+        if not self._send_telegram(msg):
+            self._save_local(category, detail, severity, ts)
+
+    def _send_telegram(self, msg: str) -> bool:
+        if not self._rm:
+            return False
+        try:
+            admin_id = self._rm.config.get("ADMIN_ID", 0)
+            if not admin_id:
+                return False
+            with self._rm.locked('bot'):
+                self._rm.bot.send_message(admin_id, msg, parse_mode="HTML")
+            return True
+        except Exception as e:
+            logger.error(f"[FaultReporter] Telegram通知失败: {e}")
+            return False
+
+    def _save_local(self, category: str, detail: str, severity: str, ts: str):
+        try:
+            line = f"[{ts}] {severity} {category} | {detail}\n"
+            with open(self._ALERT_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+            self._pending.append(line)
+            if len(self._pending) > self._MAX_PENDING:
+                self._pending = self._pending[-self._MAX_PENDING:]
+            logger.info(f"[FaultReporter] 已写入本地告警文件: {category}")
+        except Exception as e:
+            logger.error(f"[FaultReporter] 本地告警写入失败: {e}")
+
+    def _flush_pending(self):
+        if not self._pending or not self._rm:
+            return
+        pending = list(self._pending)
+        self._pending.clear()
+        try:
+            admin_id = self._rm.config.get("ADMIN_ID", 0)
+            if not admin_id:
+                return
+            count = len(pending)
+            if count > 5:
+                summary = (
+                    f"📋 <b>历史告警补发（{count}条）</b>\n"
+                    + "".join(pending[:5])
+                    + f"\n... 及其他{count - 5}条"
+                )
+            else:
+                summary = (
+                    f"📋 <b>历史告警补发（{count}条）</b>\n"
+                    + "".join(pending)
+                )
+            with self._rm.locked('bot'):
+                self._rm.bot.send_message(admin_id, summary, parse_mode="HTML")
+            logger.info(f"[FaultReporter] 补发{count}条历史告警")
+        except Exception as e:
+            logger.error(f"[FaultReporter] 补发失败，重新入队: {e}")
+            self._pending.extend(pending)
+
+
+_fault_reporter = _FaultReporter()
+
+
+def report_fault(category: str, detail: str, severity: str = "⚠️", extra: str = ""):
+    """全局故障上报函数（供其他模块调用）"""
+    _fault_reporter.report(category, detail, severity, extra)
+
 # 时区：VPS默认UTC，强制用北京时间(UTC+8)
 _CST = timezone(timedelta(hours=8))
 
@@ -71,23 +289,104 @@ def _get_scheduler():
 
 def _try_claim_task(task_name: str, min_interval_sec: int = 7200) -> bool:
     """
-    【v4.5.32】三层防重抢占（数据库→内存→APScheduler coalesce）
+    【v4.9.0】内存级快速检查（仅检查，不锁定）
     
-    第一层：数据库原子抢占（跨进程安全）
-    第二层：内存锁（同进程安全，快速拦截）
-    第三层：APScheduler max_instances=1 + coalesce=True
+    不设置_last_task_run，改为在_confirm_task_done中设置。
+    任务失败后不会被内存锁卡住，重试可以正常进行。
     
     Returns:
-        True表示抢占成功可以执行，False表示已被其他实例抢占
+        True表示可以执行，False表示距离上次成功运行太近
     """
     now = int(time.time())
     with _task_lock:
         last = _last_task_run.get(task_name, 0)
         if now - last < min_interval_sec:
-            logger.debug(f"⏳ 任务{task_name}跳过，距离上次运行{now-last}秒 < {min_interval_sec}秒")
+            logger.info(f"⏳ [{task_name}] 内存锁跳过，距上次成功{now-last}秒 < {min_interval_sec}秒")
             return False
-        _last_task_run[task_name] = now
+        logger.info(f"🔓 [{task_name}] 内存锁通过，距上次成功{now-last}秒 >= {min_interval_sec}秒")
         return True
+
+
+def _try_claim_and_lock(task_name: str, db, min_interval_sec: int = 7200) -> bool:
+    """
+    【v4.9.1】原子抢占：内存检查 + 数据库原子锁定一步完成 + TaskGuard监控
+    【v4.9.3修复】record_call移到锁成功之后，避免被拦截的调用触发误报告警
+
+    解决v4.7.0的"先执行后确认"流程导致的并发重复播报：
+    两个线程同时通过_try_claim_task和is_task_executed_today检查，
+    都执行了发送，然后_confirm_task_done中第二次被数据库拦截，
+    但消息已经发出去了。
+
+    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
+
+    关键改进：
+    - 数据库claim_task在执行前调用，INSERT OR IGNORE保证原子性
+    - 如果任务失败，调用_release_task释放数据库锁，允许重试
+    - 内存锁在_confirm_task_done中设置（成功后才设）
+    - 【v4.9.1】TaskGuard记录每次调用和抢占结果，异常时自动告警
+    - 【v4.9.3】record_call只在真正抢占成功时记录，消除锁拦截导致的误报
+    """
+    now = int(time.time())
+    with _task_lock:
+        last = _last_task_run.get(task_name, 0)
+        if now - last < min_interval_sec:
+            logger.info(f"⏳ [{task_name}] 内存锁跳过，距上次成功{now-last}秒 < {min_interval_sec}秒")
+            _task_guard.record_claim_fail(task_name, "内存锁拦截")
+            return False
+    try:
+        result = db.claim_task(task_name)
+        if not result:
+            logger.info(f"🔒 [{task_name}] 数据库锁拦截（今日已执行或被其他线程抢占）")
+            _task_guard.record_claim_fail(task_name, "数据库锁拦截")
+            return False
+        # 【v4.9.3】只在真正抢占成功时记录，避免被锁拦截的调用触发误报
+        _task_guard.record_call(task_name)
+        logger.info(f"🔓 [{task_name}] 原子抢占成功")
+        _task_guard.record_claim_ok(task_name)
+        return True
+    except Exception as e:
+        logger.warning(f"⚠️ [{task_name}] claim_task异常，放行执行: {e}")
+        # 异常情况仍记录调用，因为此时没有锁保护
+        _task_guard.record_call(task_name)
+        return True
+
+
+def _release_task(task_name: str, db):
+    """
+    【v4.9.0】任务失败时释放数据库锁，允许重试
+    
+    配合_try_claim_and_lock使用：抢占成功后如果执行失败，
+    必须释放数据库锁，否则重试会被is_task_executed_today拦截。
+    """
+    today = datetime.now(_CST).strftime("%Y-%m-%d")
+    try:
+        with _db_lock_from_db(db):
+            db.conn.execute("DELETE FROM task_log WHERE task_key=? AND exec_date=?", (task_name, today))
+            db.conn.commit()
+        logger.info(f"🔓 [{task_name}] 数据库锁已释放，允许重试")
+    except Exception as e:
+        logger.warning(f"⚠️ [{task_name}] 释放数据库锁失败: {e}")
+
+
+def _db_lock_from_db(db):
+    """获取数据库模块的_db_lock（用于_release_task）"""
+    from core.database import _db_lock as db_lock
+    return db_lock
+
+
+def _confirm_task_done(task_name: str, db, min_interval_sec: int = 7200):
+    """
+    【v4.9.0】任务成功后确认完成：设置内存锁（数据库锁已在_try_claim_and_lock中设置）
+    
+    流程演变：
+    - v4.7.0前：_try_claim_task(提前锁定) → 执行 → 失败后双重锁卡死
+    - v4.7.0：_try_claim_task(仅检查) → 执行 → _confirm_task_done(锁定) → 并发重复播报！
+    - v4.9.0：_try_claim_and_lock(原子抢占) → 执行 → _confirm_task_done(设内存锁)
+    """
+    now = int(time.time())
+    with _task_lock:
+        _last_task_run[task_name] = now
+        logger.info(f"🔒 [{task_name}] 内存锁已设置，时间戳={now}")
 
 
 def _can_run(task_name: str, min_interval_sec: int = 300) -> bool:
@@ -201,15 +500,20 @@ def _get_preferred_news_lines(time_desc: str) -> tuple[list[str], str]:
 
 
 def _retry_task(rm, task_func, task_name: str, delay_sec: int = 300):
-    """5分钟后重试失败的任务，仍失败则通知管理员（使用APScheduler调度，避免线程无法取消）"""
+    """5分钟后重试失败的任务，仍失败则通知管理员（使用APScheduler调度，避免线程无法取消）
+    
+    【v4.7.0】新流程下不需要清数据库锁，因为_confirm_task_done在任务成功后才写入。
+    只需清内存锁即可（虽然新流程下内存锁也不会提前设置，但保留以兼容旧逻辑）。
+    """
+    logger.info(f"🔄 [{task_name}] 调度重试，{delay_sec}秒后执行")
     def _do_retry(rm_inner):
         with _task_lock:
             _last_task_run.pop(task_name, None)
         try:
-            logger.info(f"🔄 重试任务: {task_name}")
+            logger.info(f"🔄 [{task_name}] 开始重试执行")
             task_func(rm_inner)
         except Exception as e:
-            logger.error(f"❌ 重试任务{task_name}仍失败: {e}")
+            logger.error(f"❌ [{task_name}] 重试仍失败: {e}")
             _notify_admin_failure(rm_inner, task_name, str(e))
 
     try:
@@ -232,83 +536,19 @@ def _retry_task(rm, task_func, task_name: str, delay_sec: int = 300):
 
 
 def _notify_admin_failure(rm, task_name: str, error_msg: str):
-    """任务重试仍失败时私聊通知管理员"""
-    try:
-        admin_id = rm.config.get("ADMIN_ID", 0)
-        if admin_id:
-            with rm.locked('bot'):
-                rm.bot.send_message(
-                    admin_id,
-                    f"️ 定时任务失败通知\n"
-                    f"📋 任务：{task_name}\n"
-                    f"❌ 错误：{error_msg[:200]}\n"
-                    f"🕐 时间：{datetime.now(_CST).strftime('%Y-%m-%d %H:%M')}\n"
-                    f"💡 请检查AI模型状态或手动触发"
-                )
-    except Exception as e:
-        logger.error(f"管理员通知发送失败: {e}")
+    """任务重试仍失败时通知管理员（走_FaultReporter统一通道）"""
+    _fault_reporter.report("定时任务失败", f"任务: {task_name}，错误: {error_msg[:200]}", "⚠️")
 
 
 def _notify_admin_news_failure(rm, news_type: str, error_msg: str = ""):
-    """新闻源全部失败时私聊通知管理员"""
-    try:
-        admin_id = rm.config.get("ADMIN_ID", 0)
-        if admin_id:
-            detail = f"\n❌ 错误：{error_msg[:200]}" if error_msg else ""
-            with rm.locked('bot'):
-                rm.bot.send_message(
-                    admin_id,
-                    f"📰 新闻源故障通知\n"
-                    f"📋 类型：{news_type}\n"
-                    f"⚠️ 所有新闻源（百度/微博/头条/知乎/抖音/36氪/澎湃）均无法获取{detail}\n"
-                    f"🕐 时间：{datetime.now(_CST).strftime('%Y-%m-%d %H:%M')}\n"
-                    f"💡 本次播报已跳过，请检查网络或新闻源可用性"
-                )
-    except Exception as e:
-        logger.error(f"新闻故障通知发送失败: {e}")
+    """新闻源全部失败时通知管理员（走_FaultReporter统一通道）"""
+    detail = f"错误: {error_msg[:200]}" if error_msg else "所有新闻源均无法获取"
+    _fault_reporter.report("新闻源故障", f"类型: {news_type}，{detail}", "⚠️")
 
 
 def _notify_admin_system_failure(rm, failure_type: str, detail: str = "", severity: str = "⚠️"):
-    """
-    全局系统故障通知管理员（覆盖API/数据库/任务/Bot等所有故障）
-    
-    Args:
-        rm: 资源管理器
-        failure_type: 故障类型（如 "API全部不可用", "数据库异常", "Bot连接断开"）
-        detail: 详细错误信息
-        severity: 严重级别图标（⚠️/🚨/❌）
-    """
-    try:
-        admin_id = rm.config.get("ADMIN_ID", 0)
-        if not admin_id:
-            return
-        
-        # 防重复通知：同一故障类型5分钟内只通知一次
-        cache_key = f"sys_notify_{failure_type}"
-        now = int(time.time())
-        if not hasattr(_notify_admin_system_failure, "_cache"):
-            _notify_admin_system_failure._cache = {}
-        last_notify = _notify_admin_system_failure._cache
-        if cache_key in last_notify and now - last_notify[cache_key] < 300:
-            return
-        last_notify[cache_key] = now
-        expired = [k for k, v in last_notify.items() if now - v > 600]
-        for k in expired:
-            del last_notify[k]
-        
-        detail_text = f"\n🔍 详情：{detail[:300]}" if detail else ""
-        msg = (
-            f"{severity} 系统故障通知\n"
-            f"📋 类型：{failure_type}\n"
-            f"🕐 时间：{datetime.now(_CST).strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"{detail_text}\n"
-            f"💡 请检查系统状态并及时处理"
-        )
-        with rm.locked('bot'):
-            rm.bot.send_message(admin_id, msg)
-        logger.info(f"📢 系统故障通知已发送: {failure_type}")
-    except Exception as e:
-        logger.error(f"系统故障通知发送失败: {e}")
+    """全局系统故障通知管理员（走_FaultReporter统一通道，保持接口兼容）"""
+    _fault_reporter.report(failure_type, detail, severity)
 
 
 def _send_and_track(rm, chat_id, text, user_msg_id=0):
@@ -362,22 +602,16 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
     """
     执行新闻播报任务的公共函数
     
-    Args:
-        rm: 资源管理器
-        task_name: 任务名称（如 "news_morning"）
-        time_desc: 时段描述（如 "早间"）
+    【v4.9.0】新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
     """
-    if not _try_claim_task(task_name, 7200):
-        return
-    
-    if not rm.db.claim_task(task_name):
-        logger.info(f"✅ {task_name} 已被抢占（数据库），跳过")
+    if not _try_claim_and_lock(task_name, rm.db, 7200):
         return
     
     try:
         with rm.locked('config'):
             gid = rm.config.get("GROUP_ID", 0)
         if gid == 0:
+            _release_task(task_name, rm.db)
             return
         
         logger.info(f"📰 触发{time_desc}新闻播报（统一主流程）")
@@ -387,6 +621,7 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
         if not lines:
             logger.warning(f"{time_desc}新闻：所有源均失败，跳过发送")
             _notify_admin_news_failure(rm, f"{time_desc}新闻")
+            _release_task(task_name, rm.db)
             return
         news_input = "\n".join(lines)
 
@@ -398,9 +633,13 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
             sent = _send_and_track(rm, gid, news)
             if sent:
                 _remember_news_lines(lines)
+                _confirm_task_done(task_name, rm.db, 7200)
                 logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}）")
+                return
+        _release_task(task_name, rm.db)
     except Exception as e:
         logger.error(f"{time_desc}新闻播报失败：{e}")
+        _release_task(task_name, rm.db)
         _retry_task(rm, lambda rm: _execute_news_task(rm, task_name, time_desc), task_name)
 
 
@@ -440,15 +679,13 @@ def _job_trendradar_evening(rm):
 
 def _job_greeting_morning(rm):
     """早安问候（8:00）"""
-    if not _try_claim_task("greeting_morning", 7200):
-        return
-    if not rm.db.claim_task("greeting_morning"):
-        logger.info(f"✅ greeting_morning 已被抢占（数据库），跳过")
+    if not _try_claim_and_lock("greeting_morning", rm.db, 7200):
         return
     try:
         with rm.locked('config'):
             gid = rm.config.get("GROUP_ID", 0)
         if gid == 0:
+            _release_task("greeting_morning", rm.db)
             return
         
         seed = random.randint(100000, 999999)
@@ -458,23 +695,25 @@ def _job_greeting_morning(rm):
             msg = msg.replace("\n", " ").strip()[:250]
             sent = _send_and_track(rm, gid, f"☀️ {msg}")
             if sent:
+                _confirm_task_done("greeting_morning", rm.db, 7200)
                 logger.info(f"☀️ 早安已发送：{msg}")
+                return
+        _release_task("greeting_morning", rm.db)
     except Exception as e:
         logger.error(f"早安问候失败：{e}")
+        _release_task("greeting_morning", rm.db)
         _retry_task(rm, _job_greeting_morning, "greeting_morning")
 
 
 def _job_greeting_afternoon(rm):
     """午安问候（12:30）"""
-    if not _try_claim_task("greeting_afternoon", 7200):
-        return
-    if not rm.db.claim_task("greeting_afternoon"):
-        logger.info(f"✅ greeting_afternoon 已被抢占（数据库），跳过")
+    if not _try_claim_and_lock("greeting_afternoon", rm.db, 7200):
         return
     try:
         with rm.locked('config'):
             gid = rm.config.get("GROUP_ID", 0)
         if gid == 0:
+            _release_task("greeting_afternoon", rm.db)
             return
         
         seed = random.randint(100000, 999999)
@@ -484,23 +723,25 @@ def _job_greeting_afternoon(rm):
             msg = msg.replace("\n", " ").strip()[:250]
             sent = _send_and_track(rm, gid, f"🍃 {msg}")
             if sent:
+                _confirm_task_done("greeting_afternoon", rm.db, 7200)
                 logger.info(f"🍃 午安已发送：{msg}")
+                return
+        _release_task("greeting_afternoon", rm.db)
     except Exception as e:
         logger.error(f"午安问候失败：{e}")
+        _release_task("greeting_afternoon", rm.db)
         _retry_task(rm, _job_greeting_afternoon, "greeting_afternoon")
 
 
 def _job_greeting_evening(rm):
     """晚安问候（23:00）"""
-    if not _try_claim_task("greeting_evening", 7200):
-        return
-    if not rm.db.claim_task("greeting_evening"):
-        logger.info(f"✅ greeting_evening 已被抢占（数据库），跳过")
+    if not _try_claim_and_lock("greeting_evening", rm.db, 7200):
         return
     try:
         with rm.locked('config'):
             gid = rm.config.get("GROUP_ID", 0)
         if gid == 0:
+            _release_task("greeting_evening", rm.db)
             return
         
         seed = random.randint(100000, 999999)
@@ -510,9 +751,13 @@ def _job_greeting_evening(rm):
             msg = msg.replace("\n", " ").strip()[:250]
             sent = _send_and_track(rm, gid, f"🌙 {msg}")
             if sent:
+                _confirm_task_done("greeting_evening", rm.db, 7200)
                 logger.info(f"🌙 晚安已发送：{msg}")
+                return
+        _release_task("greeting_evening", rm.db)
     except Exception as e:
         logger.error(f"晚安问候失败：{e}")
+        _release_task("greeting_evening", rm.db)
         _retry_task(rm, _job_greeting_evening, "greeting_evening")
 
 
@@ -573,25 +818,15 @@ def _job_wakeup_check(rm):
 
 def _job_burn_probe(rm):
     """
-    阅后即焚探测（降级为被动清理版 - 彻底避免 API 封禁）
-    
-    【v4.0 架构师强制修复】
-    废弃疯狂转发的竞态探测，直接依赖 main.py 的 global_reply_sniffer 实时标记。
-    孤儿清理完全由 _job_burn_orphan 的 TTL 机制接管。
+    【v4.5.35彻底废弃】阅后即焚探测已完全移除
+
+    原因：
+    1. forward_message探测会触发Telegram 429限流
+    2. main.py的global_reply_sniffer已实时标记replied=1
+    3. _job_burn_orphan的Phase1 TTL清理已足够处理孤儿消息
+    4. 此函数保留空实现仅兼容旧版循环调用，APScheduler中已移除调度
     """
-    try:
-        # 【降级策略】：不再用 forward_message 探测
-        # 原因：每3分钟对20条消息做forward探测 = 每小时400次API调用
-        #       → 必然触发 Telegram 429 Rate Limit → 整队卡死
-        
-        # 方案：直接跳过探测，依赖以下两个机制：
-        # 1. main.py 的 global_reply_sniffer 实时标记 replied=1
-        # 2. _job_burn_orphan 每小时清理 24小时未回复的孤儿
-        
-        logger.debug("🔄 _job_burn_probe 探测逻辑已由 v4.0 静默，将由 TTL 孤儿清理接管")
-        return
-    except Exception as e:
-        logger.error(f"阅后即焚探测失败：{e}")
+    pass
 
 
 def _job_burn_orphan(rm):
@@ -623,46 +858,12 @@ def _job_burn_orphan(rm):
             logger.info("✅ Phase1：无超时孤儿")
 
         # ── Phase 2: 探测用户是否删了原消息 ──
-        logger.info("🔍 [Phase2] 探测用户删消息情况...")
-        recent = rm.db.get_recent_unreplied(300, 1800, limit=3)
-        if not recent:
-            logger.info("✅ Phase2：无近期未回复消息需要探测")
-            return
-
-        logger.info(f"🔍 Phase2：探测{len(recent)}条近期未回复消息...")
-        deleted_count = 0
-        admin_id = rm.config.get("ADMIN_ID", 0)
-
-        for bot_mid, cid, user_mid in recent:
-            try:
-                with rm.locked('bot'):
-                    forwarded = rm.bot.forward_message(
-                        admin_id, cid, user_mid,
-                        disable_notification=True
-                    )
-                if forwarded:
-                    try:
-                        with rm.locked('bot'):
-                            rm.bot.delete_message(admin_id, forwarded.message_id)
-                    except Exception:
-                        pass
-            except Exception as fwd_err:
-                err_str = str(fwd_err).lower()
-                if any(kw in err_str for kw in ["not found", "bad request", "message to forward not found"]):
-                    logger.info(f"🗑️ 用户消息{user_mid}已被删，清理Bot回复{bot_mid}")
-                    try:
-                        with rm.locked('bot'):
-                            rm.bot.delete_message(cid, int(bot_mid))
-                    except Exception:
-                        pass
-                    rm.db.delete_tracked(bot_mid, cid)
-                    deleted_count += 1
-            time.sleep(0.5)
-
-        if deleted_count > 0:
-            logger.info(f"✅ Phase2完成：检测到{deleted_count}条用户删消息，已清理Bot回复")
-        else:
-            logger.info("✅ Phase2：未检测到用户删消息")
+        # 【v4.5.35修复】Phase2 forward探测已废弃，原因：
+        # 1. forward_message探测会触发Telegram 429限流
+        # 2. 用户删原消息后Bot回复变成"回复了一条不存在消息"，不影响功能
+        # 3. Phase1的24小时TTL清理已足够处理孤儿消息
+        # 4. 保留Phase1清理，Phase2改为仅记录日志不执行探测
+        logger.info("✅ [Phase2] 已跳过forward探测（v4.5.35废弃），依赖Phase1 TTL清理")
 
     except Exception as e:
         logger.error(f"❌ 阅后即焚孤儿清理失败：{e}", exc_info=True)
@@ -708,10 +909,7 @@ def _generate_reactivate_message(uid: int, rm) -> str:
 
 def _job_reactivate(rm):
     """醋意挽回（每小时）- AI生成个性化消息"""
-    if not _try_claim_task("reactivate", 3600):
-        return
-    if not rm.db.claim_task("reactivate"):
-        logger.info("✅ reactivate 已被抢占（数据库），跳过")
+    if not _try_claim_and_lock("reactivate", rm.db, 3600):
         return
     try:
         ts = int(time.time())
@@ -719,17 +917,29 @@ def _job_reactivate(rm):
         
         with rm.locked_multi(['db', 'bot', 'config']):
             inactive = rm.db.get_inactive_users(three_days_ago, rm.config.get("ADMIN_ID", 0))
+            sent_count = 0
             for uid, _name in inactive[:3]:
                 if random.random() < 0.25:
                     try:
                         reactivate_msg = _generate_reactivate_message(uid, rm)
                         rm.bot.send_message(uid, reactivate_msg)
                         rm.db.reset_last_active(uid)
+                        sent_count += 1
                         logger.info(f"💌 醋意挽回：{uid}")
                     except Exception as e:
-                        logger.warning(f"醋意挽回发送失败 uid={uid}：{e}")
+                        err_str = str(e).lower()
+                        if "chat not found" in err_str or "bot was blocked" in err_str or "forbidden" in err_str:
+                            rm.db.delete_user(uid)
+                            logger.debug(f"💔 醋意挽回跳过无效用户 uid={uid}（已清理）")
+                        else:
+                            logger.warning(f"醋意挽回发送失败 uid={uid}：{e}")
+            if sent_count > 0:
+                _confirm_task_done("reactivate", rm.db, 3600)
+            else:
+                _release_task("reactivate", rm.db)
     except Exception as e:
         logger.error(f"醋意挽回失败：{e}")
+        _release_task("reactivate", rm.db)
 
 
 def _generate_cart_recovery_message(uid: int, rm) -> str:
@@ -773,33 +983,41 @@ def _generate_cart_recovery_message(uid: int, rm) -> str:
 
 def _job_cart_recovery(rm):
     """购物车挽回（每小时）- AI生成个性化消息"""
-    if not _try_claim_task("cart_recovery", 3600):
-        return
-    if not rm.db.claim_task("cart_recovery"):
-        logger.info("✅ cart_recovery 已被抢占（数据库），跳过")
+    if not _try_claim_and_lock("cart_recovery", rm.db, 3600):
         return
     try:
         with rm.locked_multi(['db', 'bot', 'config']):
+            sent_count = 0
             for uid in rm.db.get_expired_carts(86400):
                 try:
                     cart_msg = _generate_cart_recovery_message(uid, rm)
                     rm.bot.send_message(uid, cart_msg)
                     rm.db.log_conversion_event(uid, "interested")
+                    sent_count += 1
                     logger.info(f"🛒 购物车挽回：{uid}")
                 except Exception as e:
-                    logger.warning(f"购物车挽回发送失败 uid={uid}：{e}")
+                    err_str = str(e).lower()
+                    if "chat not found" in err_str or "bot was blocked" in err_str or "forbidden" in err_str:
+                        rm.db.delete_user(uid)
+                        logger.debug(f"💔 购物车挽回跳过无效用户 uid={uid}（已清理users+cart_recovery）")
+                    else:
+                        logger.warning(f"购物车挽回发送失败 uid={uid}：{e}")
+            if sent_count > 0:
+                _confirm_task_done("cart_recovery", rm.db, 3600)
+            else:
+                _release_task("cart_recovery", rm.db)
     except Exception as e:
         logger.error(f"购物车挽回失败：{e}")
+        _release_task("cart_recovery", rm.db)
 
 
 def _job_leak(rm):
-    """背刺泄密（每周一次）"""
-    if not _try_claim_task("leak", 86400):
+    """【v4.9.0】背刺泄密（每周一次）
+    
+    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
+    """
+    if not _try_claim_and_lock("leak", rm.db, 86400):
         return
-    if not rm.db.claim_task("leak"):
-        logger.info("✅ leak 已被抢占（数据库），跳过")
-        return
-    global _last_saved_model_idx
     try:
         now = datetime.now(_CST)
         current_week = now.isocalendar()[1]
@@ -809,6 +1027,7 @@ def _job_leak(rm):
             last_leak_week = rm.config.get("_LAST_LEAK_WEEK", -1)
         
         if gid == 0 or current_week == last_leak_week or now.weekday() < 2:
+            _release_task("leak", rm.db)
             return
         
         seed = random.randint(100000, 999999)
@@ -838,11 +1057,16 @@ def _job_leak(rm):
                 if sent:
                     rm.config["_LAST_LEAK_WEEK"] = current_week
                     rm.save_config_fn()
+                    _confirm_task_done("leak", rm.db, 86400)
                     logger.info(f"🤫 背刺泄密触发(周{current_week})：{leak[:30]}")
+                    return
             except Exception as e:
                 logger.warning(f"背刺泄密发送失败：{e}")
+        _release_task("leak", rm.db)
     except Exception as e:
         logger.error(f"背刺泄密失败：{e}")
+        _release_task("leak", rm.db)
+        _retry_task(rm, _job_leak, "leak")
 
 
 def _job_backup(rm):
@@ -893,43 +1117,16 @@ def _job_save_config(rm):
 
 
 def _job_channel_views(rm):
-    """【v4.2.3→v4.5.32】更新频道浏览量+多频道成员数统计"""
+    """【v4.5.36】频道/群成员数统计 + 校准"""
     try:
-        tracked = rm.db.get_channel_tracking(limit=5)
         gid = rm.config.get("GROUP_ID", 0)
-        
-        for chat_id, msg_id, content_type, posted_at, current_views in tracked:
-            try:
-                with rm.locked('bot'):
-                    msg_info = rm.bot.forward_message(
-                        rm.config.get("ADMIN_ID", 0), 
-                        chat_id, 
-                        msg_id,
-                        disable_notification=True
-                    )
-                new_views = getattr(msg_info, 'views', None) if msg_info else None
-                if new_views is not None and new_views > current_views:
-                    rm.db.update_channel_views(chat_id, msg_id, new_views)
-                    logger.info(f"📊 频道浏览量更新: chat={chat_id} msg={msg_id} views={new_views}")
-                if msg_info:
-                    try:
-                        with rm.locked('bot'):
-                            rm.bot.delete_message(rm.config.get("ADMIN_ID", 0), msg_info.message_id)
-                    except Exception:
-                        pass
-                else:
-                    logger.warning(f"⚠️ forward_message返回None，跳过删除: chat={chat_id} msg={msg_id}")
-            except Exception as e:
-                err_str = str(e).lower()
-                if "not found" in err_str or "bad request" in err_str:
-                    rm.db.update_channel_views(chat_id, msg_id, -1)
-                logger.debug(f"获取浏览量失败: chat={chat_id} msg={msg_id} err={e}")
         
         if gid:
             try:
                 with rm.locked('bot'):
                     member_count = rm.bot.get_chat_member_count(gid)
                 rm.db.update_group_total_members(member_count, gid)
+                rm.db.calibrate_group_stats(gid, member_count)
                 logger.info(f"👥 群成员数更新: {member_count}")
             except Exception as e:
                 logger.debug(f"群成员数获取失败: {e}")
@@ -938,9 +1135,9 @@ def _job_channel_views(rm):
         if channel_ids:
             _update_channel_member_counts(rm, channel_ids)
         
-        logger.info("✅ 频道浏览量更新任务完成")
+        logger.info("✅ 成员数统计任务完成")
     except Exception as e:
-        logger.error(f"频道浏览量更新失败：{e}")
+        logger.error(f"成员数统计失败：{e}")
 
 
 def _update_channel_member_counts(rm, channel_ids: list):
@@ -958,15 +1155,16 @@ def _update_channel_member_counts(rm, channel_ids: list):
 
 
 def _job_daily_report(rm):
-    """【v4.5.32】每日数据报告 - 拆分为群报告+频道报告，私聊发送"""
-    if not _try_claim_task("daily_report", 7200):
-        return
-    if not rm.db.claim_task("daily_report"):
-        logger.info(f"✅ daily_report 已被抢占（数据库），跳过")
+    """【v4.9.0】每日数据报告 - 拆分为群报告+频道报告，私聊发送
+    
+    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
+    """
+    if not _try_claim_and_lock("daily_report", rm.db, 7200):
         return
     try:
         admin_id = rm.config.get("ADMIN_ID", 0)
         if not admin_id:
+            _release_task("daily_report", rm.db)
             return
         
         now = datetime.now(_CST)
@@ -982,47 +1180,96 @@ def _job_daily_report(rm):
         _send_daily_group_report(rm, admin_id, today, yesterday, gid, trend)
         _send_daily_channel_report(rm, admin_id, today, trend)
         
+        _confirm_task_done("daily_report", rm.db, 7200)
         logger.info(f"✅ 每日数据报告已发送（群+频道）")
     except Exception as e:
         logger.error(f"每日数据报告失败：{e}")
+        _release_task("daily_report", rm.db)
+        _retry_task(rm, _job_daily_report, "daily_report")
 
 
 def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid: int, trend_fn):
-    """发送群数据日报"""
-    group_stats_today = rm.db.get_group_stats_by_date(today)
-    group_stats_yesterday = rm.db.get_group_stats_by_date(yesterday)
-    
-    joined_today = left_today = net_today = 0
-    for row in group_stats_today:
-        if len(row) >= 6:
-            joined_today += row[2] or 0
-            left_today += row[3] or 0
-            net_today += row[4] or 0
-    
-    joined_yest = left_yest = net_yest = 0
-    for row in group_stats_yesterday:
-        if len(row) >= 6:
-            joined_yest += row[2] or 0
-            left_yest += row[3] or 0
-            net_yest += row[4] or 0
-    
-    active_today = rm.db.get_daily_active_users(today)
-    active_yest = rm.db.get_daily_active_users(yesterday)
-    bot_msgs_today = rm.db.get_daily_bot_messages(today)
-    bot_msgs_yest = rm.db.get_daily_bot_messages(yesterday)
-    replies_today = rm.db.get_daily_replies(today)
-    replies_yest = rm.db.get_daily_replies(yesterday)
-    
-    total_members = 0
-    if gid:
+    """【v4.5.36】群数据日报 — 优先getChatStatistics API，降级用事件追踪+校准"""
+    token = rm.config.get("TOKEN", "")
+    api_data = None
+    api_yest_data = None
+    use_api = False
+
+    if token and gid:
         try:
-            with rm.locked('bot'):
-                total_members = rm.bot.get_chat_member_count(gid)
+            api_data = get_group_daily_stats(token, gid)
+            if api_data:
+                use_api = True
+                logger.info(f"📊 群日报使用API数据")
+        except Exception as e:
+            logger.debug(f"getChatStatistics群失败: {e}")
+
+    if use_api and api_data:
+        joined_today = max(api_data.get("growth_today", 0), 0)
+        net_today = api_data.get("growth_today", 0)
+        left_today = max(-net_today, 0) if net_today < 0 else 0
+        total_members = api_data.get("current_count", 0)
+        active_today = api_data.get("interactions_today", 0)
+        msgs_today = api_data.get("messages_today", 0)
+        views_today = api_data.get("views_today", 0)
+
+        joined_yest = 0
+        left_yest = 0
+        net_yest = 0
+        active_yest = 0
+        msgs_yest = 0
+        views_yest = 0
+
+        try:
+            api_yest_data = get_group_daily_stats(token, gid)
+            if api_yest_data:
+                net_yest = api_yest_data.get("growth_today", 0)
+                joined_yest = max(net_yest, 0)
+                left_yest = max(-net_yest, 0) if net_yest < 0 else 0
+                active_yest = api_yest_data.get("interactions_today", 0)
+                msgs_yest = api_yest_data.get("messages_today", 0)
+                views_yest = api_yest_data.get("views_today", 0)
         except Exception:
-            total_members = rm.db.get_group_total_members_latest(gid)
-    
-    reply_rate = (replies_today / max(bot_msgs_today, 1)) * 100
-    
+            pass
+
+        data_source = "📡 Telegram官方统计"
+    else:
+        group_stats_today = rm.db.get_group_stats_by_date(today)
+        group_stats_yesterday = rm.db.get_group_stats_by_date(yesterday)
+
+        joined_today = left_today = net_today = 0
+        for row in group_stats_today:
+            if len(row) >= 6:
+                joined_today += row[2] or 0
+                left_today += row[3] or 0
+                net_today += row[4] or 0
+
+        joined_yest = left_yest = net_yest = 0
+        for row in group_stats_yesterday:
+            if len(row) >= 6:
+                joined_yest += row[2] or 0
+                left_yest += row[3] or 0
+                net_yest += row[4] or 0
+
+        active_today = rm.db.get_daily_active_users(today)
+        active_yest = rm.db.get_daily_active_users(yesterday)
+        msgs_today = rm.db.get_daily_bot_messages(today)
+        msgs_yest = rm.db.get_daily_bot_messages(yesterday)
+        views_today = rm.db.get_daily_replies(today)
+        views_yest = rm.db.get_daily_replies(yesterday)
+
+        total_members = 0
+        if gid:
+            try:
+                with rm.locked('bot'):
+                    total_members = rm.bot.get_chat_member_count(gid)
+            except Exception:
+                total_members = rm.db.get_group_total_members_latest(gid)
+
+        data_source = "📊 自统计（事件追踪+校准）"
+
+    reply_rate = (views_today / max(msgs_today, 1)) * 100
+
     html = f"""🏠 <b>群数据日报</b> · {today}
 
 ━━━━━━━━━━━━━━━━━━
@@ -1036,54 +1283,115 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
 ━━━━━━━━━━━━━━━━━━
 
 👥 <b>活跃度</b>
-├ 活跃用户：{active_today} {trend_fn(active_today, active_yest)}
-├ Bot消息数：{bot_msgs_today} {trend_fn(bot_msgs_today, bot_msgs_yest)}
-├ 用户回复数：{replies_today} {trend_fn(replies_today, replies_yest)}
+├ 活跃互动：{active_today} {trend_fn(active_today, active_yest)}
+├ 消息数：{msgs_today} {trend_fn(msgs_today, msgs_yest)}
+├ 浏览/回复：{views_today} {trend_fn(views_today, views_yest)}
 └ 互动率：{reply_rate:.0f}%
 
 ━━━━━━━━━━━━━━━━━━
 
 🌙 <b>昨日同期</b>
 ├ 入群{joined_yest}/离群{left_yest}/净增{net_yest:+d}
-├ 活跃{active_yest}/Bot消息{bot_msgs_yest}/回复{replies_yest}
+├ 互动{active_yest}/消息{msgs_yest}/浏览{views_yest}
 
 ━━━━━━━━━━━━━━━━━━
-<i>系统自动生成 · Mory小助理</i>"""
-    
+<i>{data_source} · Mory小助理</i>"""
+
     with rm.locked('bot'):
         rm.bot.send_message(admin_id, html, parse_mode="HTML")
-    logger.info(f"✅ 群日报已发送: 入群{joined_today} 离群{left_today} 净增{net_today}")
+    logger.info(f"✅ 群日报已发送: 入群{joined_today} 离群{left_today} 净增{net_today} 来源={'API' if use_api else '自统计'}")
 
 
 def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
-    """发送频道数据日报"""
+    """【v4.5.36】频道数据日报 — 优先getChatStatistics API，降级用channel_tracking"""
     channel_ids = rm.config.get("CHANNEL_IDS", [])
     if not channel_ids:
         return
-    
+
+    token = rm.config.get("TOKEN", "")
+    yesterday = (datetime.now(_CST) - timedelta(days=1)).strftime("%Y-%m-%d")
+
     channel_lines = []
+    stats_lines = []
+    total_posts_today = 0
+    total_views_today = 0
+    any_api = False
+
     for ch in channel_ids:
         cid = ch.get("id", 0) if isinstance(ch, dict) else ch
         cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
+
+        ch_count = 0
         try:
             with rm.locked('bot'):
                 ch_count = rm.bot.get_chat_member_count(cid)
-            ch_views_data = rm.db.get_channel_tracking(chat_id=cid, limit=10)
-            ch_total_views = sum(v[4] for v in ch_views_data if len(v) >= 5 and v[4] > 0)
-            ch_post_count = len(ch_views_data)
-            ch_avg = ch_total_views // max(ch_post_count, 1)
-            channel_lines.append(f"├ {cname}：{ch_count}人 | 今日{ch_post_count}帖 | 均览{ch_avg}")
-        except Exception:
-            channel_lines.append(f"├ {cname}：获取失败")
-    
+            ch_type = ch.get("type", "频道") if isinstance(ch, dict) else "频道"
+            channel_lines.append(f"├ {cname}：{ch_count}人 ({ch_type})")
+        except Exception as e:
+            logger.debug(f"频道成员数获取失败: {cname} err={e}")
+            ch_count = rm.db.get_group_total_members_latest(cid)
+            if ch_count > 0:
+                channel_lines.append(f"├ {cname}：约{ch_count}人")
+            else:
+                channel_lines.append(f"├ {cname}：—")
+
+        api_ch = None
+        if token:
+            try:
+                api_ch = get_channel_daily_stats(token, cid)
+                if api_ch:
+                    any_api = True
+            except Exception:
+                pass
+
+        if api_ch:
+            posts_today = api_ch.get("messages_today", 0)
+            views_today = api_ch.get("views_today", 0)
+            forwards_today = api_ch.get("forwards_today", 0)
+            avg_views = views_today // max(posts_today, 1)
+            total_posts_today += posts_today
+            total_views_today += views_today
+
+            posts_yest = api_ch.get("yesterday_messages", 0)
+            views_yest = api_ch.get("yesterday_views", 0)
+
+            stats_lines.append(
+                f"├ {cname}："
+                f"发帖{posts_today}{trend_fn(posts_today, posts_yest)} "
+                f"浏览{views_today}{trend_fn(views_today, views_yest)} "
+                f"均阅{avg_views}"
+            )
+        else:
+            try:
+                today_stats = rm.db.get_channel_daily_stats(cid, today)
+                yest_stats = rm.db.get_channel_daily_stats(cid, yesterday)
+
+                posts_today = today_stats.get("posts", 0)
+                views_today = today_stats.get("views", 0)
+                avg_views = today_stats.get("avg_views", 0)
+                posts_yest = yest_stats.get("posts", 0)
+                views_yest = yest_stats.get("views", 0)
+
+                total_posts_today += posts_today
+                total_views_today += views_today
+
+                stats_lines.append(
+                    f"├ {cname}："
+                    f"发帖{posts_today}{trend_fn(posts_today, posts_yest)} "
+                    f"浏览{views_today}{trend_fn(views_today, views_yest)} "
+                    f"均阅{avg_views}"
+                )
+            except Exception as e:
+                logger.debug(f"频道统计获取失败: {cname} err={e}")
+                stats_lines.append(f"├ {cname}：统计获取失败")
+
     if channel_lines:
         channel_lines[-1] = channel_lines[-1].replace("├", "└", 1)
-    
-    channel_stats = rm.db.get_channel_stats_summary()
-    tracked_count = channel_stats.get("total_posts", 0)
-    total_views = max(channel_stats.get("total_views", 0), 0)
-    avg_views = total_views // max(tracked_count, 1)
-    
+    if stats_lines:
+        stats_lines[-1] = stats_lines[-1].replace("├", "└", 1)
+
+    data_source = "📡 Telegram官方统计" if any_api else "📊 自统计（仅Bot消息）"
+
     html = f"""📡 <b>频道数据日报</b> · {today}
 
 ━━━━━━━━━━━━━━━━━━
@@ -1093,29 +1401,33 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
 
 ━━━━━━━━━━━━━━━━━━
 
-📊 <b>整体内容</b>
-├ 追踪消息：{tracked_count} 条
-├ 总浏览量：{total_views:,}
-└ 平均浏览：{avg_views}
+📊 <b>今日发帖/浏览</b>
+{chr(10).join(stats_lines)}
 
 ━━━━━━━━━━━━━━━━━━
-<i>系统自动生成 · Mory小助理</i>"""
-    
+
+📈 <b>汇总</b>
+└ 总发帖{total_posts_today}条 / 总浏览{total_views_today}次
+
+━━━━━━━━━━━━━━━━━━
+<i>{data_source} · Mory小助理</i>"""
+
     with rm.locked('bot'):
         rm.bot.send_message(admin_id, html, parse_mode="HTML")
-    logger.info("✅ 频道日报已发送")
+    logger.info(f"✅ 频道日报已发送: 发帖{total_posts_today} 浏览{total_views_today} API={'是' if any_api else '否'}")
 
 
 def _job_weekly_report(rm):
-    """【v4.5.32】每周数据报告 - 群周报+频道周报，含趋势分析"""
-    if not _try_claim_task("weekly_report", 86400):
-        return
-    if not rm.db.claim_task("weekly_report"):
-        logger.info(f"✅ weekly_report 已被抢占（数据库），跳过")
+    """【v4.9.0】每周数据报告 - 群周报+频道周报，含趋势分析
+    
+    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
+    """
+    if not _try_claim_and_lock("weekly_report", rm.db, 86400):
         return
     try:
         admin_id = rm.config.get("ADMIN_ID", 0)
         if not admin_id:
+            _release_task("weekly_report", rm.db)
             return
         
         now = datetime.now(_CST)
@@ -1128,16 +1440,19 @@ def _job_weekly_report(rm):
         _send_weekly_group_report(rm, admin_id, today, week_ago, two_weeks_ago)
         _send_weekly_channel_report(rm, admin_id, today, week_ago, week_ago_ts, now_ts)
         
+        _confirm_task_done("weekly_report", rm.db, 86400)
         logger.info("✅ 每周数据报告已发送（群+频道）")
     except Exception as e:
         logger.error(f"每周数据报告失败：{e}")
+        _release_task("weekly_report", rm.db)
+        _retry_task(rm, _job_weekly_report, "weekly_report")
 
 
 def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_weeks_ago: str):
-    """发送群数据周报"""
+    """【v4.5.36】群数据周报 — 修复chat_id=0 bug，优先API数据"""
     gid = rm.config.get("GROUP_ID", 0)
-    this_week = rm.db.get_weekly_group_stats(week_ago, today)
-    last_week = rm.db.get_weekly_group_stats(two_weeks_ago, week_ago)
+    this_week = rm.db.get_weekly_group_stats(week_ago, today, chat_id=gid)
+    last_week = rm.db.get_weekly_group_stats(two_weeks_ago, week_ago, chat_id=gid)
     
     total_members = 0
     if gid:
@@ -1163,6 +1478,8 @@ def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_
     if this_week["joined"] > 0:
         retention = max(0, (this_week["joined"] - this_week["left"]) / this_week["joined"] * 100)
     
+    data_source = "📊 自统计（事件追踪+校准）"
+
     html = f"""🏠 <b>群数据周报</b> · {week_ago} ~ {today}
 
 ━━━━━━━━━━━━━━━━━━
@@ -1188,7 +1505,7 @@ def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_
 ├ 周均成员：{last_week['avg_members']}
 
 ━━━━━━━━━━━━━━━━━━
-<i>系统自动生成 · Mory小助理</i>"""
+<i>{data_source} · Mory小助理</i>"""
     
     with rm.locked('bot'):
         rm.bot.send_message(admin_id, html, parse_mode="HTML")
@@ -1196,34 +1513,62 @@ def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_
 
 
 def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, week_ago_ts: int, now_ts: int):
-    """发送频道数据周报"""
+    """【v4.5.36】频道数据周报 — 优先getChatStatistics API，不再提示手动查看"""
     channel_ids = rm.config.get("CHANNEL_IDS", [])
     if not channel_ids:
         return
-    
+
+    token = rm.config.get("TOKEN", "")
     channel_lines = []
-    total_posts = 0
-    total_views = 0
+    stats_lines = []
+    any_api = False
+
     for ch in channel_ids:
         cid = ch.get("id", 0) if isinstance(ch, dict) else ch
         cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
+
+        ch_count = 0
         try:
             with rm.locked('bot'):
                 ch_count = rm.bot.get_chat_member_count(cid)
-            ch_stats = rm.db.get_channel_posts_in_range(cid, week_ago_ts, now_ts)
             ch_member_stats = rm.db.get_weekly_channel_member_stats(cid, week_ago, today)
             member_growth = ch_member_stats["max"] - ch_member_stats["min"]
-            total_posts += ch_stats["posts"]
-            total_views += ch_stats["views"]
-            channel_lines.append(f"├ {cname}：{ch_count}人(周+{member_growth}) | {ch_stats['posts']}帖 | 均览{ch_stats['avg_views']}")
-        except Exception:
-            channel_lines.append(f"├ {cname}：获取失败")
-    
+            channel_lines.append(f"├ {cname}：{ch_count}人(周+{member_growth:+d})")
+        except Exception as e:
+            logger.debug(f"频道周报获取失败: {cname} err={e}")
+            ch_count = rm.db.get_group_total_members_latest(cid)
+            if ch_count > 0:
+                channel_lines.append(f"├ {cname}：约{ch_count}人")
+            else:
+                channel_lines.append(f"├ {cname}：—")
+
+        api_ch = None
+        if token:
+            try:
+                api_ch = get_channel_daily_stats(token, cid)
+                if api_ch:
+                    any_api = True
+            except Exception:
+                pass
+
+        if api_ch:
+            msgs = api_ch.get("messages_today", 0)
+            views = api_ch.get("views_today", 0)
+            forwards = api_ch.get("forwards_today", 0)
+            stats_lines.append(f"├ {cname}：发帖{msgs} 浏览{views} 转发{forwards}")
+        else:
+            db_stats = rm.db.get_channel_posts_in_range(cid, week_ago_ts, now_ts)
+            posts = db_stats.get("posts", 0) if db_stats else 0
+            views = db_stats.get("views", 0) if db_stats else 0
+            stats_lines.append(f"├ {cname}：发帖{posts} 浏览{views}")
+
     if channel_lines:
         channel_lines[-1] = channel_lines[-1].replace("├", "└", 1)
-    
-    overall_avg = total_views // max(total_posts, 1)
-    
+    if stats_lines:
+        stats_lines[-1] = stats_lines[-1].replace("├", "└", 1)
+
+    data_source = "📡 Telegram官方统计" if any_api else "📊 自统计（仅Bot消息）"
+
     html = f"""📡 <b>频道数据周报</b> · {week_ago} ~ {today}
 
 ━━━━━━━━━━━━━━━━━━
@@ -1233,17 +1578,15 @@ def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, we
 
 ━━━━━━━━━━━━━━━━━━
 
-📈 <b>整体周表现</b>
-├ 周发帖：{total_posts} 条
-├ 周浏览：{total_views:,}
-└ 周均浏览：{overall_avg}
+📈 <b>发帖/浏览统计</b>
+{chr(10).join(stats_lines)}
 
 ━━━━━━━━━━━━━━━━━━
-<i>系统自动生成 · Mory小助理</i>"""
+<i>{data_source} · Mory小助理</i>"""
     
     with rm.locked('bot'):
         rm.bot.send_message(admin_id, html, parse_mode="HTML")
-    logger.info("✅ 频道周报已发送")
+    logger.info(f"✅ 频道周报已发送 API={'是' if any_api else '否'}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1251,6 +1594,7 @@ def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, we
 # ═══════════════════════════════════════════════════════════════════════════
 _tarot_daily_cache: Dict[str, Dict] = {}  # {user_id_date: {...}}
 _tarot_cache_last_date: str = ""  # 【v4.3.2修复M-03】上次缓存日期，用于清理
+_TAROT_CACHE_MAX_SIZE = 500  # 【v4.5.35修复】缓存上限，防止内存泄漏
 
 
 def _get_tarot_cache(uid: int, dt: datetime) -> Dict:
@@ -1258,17 +1602,26 @@ def _get_tarot_cache(uid: int, dt: datetime) -> Dict:
     global _tarot_daily_cache, _tarot_cache_last_date
     cst_now = dt.astimezone(_CST)
     date_key = cst_now.strftime("%Y-%m-%d")
-    
+
     if date_key != _tarot_cache_last_date:
         _tarot_daily_cache = {}
         _tarot_cache_last_date = date_key
-    
+
+    # 【v4.5.35修复】缓存上限保护，防止群成员过多导致内存泄漏
+    if len(_tarot_daily_cache) >= _TAROT_CACHE_MAX_SIZE:
+        # 随机淘汰20%旧缓存
+        import random
+        keys = list(_tarot_daily_cache.keys())
+        for k in random.sample(keys, len(keys) // 5):
+            del _tarot_daily_cache[k]
+        logger.debug(f"🎴 塔罗缓存触发LRU淘汰，当前大小={len(_tarot_daily_cache)}")
+
     cache_key = f"{uid}_{date_key}"
-    
+
     if cache_key not in _tarot_daily_cache:
         # 生成新数据并缓存
         _tarot_daily_cache[cache_key] = _generate_tarot_data(uid)
-    
+
     return _tarot_daily_cache[cache_key]
 
 
@@ -1522,7 +1875,9 @@ def _get_fallback_tarot_content(tarot: Dict) -> Dict:
 
 
 def _job_tarot_flirt(rm):
-    """【v4.2.5→v4.5.31】每日塔罗搭讪（30%概率，针对群里活跃用户）原子防重
+    """【v4.9.0】每日塔罗搭讪（30%概率，针对群里活跃用户）
+    
+    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
     
     【特性】
     - 同一人同一天结果固定（北京时间为准）
@@ -1535,16 +1890,13 @@ def _job_tarot_flirt(rm):
         _tarot_daily_cache = {}
         _tarot_cache_last_date = today_key
 
-    if not _try_claim_task("tarot_flirt", 7200):
+    if not _try_claim_and_lock("tarot_flirt", rm.db, 7200):
         return
     
-    # 30%概率触发（在claim前检查，避免占用名额）
     if random.random() > 0.30:
+        _release_task("tarot_flirt", rm.db)
         return
     
-    if not rm.db.claim_task("tarot_flirt"):
-        logger.info(f"✅ tarot_flirt 已被抢占（数据库），跳过")
-        return
     try:
         gid = rm.config.get("GROUP_ID", 0)
         admin_id = rm.config.get("ADMIN_ID", 0)
@@ -1618,40 +1970,60 @@ seed={convert_seed}"""
         # 构建HTML卡片消息（高度随机：40%短版 / 60%长版）
         short_mode = random.random() < 0.4
         
+        # 【v4.5.35修复】所有动态内容统一HTML转义，防止XSS/格式错乱
+        safe_uname = html.escape(str(uname))
+        safe_opener = html.escape(str(opener_text))
+        safe_action = html.escape(str(opener_action))
+        safe_user_msg = html.escape(str(user_msg[:10]))
+        safe_card = html.escape(str(tarot['card']))
+        safe_position = html.escape(str(tarot['position']))
+        safe_theme = html.escape(str(tarot['theme']))
+        safe_meaning = html.escape(str(tarot['meaning']))
+        safe_advice = html.escape(str(tarot['advice']))
+        safe_color = html.escape(str(tarot['color']))
+        safe_dir = html.escape(str(tarot['dir']))
+        safe_nums = html.escape(str(tarot['nums']))
+        safe_star = html.escape(str(tarot['star']))
+        safe_time = html.escape(str(tarot['time']))
+        safe_convert = html.escape(str(convert_hint))
+
         if short_mode:
             # ══ 短版：约70字，手机一屏看完
-            html_reply = f"""🎴 <b>{tarot['card']} {tarot['position']}</b>
+            html_reply = f"""🎴 <b>{safe_card} {safe_position}</b>
 
-@{uname} {opener_text} {opener_action}「{html.escape(user_msg[:10])}」~
+@{safe_uname} {safe_opener} {safe_action}「{safe_user_msg}」~
 
-📖 {tarot['meaning']}
+📖 {safe_meaning}
 
-🌈 {tarot['color']} · 📍 {tarot['dir']}
+🌈 {safe_color} · 📍 {safe_dir}
 
-{convert_hint}"""
+{safe_convert}"""
         else:
             # ══ 长版：约110字（控制在一屏内）
-            html_reply = f"""🎴 <b>{tarot['theme']}</b> · {tarot['card']} {tarot['position']}
+            html_reply = f"""🎴 <b>{safe_theme}</b> · {safe_card} {safe_position}
 
-@{uname} {opener_text} {opener_action}「{html.escape(user_msg[:10])}」~
+@{safe_uname} {safe_opener} {safe_action}「{safe_user_msg}」~
 
-📖 {tarot['meaning']}
+📖 {safe_meaning}
 
-💡 {tarot['advice']}
+💡 {safe_advice}
 
-🌈 {tarot['color']} · 📍 {tarot['dir']} · 🔢 {tarot['nums']} · ⭐ {tarot['star']} · ⏰ {tarot['time']}
+🌈 {safe_color} · 📍 {safe_dir} · 🔢 {safe_nums} · ⭐ {safe_star} · ⏰ {safe_time}
 
-{convert_hint}"""
+{safe_convert}"""
         
         # 发送HTML格式消息
         try:
             with rm.locked('bot'):
                 rm.bot.send_message(gid, html_reply, parse_mode="HTML")
+            _confirm_task_done("tarot_flirt", rm.db, 7200)
             logger.info(f" 塔罗搭讪成功: @{uname}")
         except Exception as e:
             logger.error(f"塔罗搭讪发送失败：{e}")
+            _release_task("tarot_flirt", rm.db)
     except Exception as e:
         logger.error(f"塔罗搭讪任务失败：{e}")
+        _release_task("tarot_flirt", rm.db)
 
 
 def _do_backup(db_file: str):
@@ -1676,10 +2048,75 @@ def _do_backup(db_file: str):
         logger.error(f"备份失败：{e}")
 
 
+_CRITICAL_TASKS = [
+    ("greeting_morning", "早安问候", 10),
+    ("greeting_afternoon", "午安问候", 13),
+    ("greeting_evening", "晚安问候", 23),
+    ("news_morning", "早间新闻", 10),
+    ("news_afternoon", "午间新闻", 14),
+    ("news_evening", "晚间新闻", 21),
+    ("daily_report", "每日日报", 10),
+]
+
+
+def _job_health_check(rm):
+    """【v4.9.1】任务健康检查 - 检查关键任务是否按时执行 + 数据库锁审计 + 并发异常检测"""
+    try:
+        now = datetime.now(_CST)
+        current_hour = now.hour
+        today = now.strftime("%Y-%m-%d")
+        admin_id = rm.config.get("ADMIN_ID", 0)
+        if not admin_id:
+            logger.warning("⚠️ [health_check] ADMIN_ID为空，跳过健康检查")
+            return
+        
+        logger.info(f"🏥 [health_check] 开始检查，当前时间{current_hour}:00，检查日期{today}")
+        
+        missed = []
+        for task_key, task_desc, expected_hour in _CRITICAL_TASKS:
+            if current_hour < expected_hour:
+                logger.debug(f"🏥 [health_check] {task_desc} 未到预期时间({expected_hour}:00)，跳过")
+                continue
+            if not rm.db.is_task_executed_today(task_key):
+                missed.append(f"• {task_desc}（应在{expected_hour}:00前执行）")
+                logger.info(f"🏥 [health_check] ❌ {task_desc} 今日未执行")
+            else:
+                logger.debug(f"🏥 [health_check] ✅ {task_desc} 今日已执行")
+        
+        anomalies = _task_guard.audit_task_log(rm.db)
+        
+        parts = []
+        if missed:
+            parts.append(f"⚠️ <b>任务未执行</b>\n" + "\n".join(missed))
+        if anomalies:
+            parts.append(f"🚨 <b>数据库锁异常</b>\n" + "\n".join(anomalies))
+        
+        if parts:
+            msg = f"🏥 <b>任务健康检查</b> · {today}\n\n" + "\n\n".join(parts)
+            try:
+                with rm.locked('bot'):
+                    rm.bot.send_message(admin_id, msg, parse_mode="HTML")
+                logger.warning(f"⚠️ [health_check] 发现异常，已通知管理员")
+            except Exception as e:
+                logger.error(f"⚠️ [health_check] 通知发送失败：{e}")
+        else:
+            logger.info(f"✅ [health_check] 所有关键任务已正常执行，数据库无异常")
+    except Exception as e:
+        logger.error(f"❌ [health_check] 健康检查失败：{e}")
+
+
 def start_background(bot, config: Dict[str, Any], db, ai, save_config_fn):
     """启动后台任务引擎"""
+    # 【v4.9.3】防重入保护：避免重复启动导致多个scheduler实例并发调度
+    global _scheduler_instance
+    if _scheduler_instance is not None and getattr(_scheduler_instance, 'running', False):
+        logger.warning("⚠️ 后台任务引擎已在运行，跳过重复启动")
+        return
+
     rm = ResourceManager(bot=bot, ai=ai, db=db, config=config, save_config_fn=save_config_fn)
-    
+    _task_guard.bind(rm)
+    _fault_reporter.bind(rm)
+
     if HAS_APSCHEDULER:
         _start_with_apscheduler(rm)
     else:
@@ -1712,21 +2149,22 @@ def _start_with_apscheduler(rm):
     # 叫醒服务（每分钟）
     scheduler.add_job(_job_wakeup_check, "cron", minute="*", args=[rm], id="wakeup_check", max_instances=1, misfire_grace_time=60)
     
-    # 阅后即焚探测（每5分钟 - v4.0.3降频以节省API配额）
-    # 注意：_job_burn_probe 已降级为空操作，主要依赖孤儿清理TTL机制
-    scheduler.add_job(_job_burn_probe, "cron", minute="*/5", args=[rm], id="burn_probe", max_instances=1, misfire_grace_time=300)
-    
-    # 每小时执行一次阅后即焚孤儿清理（v4.5.19降频：避免429限流）
-    scheduler.add_job(_job_burn_orphan, "cron", minute="5", args=[rm], id="burn_orphan", max_instances=1, misfire_grace_time=300)
-    scheduler.add_job(_job_reactivate, "cron", minute=5, args=[rm], id="reactivate", max_instances=1, misfire_grace_time=300)
-    scheduler.add_job(_job_cart_recovery, "cron", minute=10, args=[rm], id="cart_recovery", max_instances=1, misfire_grace_time=300)
-    scheduler.add_job(_job_backup, "cron", minute=15, args=[rm], id="backup", max_instances=1, misfire_grace_time=300)
-    scheduler.add_job(_job_ttl_cleanup, "cron", minute=20, args=[rm], id="ttl_cleanup", max_instances=1, misfire_grace_time=300)
-    scheduler.add_job(_job_save_config, "cron", minute=30, args=[rm], id="save_config", max_instances=1, misfire_grace_time=300)
-    scheduler.add_job(_job_channel_views, "cron", minute=25, args=[rm], id="channel_views", max_instances=1, misfire_grace_time=300)
+    # 阅后即焚探测已废弃（v4.5.35），不再调度_job_burn_probe
+
+    # 【v4.9.3】每小时任务统一补coalesce=True，防止misfire堆积补发导致record_call误报
+    scheduler.add_job(_job_burn_orphan, "cron", minute="5", args=[rm], id="burn_orphan", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_reactivate, "cron", minute=5, args=[rm], id="reactivate", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_cart_recovery, "cron", minute=10, args=[rm], id="cart_recovery", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_backup, "cron", minute=15, args=[rm], id="backup", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_ttl_cleanup, "cron", minute=20, args=[rm], id="ttl_cleanup", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_save_config, "cron", minute=30, args=[rm], id="save_config", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_channel_views, "cron", minute=25, args=[rm], id="channel_views", max_instances=1, coalesce=True, misfire_grace_time=300)
     
     # 背刺泄密（每周三0点）
     scheduler.add_job(_job_leak, "cron", day_of_week="wed", hour=0, minute=0, args=[rm], id="leak", max_instances=1, misfire_grace_time=3600)
+    
+    # 任务健康检查（每6小时，检查关键任务是否按时执行）
+    scheduler.add_job(_job_health_check, "cron", hour="10,16,22", minute=0, args=[rm], id="health_check", max_instances=1, coalesce=True, misfire_grace_time=300)
     
     scheduler.start()
     logger.info("🚀 后台任务引擎启动（APScheduler版，各任务独立运行）")

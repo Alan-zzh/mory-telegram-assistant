@@ -1,5 +1,133 @@
 # 更新日志
 
+## v4.9.4 | 2026-05-20
+
+- 🐛 **根治任务并发异常误报**：`reactivate`/`cart_recovery`每小时稳定触发"300秒内被调用2次"告警
+  - 根因① `_TaskGuard.record_call` 在锁拦截前记录所有调用，被锁挡住的调用也计入并发计数 → 移到 `_try_claim_and_lock` 成功获取锁之后才记录
+  - 根因② `coalesce=True` 缺失：APScheduler 默认 `coalesce=False`，任务堆积时可能补发 → 全部每小时任务补上 `coalesce=True`
+  - 根因③ 缺少防重入保护：`start_background` 可能被重复调用创建多个 scheduler → 增加 `_scheduler_instance.running` 检查
+
+## v4.9.3 | 2026-05-19
+
+- 🧹 **项目大整理**：本地+VPS清理60+垃圾文件（临时脚本/过期文档/旧计划spec/旧备份）
+- 🧹 **代码清理**：移除13处未使用import（6个模块冗余logging import+dashboard 5个未用import+hashlib+RotatingFileHandler）
+- 📝 **README全面更新**：修正systemd管理方式、更新项目结构、修正环境变量名
+- 📝 **文档同步**：本地与VPS文档统一，删除过期文档（COORDINATION_CENTER/PROMPT板块/AI_ISSUE_TEMPLATE等）
+
+## v4.9.2 | 2026-05-19
+
+- 🆕 **统一故障通知中心 `_FaultReporter`**：所有故障统一入口，自动Telegram私聊通知管理员
+- 🆕 **本地告警兜底**：Telegram通知失败时写入 `fault_alerts.log`，下次成功时自动补发
+- 🆕 **防刷机制**：同类故障5分钟内不重复通知
+- 🚨 **P0故障接入**：AI模型全部失败 / 模型池全部拉黑 / 三层路由全失败 / 数据库损坏 / Bot崩溃
+- ⚠️ **P1故障接入**：Telegram API异常(降级发送也失败) / 数据库操作失败(claim_task/阅后即焚/寻宝积分) / normal模式AI失败
+- 🔧 **系统资源告警激活**：CPU/内存/磁盘告警从仅写日志升级为Telegram通知
+- 🔧 旧通知函数(`_notify_admin_failure`/`_notify_admin_news_failure`/`_notify_admin_system_failure`)统一走`_FaultReporter`
+
+## v4.9.1 | 2026-05-19
+
+- 🆕 **并发监控预警 `_TaskGuard`**：同一任务5分钟内被调用≥2次自动私聊告警管理员
+- 🆕 **抢占失败监控**：连续抢占失败≥3次自动告警管理员
+- 🆕 **数据库锁审计**：健康检查时自动检测task_log异常重复记录
+- 🔧 健康检查增强：从仅检查"任务未执行"扩展为"任务未执行+数据库锁异常"双维度
+
+## v4.9.0 | 2026-05-19
+
+- 🐛 **根治并发重复播报**：新增`_try_claim_and_lock`原子抢占（内存检查+数据库锁定一步完成），解决v4.7.0"先执行后确认"流程的并发窗口问题
+- 🐛 **任务失败可重试**：新增`_release_task`释放数据库锁，避免失败后重试被拦截
+- 🔧 `_confirm_task_done`简化为仅设内存锁，数据库锁由原子抢占负责
+
+## v4.8.0 | 2026-05-18
+
+- 🆕 **回复节奏拟人化**：非阻塞延迟系统，Bot不再秒回
+  - 新增 `_calc_humanized_delay()`：根据回复长度/私聊群聊/深夜/连续对话智能计算延迟
+  - 新增 `_delayed_reply()`：用 `threading.Timer` 实现非阻塞延迟发送，期间持续typing状态
+  - 新增 `REPLY_SPEED` 配置项：fast/normal/slow/human四档，默认human智能拟人
+  - 支持自然语言修改："把回复速度调成慢一点"
+- 🆕 **人设话术精细化**：SYSTEM_PROMPT迁移到BASE_PERSONA分层结构化
+  - 9大分层：身份锚定/性格光谱/对话节奏/情绪雷达/场景话术/私聊模式/群聊模式/挑逗艺术/禁忌红线
+  - 新增情绪雷达：感知对方敷衍/急迫/失望/夸奖/质疑等情绪并差异化回应
+  - 新增场景话术库：被问"你是机器人吗"/被问价格/深夜私聊/新人搭讪等7种场景
+  - 挑逗艺术升级：直球→暧昧留白，新增肢体暗示/打字犹豫/反向撩等技法
+  - 私聊/群聊差异化人设：`_build_persona()` 增加 `is_priv` 场景感知
+- 🆕 **自然语言人设调教系统**：Telegram端直接用自然语言微调Bot行为
+  - 新增 `_handle_persona_teaching()`：识别"以后对我温柔一点""说话再撩一点"等调教指令
+  - 新增 `TEACHING_LOG` 调教记录：最近20条，支持"撤销调教"/"查看调教"
+  - 智能路由：回复速度相关→改REPLY_SPEED，群聊主动度→改REPLY_CHANCE，其他→追加STYLE_APPEND
+- 🆕 **私聊分段发送**：30%概率将长回复拆成2段发送，制造"还在打字"真人感
+  - 新增 `_split_for_private()`：在自然语句边界拆分，第一段末尾加省略号
+  - 深夜私聊拆分概率更高(50%)，聊嗨了(≥3轮)不拆
+- 🆕 **新增PROMPT_TEMPLATES**：flirt(纯撩)/shy(害羞)/cold(高冷)三种情绪模式
+- 🔧 **AI参数微调**：硬编码改为从config读取
+  - temperature: 0.88→0.92（更随机更有变化）
+  - max_tokens: 500→400（限制回复长度避免长篇大论）
+  - top_p: 0.95→0.92，frequency_penalty: 0.3→0.5，presence_penalty: 0.2→0.4
+- 🔧 **PROMPT_TEMPLATES优化**：hook/nudge/convert/convert_soft模板话术更自然更多样
+
+## v4.7.0 | 2026-05-18
+
+- 🔧 **核心修复**：定时任务锁机制从"先锁后执行"改为"先执行后确认"
+  - `_try_claim_task` 改为仅检查不锁定，避免任务失败后被内存锁卡死
+  - 新增 `_confirm_task_done`：任务成功后才同时设置内存锁和数据库锁
+- 🔧 **修复日报/周报**：改用新流程 + 添加 `_retry_task` 重试机制
+- 🔧 **修复塔罗搭讪**：改用新流程 + 成功后 `_confirm_task_done`
+- 🔧 **修复背刺泄密**：改用新流程 + 添加重试 + 移除无用的 `global _last_saved_model_idx`
+- 🔧 **修复 `rm.db.execute()` 不存在**：database.py 新增 `delete_user()` 方法，醋意/购物车挽回改用 `rm.db.delete_user(uid)`
+- 🗑️ 移除废弃的 `_job_burn_probe` APScheduler 调度（每5分钟空转浪费资源）
+- 🆕 新增任务健康检查 `_job_health_check`：每6小时（10:00/16:00/22:00）检查关键任务是否按时执行，未执行则通知管理员
+
+## v4.6.5 | 2026-05-17
+
+- 🆕 大幅扩展色情引流暗号检测：新增30+条组合规则（口爆/全套服务/特服/约+小姐/同城+约/上门+按摩/KTV+小姐/足浴+小姐/洗浴+全套/成人+视频等）
+- 🆕 新增价格暗号检测：数字+P/S/套/次/晚/夜、数字+E/F级+奶/胸/美（如36E奶）、奶+数字/尺
+- 🔧 修复误判：按摩/小姐/少妇/约/上门/服务/接待等单字规则全部改为组合规则，必须搭配色情特征词才触发
+- 🔧 修复"小姐服务"误判：小姐+服务不触发，小姐+接待/全套/上门/特服才触发
+- 🔧 修复"约了同学"误判：约+小姐/少妇/学生妹/奶/美女间距缩短到≤1
+- 🔧 修复"姐妹一起去按摩"误判：姐妹一起改为姐妹一起+干活/赚钱/做事组合
+- 🔧 修复VPS Bot崩溃：pytz模块缺失导致启动失败，改为可选依赖+回退方案
+- 🔧 ad_detector.py 单维度多次命中只计一次分，避免同维度规则重复加分
+- 📝 规则文档归档：AI_DEBUG_HISTORY.md 新增"色情引流检测规则设计原则与避开指南"防失忆档案
+
+## v4.6.4 | 2026-05-17
+
+- 🆕 新增色情引流黑话检测：M36D（罩杯暗号）、白虎（体貌暗号）、800约、各地+约、传递+各地、学生+约
+- 🆕 新增色情引流场景暗号：淫姑/淫娃、上门服务、同城约、约炮、裸聊、视频聊、一夜情、包夜、寻花问柳、学生妹、白嫖、活好、正点、年轻漂亮、身材火辣
+- 🔧 修复emoji夹杂用户名检测：原正则要求连续字符，新正则支持跳过emoji匹配"看我简⭕介"
+- 🔧 扩充AUTO_MUTE_NAMES入群封禁词：新增各地/约/学生/M36D/白虎/传递/800约/各地约
+
+## v4.6.3 | 2026-05-17
+
+- 🆕 新增延迟封禁机制：用户第一条消息可能难判断，但后续消息累计评分达到阈值（默认3分）后自动封禁
+- 🆕 延迟封禁触发时，自动删除该用户所有被追踪的历史消息（清道夫模式）
+- 🆕 补充 group_mgr.py AUTO_MUTE_NAMES 关键词：赚钱黑话（搞米/日入/躺赚）、招募引流、色情引流、灰色产业、联系方式引流等一眼广告ID直接封禁
+- 🆕 ad_detector.py 新增 `get_user_messages_to_delete()` 方法，支持批量获取待删除消息
+- 🔧 main.py P3.5 广告检测逻辑重构：即时命中 → 延迟追踪 → 累计封禁 三级处理
+
+## v4.6.0 | 2026-05-16
+
+- 🔴 P0-1: Dashboard配置修改后增加"需重启Bot生效"提示（api_config_update + api_group_settings_update）
+- 🔴 P0-2: Dashboard日志查询修复（reply_tracking表列名不匹配：id/user_id/user_name→bot_msg_id/chat_id/user_msg_id/ts/replied）
+- 🔴 P0-3: 绑定主人安全修复（首次ADMIN_ID为0时限制私聊才能绑定，群聊发送"绑定主人"被拒绝）
+- 🔴 P0-4: Dashboard会话30分钟过期机制（PERMANENT_SESSION_LIFETIME = timedelta(minutes=30)）
+- 🟠 P1-5: Dashboard版本号从version.py动态读取（替换硬编码v6.0）
+- 🟠 P1-6: 运行状态显示当前模型名称而非索引数字
+- 🟠 P1-7: 页面标题随Tab切换动态更新（_pageTitles映射）
+- 🟠 P1-8: 自然语言配置bot=None时异常安全处理（try-except AttributeError + 友好提示）
+- 🟠 P1-9: 报表下载改用fetch+credentials+blob方式确保鉴权完整
+- 🟠 P1-10: 关键操作添加确认弹窗（清空列表confirm）+ 快速保存增加重启提示
+
+## v4.5.36 | 2026-05-15
+
+- 🔴 修复周报 `chat_id=0` 硬编码 Bug：`get_weekly_group_stats()` SQL 写死 `chat_id=0`，但实际记录用真实 chat_id，导致周报入群/离群/净增永远为0
+- 🔴 修复可疑用户入群不计入统计：被自动禁言的用户 `continue` 跳过了 `record_group_join()`
+- 🆕 新增 `core/telegram_stats.py`：封装 `getChatStatistics` Bot API 7.0+，优先从 Telegram 官方获取准确统计
+- 🆕 新增成员数校准机制：每小时对比 API 实时人数与昨日记录，修正漏记的净增
+- 🆕 新增 `get_group_stats_by_chat_id()` 精确查询方法
+- 📝 日报/周报重写：优先使用 `getChatStatistics` API 数据，降级用事件追踪+校准
+- 📝 频道周报不再显示"请在Telegram客户端查看"，改为实际展示统计数据
+- 📝 频道成员数获取失败时显示"约XXX人"回退，不再显示"获取失败"
+- 📝 日报/周报底部标注数据来源（Telegram官方统计 / 自统计）
+
 ## 2026-04-30
 
 - 文档：明确生产环境只允许 `systemd` 管理 `mory_assistant`（禁止 pm2 / `bash start.sh start` / 手动 `python main.py`），避免 Telegram `409 Conflict`（同 token 多开 getUpdates）。
