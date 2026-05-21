@@ -25,7 +25,6 @@
 
 import sqlite3
 import time
-import logging
 from threading import Lock
 from datetime import datetime, timedelta, timezone
 
@@ -181,6 +180,24 @@ class DB:
                 created_at INTEGER
             )""")
 
+            # 【v4.9.5新增】入群/离群去重日志表（用于幂等性保护）
+            c.execute("""CREATE TABLE IF NOT EXISTS group_join_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT,
+                chat_id INTEGER DEFAULT 0,
+                user_id INTEGER,
+                ts INTEGER
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_group_join_log ON group_join_log(date, chat_id, user_id)")
+            c.execute("""CREATE TABLE IF NOT EXISTS group_left_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT,
+                chat_id INTEGER DEFAULT 0,
+                user_id INTEGER,
+                ts INTEGER
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_group_left_log ON group_left_log(date, chat_id, user_id)")
+
             # 【v4.2.3】频道内容追踪表（追踪机器人发的消息浏览量）
             c.execute("""CREATE TABLE IF NOT EXISTS channel_tracking (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,6 +210,30 @@ class DB:
                 last_checked_at INTEGER,
                 UNIQUE(chat_id, message_id)
             )""")
+
+            # 【v4.9.5新增】频道原生内容追踪表（追踪频道内所有消息，非仅Bot消息）
+            c.execute("""CREATE TABLE IF NOT EXISTS channel_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                message_id INTEGER,
+                posted_at INTEGER,
+                views INTEGER DEFAULT 0,
+                forwards INTEGER DEFAULT 0,
+                content_type TEXT DEFAULT 'text',
+                UNIQUE(chat_id, message_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_channel_posts_chat_date ON channel_posts(chat_id, posted_at)")
+
+            # 【v4.9.6新增】频道成员快照表（用于日报/周报/月报的新增/离开计算）
+            c.execute("""CREATE TABLE IF NOT EXISTS channel_member_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                member_count INTEGER,
+                snapshot_date TEXT,
+                created_at INTEGER,
+                UNIQUE(chat_id, snapshot_date)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_channel_member_snapshot ON channel_member_snapshot(chat_id, snapshot_date)")
 
             # 【v4.3.0新增】用户勋章表
             c.execute("""CREATE TABLE IF NOT EXISTS user_badges (
@@ -232,6 +273,17 @@ class DB:
                 c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_task_log_unique ON task_log(task_key, exec_date)")
             except Exception as e:
                 logger.debug(f"task_log唯一索引迁移: {e}")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS reply_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_msg_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                feedback TEXT NOT NULL,
+                ts INTEGER NOT NULL,
+                UNIQUE(bot_msg_id, chat_id, user_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_reply_feedback_ts ON reply_feedback(ts)")
 
             # ── 兼容性迁移：旧数据库缺少的列自动补齐 ──────────────────
             try:
@@ -409,6 +461,11 @@ class DB:
                 return (score, False, consecutive)
         except Exception as e:
             logger.error(f"寻宝积分操作失败 uid={uid}: {e}")
+            try:
+                from modules.auto_tasks import report_fault
+                report_fault("数据库操作失败", f"寻宝积分操作失败 uid={uid}: {str(e)[:80]}", "⚠️")
+            except Exception:
+                pass
             return (0, False, 0)
 
     def _calc_consecutive_days(self, uid: int) -> int:
@@ -469,6 +526,11 @@ class DB:
                 logger.info(f"📌 阅后即焚追踪成功：bot={bot_msg_id} chat={chat_id} user={user_msg_id} ts={ts}")
             except Exception as e:
                 logger.error(f"📌 阅后即焚追踪失败：{e}")
+                try:
+                    from modules.auto_tasks import report_fault
+                    report_fault("阅后即焚追踪失败", f"bot_msg={bot_msg_id} chat={chat_id}: {str(e)[:80]}", "⚠️")
+                except Exception:
+                    pass
 
     def mark_replied(self, bot_msg_id: int, chat_id: int = 0):
         """用户回复了机器人的消息，标记为已回复（不自动删除）"""
@@ -635,6 +697,12 @@ class DB:
         with _db_lock:
             self.conn.execute("INSERT OR IGNORE INTO blacklist VALUES (?,?,?)",
                              (uid, reason, int(time.time())))
+            self.conn.commit()
+
+    def blacklist_remove(self, uid: int):
+        """从黑名单移除用户（用于自助解封）"""
+        with _db_lock:
+            self.conn.execute("DELETE FROM blacklist WHERE uid=?", (uid,))
             self.conn.commit()
 
     def is_blacklisted(self, uid: int) -> bool:
@@ -855,25 +923,42 @@ class DB:
     # 【v4.2.3】群数据统计
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def record_group_join(self, chat_id: int = 0):
-        """记录用户入群"""
+    def record_group_join(self, chat_id: int = 0, user_id: int = 0):
+        """记录用户入群（带user_id幂等保护）"""
         today = datetime.now(_CST).strftime("%Y-%m-%d")
         with _db_lock:
             c = self.conn.cursor()
+            # 【v4.9.5】幂等性保护：同一用户同一天多次入群只记一次
+            if user_id:
+                c.execute("SELECT 1 FROM group_join_log WHERE date=? AND chat_id=? AND user_id=?", (today, chat_id, user_id))
+                if c.fetchone():
+                    logger.debug(f"📊 入群去重: uid={user_id} chat_id={chat_id} date={today}")
+                    return
+                c.execute("INSERT OR IGNORE INTO group_join_log (date, chat_id, user_id, ts) VALUES (?,?,?,?)",
+                         (today, chat_id, user_id, int(time.time())))
             c.execute("SELECT joined_count FROM group_stats WHERE date=? AND chat_id=?", (today, chat_id))
             row = c.fetchone()
             if row:
-                c.execute("UPDATE group_stats SET joined_count=joined_count+1 WHERE date=? AND chat_id=?", (today, chat_id))
+                c.execute("UPDATE group_stats SET joined_count=joined_count+1, net_count=net_count+1 WHERE date=? AND chat_id=?", (today, chat_id))
             else:
                 c.execute("INSERT INTO group_stats (date, joined_count, left_count, net_count, chat_id, created_at) VALUES (?,1,0,1,?,?)",
                          (today, chat_id, int(time.time())))
             self.conn.commit()
+            logger.debug(f"📊 记录入群: chat_id={chat_id} date={today}")
 
-    def record_group_left(self, chat_id: int = 0):
-        """记录用户离群"""
+    def record_group_left(self, chat_id: int = 0, user_id: int = 0):
+        """记录用户离群（带user_id幂等保护）"""
         today = datetime.now(_CST).strftime("%Y-%m-%d")
         with _db_lock:
             c = self.conn.cursor()
+            # 【v4.9.5】幂等性保护：同一用户同一天多次离群只记一次
+            if user_id:
+                c.execute("SELECT 1 FROM group_left_log WHERE date=? AND chat_id=? AND user_id=?", (today, chat_id, user_id))
+                if c.fetchone():
+                    logger.debug(f"📊 离群去重: uid={user_id} chat_id={chat_id} date={today}")
+                    return
+                c.execute("INSERT OR IGNORE INTO group_left_log (date, chat_id, user_id, ts) VALUES (?,?,?,?)",
+                         (today, chat_id, user_id, int(time.time())))
             c.execute("SELECT left_count FROM group_stats WHERE date=? AND chat_id=?", (today, chat_id))
             row = c.fetchone()
             if row:
@@ -882,6 +967,7 @@ class DB:
                 c.execute("INSERT INTO group_stats (date, joined_count, left_count, net_count, chat_id, created_at) VALUES (?,0,1,-1,?,?)",
                          (today, chat_id, int(time.time())))
             self.conn.commit()
+            logger.debug(f"📊 记录离群: chat_id={chat_id} date={today}")
 
     def update_group_total_members(self, total: int, chat_id: int = 0):
         """更新群成员总数"""
@@ -983,14 +1069,15 @@ class DB:
     # ═══════════════════════════════════════════════════════════════════════════
 
     def get_daily_active_users(self, date_str: str = None) -> int:
-        """获取指定日期活跃用户数（last_active在当天内的用户）"""
+        """【v4.9.5修复】获取指定日期与Bot互动的活跃用户数（从reply_tracking统计，而非last_active）"""
         if not date_str:
             date_str = datetime.now(_CST).strftime("%Y-%m-%d")
         with _db_lock:
             c = self.conn.cursor()
             day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
             day_end = day_start + 86400
-            c.execute("SELECT COUNT(*) FROM users WHERE last_active>=? AND last_active<?", (day_start, day_end))
+            # 统计当天回复过Bot的唯一用户数（更准确的互动定义）
+            c.execute("SELECT COUNT(DISTINCT user_msg_id) FROM reply_tracking WHERE ts>=? AND ts<? AND replied=1", (day_start, day_end))
             row = c.fetchone()
             return row[0] if row else 0
 
@@ -1024,14 +1111,56 @@ class DB:
             row = c.fetchone()
             return row[0] if row and row[0] else 0
 
-    def get_weekly_group_stats(self, start_date: str, end_date: str) -> dict:
-        """获取指定日期范围的群统计汇总"""
+    def calibrate_group_stats(self, chat_id: int, current_count: int):
+        """【v4.5.36新增】成员数校准：对比API实时人数与昨日记录，修正漏记的净增"""
+        today = datetime.now(_CST).strftime("%Y-%m-%d")
+        yesterday = (datetime.now(_CST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("SELECT total_members FROM group_stats WHERE chat_id=? AND date=? ORDER BY date DESC LIMIT 1",
+                     (chat_id, yesterday))
+            row = c.fetchone()
+            yesterday_total = row[0] if row and row[0] else 0
+
+            if yesterday_total <= 0:
+                return
+
+            c.execute("SELECT net_count FROM group_stats WHERE chat_id=? AND date=?", (chat_id, today))
+            today_row = c.fetchone()
+            event_net = today_row[0] if today_row else 0
+
+            actual_net = current_count - yesterday_total
+            delta = actual_net - event_net
+
+            if abs(delta) > 1:
+                if today_row:
+                    c.execute("UPDATE group_stats SET net_count=net_count+? WHERE date=? AND chat_id=?",
+                             (delta, today, chat_id))
+                else:
+                    c.execute("INSERT INTO group_stats (date, joined_count, left_count, net_count, total_members, chat_id, created_at) VALUES (?,?,?,0,?,?,?)",
+                             (today, max(delta, 0), max(-delta, 0), delta, current_count, chat_id, int(time.time())))
+                self.conn.commit()
+                logger.info(f"📊 校准: chat_id={chat_id} 事件净增={event_net} 实际净增={actual_net} 修正={delta:+d}")
+
+    def get_group_stats_by_chat_id(self, target_date: str, chat_id: int) -> dict:
+        """【v4.5.36新增】获取指定日期+chat_id的群统计"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT joined_count, left_count, net_count, total_members
+                         FROM group_stats WHERE date=? AND chat_id=?""", (target_date, chat_id))
+            row = c.fetchone()
+            if row:
+                return {"joined": row[0] or 0, "left": row[1] or 0, "net": row[2] or 0, "total": row[3] or 0}
+            return {"joined": 0, "left": 0, "net": 0, "total": 0}
+
+    def get_weekly_group_stats(self, start_date: str, end_date: str, chat_id: int = 0) -> dict:
+        """获取指定日期范围的群统计汇总【v4.5.36修复】chat_id参数化，不再硬编码0"""
         with _db_lock:
             c = self.conn.cursor()
             c.execute("""SELECT COALESCE(SUM(joined_count),0), COALESCE(SUM(left_count),0),
                          COALESCE(SUM(net_count),0), AVG(total_members)
-                         FROM group_stats WHERE date>=? AND date<=? AND chat_id=0""",
-                     (start_date, end_date))
+                         FROM group_stats WHERE date>=? AND date<=? AND chat_id=?""",
+                     (start_date, end_date, chat_id))
             row = c.fetchone()
             if row:
                 return {"joined": row[0], "left": row[1], "net": row[2], "avg_members": int(row[3] or 0)}
@@ -1050,16 +1179,129 @@ class DB:
             return {"min": 0, "max": 0, "avg": 0}
 
     def get_channel_posts_in_range(self, chat_id: int, start_ts: int, end_ts: int) -> dict:
-        """获取频道在时间范围内的发帖和浏览量统计"""
+        """【v4.9.5修复】获取频道在时间范围内的发帖和浏览量统计（包含原生内容+Bot消息）"""
         with _db_lock:
             c = self.conn.cursor()
+            # Bot消息
             c.execute("""SELECT COUNT(*), COALESCE(SUM(current_views),0)
                          FROM channel_tracking WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
                      (chat_id, start_ts, end_ts))
+            bot_row = c.fetchone()
+            # 频道原生内容
+            c.execute("""SELECT COUNT(*), COALESCE(SUM(views),0)
+                         FROM channel_posts WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
+                     (chat_id, start_ts, end_ts))
+            native_row = c.fetchone()
+            total_posts = (bot_row[0] if bot_row else 0) + (native_row[0] if native_row else 0)
+            total_views = (bot_row[1] if bot_row else 0) + (native_row[1] if native_row else 0)
+            return {"posts": total_posts, "views": total_views, "avg_views": total_views // max(total_posts, 1)}
+
+    def get_channel_daily_stats(self, chat_id: int, date_str: str = None) -> dict:
+        """【v4.9.5修复】获取频道指定日期的发帖和浏览量统计（包含原生内容+Bot消息）"""
+        if not date_str:
+            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
+        day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
+        day_end = day_start + 86400
+        with _db_lock:
+            c = self.conn.cursor()
+            # Bot消息
+            c.execute("""SELECT COUNT(*), COALESCE(SUM(current_views),0)
+                         FROM channel_tracking WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
+                     (chat_id, day_start, day_end))
+            bot_row = c.fetchone()
+            # 频道原生内容
+            c.execute("""SELECT COUNT(*), COALESCE(SUM(views),0)
+                         FROM channel_posts WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
+                     (chat_id, day_start, day_end))
+            native_row = c.fetchone()
+            total_posts = (bot_row[0] if bot_row else 0) + (native_row[0] if native_row else 0)
+            total_views = (bot_row[1] if bot_row else 0) + (native_row[1] if native_row else 0)
+            return {"posts": total_posts, "views": total_views, "avg_views": total_views // max(total_posts, 1)}
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 【v4.9.5新增】频道原生内容管理
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def track_channel_post(self, chat_id: int, message_id: int, posted_at: int, views: int = 0, forwards: int = 0, content_type: str = "text"):
+        """记录频道原生内容（非Bot发送的消息）"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""INSERT OR IGNORE INTO channel_posts
+                         (chat_id, message_id, posted_at, views, forwards, content_type)
+                         VALUES (?,?,?,?,?,?)""",
+                     (chat_id, message_id, posted_at, views, forwards, content_type))
+            self.conn.commit()
+
+    def update_channel_post_views(self, chat_id: int, message_id: int, views: int, forwards: int = 0):
+        """更新频道原生内容的浏览量"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""UPDATE channel_posts SET views=?, forwards=?
+                         WHERE chat_id=? AND message_id=?""",
+                     (views, forwards, chat_id, message_id))
+            self.conn.commit()
+
+    def get_channel_post_stats(self, chat_id: int, date_str: str = None) -> dict:
+        """获取频道原生内容统计"""
+        if not date_str:
+            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
+        day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
+        day_end = day_start + 86400
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT COUNT(*), COALESCE(SUM(views),0), COALESCE(SUM(forwards),0)
+                         FROM channel_posts WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
+                     (chat_id, day_start, day_end))
             row = c.fetchone()
             if row:
-                return {"posts": row[0], "views": row[1], "avg_views": row[1] // max(row[0], 1)}
-            return {"posts": 0, "views": 0, "avg_views": 0}
+                return {"posts": row[0], "views": row[1], "forwards": row[2], "avg_views": row[1] // max(row[0], 1)}
+            return {"posts": 0, "views": 0, "forwards": 0, "avg_views": 0}
+
+    def get_channel_recent_posts(self, chat_id: int, limit: int = 10) -> list:
+        """【v4.9.7新增】获取频道最近N条帖子（用于浏览量刷新）"""
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT message_id, views, forwards FROM channel_posts
+                         WHERE chat_id=? ORDER BY posted_at DESC LIMIT ?""",
+                     (chat_id, limit))
+            rows = c.fetchall()
+        return [{"message_id": r[0], "views": r[1], "forwards": r[2]} for r in rows]
+
+    def get_channel_top_posts(self, chat_id: int, date_str: str = None, threshold: float = 2.0) -> int:
+        """【v4.9.7新增】获取频道指定日期浏览量超过均值*threshold的爆款帖数"""
+        if not date_str:
+            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
+        day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
+        day_end = day_start + 86400
+        with _db_lock:
+            c = self.conn.cursor()
+            # 先算平均浏览量
+            c.execute("""SELECT COALESCE(AVG(views),0) FROM channel_posts
+                         WHERE chat_id=? AND posted_at>=? AND posted_at<? AND views>0""",
+                     (chat_id, day_start, day_end))
+            avg_views = c.fetchone()[0]
+            if avg_views <= 0:
+                return 0
+            # 再算超过阈值的帖子数
+            c.execute("""SELECT COUNT(*) FROM channel_posts
+                         WHERE chat_id=? AND posted_at>=? AND posted_at<? AND views>?""",
+                     (chat_id, day_start, day_end, avg_views * threshold))
+            count = c.fetchone()[0]
+        return count
+
+    def get_channel_avg_views(self, chat_id: int, date_str: str = None) -> float:
+        """【v4.9.7新增】获取频道指定日期的平均浏览量"""
+        if not date_str:
+            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
+        day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
+        day_end = day_start + 86400
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT COALESCE(AVG(views),0) FROM channel_posts
+                         WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
+                     (chat_id, day_start, day_end))
+            row = c.fetchone()
+        return row[0] if row else 0.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 【v4.3.0新增】活跃勋章系统
@@ -1202,7 +1444,7 @@ class DB:
     # ═══════════════════════════════════════════════════════════════════════════
 
     def claim_task(self, task_key: str) -> bool:
-        """【v4.5.32】数据库级原子抢占：跨进程防重核心防线
+        """【v4.5.32→v4.7.0】数据库级原子抢占：跨进程防重核心防线
         纯INSERT OR IGNORE + UNIQUE索引，无SELECT（SELECT会引入竞态窗口）
         SQLite的UNIQUE约束保证跨进程原子性：后到者插入被拒绝
         返回True表示抢占成功，False表示已被抢占（同次或历史执行）"""
@@ -1215,9 +1457,16 @@ class DB:
                     (task_key, today, ts)
                 )
                 self.conn.commit()
-                return cur.rowcount > 0
+                result = cur.rowcount > 0
+                logger.info(f"📋 [DB] claim_task({task_key}, {today}) rowcount={cur.rowcount} result={result}")
+                return result
             except Exception as e:
-                logger.warning(f"claim_task失败: {e}")
+                logger.warning(f"📋 [DB] claim_task({task_key}) 失败: {e}")
+                try:
+                    from modules.auto_tasks import report_fault
+                    report_fault("数据库任务抢占失败", f"claim_task({task_key})异常: {str(e)[:100]}", "⚠️")
+                except Exception:
+                    pass
                 return False
 
     def is_task_executed_today(self, task_key: str) -> bool:
@@ -1229,9 +1478,11 @@ class DB:
                     "SELECT 1 FROM task_log WHERE task_key=? AND exec_date=? LIMIT 1",
                     (task_key, today)
                 ).fetchone()
-                return row is not None
+                result = row is not None
+                logger.info(f"📋 [DB] is_task_executed_today({task_key}, {today}) = {result}")
+                return result
             except Exception as e:
-                logger.warning(f"is_task_executed_today失败: {e}")
+                logger.warning(f"📋 [DB] is_task_executed_today({task_key}) 失败: {e}")
                 return False
 
     def cleanup_old_task_log(self, days: int = 7):
@@ -1245,6 +1496,16 @@ class DB:
                     logger.info(f"🧹 清理{cur.rowcount}条过期task_log记录(>{days}天)")
             except Exception as e:
                 logger.warning(f"cleanup_old_task_log失败: {e}")
+
+    def delete_user(self, uid: int):
+        """删除无效用户及其关联数据（购物车挽回/醋意挽回中清理400用户）"""
+        with _db_lock:
+            try:
+                self.conn.execute("DELETE FROM cart_recovery WHERE uid=?", (uid,))
+                self.conn.execute("DELETE FROM users WHERE uid=?", (uid,))
+                self.conn.commit()
+            except Exception as e:
+                logger.warning(f"delete_user失败 uid={uid}: {e}")
 
     def cleanup_old_records(self, cutoff: int):
         """清理过期的追踪记录（线程安全）"""
@@ -1268,5 +1529,156 @@ class DB:
             c.execute("SELECT COUNT(*) FROM reply_tracking WHERE replied=0")
             unreplied = c.fetchone()[0]
         return total, unreplied
+
+    def record_feedback(self, bot_msg_id: int, chat_id: int, user_id: int, feedback: str) -> bool:
+        with _db_lock:
+            try:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO reply_feedback (bot_msg_id, chat_id, user_id, feedback, ts) VALUES (?, ?, ?, ?, ?)",
+                    (bot_msg_id, chat_id, user_id, feedback, int(time.time()))
+                )
+                self.conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"record_feedback error: {e}")
+                return False
+
+    def get_feedback_stats(self, days: int = 7) -> dict:
+        with _db_lock:
+            try:
+                cutoff = int(time.time()) - days * 86400
+                c = self.conn.cursor()
+                c.execute("SELECT feedback, COUNT(*) FROM reply_feedback WHERE ts >= ? GROUP BY feedback", (cutoff,))
+                counts = {"like": 0, "dislike": 0}
+                for row in c.fetchall():
+                    if row[0] in counts:
+                        counts[row[0]] = row[1]
+                total = counts["like"] + counts["dislike"]
+                rate = round(counts["like"] / total * 100, 1) if total > 0 else 0
+                c.execute("SELECT COUNT(*) FROM reply_feedback WHERE ts >= ? AND feedback = 'dislike'", (cutoff,))
+                recent_dislike = c.fetchone()[0]
+                return {"like": counts["like"], "dislike": counts["dislike"], "total": total, "satisfaction_rate": rate, "recent_dislike": recent_dislike}
+            except Exception as e:
+                logger.error(f"get_feedback_stats error: {e}")
+                return {"like": 0, "dislike": 0, "total": 0, "satisfaction_rate": 0, "recent_dislike": 0}
+
+    def get_recent_feedback(self, limit: int = 20) -> list:
+        with _db_lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("SELECT bot_msg_id, chat_id, user_id, feedback, ts FROM reply_feedback ORDER BY ts DESC LIMIT ?", (limit,))
+                return [{"bot_msg_id": r[0], "chat_id": r[1], "user_id": r[2], "feedback": r[3], "ts": r[4]} for r in c.fetchall()]
+            except Exception as e:
+                logger.error(f"get_recent_feedback error: {e}")
+                return []
+
+    def record_channel_member_snapshot(self, chat_id: int, member_count: int, snapshot_date: str = None) -> bool:
+        """【v4.9.6新增】记录频道成员数快照（每小时调用一次）"""
+        if not snapshot_date:
+            snapshot_date = datetime.now(_CST).strftime("%Y-%m-%d-%H")
+        try:
+            with _db_lock:
+                ts = int(time.time())
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO channel_member_snapshot (chat_id, member_count, snapshot_date, created_at) VALUES (?,?,?,?)",
+                    (chat_id, member_count, snapshot_date, ts)
+                )
+                self.conn.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"record_channel_member_snapshot失败: chat_id={chat_id} err={e}")
+            return False
+
+    def get_channel_member_changes(self, chat_id: int, start_date: str, end_date: str) -> dict:
+        """【v4.9.6新增】获取频道在日期范围内的成员变化（新增/离开）
+        
+        Args:
+            chat_id: 频道ID
+            start_date: 开始日期（如 "2026-05-20"）
+            end_date: 结束日期（如 "2026-05-21"）
+        
+        Returns:
+            {"joined": int, "left": int, "start_count": int, "end_count": int}
+        """
+        with _db_lock:
+            c = self.conn.cursor()
+            # 获取开始日期最早的快照（作为基准）
+            c.execute("""SELECT member_count FROM channel_member_snapshot 
+                         WHERE chat_id=? AND snapshot_date LIKE ? ORDER BY snapshot_date ASC LIMIT 1""",
+                     (chat_id, f"{start_date}%"))
+            start_row = c.fetchone()
+            start_count = start_row[0] if start_row else 0
+            
+            # 获取结束日期最晚的快照（作为当前）
+            c.execute("""SELECT member_count FROM channel_member_snapshot 
+                         WHERE chat_id=? AND snapshot_date LIKE ? ORDER BY snapshot_date DESC LIMIT 1""",
+                     (chat_id, f"{end_date}%"))
+            end_row = c.fetchone()
+            end_count = end_row[0] if end_row else 0
+            
+            # 如果开始日期没有快照，用结束日期的前一个可用快照
+            if start_count == 0 and end_count > 0:
+                c.execute("""SELECT member_count FROM channel_member_snapshot 
+                             WHERE chat_id=? AND snapshot_date < ? ORDER BY snapshot_date DESC LIMIT 1""",
+                         (chat_id, start_date))
+                prev_row = c.fetchone()
+                start_count = prev_row[0] if prev_row else 0
+        
+        # 计算变化：正数=新增，负数=离开
+        diff = end_count - start_count
+        if diff >= 0:
+            return {"joined": diff, "left": 0, "start_count": start_count, "end_count": end_count}
+        else:
+            return {"joined": 0, "left": abs(diff), "start_count": start_count, "end_count": end_count}
+
+    def get_channel_weekly_member_changes(self, chat_id: int, start_date: str, end_date: str) -> dict:
+        """【v4.9.6新增】获取频道在周报日期范围内的成员变化
+        
+        Args:
+            chat_id: 频道ID
+            start_date: 周报开始日期
+            end_date: 周报结束日期
+        
+        Returns:
+            {"joined": int, "left": int, "start_count": int, "end_count": int}
+        """
+        return self.get_channel_member_changes(chat_id, start_date, end_date)
+
+    def get_channel_monthly_member_changes(self, chat_id: int, month_date: str) -> dict:
+        """【v4.9.6新增】获取频道月报的成员变化
+        month_date 格式: "2026-05"
+        
+        Returns:
+            {"joined": int, "left": int, "start_count": int, "end_count": int}
+        """
+        # 取该月1号的快照和月末快照
+        start_date = f"{month_date}-01"
+        # 计算月末日期
+        parts = month_date.split("-")
+        year, month = int(parts[0]), int(parts[1])
+        if month == 12:
+            end_date = f"{year + 1}-01-01"
+        else:
+            end_date = f"{year}-{month + 1:02d}-01"
+        
+        with _db_lock:
+            c = self.conn.cursor()
+            c.execute("""SELECT member_count FROM channel_member_snapshot 
+                         WHERE chat_id=? AND snapshot_date LIKE ? ORDER BY snapshot_date ASC LIMIT 1""",
+                     (chat_id, f"{start_date}%"))
+            start_row = c.fetchone()
+            start_count = start_row[0] if start_row else 0
+            
+            c.execute("""SELECT member_count FROM channel_member_snapshot 
+                         WHERE chat_id=? AND snapshot_date < ? ORDER BY snapshot_date DESC LIMIT 1""",
+                     (chat_id, end_date))
+            end_row = c.fetchone()
+            end_count = end_row[0] if end_row else 0
+        
+        diff = end_count - start_count
+        if diff >= 0:
+            return {"joined": diff, "left": 0, "start_count": start_count, "end_count": end_count}
+        else:
+            return {"joined": 0, "left": abs(diff), "start_count": start_count, "end_count": end_count}
 
 

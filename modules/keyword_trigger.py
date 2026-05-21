@@ -16,7 +16,6 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
-import logging
 import traceback
 from core.logging_util import get_logger
 

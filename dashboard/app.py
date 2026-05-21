@@ -11,14 +11,11 @@ import sys
 import json
 import sqlite3
 import io
-import base64
 import hmac
-import random
 from datetime import datetime, timedelta, timezone
 _CST = timezone(timedelta(hours=8))
 from functools import wraps
-from flask import Flask, render_template_string, request, jsonify, session, Response, stream_with_context, g
-from threading import Thread
+from flask import Flask, request, jsonify, session, Response, g
 import time
 
 # ============ 路径配置 ============
@@ -56,6 +53,7 @@ def _check_rate_limit(ip: str, max_requests: int = 60, window_seconds: int = 60)
 app = Flask(__name__)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 app.secret_key = os.environ.get("DASHBOARD_SECRET")
 if not app.secret_key or len(app.secret_key) < 16:
     print("❌ 致命错误：DASHBOARD_SECRET 环境变量未设置或太短（至少16位）！")
@@ -308,7 +306,7 @@ def api_stats_users():
         ("private_messages", "asc"): "private_messages ASC", ("private_messages", "desc"): "private_messages DESC",
     }
     order_by = order_by_map.get((sort, order), "last_active DESC")
-    # where_clause 和 order_by 已通过白名单映射校验，无SQL注入风险
+    # 【v4.5.35修复】where_clause 使用参数化查询，order_by 使用白名单映射，双重防护
     total = conn.execute(f"SELECT COUNT(*) FROM users {where_clause}", params).fetchone()[0]
     offset = (page - 1) * per_page
     rows = conn.execute(f"SELECT * FROM users {where_clause} ORDER BY {order_by} LIMIT ? OFFSET ?", params + [per_page, offset]).fetchall()
@@ -351,11 +349,11 @@ def api_logs():
         total = conn.execute("SELECT COUNT(*) FROM reply_tracking").fetchone()[0]
         offset = (page - 1) * per_page
         rows = conn.execute("""
-            SELECT id, user_id, user_name, bot_mid, reply_type, ts, content_preview
+            SELECT bot_msg_id, chat_id, user_msg_id, ts, replied
             FROM reply_tracking ORDER BY ts DESC LIMIT ? OFFSET ?
         """, (per_page, offset)).fetchall()
-        logs = [{"id": r[0], "uid": r[1], "uname": r[2], "bot_mid": r[3],
-                 "type": r[4], "ts": r[5], "content": r[6]} for r in rows]
+        logs = [{"bot_msg_id": r[0], "chat_id": r[1], "user_msg_id": r[2],
+                 "ts": r[3], "replied": r[4]} for r in rows]
         pagination = {"page": page, "per_page": per_page, "total": total,
                       "pages": (total + per_page - 1) // per_page if total > 0 else 0}
         return jsonify({"ok": True, "data": {"logs": logs, "pagination": pagination}})
@@ -371,13 +369,13 @@ def api_logs_search():
     conn = get_db()
     try:
         rows = conn.execute("""
-            SELECT id, user_id, user_name, bot_mid, reply_type, ts, content_preview
+            SELECT bot_msg_id, chat_id, user_msg_id, ts, replied
             FROM reply_tracking
-            WHERE content_preview LIKE ? OR user_name LIKE ?
+            WHERE CAST(bot_msg_id AS TEXT) LIKE ? OR CAST(chat_id AS TEXT) LIKE ?
             ORDER BY ts DESC LIMIT 100
         """, (f"%{keyword}%", f"%{keyword}%")).fetchall()
-        logs = [{"id": r[0], "uid": r[1], "uname": r[2], "bot_mid": r[3],
-                 "type": r[4], "ts": r[5], "content": r[6]} for r in rows]
+        logs = [{"bot_msg_id": r[0], "chat_id": r[1], "user_msg_id": r[2],
+                 "ts": r[3], "replied": r[4]} for r in rows]
         return jsonify({"ok": True, "data": {"logs": logs, "total": len(logs)}})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
@@ -410,7 +408,7 @@ def api_config_update():
     cfg = read_config()
     cfg[key] = value
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": f"配置项 {key} 已更新"})
+        return jsonify({"ok": True, "msg": f"配置项 {key} 已更新（⚠️ 需重启Bot或等待自动重载后生效）"})
     return jsonify({"ok": False, "msg": "保存配置失败"}), 500
 
 
@@ -441,21 +439,26 @@ def api_config_natural():
         return write_config(cfg)
 
     proxy = _DashboardReplyProxy()
-    handled = handle_natural_admin(
-        bot=None,
-        m=_DashboardFakeMessage(text),
-        config=cfg,
-        save_config_fn=_save,
-        mory_bot=proxy,
-        is_admin=True,
-    )
+    try:
+        handled = handle_natural_admin(
+            bot=None,
+            m=_DashboardFakeMessage(text),
+            config=cfg,
+            save_config_fn=_save,
+            mory_bot=proxy,
+            is_admin=True,
+        )
+    except AttributeError as e:
+        return jsonify({"ok": False, "msg": "该指令暂不支持在网页端使用（缺少Bot上下文），请在Telegram中使用"}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"处理失败：{str(e)[:100]}"}), 500
     if not handled:
         return jsonify({"ok": False, "msg": "这句话我还没听明白，换个更明确的说法试试"}), 400
     _sensitive_keys = ['key', 'token', 'password', 'secret']
     safe_cfg = {k: v for k, v in cfg.items() if not any(s in k.lower() for s in _sensitive_keys)}
     return jsonify({
         "ok": True,
-        "msg": proxy.messages[-1] if proxy.messages else "已处理",
+        "msg": (proxy.messages[-1] if proxy.messages else "已处理") + "（⚠️ 需重启Bot生效）",
         "data": {"config": safe_cfg},
     })
 
@@ -493,6 +496,281 @@ def api_channels():
         return jsonify({"ok": True, "data": {"channels": channels}})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
+
+def _get_current_model_name(cfg):
+    idx = cfg.get("CURRENT_MODEL_INDEX", 0)
+    pools = cfg.get("MODEL_POOLS", {})
+    llm_pool = pools.get("llm", pools.get("llm_light", []))
+    if isinstance(llm_pool, list) and 0 <= idx < len(llm_pool):
+        return llm_pool[idx].get("name", f"模型#{idx}")
+    return f"模型#{idx}"
+
+@app.route("/api/bot/status")
+@login_required
+def api_bot_status():
+    cfg = read_config()
+    vps = get_vps_status()
+    from version import VERSION
+    status = {
+        "version": VERSION,
+        "bot_running": vps.get("bot_running", False),
+        "bot_pid": vps.get("bot_pid"),
+        "bot_memory": vps.get("bot_memory", "N/A"),
+        "uptime": vps.get("uptime", "N/A"),
+        "current_model_index": cfg.get("CURRENT_MODEL_INDEX", 0),
+        "current_model_name": _get_current_model_name(cfg),
+        "reply_chance": cfg.get("REPLY_CHANCE", 10),
+        "blacklisted_models": cfg.get("BLACKLISTED_MODELS", []),
+        "group_id": cfg.get("GROUP_ID", 0),
+        "admin_ids": cfg.get("ADMIN_IDS", []),
+    }
+    return jsonify({"ok": True, "data": status})
+
+@app.route("/api/models/status")
+@login_required
+def api_models_status():
+    cfg = read_config()
+    pools = cfg.get("MODEL_POOLS", {})
+    blacklisted = set(cfg.get("BLACKLISTED_MODELS", []))
+    result = {}
+    now_str = datetime.now(_CST).strftime("%Y-%m-%d")
+    for pool_name, models in pools.items():
+        pool_info = []
+        for m in (models or []):
+            expire = m.get("expire", "2099-12-31")
+            is_blacked = m.get("name", "") in blacklisted
+            days_left = 9999
+            try:
+                from datetime import date as _date
+                exp_d = _date.fromisoformat(expire)
+                days_left = (exp_d - _date.today()).days
+            except Exception:
+                pass
+            pool_info.append({
+                "name": m.get("name", "?"),
+                "desc": m.get("desc", ""),
+                "expire": expire,
+                "days_left": days_left,
+                "blacklisted": is_blacked,
+                "status": "黑名单" if is_blacked else ("即将过期" if days_left <= 7 else "正常"),
+            })
+        result[pool_name] = pool_info
+    tier_routing = cfg.get("MODE_ROUTING", {})
+    result["_mode_routing"] = tier_routing
+    return jsonify({"ok": True, "data": result})
+
+@app.route("/api/tasks/status")
+@login_required
+def api_tasks_status():
+    conn = get_db()
+    today = datetime.now(_CST).strftime("%Y-%m-%d")
+    task_defs = [
+        ("morning_greeting", "早安问候", "08:05"),
+        ("morning_news", "早间新闻", "09:05"),
+        ("daily_report", "每日报告", "09:10"),
+        ("afternoon_greeting", "午安问候", "12:35"),
+        ("afternoon_news", "午间新闻", "13:05"),
+        ("tarot_chatup", "塔罗搭讪", "15:00"),
+        ("trendradar_broadcast", "TrendRadar播报", "18:00"),
+        ("evening_news", "晚间新闻", "20:35"),
+        ("goodnight_greeting", "晚安问候", "23:05"),
+        ("channel_views", "频道浏览量", "每小时"),
+        ("burn_cleanup", "阅后即焚清理", "每10分钟"),
+    ]
+    tasks = []
+    for key, name, schedule in task_defs:
+        done_today = False
+        exec_time = ""
+        try:
+            row = conn.execute(
+                "SELECT exec_date, exec_ts FROM task_log WHERE task_key=? AND exec_date=? ORDER BY exec_ts DESC LIMIT 1",
+                (key, today)
+            ).fetchone()
+            if row:
+                done_today = True
+                if row[1]:
+                    try:
+                        exec_time = datetime.fromtimestamp(row[1], _CST).strftime("%H:%M:%S")
+                    except Exception:
+                        exec_time = str(row[1])
+        except Exception:
+            pass
+        tasks.append({
+            "key": key,
+            "name": name,
+            "schedule": schedule,
+            "done_today": done_today,
+            "exec_time": exec_time,
+        })
+    return jsonify({"ok": True, "data": {"tasks": tasks, "date": today}})
+
+@app.route("/api/group/settings")
+@login_required
+def api_group_settings():
+    cfg = read_config()
+    settings = {
+        "banned_words": cfg.get("BANNED_WORDS", []),
+        "hate_keywords": cfg.get("HATE_KEYWORDS", []),
+        "spam_limit": cfg.get("SPAM_LIMIT", {"messages_per_minute": 10, "ban_minutes": 5}),
+        "welcome_text": cfg.get("WELCOME_TEXT", ""),
+        "welcome_msg": cfg.get("WELCOME_MSG", True),
+        "auto_mute_names": cfg.get("AUTO_MUTE_NAMES", []),
+        "spam_ban_duration": cfg.get("BAN_DURATION_DEFAULT", 5),
+        "max_requests_per_user": cfg.get("MAX_REQUESTS_PER_USER", 100),
+    }
+    return jsonify({"ok": True, "data": settings})
+
+@app.route("/api/group/settings/update", methods=["POST"])
+@login_required
+def api_group_settings_update():
+    data = request.get_json()
+    if not data:
+        return jsonify({"ok": False, "msg": "无效的请求数据"}), 400
+    key = data.get("key", "").strip()
+    value = data.get("value")
+    if not key:
+        return jsonify({"ok": False, "msg": "配置项名称不能为空"}), 400
+    allowed_keys = {
+        "BANNED_WORDS", "HATE_KEYWORDS", "SPAM_LIMIT", "WELCOME_TEXT",
+        "WELCOME_MSG", "AUTO_MUTE_NAMES", "BAN_DURATION_DEFAULT",
+        "MAX_REQUESTS_PER_USER"
+    }
+    if key not in allowed_keys:
+        return jsonify({"ok": False, "msg": f"不允许修改 {key}"}), 403
+    cfg = read_config()
+    cfg[key] = value
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": f"已更新 {key}（⚠️ 需重启Bot或等待自动重载后生效）"})
+    return jsonify({"ok": False, "msg": "保存失败"}), 500
+
+@app.route("/api/feedback/stats")
+@login_required
+def api_feedback_stats():
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT feedback, COUNT(*) FROM reply_feedback GROUP BY feedback").fetchall()
+        counts = {"like": 0, "dislike": 0}
+        for r in row:
+            if r[0] in counts:
+                counts[r[0]] = r[1]
+        total = counts["like"] + counts["dislike"]
+        rate = round(counts["like"] / total * 100, 1) if total > 0 else 0
+    except Exception:
+        counts, total, rate = {"like": 0, "dislike": 0}, 0, 0
+    try:
+        recent = conn.execute("SELECT bot_msg_id, chat_id, user_id, feedback, ts FROM reply_feedback ORDER BY ts DESC LIMIT 20").fetchall()
+        recent_list = [{"bot_msg_id": r[0], "chat_id": r[1], "user_id": r[2], "feedback": r[3], "ts": r[4]} for r in recent]
+    except Exception:
+        recent_list = []
+    return jsonify({"ok": True, "data": {"like": counts["like"], "dislike": counts["dislike"], "total": total, "satisfaction_rate": rate, "recent": recent_list}})
+
+@app.route("/api/help/docs")
+@login_required
+def api_help_docs():
+    docs = {
+        "user_commands": [
+            {"cmd": "直接发消息", "desc": "跟Mory聊天，自动回复", "example": "你好呀"},
+            {"cmd": "签到", "desc": "每日签到领积分", "example": "签到"},
+            {"cmd": "积分/排行榜", "desc": "查看积分和排名", "example": "排行榜"},
+            {"cmd": "我的等级", "desc": "查看当前等级", "example": "我的等级"},
+            {"cmd": "碎片寻宝", "desc": "猜暗号赢积分", "example": "碎片寻宝"},
+            {"cmd": "塔罗牌", "desc": "抽一张塔罗牌", "example": "塔罗牌"},
+            {"cmd": "叫醒服务 HH:MM", "desc": "设置叫醒时间", "example": "叫醒服务 07:30"},
+            {"cmd": "👍👎按钮", "desc": "对Bot回复点反馈", "example": "点击Bot消息下方按钮"},
+        ],
+        "admin_commands": [
+            {"section": "配置管理", "items": [
+                {"cmd": "查看配置", "desc": "查看所有配置状态"},
+                {"cmd": "设置概率 [0-100]", "desc": "修改群聊随机回复概率"},
+                {"cmd": "开启/关闭 [功能名]", "desc": "开关功能（早安/晚安/新闻/签到等）"},
+            ]},
+            {"section": "人设与知识", "items": [
+                {"cmd": "设置人设 [文本]", "desc": "修改机器人核心人设"},
+                {"cmd": "投喂资料 [文本]", "desc": "追加业务知识库"},
+                {"cmd": "学知识 [内容]", "desc": "让机器人学习新知识"},
+                {"cmd": "忘记 [关键词]", "desc": "从知识库移除内容"},
+            ]},
+            {"section": "模型管理", "items": [
+                {"cmd": "当前模型", "desc": "查看所有模型和当前使用"},
+                {"cmd": "切换模型 [名称]", "desc": "手动切换AI模型"},
+                {"cmd": "模型恢复 [模型名]", "desc": "从黑名单恢复模型"},
+            ]},
+            {"section": "群管理", "items": [
+                {"cmd": "增加敏感词 [词]", "desc": "添加违禁词（支持批量，逗号分隔）"},
+                {"cmd": "删除敏感词 [词]", "desc": "移除违禁词"},
+                {"cmd": "增加反感词 [词]", "desc": "添加反感关键词"},
+                {"cmd": "/blacklist @ID", "desc": "拉黑用户"},
+                {"cmd": "/mute @ID 分钟", "desc": "禁言用户"},
+                {"cmd": "健康检查", "desc": "一键诊断Bot运行状态"},
+            ]},
+            {"section": "动态进化", "items": [
+                {"cmd": "加热词 [词汇...]", "desc": "给热词库追加新词汇"},
+                {"cmd": "改风格 [描述]", "desc": "快速调整说话风格"},
+                {"cmd": "进化 [指令]", "desc": "高级进化：直接修改任意配置项"},
+            ]},
+        ],
+        "dashboard_guide": [
+            {"page": "运行状态", "desc": "Bot运行状态、当前模型、黑名单等"},
+            {"page": "模型总览", "desc": "6池模型状态、到期倒计时、三层路由"},
+            {"page": "定时任务", "desc": "11项定时任务执行状态"},
+            {"page": "群管设置", "desc": "敏感词/刷屏/禁言/欢迎语可视化管理"},
+            {"page": "系统配置", "desc": "表单式配置编辑器+自然语言配置"},
+            {"page": "用户反馈", "desc": "👍👎满意度统计"},
+        ],
+    }
+    return jsonify({"ok": True, "data": docs})
+
+@app.route("/api/user/analytics")
+@login_required
+def api_user_analytics():
+    conn = get_db()
+    now_ts = int(datetime.now(_CST).timestamp())
+    try:
+        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    except Exception:
+        total_users = 0
+    try:
+        dau = conn.execute("SELECT COUNT(*) FROM users WHERE last_active>=?", (now_ts - 86400,)).fetchone()[0]
+    except Exception:
+        dau = 0
+    try:
+        wau = conn.execute("SELECT COUNT(*) FROM users WHERE last_active>=?", (now_ts - 7 * 86400,)).fetchone()[0]
+    except Exception:
+        wau = 0
+    try:
+        mau = conn.execute("SELECT COUNT(*) FROM users WHERE last_active>=?", (now_ts - 30 * 86400,)).fetchone()[0]
+    except Exception:
+        mau = 0
+    try:
+        churn_risk = conn.execute("SELECT COUNT(*) FROM users WHERE last_active<? AND last_active>0", (now_ts - 14 * 86400,)).fetchone()[0]
+    except Exception:
+        churn_risk = 0
+    try:
+        lost = conn.execute("SELECT COUNT(*) FROM users WHERE last_active<? AND last_active>0", (now_ts - 30 * 86400,)).fetchone()[0]
+    except Exception:
+        lost = 0
+    trend = []
+    try:
+        for i in range(6, -1, -1):
+            day_str = (datetime.now(_CST) - timedelta(days=i)).strftime("%Y-%m-%d")
+            day_start = int(datetime.strptime(day_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
+            day_end = day_start + 86400
+            cnt = conn.execute("SELECT COUNT(*) FROM users WHERE last_active>=? AND last_active<?", (day_start, day_end)).fetchone()[0]
+            trend.append({"date": day_str, "dau": cnt})
+    except Exception:
+        pass
+    top_users = []
+    try:
+        rows = conn.execute("SELECT uid, name, group_messages, last_active FROM users ORDER BY group_messages DESC LIMIT 10").fetchall()
+        for r in rows:
+            top_users.append({"uid": r[0], "name": r[1] or "未知", "messages": r[2], "last_active": r[3]})
+    except Exception:
+        pass
+    return jsonify({"ok": True, "data": {
+        "total_users": total_users, "dau": dau, "wau": wau, "mau": mau,
+        "churn_risk": churn_risk, "lost": lost,
+        "dau_trend": trend, "top_users": top_users,
+    }})
 
 # ============ 前端页面 ============
 HTML_PAGE = '''<!DOCTYPE html>
@@ -624,6 +902,15 @@ body { margin: 0; padding: 0; background: #0f0f1a; color: #e2e8f0; min-height: 1
 <div id="app"></div>
 <script>
 const API_BASE = '';
+
+async function loadVersion() {
+  try {
+    const d = await api('/api/bot/status');
+    const el = document.getElementById('sidebarVersion');
+    if (el) el.textContent = d.data.version || '?';
+  } catch(e) {}
+}
+
 let currentPage = 'overview';
 let currentUserPage = 1;
 let searchQuery = '';
@@ -812,10 +1099,19 @@ function handleSort(field) {
   loadUsers(1);
 }
 
+const _pageTitles = {
+  overview: '数据概览', users: '用户管理', groups: '群组数据',
+  status: '运行状态', models: '模型中心', tasks: '定时任务',
+  groupmgr: '群管设置', feedback: '用户反馈', userprofile: '用户画像',
+  config: '系统配置', reports: '运营报表', logs: '日志查看', helpcenter: '帮助中心'
+};
 function switchTab(tab) {
   document.querySelectorAll('.nav-item').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.nav-item[onclick*="${tab}"]`).classList.add('active');
+  const navItem = document.querySelector(`.nav-item[onclick*="${tab}"]`);
+  if (navItem) navItem.classList.add('active');
   currentPage = tab;
+  const titleEl = document.querySelector('.page-title');
+  if (titleEl) titleEl.textContent = _pageTitles[tab] || tab;
   renderPage();
 }
 
@@ -824,6 +1120,103 @@ function renderPage() {
   if (!content) return;
   
   switch (currentPage) {
+    case 'status':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>运行状态</h2>
+            <p>Bot实时健康监控</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadBotStatus()">刷新</button>
+        </div>
+        <div id="statusContent" class="loading">加载中...</div>
+      `;
+      loadBotStatus();
+      break;
+
+    case 'models':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>模型中心</h2>
+            <p>多模型池状态与路由管理</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadModels()">刷新</button>
+        </div>
+        <div id="modelsContent" class="loading">加载中...</div>
+      `;
+      loadModels();
+      break;
+
+    case 'tasks':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>定时任务</h2>
+            <p>今日任务执行状态一览</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadTasks()">刷新</button>
+        </div>
+        <div id="tasksContent" class="loading">加载中...</div>
+      `;
+      loadTasks();
+      break;
+
+    case 'groupmgr':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>群管设置</h2>
+            <p>敏感词/刷屏/禁言/欢迎语可视化管理</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadGroupMgr()">刷新</button>
+        </div>
+        <div id="groupMgrContent" class="loading">加载中...</div>
+      `;
+      loadGroupMgr();
+      break;
+
+    case 'feedback':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>用户反馈</h2>
+            <p>👍👎满意度统计与反馈详情</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadFeedback()">刷新</button>
+        </div>
+        <div id="feedbackContent" class="loading">加载中...</div>
+      `;
+      loadFeedback();
+      break;
+
+    case 'helpcenter':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>帮助中心</h2>
+            <p>使用手册与命令参考</p>
+          </div>
+        </div>
+        <div id="helpContent" class="loading">加载中...</div>
+      `;
+      loadHelpCenter();
+      break;
+
+    case 'userprofile':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>用户画像</h2>
+            <p>活跃趋势/分布/流失预警</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadUserProfile()">刷新</button>
+        </div>
+        <div id="userProfileContent" class="loading">加载中...</div>
+      `;
+      loadUserProfile();
+      break;
+
     case 'overview':
       content.innerHTML = `
         <div class="page-header">
@@ -1017,6 +1410,425 @@ function renderPage() {
   }
 }
 
+async function loadBotStatus() {
+  try {
+    const d = await api('/api/bot/status');
+    const s = d.data;
+    const el = document.getElementById('statusContent');
+    if (!el) return;
+    const runColor = s.bot_running ? '#10b981' : '#ef4444';
+    const runText = s.bot_running ? '运行中' : '已停止';
+    const runBg = s.bot_running ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
+    const blCount = (s.blacklisted_models || []).length;
+    el.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card ${s.bot_running ? 'green' : ''}" style="border-left: 4px solid ${runColor};">
+          <div class="stat-icon">${s.bot_running ? '🟢' : '🔴'}</div>
+          <div class="stat-value" style="font-size: 28px; color: ${runColor};">${runText}</div>
+          <div class="stat-label">Bot状态</div>
+        </div>
+        <div class="stat-card blue">
+          <div class="stat-icon">📦</div>
+          <div class="stat-value" style="font-size: 28px;">${escHtml(s.version)}</div>
+          <div class="stat-label">版本号</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-icon">🧠</div>
+          <div class="stat-value" style="font-size: 18px;">${escHtml(s.current_model_name || '索引' + s.current_model_index)}</div>
+          <div class="stat-label">当前模型</div>
+        </div>
+        <div class="stat-card orange">
+          <div class="stat-icon">🚫</div>
+          <div class="stat-value" style="font-size: 28px;">${blCount}</div>
+          <div class="stat-label">黑名单模型</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top: 24px;">
+        <h3 style="color: #fff; margin-bottom: 16px;">📊 详细信息</h3>
+        <table class="data-table">
+          <tbody>
+            <tr><td style="font-weight:500; width:200px;">进程PID</td><td>${s.bot_pid || 'N/A'}</td></tr>
+            <tr><td style="font-weight:500;">内存占用</td><td>${s.bot_memory || 'N/A'}</td></tr>
+            <tr><td style="font-weight:500;">运行时长</td><td>${s.uptime || 'N/A'}</td></tr>
+            <tr><td style="font-weight:500;">回复概率</td><td>${s.reply_chance}%</td></tr>
+            <tr><td style="font-weight:500;">主群ID</td><td>${s.group_id || '未配置'}</td></tr>
+            <tr><td style="font-weight:500;">管理员</td><td>${(s.admin_ids || []).join(', ') || '未配置'}</td></tr>
+            ${blCount > 0 ? `<tr><td style="font-weight:500; color:#ef4444;">黑名单模型</td><td style="color:#ef4444;">${(s.blacklisted_models||[]).join(', ')}</td></tr>` : ''}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch(e) { console.error(e); }
+}
+
+async function loadModels() {
+  try {
+    const d = await api('/api/models/status');
+    const data = d.data;
+    const el = document.getElementById('modelsContent');
+    if (!el) return;
+    const routing = data._mode_routing || {};
+    delete data._mode_routing;
+    let html = '';
+    const poolLabels = {
+      llm: 'LLM文本', vision: '视觉', omni: '全模态',
+      voice_tts: 'TTS语音', voice_asr: 'ASR识别', embedding: '向量',
+      llm_light: '轻量路由', llm_standard: '标准路由', llm_premium: '旗舰路由'
+    };
+    for (const [poolName, models] of Object.entries(data)) {
+      if (!Array.isArray(models)) continue;
+      const label = poolLabels[poolName] || poolName;
+      html += `
+        <div class="card" style="margin-bottom: 20px;">
+          <h3 style="color: #fff; margin-bottom: 16px;">${escHtml(label)} <span style="color:#6b7280; font-size:14px;">(${models.length}个模型)</span></h3>
+          ${models.length === 0 ? '<p style="color:#6b7280;">暂无模型</p>' : `
+          <table class="data-table">
+            <thead><tr><th>模型名</th><th>描述</th><th>到期日</th><th>剩余天数</th><th>状态</th></tr></thead>
+            <tbody>
+              ${models.map(m => {
+                const statusColor = m.blacklisted ? '#ef4444' : (m.days_left <= 7 ? '#f59e0b' : '#10b981');
+                const statusBg = m.blacklisted ? 'rgba(239,68,68,0.2)' : (m.days_left <= 7 ? 'rgba(245,158,11,0.2)' : 'rgba(16,185,129,0.2)');
+                return `<tr>
+                  <td style="font-weight:500; font-family:'JetBrains Mono',monospace;">${escHtml(m.name)}</td>
+                  <td>${escHtml(m.desc)}</td>
+                  <td>${escHtml(m.expire)}</td>
+                  <td style="color:${statusColor}; font-weight:600;">${m.days_left >= 9999 ? '永久' : m.days_left + '天'}</td>
+                  <td><span class="badge" style="background:${statusBg}; color:${statusColor};">${m.status}</span></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>`}
+        </div>
+      `;
+    }
+    if (Object.keys(routing).length > 0) {
+      html += `
+        <div class="card">
+          <h3 style="color: #fff; margin-bottom: 16px;">🔀 三层路由映射</h3>
+          <table class="data-table">
+            <thead><tr><th>模式(mode)</th><th>路由到</th></tr></thead>
+            <tbody>
+              ${Object.entries(routing).map(([mode, tier]) => `<tr><td style="font-weight:500;">${escHtml(mode)}</td><td><span class="badge badge-info">${escHtml(tier)}</span></td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+    el.innerHTML = html || '<div class="empty-state"><h3>暂无模型配置</h3></div>';
+  } catch(e) { console.error(e); }
+}
+
+async function loadTasks() {
+  try {
+    const d = await api('/api/tasks/status');
+    const data = d.data;
+    const el = document.getElementById('tasksContent');
+    if (!el) return;
+    const tasks = data.tasks || [];
+    const doneCount = tasks.filter(t => t.done_today).length;
+    el.innerHTML = `
+      <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 24px;">
+        <div class="stat-card green">
+          <div class="stat-icon">✅</div>
+          <div class="stat-value">${doneCount}</div>
+          <div class="stat-label">今日已完成</div>
+        </div>
+        <div class="stat-card orange">
+          <div class="stat-icon">⏳</div>
+          <div class="stat-value">${tasks.length - doneCount}</div>
+          <div class="stat-label">待执行/未到时间</div>
+        </div>
+        <div class="stat-card blue">
+          <div class="stat-icon">📅</div>
+          <div class="stat-value" style="font-size: 20px;">${escHtml(data.date)}</div>
+          <div class="stat-label">统计日期</div>
+        </div>
+      </div>
+      <div class="card">
+        <table class="data-table">
+          <thead><tr><th>任务名称</th><th>计划时间</th><th>今日状态</th><th>执行时间</th></tr></thead>
+          <tbody>
+            ${tasks.map(t => `
+              <tr>
+                <td style="font-weight:500;">${escHtml(t.name)}</td>
+                <td>${escHtml(t.schedule)}</td>
+                <td>${t.done_today
+                  ? '<span class="badge badge-success">✅ 已完成</span>'
+                  : '<span class="badge badge-warning">⏳ 未执行</span>'}</td>
+                <td style="color: ${t.done_today ? '#10b981' : '#6b7280'};">${t.done_today ? t.exec_time : '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch(e) { console.error(e); }
+}
+
+async function loadGroupMgr() {
+  try {
+    const d = await api('/api/group/settings');
+    const s = d.data;
+    const el = document.getElementById('groupMgrContent');
+    if (!el) return;
+    const bannedWords = (s.banned_words || []).join(', ');
+    const hateKeywords = (s.hate_keywords || []).join(', ');
+    const autoMuteNames = (s.auto_mute_names || []).join(', ');
+    const spamLimit = s.spam_limit || {};
+    const welcomeOn = s.welcome_msg !== false;
+    el.innerHTML = `
+      <div class="card" style="margin-bottom: 20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">🛡️ 敏感词管理</h3>
+        <div style="margin-bottom:12px;">
+          <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">违禁词（消息含这些词会被删除，逗号分隔）</label>
+          <textarea id="bannedWordsInput" style="width:100%; min-height:60px; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px; resize:vertical;">${escHtml(bannedWords)}</textarea>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">反感词（说这些词时Bot冷淡回应，逗号分隔）</label>
+          <textarea id="hateKeywordsInput" style="width:100%; min-height:60px; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px; resize:vertical;">${escHtml(hateKeywords)}</textarea>
+        </div>
+        <button class="btn btn-primary" onclick="saveGroupList('BANNED_WORDS', 'bannedWordsInput')">保存违禁词</button>
+        <button class="btn btn-secondary" onclick="saveGroupList('HATE_KEYWORDS', 'hateKeywordsInput')" style="margin-left:8px;">保存反感词</button>
+      </div>
+
+      <div class="card" style="margin-bottom: 20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">🚫 刷屏与禁言</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:12px;">
+          <div>
+            <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">每分钟消息上限</label>
+            <input id="spamMsgLimit" type="number" value="${spamLimit.messages_per_minute || 10}" style="width:100%; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px;">
+          </div>
+          <div>
+            <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">刷屏封禁时长(分钟)</label>
+            <input id="spamBanMin" type="number" value="${spamLimit.ban_minutes || 5}" style="width:100%; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px;">
+          </div>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">默认封禁时长(分钟)</label>
+          <input id="banDuration" type="number" value="${s.spam_ban_duration || 5}" style="width:200px; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px;">
+        </div>
+        <button class="btn btn-primary" onclick="saveSpamSettings()">保存刷屏设置</button>
+      </div>
+
+      <div class="card" style="margin-bottom: 20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">👋 入群欢迎</h3>
+        <div style="margin-bottom:12px;">
+          <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; margin-bottom:8px;">
+            <input type="checkbox" id="welcomeOn" ${welcomeOn ? 'checked' : ''} style="width:18px; height:18px;">
+            开启入群欢迎
+          </label>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">欢迎语内容</label>
+          <textarea id="welcomeTextInput" style="width:100%; min-height:80px; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px; resize:vertical;">${escHtml(s.welcome_text || '')}</textarea>
+        </div>
+        <button class="btn btn-primary" onclick="saveWelcomeSettings()">保存欢迎设置</button>
+      </div>
+
+      <div class="card">
+        <h3 style="color:#fff; margin-bottom:16px;">🔒 自动禁言关键词</h3>
+        <p style="color:#6b7280; font-size:13px; margin-bottom:12px;">入群用户名含这些词会被自动永久禁言</p>
+        <div style="margin-bottom:12px;">
+          <textarea id="autoMuteNamesInput" style="width:100%; min-height:60px; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px; resize:vertical;">${escHtml(autoMuteNames)}</textarea>
+        </div>
+        <button class="btn btn-primary" onclick="saveGroupList('AUTO_MUTE_NAMES', 'autoMuteNamesInput')">保存禁言关键词</button>
+      </div>
+    `;
+  } catch(e) { console.error(e); }
+}
+
+async function saveGroupList(key, inputId) {
+  const raw = document.getElementById(inputId).value;
+  const items = raw.split(/[,，、]/).map(s => s.trim()).filter(s => s);
+  if (items.length === 0) {
+    if (!confirm('确定要清空此列表吗？此操作不可撤销！')) return;
+  }
+  try {
+    const r = await api('/api/group/settings/update', {
+      method: 'POST',
+      body: JSON.stringify({key, value: items})
+    });
+    showToast(r.ok ? '保存成功' : (r.msg || '保存失败'), r.ok ? 'success' : 'error');
+  } catch(e) { showToast('保存失败', 'error'); }
+}
+
+async function saveSpamSettings() {
+  const msgLimit = parseInt(document.getElementById('spamMsgLimit').value) || 10;
+  const banMin = parseInt(document.getElementById('spamBanMin').value) || 5;
+  const banDuration = parseInt(document.getElementById('banDuration').value) || 5;
+  try {
+    await api('/api/group/settings/update', {
+      method: 'POST',
+      body: JSON.stringify({key: 'SPAM_LIMIT', value: {messages_per_minute: msgLimit, ban_minutes: banMin}})
+    });
+    await api('/api/group/settings/update', {
+      method: 'POST',
+      body: JSON.stringify({key: 'BAN_DURATION_DEFAULT', value: banDuration})
+    });
+    showToast('刷屏设置已保存', 'success');
+  } catch(e) { showToast('保存失败', 'error'); }
+}
+
+async function saveWelcomeSettings() {
+  const welcomeOn = document.getElementById('welcomeOn').checked;
+  const welcomeText = document.getElementById('welcomeTextInput').value;
+  try {
+    await api('/api/group/settings/update', {
+      method: 'POST',
+      body: JSON.stringify({key: 'WELCOME_MSG', value: welcomeOn})
+    });
+    await api('/api/group/settings/update', {
+      method: 'POST',
+      body: JSON.stringify({key: 'WELCOME_TEXT', value: welcomeText})
+    });
+    showToast('欢迎设置已保存', 'success');
+  } catch(e) { showToast('保存失败', 'error'); }
+}
+
+async function loadFeedback() {
+  try {
+    const d = await api('/api/feedback/stats');
+    const s = d.data;
+    const el = document.getElementById('feedbackContent');
+    if (!el) return;
+    const rateColor = s.satisfaction_rate >= 80 ? '#10b981' : s.satisfaction_rate >= 50 ? '#f59e0b' : '#ef4444';
+    const recent = s.recent || [];
+    el.innerHTML = `
+      <div class="stats-grid" style="margin-bottom:20px;">
+        <div class="stat-card" style="border-left:4px solid #10b981;">
+          <div class="stat-value" style="color:#10b981;">${s.like}</div>
+          <div class="stat-label">👍 满意</div>
+        </div>
+        <div class="stat-card" style="border-left:4px solid #ef4444;">
+          <div class="stat-value" style="color:#ef4444;">${s.dislike}</div>
+          <div class="stat-label">👎 不满意</div>
+        </div>
+        <div class="stat-card" style="border-left:4px solid ${rateColor};">
+          <div class="stat-value" style="color:${rateColor};">${s.satisfaction_rate}%</div>
+          <div class="stat-label">满意度</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${s.total}</div>
+          <div class="stat-label">总反馈数</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="color:#fff; margin-bottom:16px;">最近反馈记录</h3>
+        ${recent.length === 0 ? '<p style="color:#6b7280;">暂无反馈数据，Bot回复消息后用户可点击👍👎按钮</p>' : `
+        <table class="data-table">
+          <thead><tr><th>时间</th><th>用户ID</th><th>反馈</th><th>消息ID</th></tr></thead>
+          <tbody>
+            ${recent.map(r => {
+              const dt = new Date(r.ts * 1000).toLocaleString('zh-CN');
+              const fbEmoji = r.feedback === 'like' ? '👍 满意' : '👎 不满意';
+              const fbColor = r.feedback === 'like' ? '#10b981' : '#ef4444';
+              return `<tr><td>${dt}</td><td>${r.user_id}</td><td style="color:${fbColor};">${fbEmoji}</td><td>${r.bot_msg_id}</td></tr>`;
+            }).join('')}
+          </tbody>
+        </table>`}
+      </div>
+    `;
+  } catch(e) { console.error(e); }
+}
+
+async function loadHelpCenter() {
+  try {
+    const d = await api('/api/help/docs');
+    const docs = d.data;
+    const el = document.getElementById('helpContent');
+    if (!el) return;
+    let html = '';
+    html += `<div class="card" style="margin-bottom:20px;">
+      <h3 style="color:#fff; margin-bottom:16px;">👤 用户命令</h3>
+      <table class="data-table"><thead><tr><th>命令</th><th>说明</th><th>示例</th></tr></thead><tbody>
+      ${docs.user_commands.map(c => `<tr><td style="color:#60a5fa; font-weight:500;">${escHtml(c.cmd)}</td><td>${escHtml(c.desc)}</td><td style="color:#6b7280;">${escHtml(c.example)}</td></tr>`).join('')}
+      </tbody></table></div>`;
+    for (const sec of docs.admin_commands) {
+      html += `<div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">🔐 ${escHtml(sec.section)}</h3>
+        <table class="data-table"><thead><tr><th>命令</th><th>说明</th></tr></thead><tbody>
+        ${sec.items.map(c => `<tr><td style="color:#60a5fa; font-weight:500;">${escHtml(c.cmd)}</td><td>${escHtml(c.desc)}</td></tr>`).join('')}
+        </tbody></table></div>`;
+    }
+    html += `<div class="card">
+      <h3 style="color:#fff; margin-bottom:16px;">📊 Dashboard页面指南</h3>
+      <table class="data-table"><thead><tr><th>页面</th><th>说明</th></tr></thead><tbody>
+      ${docs.dashboard_guide.map(g => `<tr><td style="color:#60a5fa; font-weight:500;">${escHtml(g.page)}</td><td>${escHtml(g.desc)}</td></tr>`).join('')}
+      </tbody></table></div>`;
+    el.innerHTML = html;
+  } catch(e) { console.error(e); }
+}
+
+async function loadUserProfile() {
+  try {
+    const d = await api('/api/user/analytics');
+    const s = d.data;
+    const el = document.getElementById('userProfileContent');
+    if (!el) return;
+    const churnPct = s.total_users > 0 ? (s.churn_risk / s.total_users * 100).toFixed(1) : 0;
+    const lostPct = s.total_users > 0 ? (s.lost / s.total_users * 100).toFixed(1) : 0;
+    const churnColor = churnPct > 30 ? '#ef4444' : churnPct > 15 ? '#f59e0b' : '#10b981';
+    el.innerHTML = `
+      <div class="stats-grid" style="margin-bottom:20px;">
+        <div class="stat-card">
+          <div class="stat-value">${s.total_users}</div>
+          <div class="stat-label">总用户数</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-value" style="color:#10b981;">${s.dau}</div>
+          <div class="stat-label">日活(DAU)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color:#60a5fa;">${s.wau}</div>
+          <div class="stat-label">周活(WAU)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color:#a78bfa;">${s.mau}</div>
+          <div class="stat-label">月活(MAU)</div>
+        </div>
+      </div>
+      <div class="stats-grid" style="margin-bottom:20px;">
+        <div class="stat-card" style="border-left:4px solid ${churnColor};">
+          <div class="stat-value" style="color:${churnColor};">${s.churn_risk} (${churnPct}%)</div>
+          <div class="stat-label">⚠️ 流失预警(14天未活跃)</div>
+        </div>
+        <div class="stat-card" style="border-left:4px solid #ef4444;">
+          <div class="stat-value" style="color:#ef4444;">${s.lost} (${lostPct}%)</div>
+          <div class="stat-label">🔴 已流失(30天未活跃)</div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">📈 7日DAU趋势</h3>
+        <div style="display:flex; align-items:flex-end; gap:8px; height:120px; padding:0 8px;">
+          ${(s.dau_trend || []).map(t => {
+            const maxDau = Math.max(...(s.dau_trend || []).map(x => x.dau), 1);
+            const h = Math.max(t.dau / maxDau * 100, 4);
+            const dayLabel = t.date.substring(5);
+            return `<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <span style="color:#e2e8f0; font-size:11px;">${t.dau}</span>
+              <div style="width:100%; height:${h}px; background:linear-gradient(180deg,#60a5fa,#3b82f6); border-radius:4px 4px 0 0;"></div>
+              <span style="color:#6b7280; font-size:10px;">${dayLabel}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="color:#fff; margin-bottom:16px;">🏆 活跃排行榜 TOP10</h3>
+        <table class="data-table">
+          <thead><tr><th>#</th><th>用户</th><th>消息数</th><th>最后活跃</th></tr></thead>
+          <tbody>
+            ${(s.top_users || []).map((u, i) => {
+              const dt = u.last_active ? new Date(u.last_active * 1000).toLocaleString('zh-CN') : '未知';
+              const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}`;
+              return `<tr><td>${medal}</td><td>${escHtml(u.name)}<span style="color:#6b7280; font-size:11px;"> (${u.uid})</span></td><td>${u.messages}</td><td style="color:#6b7280;">${dt}</td></tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch(e) { console.error(e); }
+}
+
 function renderCharts() {
   const ctx1 = document.getElementById('trendChart');
   const ctx2 = document.getElementById('hourlyChart');
@@ -1184,36 +1996,96 @@ async function loadConfig() {
     const cfg = d.data.config || {};
     const cc = document.getElementById('configContent');
     if (!cc) return;
-    const entries = Object.entries(cfg);
-    if (entries.length === 0) {
-      cc.innerHTML = '<div class="empty-state"><h3>暂无配置数据</h3></div>';
-      return;
+    const categories = {
+      '核心互动': ['REPLY_CHANCE', 'REPLY_DELAY_MIN', 'REPLY_DELAY_MAX', 'MAX_MSG_LENGTH'],
+      '功能开关': ['PUZZLE_ENABLED', 'PUZZLE_WORD', 'SIGNUP_ENABLED', 'AUTO_GREETING', 'AUTO_GOODNIGHT', 'AUTO_NEWS', 'WELCOME_MSG', 'ANTI_REVOKE', 'BURN_AFTER', 'RECOVER_ENABLED', 'AUTO_MORNING_NEWS', 'AUTO_AFTERNOON_NEWS', 'AUTO_EVENING_NEWS'],
+      '时间调度': ['GREETING_HOUR', 'GOODNIGHT_HOUR', 'NEWS_HOUR_MORNING', 'NEWS_HOUR_AFTERNOON', 'NEWS_HOUR_EVENING', 'SIGNUP_RESET_HOUR'],
+      '安全限制': ['SPAM_LIMIT', 'MAX_REQUESTS_PER_USER', 'BAN_DURATION_DEFAULT'],
+      'AI模型': ['TEMPERATURE', 'MAX_TOKENS', 'TOP_P', 'FREQUENCY_PENALTY', 'PRESENCE_PENALTY', 'CURRENT_MODEL_INDEX'],
+      '内容互动': ['WELCOME_TEXT', 'GREETING_TEMPLATE', 'GOODNIGHT_TEMPLATE', 'HATE_KEYWORDS', 'BANNED_WORDS', 'AUTO_REPLY_TRIGGERS'],
+      '业务配置': ['POINTS_PER_SIGNUP', 'POINTS_PER_INVITE', 'REPLY_STICKER_CHANCE', 'MAX_STICKERS_PER_DAY'],
+      '数据存储': ['LOG_LEVEL', 'BACKUP_INTERVAL'],
+    };
+    const friendlyNames = {
+      'REPLY_CHANCE': '群聊回复概率(%)', 'REPLY_DELAY_MIN': '回复延迟下限(秒)', 'REPLY_DELAY_MAX': '回复延迟上限(秒)',
+      'MAX_MSG_LENGTH': '最大回复长度', 'PUZZLE_ENABLED': '碎片寻宝', 'PUZZLE_WORD': '碎片暗号',
+      'SIGNUP_ENABLED': '每日签到', 'AUTO_GREETING': '每日早安', 'AUTO_GOODNIGHT': '每日晚安',
+      'AUTO_NEWS': '新闻播报', 'WELCOME_MSG': '入群欢迎', 'ANTI_REVOKE': '撤回检测',
+      'BURN_AFTER': '阅后即焚', 'RECOVER_ENABLED': '挽回功能', 'AUTO_MORNING_NEWS': '早间新闻',
+      'AUTO_AFTERNOON_NEWS': '午间新闻', 'AUTO_EVENING_NEWS': '晚间新闻',
+      'GREETING_HOUR': '早安时间(点)', 'GOODNIGHT_HOUR': '晚安时间(点)',
+      'NEWS_HOUR_MORNING': '早间新闻时间(点)', 'NEWS_HOUR_AFTERNOON': '午间新闻时间(点)',
+      'NEWS_HOUR_EVENING': '晚间新闻时间(点)', 'SIGNUP_RESET_HOUR': '签到重置时间(点)',
+      'SPAM_LIMIT': '刷屏限制', 'MAX_REQUESTS_PER_USER': '用户请求限制(/时)',
+      'BAN_DURATION_DEFAULT': '默认封禁时长(分)', 'TEMPERATURE': '创意温度',
+      'MAX_TOKENS': '最大Token数', 'TOP_P': 'Top-P采样',
+      'FREQUENCY_PENALTY': '频率惩罚', 'PRESENCE_PENALTY': '存在惩罚',
+      'CURRENT_MODEL_INDEX': '当前模型索引', 'WELCOME_TEXT': '欢迎语内容',
+      'GREETING_TEMPLATE': '早安模板', 'GOODNIGHT_TEMPLATE': '晚安模板',
+      'HATE_KEYWORDS': '反感关键词', 'BANNED_WORDS': '违禁词',
+      'AUTO_REPLY_TRIGGERS': '自动回复触发词', 'POINTS_PER_SIGNUP': '签到积分',
+      'POINTS_PER_INVITE': '邀请积分', 'REPLY_STICKER_CHANCE': '贴纸概率(%)',
+      'MAX_STICKERS_PER_DAY': '每日贴纸上限', 'LOG_LEVEL': '日志级别',
+      'BACKUP_INTERVAL': '备份间隔(时)',
+    };
+    let html = '';
+    for (const [cat, keys] of Object.entries(categories)) {
+      const items = keys.filter(k => k in cfg);
+      if (items.length === 0) continue;
+      html += `<h4 style="color:#60a5fa; margin:16px 0 8px; font-size:14px;">${escHtml(cat)}</h4>`;
+      html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">';
+      for (const k of items) {
+        const v = cfg[k];
+        const label = friendlyNames[k] || k;
+        if (typeof v === 'boolean') {
+          html += `<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#1e1e2e; border-radius:8px;">
+            <label style="flex:1; color:#94a3b8; font-size:13px;">${escHtml(label)}</label>
+            <input type="checkbox" ${v ? 'checked' : ''} onchange="quickSaveConfig('${k}', this.checked)" style="width:18px; height:18px;">
+          </div>`;
+        } else if (typeof v === 'number') {
+          html += `<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#1e1e2e; border-radius:8px;">
+            <label style="color:#94a3b8; font-size:13px; min-width:100px;">${escHtml(label)}</label>
+            <input type="number" value="${v}" onchange="quickSaveConfig('${k}', parseFloat(this.value))" style="width:80px; padding:4px 8px; background:#0f0f1a; border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#e2e8f0; font-size:13px; text-align:right;">
+          </div>`;
+        } else if (typeof v === 'string') {
+          const short = v.length > 30 ? v.substring(0, 30) + '...' : v;
+          html += `<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#1e1e2e; border-radius:8px;">
+            <label style="color:#94a3b8; font-size:13px; min-width:100px;">${escHtml(label)}</label>
+            <input type="text" value="${escHtml(v)}" onchange="quickSaveConfig('${k}', this.value)" style="flex:1; padding:4px 8px; background:#0f0f1a; border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#e2e8f0; font-size:13px;">
+          </div>`;
+        } else if (Array.isArray(v)) {
+          html += `<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#1e1e2e; border-radius:8px;">
+            <label style="color:#94a3b8; font-size:13px; min-width:100px;">${escHtml(label)}</label>
+            <input type="text" value="${escHtml(v.join(', '))}" onchange="quickSaveConfig('${k}', this.value.split(/[,，]/).map(s=>s.trim()).filter(s=>s))" style="flex:1; padding:4px 8px; background:#0f0f1a; border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#e2e8f0; font-size:13px;">
+          </div>`;
+        }
+      }
+      html += '</div>';
     }
-    cc.innerHTML = `
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>配置项</th>
-            <th>当前值</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${entries.map(([k, v]) => `
-            <tr>
-              <td style="font-weight: 500;">${escHtml(k)}</td>
-              <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escHtml(typeof v === 'object' ? JSON.stringify(v) : String(v))}</td>
-              <td>
-                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="editConfig(${JSON.stringify(k)}, ${JSON.stringify(typeof v === 'object' ? JSON.stringify(v) : String(v))})">编辑</button>
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    `;
-  } catch (e) {
-    console.error(e);
-  }
+    const uncategorized = Object.keys(cfg).filter(k => !Object.values(categories).flat().includes(k));
+    if (uncategorized.length > 0) {
+      html += `<h4 style="color:#60a5fa; margin:16px 0 8px; font-size:14px;">其他配置</h4>`;
+      html += '<table class="data-table"><thead><tr><th>配置项</th><th>当前值</th><th>操作</th></tr></thead><tbody>';
+      for (const k of uncategorized) {
+        const v = cfg[k];
+        html += `<tr><td style="font-weight:500;">${escHtml(k)}</td>
+          <td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(typeof v === 'object' ? JSON.stringify(v) : String(v))}</td>
+          <td><button class="btn btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="editConfig(${JSON.stringify(k)}, ${JSON.stringify(typeof v === 'object' ? JSON.stringify(v) : String(v))})">编辑</button></td></tr>`;
+      }
+      html += '</tbody></table>';
+    }
+    cc.innerHTML = html || '<div class="empty-state"><h3>暂无配置数据</h3></div>';
+  } catch (e) { console.error(e); }
+}
+
+async function quickSaveConfig(key, value) {
+  try {
+    const r = await api('/api/config/update', {
+      method: 'POST',
+      body: JSON.stringify({key, value})
+    });
+    showToast(r.ok ? `${key} 已更新（⚠️ 需重启Bot生效）` : (r.msg || '更新失败'), r.ok ? 'success' : 'error');
+  } catch(e) { showToast('更新失败', 'error'); }
 }
 
 function editConfig(key, value) {
@@ -1267,19 +2139,17 @@ async function loadLogs(page = 1) {
       <table class="data-table">
         <thead>
           <tr>
-            <th>时间</th>
-            <th>用户</th>
-            <th>类型</th>
-            <th>内容预览</th>
+            <th>时间</th><th>群ID</th><th>Bot消息ID</th><th>用户消息ID</th><th>已回复</th>
           </tr>
         </thead>
         <tbody>
           ${logs.map(l => `
             <tr>
               <td style="font-size: 12px; color: #6b7280;">${formatTime(l.ts)}</td>
-              <td>${escHtml(l.uname || l.uid)}</td>
-              <td><span class="badge badge-info">${escHtml(l.type)}</span></td>
-              <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escHtml(l.content || '-')}</td>
+              <td>${l.chat_id || '-'}</td>
+              <td>${l.bot_msg_id || '-'}</td>
+              <td>${l.user_msg_id || '-'}</td>
+              <td>${l.replied ? '<span class="badge badge-success">✅</span>' : '<span class="badge badge-warning">⏳</span>'}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -1307,19 +2177,17 @@ function searchLogs() {
       <table class="data-table">
         <thead>
           <tr>
-            <th>时间</th>
-            <th>用户</th>
-            <th>类型</th>
-            <th>内容预览</th>
+            <th>时间</th><th>群ID</th><th>Bot消息ID</th><th>用户消息ID</th><th>已回复</th>
           </tr>
         </thead>
         <tbody>
           ${logs.map(l => `
             <tr>
               <td style="font-size: 12px; color: #6b7280;">${formatTime(l.ts)}</td>
-              <td>${escHtml(l.uname || l.uid)}</td>
-              <td><span class="badge badge-info">${escHtml(l.type)}</span></td>
-              <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escHtml(l.content || '-')}</td>
+              <td>${l.chat_id || '-'}</td>
+              <td>${l.bot_msg_id || '-'}</td>
+              <td>${l.user_msg_id || '-'}</td>
+              <td>${l.replied ? '<span class="badge badge-success">✅</span>' : '<span class="badge badge-warning">⏳</span>'}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -1329,7 +2197,19 @@ function searchLogs() {
 }
 
 function downloadReport() {
-  window.open(API_BASE + '/api/report/download', '_blank');
+  fetch(API_BASE + '/api/report/download', {credentials: 'same-origin'})
+    .then(r => {
+      if (!r.ok) throw new Error('下载失败');
+      return r.blob();
+    })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'mory_report.csv';
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+    })
+    .catch(e => showToast('下载失败: ' + e.message, 'error'));
 }
 
 function renderApp() {
@@ -1341,7 +2221,7 @@ function renderApp() {
             <div class="sidebar-logo-icon">🤖</div>
             <div class="sidebar-logo-text">
               <h1>Mory Assistant</h1>
-              <span>v6.0</span>
+              <span id="sidebarVersion">加载中</span>
             </div>
           </div>
         </div>
@@ -1374,6 +2254,54 @@ function renderApp() {
             </div>
           </div>
           <div class="nav-section">
+            <div class="nav-section-title">运行监控</div>
+            <div class="nav-item" onclick="switchTab('status')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+              </svg>
+              运行状态
+            </div>
+            <div class="nav-item" onclick="switchTab('models')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="4" y="4" width="16" height="16" rx="2"/>
+                <rect x="9" y="9" width="6" height="6"/>
+                <line x1="9" y1="2" x2="9" y2="4"/>
+                <line x1="15" y1="2" x2="15" y2="4"/>
+                <line x1="9" y1="20" x2="9" y2="22"/>
+                <line x1="15" y1="20" x2="15" y2="22"/>
+              </svg>
+              模型中心
+            </div>
+            <div class="nav-item" onclick="switchTab('tasks')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+              定时任务
+            </div>
+            <div class="nav-item" onclick="switchTab('groupmgr')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              群管设置
+            </div>
+            <div class="nav-item" onclick="switchTab('feedback')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+              </svg>
+              用户反馈
+            </div>
+            <div class="nav-item" onclick="switchTab('userprofile')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+              用户画像
+            </div>
+          </div>
+          <div class="nav-section">
             <div class="nav-section-title">系统</div>
             <div class="nav-item" onclick="switchTab('config')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -1401,6 +2329,14 @@ function renderApp() {
               </svg>
               日志查看
             </div>
+            <div class="nav-item" onclick="switchTab('helpcenter')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              帮助中心
+            </div>
           </div>
         </nav>
       </aside>
@@ -1423,6 +2359,7 @@ function renderApp() {
     </div>
   `;
   renderPage();
+  loadVersion();
 }
 
 function toggleSidebar() {

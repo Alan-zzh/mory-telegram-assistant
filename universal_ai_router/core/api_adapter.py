@@ -468,10 +468,36 @@ class GeminiAdapter(BaseAdapter):
             else:
                 role = "user"
 
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg.get("content", "")}]
-            })
+            content = msg.get("content", "")
+            parts = []
+            
+            # 处理工具调用响应
+            if msg.get("tool_calls") or msg.get("function_call"):
+                tool_calls = msg.get("tool_calls", [])
+                if not tool_calls and msg.get("function_call"):
+                    tool_calls = [msg.get("function_call")]
+                
+                for tool_call in tool_calls:
+                    func_name = tool_call.get("name", tool_call.get("function", {}).get("name", ""))
+                    func_args = tool_call.get("arguments", tool_call.get("function", {}).get("arguments", {}))
+                    
+                    parts.append({
+                        "functionCall": {
+                            "name": func_name,
+                            "args": func_args,
+                            "thoughtSignature": "Function call response"
+                        }
+                    })
+            
+            # 添加文本内容
+            if content and isinstance(content, str):
+                parts.append({"text": content})
+            
+            if parts:
+                contents.append({
+                    "role": role,
+                    "parts": parts
+                })
 
         request_data = {
             "contents": contents
@@ -484,6 +510,25 @@ class GeminiAdapter(BaseAdapter):
                     "parts": [{"text": msg.get("content", "")}]
                 }
                 break
+
+        # 处理工具定义
+        tools = kwargs.get("tools", kwargs.get("function_definitions", []))
+        if tools:
+            gemini_tools = []
+            for tool in tools:
+                gemini_tool = {
+                    "functionDeclarations": [{
+                        "name": tool.get("name", ""),
+                        "description": tool.get("description", ""),
+                        "parameters": {
+                            "type": "object",
+                            "properties": tool.get("parameters", {}).get("properties", {}),
+                            "required": tool.get("parameters", {}).get("required", [])
+                        }
+                    }]
+                }
+                gemini_tools.append(gemini_tool)
+            request_data["tools"] = gemini_tools
 
         # 添加生成配置
         generation_config = {}

@@ -34,10 +34,11 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
-import logging
 import random
 import re
 from core.logging_util import get_logger
+from modules.ad_detector import check_username_suspicious
+from modules.avatar_detector import check_and_ban_if_porn_avatar
 
 logger = get_logger("group_mgr")
 
@@ -56,9 +57,29 @@ def handle_new_members(bot, m, config: dict, db):
     """新人入群欢迎"""
     _bot_id = _get_bot_id(bot)
     auto_mute_names = config.get("AUTO_MUTE_NAMES", [
+        # 加密货币类
         "虚拟币", "搬砖", "币圈", "炒币", "数字货币",
         "加密货币", "区块链投资", "合约交易", "量化交易",
         "USDT", "BTC", "ETH交易", "空投", "挖矿",
+        # 赚钱黑话类
+        "日入", "日赚", "日挣", "躺赚", "稳赚", "暴利",
+        "月入", "年入", "保底", "零成本", "无风险",
+        "搞米", "安全搞米", "放电宝", "充电宝",
+        # 招募引流类
+        "招团队", "拉人头", "招代理", "招加盟",
+        "兼职", "副业", "刷单", "做任务",
+        # 色情引流类
+        "裸聊", "约炮", "同城交友", "上门服务",
+        # 灰色产业类
+        "洗钱", "跑分", "代付", "代收", "资金盘",
+        "博彩", "赌博", "娱乐城", "菠菜",
+        # 联系方式引流类（一眼广告）
+        "加我", "私聊我", "私我", "关注我", "点击链接",
+        "微信号", "QQ群", "Telegram群", "群号",
+        "看简介", "看我简介", "看我主页", "看我资料",
+        # [Trae] v4.6.4 新增：针对截图案例的一眼广告词
+        "各地", "约", "学生", "M36D", "白虎",
+        "传递", "800约", "各地约",
     ])
     
     for user in m.new_chat_members:
@@ -70,7 +91,10 @@ def handle_new_members(bot, m, config: dict, db):
         user_display = f"{user_name}"
         if username:
             user_display += f" @{username}"
-        
+
+        if db:
+            db.record_group_join(m.chat.id, user.id)
+
         matched_keyword = None
         for kw in auto_mute_names:
             if len(kw) <= 2 and kw.isascii():
@@ -82,8 +106,18 @@ def handle_new_members(bot, m, config: dict, db):
                 if kw.lower() in user_name.lower():
                     matched_keyword = kw
                     break
-        
-        if matched_keyword:
+
+        # ── v4.5.36 新增：检测可疑用户名（Custom Emoji贴图/引流文字）──
+        is_suspicious, suspicious_reason = check_username_suspicious(user_name)
+
+        # ── v4.6.1 新增：检测色情头像 ──
+        avatar_banned = False
+        try:
+            avatar_banned = check_and_ban_if_porn_avatar(bot, user.id, m.chat.id, user_display)
+        except Exception as e:
+            logger.warning(f"头像检测失败 {user_display}: {e}")
+
+        if matched_keyword or is_suspicious or avatar_banned:
             try:
                 bot.restrict_chat_member(
                     m.chat.id, user.id,
@@ -92,14 +126,22 @@ def handle_new_members(bot, m, config: dict, db):
                     can_send_media_messages=False,
                     can_send_other_messages=False,
                 )
-                logger.warning(f"🚫 自动永久禁言：{user_display} 命中关键词={matched_keyword}")
+                if matched_keyword:
+                    logger.warning(f"🚫 自动永久禁言：{user_display} 命中关键词={matched_keyword}")
+                    notify_reason = f"🔑 命中关键词：{matched_keyword}"
+                elif avatar_banned:
+                    logger.warning(f"🚫 自动永久禁言：{user_display} 原因=头像检测违规")
+                    notify_reason = f"🔑 原因：头像检测违规"
+                else:
+                    logger.warning(f"🚫 自动永久禁言：{user_display} 原因={suspicious_reason}")
+                    notify_reason = f"🔑 原因：{suspicious_reason}"
                 admin_id = config.get("ADMIN_ID", 0)
                 if admin_id:
                     try:
                         bot.send_message(admin_id,
                             f"🚫 自动禁言通知\n"
                             f"👤 用户：{user_display}\n"
-                            f"🔑 命中关键词：{matched_keyword}\n"
+                            f"{notify_reason}\n"
                             f"📋 操作：永久禁言\n"
                             f"💡 如误封请手动解禁")
                     except Exception:
@@ -110,7 +152,6 @@ def handle_new_members(bot, m, config: dict, db):
         
         db.upsert_user(user.id, user.first_name or "新人", "group")
         db.add_points(user.id, 0)
-        db.record_group_join(m.chat.id)
 
         welcome = f"""👋 欢迎 {user.first_name or '亲爱的'} 加入！
 
@@ -170,15 +211,16 @@ def check_banned_words(bot, m, config: dict, db) -> bool:
             try:
                 bot.delete_message(m.chat.id, m.message_id)
                 bot.send_message(m.from_user.id,
-                    f"⚠️ 你的消息含有敏感词「{word}」已被删除，请遵守社群规则～")
-                _safe_preview = (msg[:50] + "…") if len(msg) > 50 else msg
+                    f"⚠️ 你的消息含有敏感词已被删除，请遵守社群规则～")
+                # 【v4.5.35修复】管理员通知中不再泄露原始消息内容，只显示触发词
                 _uname = getattr(m.from_user, 'username', None)
                 _user_display = m.from_user.first_name or ""
                 if _uname:
                     _user_display += f" @{_uname}"
                 bot.send_message(config["ADMIN_ID"],
                     f"🚨 用户 {_user_display} "
-                    f"触发了敏感词「{word}」\n消息摘要：{_safe_preview}")
+                    f"触发了敏感词「{word}」\n"
+                    f"💡 消息已删除，原始内容未记录")
             except Exception as e:
                 logger.warning(f"删除敏感词消息失败：{e}")
             logger.warning(f"⚠️ 敏感词拦截：uid={m.from_user.id} word={word}")
@@ -212,7 +254,7 @@ def check_ad_content(bot, m, config: dict, db, ai) -> bool:
     
     ad_keywords = [
         "加我", "私聊我", "私我", "关注我", "点击链接", "点我", "扫码",
-        "赚钱", "日入", "月入", "躺赚", "稳赚", "暴利",
+        "赚钱", "日入", "日赚", "日挣", "月入", "躺赚", "稳赚", "暴利",
         "兼职", "副业", "刷单", "做任务", "拉人头",
         "免费领", "免费送", "限时优惠", "抢购", "秒杀",
         "微信号", "QQ群", "Telegram群", "群号",
@@ -226,15 +268,21 @@ def check_ad_content(bot, m, config: dict, db, ai) -> bool:
         "日结", "周结", "手工活", "手机赚钱",
         "投注", "彩票", "六合彩", "时时彩",
         "裸聊", "约炮", "同城交友", "上门服务",
+        # [Trae] v4.6.6 新增：兜底关键词补全
+        "搬砖", "招团队", "虚拟币", "数字货币", "加密货币",
+        "新手", "当天上手", "就能上手", "零基础",
     ]
-    
+
     hit_kw = None
     msg_lower = msg.lower()
+    uname_lower = uname.lower()
+    # [Trae] v4.6.6 修复：同时检测消息内容和用户显示名称
     for kw in ad_keywords:
-        if kw.lower() in msg_lower:
+        kw_lower = kw.lower()
+        if kw_lower in msg_lower or kw_lower in uname_lower:
             hit_kw = kw
             break
-    
+
     if not hit_kw:
         return False
     
@@ -287,8 +335,17 @@ def check_spam(bot, m, config: dict, db) -> bool:
             bot.restrict_chat_member(m.chat.id, uid,
                 permissions=ChatPermissions(can_send_messages=False),
                 until_date=int(time.time()) + ban_min * 60)
-            bot.send_message(m.chat.id,
-                f"⚠️ {m.from_user.first_name} 因刷屏被禁言 {ban_min} 分钟。")
+            # [Trae] v4.5.36 修复：刷屏通知不再发到群里，只通知管理员
+            admin_id = config.get("ADMIN_ID", 0)
+            if admin_id:
+                try:
+                    bot.send_message(admin_id,
+                        f"🔇 刷屏禁言通知\n"
+                        f"👤 用户：{m.from_user.first_name or '未知'}({uid})\n"
+                        f"📋 操作：禁言 {ban_min} 分钟\n"
+                        f"💡 如误封请手动解禁")
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning(f"刷屏禁言操作失败 uid={uid}：{e}")
         logger.warning(f"🔇 刷屏禁言：uid={uid}")
@@ -303,7 +360,7 @@ def handle_left_member(bot, m, config: dict, db=None):
         return
     name = m.left_chat_member.first_name or "亲爱的"
     if db:
-        db.record_group_left(m.chat.id)  # 【v4.2.3】记录离群统计
+        db.record_group_left(m.chat.id, uid)  # 【v4.9.5】记录离群统计（带user_id幂等保护）
     try:
         bot.send_message(uid,
             f"😢 {name}，你真的要走吗？\n\n"
@@ -394,6 +451,44 @@ def detect_keywords(msg: str, config: dict) -> dict:
     elif any(k in msg for k in ["多少钱", "价格", "怎么买", "门槛", "开通", "会员"]):
         result["is_cart"] = True
         result["mode"] = "convert"
+
+    # 用户反馈/找Mory 检测（优先于普通AI闲聊，避免AI瞎撩人）
+    # 【v4.7.1 新增】反馈模式 — 用户遇到问题/反馈异常
+    # 【v4.12.1 优化】关键词全小写 + msg.lower() 匹配，兼容大小写变体
+    msg_lower = msg.lower()
+    _feedback_words = [
+        # 封禁/踢出类
+        "被封", "封了", "禁言", "踢出", "被踢", "踢了", "踢出群", "解封", "解禁",
+        "踢回来", "加回来", "加回群", "加回来群",
+        # 举报/投诉类
+        "举报", "投诉", "反馈", "反应", "有问题", "出bug", "坏了", "登不上", "登录不上",
+        "出问题", "不对劲", "有问题找",
+        # 找人类（全小写匹配，兼容Mory/mory/MORY）
+        "找mory", "找老板", "找boss",
+        "叫mory", "叫老板", "叫boss",
+        "请mory", "请老板",
+        "联系mory", "联系老板", "让mory", "让老板",
+        "mory在吗", "老板在吗", "有人在吗", "mory在么", "老板在么",
+        "mory呢", "老板呢", "boss呢",
+        # 新增变体
+        "呼叫mory", "呼叫老板", "呼叫boss",
+        "召唤mory", "召唤老板",
+    ]
+    # 【v4.7.1 新增】找Mory模式 — 用户明确想找Mory/老板本人
+    _contact_mory_words = [
+        "要找mory", "要找老板", "要找boss", "我要找mory", "我想找老板",
+        "mory本人", "老板本人", "见老板", "见mory", "私聊老板", "私聊mory",
+        "让mory来", "叫老板来", "喊老板", "喊mory",
+        # 新增变体
+        "呼叫mory本人", "呼叫老板本人",
+        "想见mory", "想见老板",
+        "找mory本人", "找老板本人",
+    ]
+    # 反馈模式（覆盖找人类关键词）
+    if any(k in msg_lower for k in _feedback_words):
+        result["mode"] = "feedback"
+    elif any(k in msg_lower for k in _contact_mory_words):
+        result["mode"] = "contact_mory"
 
     # 黑话/行话自动识别（匹配到的第一个黑话就科普，避免刷屏）
     slang_dict = config.get("SLANG_DICT", {})

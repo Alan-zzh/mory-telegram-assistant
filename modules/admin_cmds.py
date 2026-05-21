@@ -92,13 +92,22 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
 
     # ── 以下为公开指令（任何人可用）────────────────────────────────────
     
-    # ── 绑定主人（首次ADMIN_ID为0时任何人能绑，之后只有主人能重新绑）
+    # ── 绑定主人（首次ADMIN_ID为0时仅私聊可绑，之后只有主人能重新绑）[Trae] 安全修复：限制私聊才能首次绑定
     if msg.strip() == "绑定主人":
-        if config.get("ADMIN_ID", 0) == 0 or uid == config.get("ADMIN_ID", 0):
+        is_priv = m.chat.type == "private"
+        if config.get("ADMIN_ID", 0) == 0:
+            if not is_priv:
+                mory_bot.reply_and_track(m, "⚠️ 首次绑定主人请私聊机器人操作，群聊中不开放此功能。")
+                return True
             config["ADMIN_ID"] = uid
             save_config_fn()
             mory_bot.reply_and_track(m, f"✅ 绑定成功！主人ID：{uid}")
             logger.info(f"👑 绑定管理员：{uid}")
+        elif uid == config.get("ADMIN_ID", 0):
+            config["ADMIN_ID"] = uid
+            save_config_fn()
+            mory_bot.reply_and_track(m, f"✅ 重新绑定成功！主人ID：{uid}")
+            logger.info(f"👑 重新绑定管理员：{uid}")
         else:
             mory_bot.reply_and_track(m, "⛔ 已有主人，无法绑定。")
         return True
@@ -300,7 +309,14 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             for ch in channels:
                 cid = ch.get("id", 0) if isinstance(ch, dict) else ch
                 try:
-                    bot.send_message(cid, content)
+                    # 【v4.5.35修复】检测内容是否含HTML标签，自动启用HTML模式
+                    import html
+                    has_html = any(tag in content for tag in ['<b>', '<i>', '<u>', '<s>', '<code>', '<pre>', '<a href='])
+                    if has_html:
+                        sent = bot.send_message(cid, content, parse_mode="HTML")
+                    else:
+                        sent = bot.send_message(cid, content)
+                    db.track_channel_message(cid, sent.message_id, "text")
                     ok += 1
                 except Exception as e:
                     fail += 1
@@ -482,6 +498,73 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
         bot.send_message(chat_id, "\n".join(lines))
         return True
 
+    # ── 健康检查（一键诊断Bot运行状态）─────────────────────────────────
+    if msg in ("健康检查", "/健康检查", "/health"):
+        lines = []
+        lines.append("🏥 Mory健康检查报告")
+        lines.append("━" * 20)
+        pool = config.get("MODEL_POOLS", {}).get("llm", config.get("MODEL_POOL", []))
+        idx = config.get("CURRENT_MODEL_INDEX", 0)
+        cur = pool[idx] if pool else {}
+        blacklisted = getattr(ai, 'blacklisted', set())
+        cur_name = cur.get('name', '未知')
+        lines.append(f"🧠 当前模型：{cur_name}")
+        total_models = sum(len(v) for v in config.get("MODEL_POOLS", {}).values() if isinstance(v, list))
+        bl_count = len(blacklisted)
+        lines.append(f"📦 模型总数：{total_models}  🚫 黑名单：{bl_count}")
+        if bl_count > 0:
+            lines.append(f"   黑名单：{', '.join(list(blacklisted)[:5])}")
+        reply_chance = config.get("REPLY_CHANCE", 10)
+        lines.append(f"💬 回复概率：{reply_chance}%")
+        auto_greeting = config.get("AUTO_GREETING", True)
+        lines.append(f"🌅 早安问候：{'✅' if auto_greeting else '❌'}")
+        spam_limit = config.get("SPAM_LIMIT", 5)
+        lines.append(f"🛡️ 刷屏限制：{spam_limit}条")
+        try:
+            user_count = db.get_user_count() if hasattr(db, 'get_user_count') else '?'
+            lines.append(f"👥 用户总数：{user_count}")
+        except Exception:
+            pass
+        try:
+            today = datetime.now(_CST).strftime("%Y-%m-%d")
+            today_tasks = 0
+            if hasattr(db, 'conn'):
+                try:
+                    row = db.conn.execute("SELECT COUNT(DISTINCT task_key) FROM task_log WHERE exec_date=?", (today,)).fetchone()
+                    today_tasks = row[0] if row else 0
+                except Exception:
+                    pass
+            lines.append(f"📋 今日任务：{today_tasks}项已完成")
+        except Exception:
+            pass
+        lines.append("━" * 20)
+        issues = []
+        if bl_count > 3:
+            issues.append("⚠️ 黑名单模型过多，建议恢复或更换")
+        if not pool:
+            issues.append("🔴 模型池为空！Bot无法回复")
+        try:
+            expire = cur.get('expire', '2099-12-31')
+            from datetime import date as _date
+            exp_d = _date.fromisoformat(expire)
+            days_left = (exp_d - _date.today()).days
+            if days_left <= 3:
+                issues.append(f"🔴 当前模型{days_left}天后到期！")
+            elif days_left <= 7:
+                issues.append(f"⚠️ 当前模型{days_left}天后到期")
+        except Exception:
+            pass
+        if reply_chance == 0:
+            issues.append("⚠️ 回复概率为0，Bot不会主动回复")
+        if not issues:
+            lines.append("✅ 一切正常，Mory状态健康！")
+        else:
+            lines.append("发现问题：")
+            for issue in issues:
+                lines.append(issue)
+        mory_bot.reply_and_track(m, "\n".join(lines))
+        return True
+
     # ── 优化引擎诊断指令（v21.25+）─────────────────────────────────────
     if msg.startswith(("/optimize_status", "/opt_status", "/os",
                        "/optimize_cache", "/oc",
@@ -656,9 +739,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
     # ── 查追踪（调试阅后即焚）─────────────────────────────────────────
     if "查追踪" in msg or "查阅后" in msg:
         try:
-            import datetime as dt
-            tz = dt.timezone(dt.timedelta(hours=8))
-            now = dt.datetime.now(tz).strftime("%m-%d %H:%M:%S")
+            now = datetime.now(_CST).strftime("%m-%d %H:%M:%S")
             version = config.get("_CONFIG_VERSION", "?")
 
             # ── 实时写入测试：验证数据库 reply_tracking 表能正常读写 ──
@@ -765,6 +846,37 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             logger.info(f"🎨 改风格：{style_desc[:30]}")
         else:
             mory_bot.reply_and_track(m, "⚠️ 格式：改风格 [风格描述]\n例：改风格 更骚一点\n例：改风格 变温柔知性\n例：改风格 更毒舌更傲娇")
+        return True
+
+    # ── [Trae] 撤销调教：撤销最近一次人设调教 ──────────────────────
+    if msg in ("撤销调教", "撤销上次调教", "撤回调教"):
+        teaching_log = config.get("TEACHING_LOG", [])
+        if not isinstance(teaching_log, list) or not teaching_log:
+            mory_bot.reply_and_track(m, "⚠️ 没有调教记录可以撤销")
+            return True
+        removed = teaching_log.pop()
+        style = config.get("STYLE_APPEND", "")
+        lines = style.split("\n")
+        new_lines = [l for l in lines if "调教指令" not in l or removed.split("] ", 1)[-1] not in l]
+        config["STYLE_APPEND"] = "\n".join(new_lines).strip()
+        config["TEACHING_LOG"] = teaching_log
+        save_config_fn()
+        mory_bot.reply_and_track(m, f"✅ 已撤销调教：{removed}")
+        logger.info(f"↩️ 撤销调教：{removed}")
+        return True
+
+    # ── [Trae] 查看调教记录 ──────────────────────────────────────────
+    if msg in ("查看调教", "调教记录", "看调教"):
+        teaching_log = config.get("TEACHING_LOG", [])
+        if not isinstance(teaching_log, list) or not teaching_log:
+            mory_bot.reply_and_track(m, "📋 暂无调教记录\n\n💡 可以直接用自然语言调教我，比如：\n• 以后对我温柔一点\n• 说话再撩一点\n• 别那么快回复")
+            return True
+        lines = ["📋 调教记录（最近20条）：", ""]
+        for idx, entry in enumerate(teaching_log[-20:], 1):
+            lines.append(f"{idx}. {entry}")
+        lines.append("")
+        lines.append("💡 发送「撤销调教」可撤销最近一条")
+        mory_bot.reply_and_track(m, "\n".join(lines))
         return True
 
     # ── 学知识：让机器人学习新知识（写入ADDED_KNOWLEDGE，不影响业务知识库）──

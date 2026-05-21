@@ -16,6 +16,18 @@
         }
       ],
       "round_robin": true
+    },
+    "gemini": {
+      "api_type": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "accounts": [
+        {
+          "api_key": "${ENV:GOOGLE_API_KEY}",
+          "name": "Google Gemini",
+          "enabled": true
+        }
+      ],
+      "round_robin": true
     }
   },
   "model_pools": {
@@ -91,6 +103,32 @@
           "capabilities": [
             "text",
             "chat"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "gemini-flash-latest",
+          "provider": "gemini",
+          "cost_level": "low",
+          "input_price": 0.00000015,
+          "output_price": 0.0000006,
+          "capabilities": [
+            "text",
+            "chat",
+            "vision"
+          ],
+          "enabled": true
+        },
+        {
+          "name": "gemini-pro-latest",
+          "provider": "gemini",
+          "cost_level": "high",
+          "input_price": 0.00000125,
+          "output_price": 0.000005,
+          "capabilities": [
+            "text",
+            "chat",
+            "vision"
           ],
           "enabled": true
         }

@@ -27,7 +27,6 @@
 """
 
 import random
-import logging
 import time
 import requests
 from io import BytesIO

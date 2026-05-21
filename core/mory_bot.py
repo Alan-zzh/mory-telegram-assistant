@@ -99,9 +99,21 @@ class MoryBot:
                     return sent  # 降级发送的不需要追踪阅后即焚
                 except Exception as fb_err:
                     logger.error(f"❌ 降级发送也失败：{fb_err}")
+                    try:
+                        from modules.auto_tasks import report_fault
+                        report_fault("Telegram发送失败", f"降级发送也失败，用户完全无响应: {str(fb_err)[:100]}", "⚠️",
+                                     f"chat_id={cid}")
+                    except Exception:
+                        pass
                     return None
             else:
                 logger.error(f"reply_and_track API异常：{e}")
+                try:
+                    from modules.auto_tasks import report_fault
+                    report_fault("Telegram API异常", f"reply_and_track异常: {str(e)[:100]}", "⚠️",
+                                 f"chat_id={cid}")
+                except Exception:
+                    pass
                 return None
         
         # 只要发送成功，无脑入库追踪

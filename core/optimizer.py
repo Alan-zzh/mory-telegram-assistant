@@ -375,10 +375,10 @@ class OptimizerManager:
         
         # 三个核心模块
         self.circuit = CircuitBreaker(threshold=3, cooldown=300)
-        self.cache = SemanticCache(ttl=3600, max_entries=200)
+        self.cache = SemanticCache(ttl=86400, max_entries=200)
         self.limiter = TokenBucket(capacity=10, refill_rate=2.0)
         
-        logger.info("⚡ 优化引擎初始化完成：熔断器 + 语义缓存(TTL=1h,200条) + 令牌桶(10桶/2每秒)")
+        logger.info("⚡ 优化引擎初始化完成：熔断器 + 语义缓存(TTL=24h,200条) + 令牌桶(10桶/2每秒)")
     
     def get_full_report(self) -> dict:
         """生成完整诊断报告（管理员指令用）"""

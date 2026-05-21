@@ -174,11 +174,13 @@ class SystemMonitor:
             'timestamp': datetime.now().isoformat()
         }
         
-        # 记录告警日志
         self.logger.warning(f"[告警] {title}: {message}")
         
-        # 这里可以添加告警通知机制
-        # 例如：发送邮件、短信、Telegram消息等
+        try:
+            from modules.auto_tasks import report_fault
+            report_fault(f"系统资源告警: {title}", message, "⚠️")
+        except Exception:
+            pass
     
     def _record_metrics(self):
         """记录监控数据"""

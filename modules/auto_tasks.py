@@ -693,7 +693,8 @@ def _job_greeting_morning(rm):
             msg = rm.ai.ask("早安", mode="morning", seed=seed)
         if msg:
             msg = msg.replace("\n", " ").strip()[:250]
-            sent = _send_and_track(rm, gid, f"☀️ {msg}")
+            unban_hint = "\n\n🆘 误封或有问题？私聊我，Mory秒帮你处理～"
+            sent = _send_and_track(rm, gid, f"☀️ {msg}{unban_hint}")
             if sent:
                 _confirm_task_done("greeting_morning", rm.db, 7200)
                 logger.info(f"☀️ 早安已发送：{msg}")
@@ -721,7 +722,8 @@ def _job_greeting_afternoon(rm):
             msg = rm.ai.ask("午安", mode="afternoon", seed=seed)
         if msg:
             msg = msg.replace("\n", " ").strip()[:250]
-            sent = _send_and_track(rm, gid, f"🍃 {msg}")
+            unban_hint = "\n\n🆘 误封或有问题？私聊我，Mory秒帮你处理～"
+            sent = _send_and_track(rm, gid, f"🍃 {msg}{unban_hint}")
             if sent:
                 _confirm_task_done("greeting_afternoon", rm.db, 7200)
                 logger.info(f"🍃 午安已发送：{msg}")
@@ -749,7 +751,8 @@ def _job_greeting_evening(rm):
             msg = rm.ai.ask("晚安", mode="evening", seed=seed)
         if msg:
             msg = msg.replace("\n", " ").strip()[:250]
-            sent = _send_and_track(rm, gid, f"🌙 {msg}")
+            unban_hint = "\n\n🆘 误封或有问题？私聊我，Mory秒帮你处理～"
+            sent = _send_and_track(rm, gid, f"🌙 {msg}{unban_hint}")
             if sent:
                 _confirm_task_done("greeting_evening", rm.db, 7200)
                 logger.info(f"🌙 晚安已发送：{msg}")
@@ -1117,10 +1120,10 @@ def _job_save_config(rm):
 
 
 def _job_channel_views(rm):
-    """【v4.5.36】频道/群成员数统计 + 校准"""
+    """【v4.9.5】频道/群成员数统计 + 校准 + 频道内容同步"""
     try:
         gid = rm.config.get("GROUP_ID", 0)
-        
+
         if gid:
             try:
                 with rm.locked('bot'):
@@ -1134,14 +1137,51 @@ def _job_channel_views(rm):
         channel_ids = rm.config.get("CHANNEL_IDS", [])
         if channel_ids:
             _update_channel_member_counts(rm, channel_ids)
-        
+            # 【v4.9.7废弃】_sync_channel_posts 已被 channel_post_handler 替代
+            # _sync_channel_posts(rm, channel_ids)
+
         logger.info("✅ 成员数统计任务完成")
     except Exception as e:
         logger.error(f"成员数统计失败：{e}")
 
 
+def _sync_channel_posts(rm, channel_ids: list):
+    """【v4.9.7废弃】此函数通过 get_updates() 获取频道帖子，但 infinity_polling 已消费所有更新，永远获取不到数据。
+    已被 channel_post_handler + _refresh_channel_post_views 替代。保留函数体避免引用报错。"""
+    for ch in channel_ids:
+        cid = ch.get("id", 0) if isinstance(ch, dict) else ch
+        cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
+        try:
+            # 获取频道最近24小时的消息
+            now = int(time.time())
+            day_ago = now - 86400
+            # 使用 getUpdates 或 getChatHistory 获取消息
+            # 注意：Bot API 不直接支持 getChatHistory，这里用 getUpdates 过滤
+            with rm.locked('bot'):
+                # 获取Bot在频道中的最新消息ID
+                updates = rm.bot.get_updates(limit=100, timeout=10)
+                for update in updates:
+                    if hasattr(update, 'channel_post') and update.channel_post:
+                        msg = update.channel_post
+                        if msg.chat.id == cid and msg.date >= day_ago:
+                            views = getattr(msg, 'views', 0) or 0
+                            forwards = getattr(msg, 'forward_count', 0) or 0
+                            rm.db.track_channel_post(
+                                cid, msg.message_id, msg.date,
+                                views=views, forwards=forwards,
+                                content_type=getattr(msg, 'content_type', 'text')
+                            )
+                            # 更新浏览量
+                            if views > 0:
+                                rm.db.update_channel_post_views(cid, msg.message_id, views, forwards)
+            logger.info(f"📊 频道内容同步: {cname}")
+        except Exception as e:
+            logger.debug(f"频道内容同步失败: {cname} err={e}")
+
+
 def _update_channel_member_counts(rm, channel_ids: list):
-    """获取多频道成员数并写入数据库"""
+    """获取多频道成员数并写入数据库 + 记录快照"""
+    snapshot_date = datetime.now(_CST).strftime("%Y-%m-%d-%H")
     for ch in channel_ids:
         cid = ch.get("id", 0) if isinstance(ch, dict) else ch
         cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
@@ -1149,9 +1189,56 @@ def _update_channel_member_counts(rm, channel_ids: list):
             with rm.locked('bot'):
                 count = rm.bot.get_chat_member_count(cid)
             rm.db.update_group_total_members(count, cid)
+            rm.db.record_channel_member_snapshot(cid, count, snapshot_date)
             logger.info(f"📊 频道成员数: {cname}={count}")
         except Exception as e:
             logger.debug(f"频道成员数获取失败: {cname} err={e}")
+
+
+def _refresh_channel_post_views(rm):
+    """【v4.9.7新增】定时刷新频道帖子浏览量
+    每小时对每个频道最近10条帖子，通过 forwardMessage 获取最新 views
+    """
+    channel_ids = rm.config.get("CHANNEL_IDS", [])
+    admin_id = rm.config.get("ADMIN_ID", 0)
+    if not channel_ids or not admin_id:
+        return
+
+    for ch in channel_ids:
+        cid = ch.get("id", 0) if isinstance(ch, dict) else ch
+        cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
+        try:
+            recent_posts = rm.db.get_channel_recent_posts(cid, limit=10)
+            if not recent_posts:
+                continue
+            for post in recent_posts:
+                msg_id = post["message_id"]
+                try:
+                    # forwardMessage 到管理员私聊获取最新 views
+                    with rm.locked('bot'):
+                        fwd = rm.bot.forward_message(admin_id, cid, msg_id)
+                        # 获取最新浏览量
+                        new_views = getattr(fwd, 'views', 0) or 0
+                        new_forwards = getattr(fwd, 'forward_count', 0) or 0
+                        # 立即删除转发消息
+                        try:
+                            rm.bot.delete_message(admin_id, fwd.message_id)
+                        except Exception:
+                            pass
+                    # 更新数据库
+                    if new_views > 0:
+                        rm.db.update_channel_post_views(cid, msg_id, new_views, new_forwards)
+                    # 限流保护：每条帖间隔1秒
+                    time.sleep(1)
+                except Exception as e:
+                    err_str = str(e)
+                    if "429" in err_str or "Too Many Requests" in err_str:
+                        logger.warning(f"⚠️ 频道浏览量刷新遇429限流，停止: {cname}")
+                        return  # 遇限流立即停止整个任务
+                    logger.debug(f"频道帖子刷新失败: {cname} msg={msg_id} err={e}")
+            logger.info(f"📺 频道浏览量刷新完成: {cname} {len(recent_posts)}条")
+        except Exception as e:
+            logger.debug(f"频道浏览量刷新异常: {cname} err={e}")
 
 
 def _job_daily_report(rm):
@@ -1189,7 +1276,7 @@ def _job_daily_report(rm):
 
 
 def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid: int, trend_fn):
-    """【v4.5.36】群数据日报 — 优先getChatStatistics API，降级用事件追踪+校准"""
+    """【v4.9.7重构】群数据日报 — 移除浏览/回复，新增运营洞察"""
     token = rm.config.get("TOKEN", "")
     api_data = None
     api_yest_data = None
@@ -1204,6 +1291,23 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
         except Exception as e:
             logger.debug(f"getChatStatistics群失败: {e}")
 
+    group_stats_today = rm.db.get_group_stats_by_date(today)
+    group_stats_yesterday = rm.db.get_group_stats_by_date(yesterday)
+
+    joined_today_db = left_today_db = net_today_db = 0
+    for row in group_stats_today:
+        if len(row) >= 6:
+            joined_today_db += row[2] or 0
+            left_today_db += row[3] or 0
+            net_today_db += row[4] or 0
+
+    joined_yest_db = left_yest_db = net_yest_db = 0
+    for row in group_stats_yesterday:
+        if len(row) >= 6:
+            joined_yest_db += row[2] or 0
+            left_yest_db += row[3] or 0
+            net_yest_db += row[4] or 0
+
     if use_api and api_data:
         joined_today = max(api_data.get("growth_today", 0), 0)
         net_today = api_data.get("growth_today", 0)
@@ -1211,53 +1315,16 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
         total_members = api_data.get("current_count", 0)
         active_today = api_data.get("interactions_today", 0)
         msgs_today = api_data.get("messages_today", 0)
-        views_today = api_data.get("views_today", 0)
-
-        joined_yest = 0
-        left_yest = 0
-        net_yest = 0
-        active_yest = 0
-        msgs_yest = 0
-        views_yest = 0
-
-        try:
-            api_yest_data = get_group_daily_stats(token, gid)
-            if api_yest_data:
-                net_yest = api_yest_data.get("growth_today", 0)
-                joined_yest = max(net_yest, 0)
-                left_yest = max(-net_yest, 0) if net_yest < 0 else 0
-                active_yest = api_yest_data.get("interactions_today", 0)
-                msgs_yest = api_yest_data.get("messages_today", 0)
-                views_yest = api_yest_data.get("views_today", 0)
-        except Exception:
-            pass
-
+        if joined_today == 0 and left_today == 0 and net_today == 0 and (joined_today_db or left_today_db):
+            joined_today = joined_today_db
+            left_today = left_today_db
+            net_today = net_today_db
+            logger.info(f"📊 API数据为0，用自统计补充: 入群{joined_today} 离群{left_today}")
         data_source = "📡 Telegram官方统计"
     else:
-        group_stats_today = rm.db.get_group_stats_by_date(today)
-        group_stats_yesterday = rm.db.get_group_stats_by_date(yesterday)
-
-        joined_today = left_today = net_today = 0
-        for row in group_stats_today:
-            if len(row) >= 6:
-                joined_today += row[2] or 0
-                left_today += row[3] or 0
-                net_today += row[4] or 0
-
-        joined_yest = left_yest = net_yest = 0
-        for row in group_stats_yesterday:
-            if len(row) >= 6:
-                joined_yest += row[2] or 0
-                left_yest += row[3] or 0
-                net_yest += row[4] or 0
-
-        active_today = rm.db.get_daily_active_users(today)
-        active_yest = rm.db.get_daily_active_users(yesterday)
-        msgs_today = rm.db.get_daily_bot_messages(today)
-        msgs_yest = rm.db.get_daily_bot_messages(yesterday)
-        views_today = rm.db.get_daily_replies(today)
-        views_yest = rm.db.get_daily_replies(yesterday)
-
+        joined_today = joined_today_db
+        left_today = left_today_db
+        net_today = net_today_db
         total_members = 0
         if gid:
             try:
@@ -1265,10 +1332,36 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
                     total_members = rm.bot.get_chat_member_count(gid)
             except Exception:
                 total_members = rm.db.get_group_total_members_latest(gid)
-
+        active_today = rm.db.get_daily_active_users(today)
+        msgs_today = rm.db.get_daily_bot_messages(today)
         data_source = "📊 自统计（事件追踪+校准）"
 
-    reply_rate = (views_today / max(msgs_today, 1)) * 100
+    joined_yest = joined_yest_db
+    left_yest = left_yest_db
+    net_yest = net_yest_db
+    active_yest = rm.db.get_daily_active_users(yesterday)
+    msgs_yest = rm.db.get_daily_bot_messages(yesterday)
+
+    # ── 运营指标计算 ──
+    # 活跃度
+    activity_rate = (active_today / max(total_members, 1)) * 100
+    activity_rate_yest = (active_yest / max(total_members, 1)) * 100
+
+    # 沉默比例
+    silence_ratio = ((total_members - active_today) / max(total_members, 1)) * 100
+
+    # 流失预警
+    churn_warning = ""
+    if joined_today > 0 and (left_today / joined_today) > 0.5:
+        churn_warning = " ⚠️"
+    elif left_today > 0 and joined_today == 0:
+        churn_warning = " 🔴"
+
+    # Bot互动率
+    bot_interact_rate = 0
+    if msgs_today > 0:
+        replies_today = rm.db.get_daily_replies(today)
+        bot_interact_rate = (replies_today / msgs_today) * 100
 
     html = f"""🏠 <b>群数据日报</b> · {today}
 
@@ -1284,15 +1377,21 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
 
 👥 <b>活跃度</b>
 ├ 活跃互动：{active_today} {trend_fn(active_today, active_yest)}
-├ 消息数：{msgs_today} {trend_fn(msgs_today, msgs_yest)}
-├ 浏览/回复：{views_today} {trend_fn(views_today, views_yest)}
-└ 互动率：{reply_rate:.0f}%
+└ 消息数：{msgs_today} {trend_fn(msgs_today, msgs_yest)}
+
+━━━━━━━━━━━━━━━━━━
+
+💡 <b>运营洞察</b>
+├ 活跃度：{activity_rate:.1f}% {trend_fn(activity_rate, activity_rate_yest)}
+├ 沉默比例：{silence_ratio:.1f}%
+├ 流失预警：{'离群/入群=' + f'{left_today}/{joined_today}' + churn_warning if joined_today > 0 else f'离群{left_today}' + churn_warning}
+└ Bot互动率：{bot_interact_rate:.0f}%
 
 ━━━━━━━━━━━━━━━━━━
 
 🌙 <b>昨日同期</b>
 ├ 入群{joined_yest}/离群{left_yest}/净增{net_yest:+d}
-├ 互动{active_yest}/消息{msgs_yest}/浏览{views_yest}
+├ 互动{active_yest}/消息{msgs_yest}
 
 ━━━━━━━━━━━━━━━━━━
 <i>{data_source} · Mory小助理</i>"""
@@ -1303,38 +1402,53 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
 
 
 def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
-    """【v4.5.36】频道数据日报 — 优先getChatStatistics API，降级用channel_tracking"""
+    """【v4.9.7重构】频道数据日报 — 运营指标 + 健康度评分"""
     channel_ids = rm.config.get("CHANNEL_IDS", [])
     if not channel_ids:
         return
 
     token = rm.config.get("TOKEN", "")
     yesterday = (datetime.now(_CST) - timedelta(days=1)).strftime("%Y-%m-%d")
+    gid = rm.config.get("GROUP_ID", 0)
 
     channel_lines = []
     stats_lines = []
+    ops_lines = []
     total_posts_today = 0
     total_views_today = 0
+    total_forwards_today = 0
+    total_channel_members = 0
     any_api = False
 
     for ch in channel_ids:
         cid = ch.get("id", 0) if isinstance(ch, dict) else ch
         cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
 
+        # ── 获取当前成员数 ──
         ch_count = 0
         try:
             with rm.locked('bot'):
                 ch_count = rm.bot.get_chat_member_count(cid)
-            ch_type = ch.get("type", "频道") if isinstance(ch, dict) else "频道"
-            channel_lines.append(f"├ {cname}：{ch_count}人 ({ch_type})")
         except Exception as e:
             logger.debug(f"频道成员数获取失败: {cname} err={e}")
             ch_count = rm.db.get_group_total_members_latest(cid)
-            if ch_count > 0:
-                channel_lines.append(f"├ {cname}：约{ch_count}人")
-            else:
-                channel_lines.append(f"├ {cname}：—")
+        total_channel_members += ch_count
 
+        ch_type = ch.get("type", "频道") if isinstance(ch, dict) else "频道"
+
+        # ── 获取今日新增/离开数据 ──
+        member_changes = rm.db.get_channel_member_changes(cid, yesterday, today)
+        joined = member_changes["joined"]
+        left = member_changes["left"]
+        net = joined - left
+
+        # ── 构建频道概况行 ──
+        if joined > 0 or left > 0:
+            channel_lines.append(f"├ {cname}：{ch_count}人 ({ch_type}) 今日+{joined}/-{left} 净{net:+d}")
+        else:
+            channel_lines.append(f"├ {cname}：{ch_count}人 ({ch_type}) 今日无变化")
+
+        # ── 获取发帖/浏览数据 ──
         api_ch = None
         if token:
             try:
@@ -1344,55 +1458,120 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
             except Exception:
                 pass
 
+        yest_stats = rm.db.get_channel_daily_stats(cid, yesterday)
+        posts_yest = yest_stats.get("posts", 0)
+        views_yest = yest_stats.get("views", 0)
+
+        posts_today = 0
+        views_today = 0
+        forwards_today = 0
+        avg_views = 0
+
         if api_ch:
             posts_today = api_ch.get("messages_today", 0)
             views_today = api_ch.get("views_today", 0)
             forwards_today = api_ch.get("forwards_today", 0)
+            if posts_today == 0 and views_today == 0:
+                db_stats = rm.db.get_channel_daily_stats(cid, today)
+                posts_today = db_stats.get("posts", 0)
+                views_today = db_stats.get("views", 0)
+                forwards_today = rm.db.get_channel_post_stats(cid, today).get("forwards", 0)
             avg_views = views_today // max(posts_today, 1)
-            total_posts_today += posts_today
-            total_views_today += views_today
-
-            posts_yest = api_ch.get("yesterday_messages", 0)
-            views_yest = api_ch.get("yesterday_views", 0)
-
-            stats_lines.append(
-                f"├ {cname}："
-                f"发帖{posts_today}{trend_fn(posts_today, posts_yest)} "
-                f"浏览{views_today}{trend_fn(views_today, views_yest)} "
-                f"均阅{avg_views}"
-            )
         else:
             try:
                 today_stats = rm.db.get_channel_daily_stats(cid, today)
-                yest_stats = rm.db.get_channel_daily_stats(cid, yesterday)
-
+                native_stats = rm.db.get_channel_post_stats(cid, today)
                 posts_today = today_stats.get("posts", 0)
                 views_today = today_stats.get("views", 0)
+                forwards_today = native_stats.get("forwards", 0)
                 avg_views = today_stats.get("avg_views", 0)
-                posts_yest = yest_stats.get("posts", 0)
-                views_yest = yest_stats.get("views", 0)
-
-                total_posts_today += posts_today
-                total_views_today += views_today
-
-                stats_lines.append(
-                    f"├ {cname}："
-                    f"发帖{posts_today}{trend_fn(posts_today, posts_yest)} "
-                    f"浏览{views_today}{trend_fn(views_today, views_yest)} "
-                    f"均阅{avg_views}"
-                )
             except Exception as e:
                 logger.debug(f"频道统计获取失败: {cname} err={e}")
-                stats_lines.append(f"├ {cname}：统计获取失败")
+
+        total_posts_today += posts_today
+        total_views_today += views_today
+        total_forwards_today += forwards_today
+
+        stats_lines.append(
+            f"├ {cname}："
+            f"发帖{posts_today}{trend_fn(posts_today, posts_yest)} "
+            f"浏览{views_today}{trend_fn(views_today, views_yest)} "
+            f"均阅{avg_views}"
+        )
+
+        # ── 运营指标计算 ──
+        reach_rate = (views_today / max(ch_count, 1)) * 100
+        interact_rate = (forwards_today / max(views_today, 1)) * 100
+        hot_posts = rm.db.get_channel_top_posts(cid, today, threshold=2.0)
+
+        ops_lines.append(
+            f"├ {cname}：触达{reach_rate:.0f}% 互动{interact_rate:.1f}% 爆款{hot_posts}条"
+        )
 
     if channel_lines:
         channel_lines[-1] = channel_lines[-1].replace("├", "└", 1)
     if stats_lines:
         stats_lines[-1] = stats_lines[-1].replace("├", "└", 1)
+    if ops_lines:
+        ops_lines[-1] = ops_lines[-1].replace("├", "└", 1)
 
-    data_source = "📡 Telegram官方统计" if any_api else "📊 自统计（仅Bot消息）"
+    # ── 综合健康度评分 ──
+    # 成员增长 30%
+    group_stats_today = rm.db.get_group_stats_by_date(today)
+    net_group = 0
+    for row in group_stats_today:
+        if len(row) >= 6:
+            net_group += row[4] or 0
+    total_net = net_group + sum(
+        rm.db.get_channel_member_changes(
+            ch.get("id", 0) if isinstance(ch, dict) else ch, yesterday, today
+        )["joined"] - rm.db.get_channel_member_changes(
+            ch.get("id", 0) if isinstance(ch, dict) else ch, yesterday, today
+        )["left"]
+        for ch in channel_ids
+    )
+    if total_net > 0:
+        growth_score = 30
+    elif total_net == 0:
+        growth_score = 15
+    else:
+        growth_score = max(0, 30 + total_net * 2)
 
-    html = f"""📡 <b>频道数据日报</b> · {today}
+    # 内容触达 25%
+    total_reach_rate = (total_views_today / max(total_channel_members, 1)) * 100
+    reach_score = min(25, total_reach_rate / 4)
+
+    # 社群活跃 25%
+    active_today = rm.db.get_daily_active_users(today)
+    total_members_group = 0
+    if gid:
+        try:
+            with rm.locked('bot'):
+                total_members_group = rm.bot.get_chat_member_count(gid)
+        except Exception:
+            total_members_group = rm.db.get_group_total_members_latest(gid)
+    activity_rate = (active_today / max(total_members_group, 1)) * 100
+    activity_score = min(25, activity_rate / 2)
+
+    # 内容更新 20%
+    if total_posts_today >= 3:
+        content_score = 20
+    elif total_posts_today >= 1:
+        content_score = 10
+    else:
+        content_score = 0
+
+    health_score = int(growth_score + reach_score + activity_score + content_score)
+    if health_score >= 70:
+        health_icon = "🟢"
+    elif health_score >= 40:
+        health_icon = "🟡"
+    else:
+        health_icon = "🔴"
+
+    data_source = "📡 Telegram官方统计" if any_api else "📊 自统计"
+
+    html = f"""📢 <b>频道数据日报</b> · {today}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -1406,15 +1585,22 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
 
 ━━━━━━━━━━━━━━━━━━
 
-📈 <b>汇总</b>
-└ 总发帖{total_posts_today}条 / 总浏览{total_views_today}次
+💡 <b>运营洞察</b>
+{chr(10).join(ops_lines)}
+
+━━━━━━━━━━━━━━━━━━
+
+🏥 <b>综合健康度</b> {health_icon} {health_score}/100
+├ 成员增长{growth_score:.0f}/30 · 内容触达{reach_score:.0f}/25
+├ 社群活跃{activity_score:.0f}/25 · 内容更新{content_score:.0f}/20
+└ 汇总：发帖{total_posts_today}条 / 浏览{total_views_today}次 / 转发{total_forwards_today}次
 
 ━━━━━━━━━━━━━━━━━━
 <i>{data_source} · Mory小助理</i>"""
 
     with rm.locked('bot'):
         rm.bot.send_message(admin_id, html, parse_mode="HTML")
-    logger.info(f"✅ 频道日报已发送: 发帖{total_posts_today} 浏览{total_views_today} API={'是' if any_api else '否'}")
+    logger.info(f"✅ 频道日报已发送: 发帖{total_posts_today} 浏览{total_views_today} 健康度{health_score} API={'是' if any_api else '否'}")
 
 
 def _job_weekly_report(rm):
@@ -1449,7 +1635,7 @@ def _job_weekly_report(rm):
 
 
 def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_weeks_ago: str):
-    """【v4.5.36】群数据周报 — 修复chat_id=0 bug，优先API数据"""
+    """【v4.9.7重构】群数据周报 — 移除浏览/回复，新增运营洞察"""
     gid = rm.config.get("GROUP_ID", 0)
     this_week = rm.db.get_weekly_group_stats(week_ago, today, chat_id=gid)
     last_week = rm.db.get_weekly_group_stats(two_weeks_ago, week_ago, chat_id=gid)
@@ -1478,6 +1664,12 @@ def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_
     if this_week["joined"] > 0:
         retention = max(0, (this_week["joined"] - this_week["left"]) / this_week["joined"] * 100)
     
+    # ── 运营指标 ──
+    activity_rate = (this_week.get("active_users", 0) / max(total_members, 1)) * 100
+    churn_warning = ""
+    if this_week["joined"] > 0 and (this_week["left"] / this_week["joined"]) > 0.5:
+        churn_warning = " ⚠️"
+    
     data_source = "📊 自统计（事件追踪+校准）"
 
     html = f"""🏠 <b>群数据周报</b> · {week_ago} ~ {today}
@@ -1492,17 +1684,23 @@ def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_
 
 ━━━━━━━━━━━━━━━━━━
 
+💡 <b>运营洞察</b>
+├ 活跃度：{activity_rate:.1f}%
+├ 留存率：{retention:.0f}%
+├ 流失预警：离群/入群={this_week['left']}/{this_week['joined']}{churn_warning}
+└ 周均成员：{this_week['avg_members']}
+
+━━━━━━━━━━━━━━━━━━
+
 📈 <b>周环比</b>
 ├ 入群变化：{pct(this_week['joined'], last_week['joined'])}
 ├ 离群变化：{pct(this_week['left'], last_week['left'])}
-├ 净增变化：{pct(this_week['net'], last_week['net'])}
-└ 留存率：{retention:.0f}%
+└ 净增变化：{pct(this_week['net'], last_week['net'])}
 
 ━━━━━━━━━━━━━━━━━━
 
 📉 <b>上周同期</b>
 ├ 入群{last_week['joined']}/离群{last_week['left']}/净增{last_week['net']:+d}
-├ 周均成员：{last_week['avg_members']}
 
 ━━━━━━━━━━━━━━━━━━
 <i>{data_source} · Mory小助理</i>"""
@@ -1513,7 +1711,7 @@ def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_
 
 
 def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, week_ago_ts: int, now_ts: int):
-    """【v4.5.36】频道数据周报 — 优先getChatStatistics API，不再提示手动查看"""
+    """【v4.9.7重构】频道数据周报 — 成员变化 + 发帖浏览 + 运营指标"""
     channel_ids = rm.config.get("CHANNEL_IDS", [])
     if not channel_ids:
         return
@@ -1521,27 +1719,31 @@ def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, we
     token = rm.config.get("TOKEN", "")
     channel_lines = []
     stats_lines = []
+    ops_lines = []
     any_api = False
 
     for ch in channel_ids:
         cid = ch.get("id", 0) if isinstance(ch, dict) else ch
         cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
 
+        # ── 获取当前成员数 ──
         ch_count = 0
         try:
             with rm.locked('bot'):
                 ch_count = rm.bot.get_chat_member_count(cid)
-            ch_member_stats = rm.db.get_weekly_channel_member_stats(cid, week_ago, today)
-            member_growth = ch_member_stats["max"] - ch_member_stats["min"]
-            channel_lines.append(f"├ {cname}：{ch_count}人(周+{member_growth:+d})")
         except Exception as e:
             logger.debug(f"频道周报获取失败: {cname} err={e}")
             ch_count = rm.db.get_group_total_members_latest(cid)
-            if ch_count > 0:
-                channel_lines.append(f"├ {cname}：约{ch_count}人")
-            else:
-                channel_lines.append(f"├ {cname}：—")
 
+        # ── 获取本周成员变化 ──
+        member_changes = rm.db.get_channel_weekly_member_changes(cid, week_ago, today)
+        joined = member_changes["joined"]
+        left = member_changes["left"]
+        net = joined - left
+
+        channel_lines.append(f"├ {cname}：{ch_count}人 周+{net:+d} (+{joined}/-{left})")
+
+        # ── 发帖/浏览统计 ──
         api_ch = None
         if token:
             try:
@@ -1551,25 +1753,37 @@ def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, we
             except Exception:
                 pass
 
+        posts = 0
+        views = 0
+        forwards = 0
+
         if api_ch:
-            msgs = api_ch.get("messages_today", 0)
+            posts = api_ch.get("messages_today", 0)
             views = api_ch.get("views_today", 0)
             forwards = api_ch.get("forwards_today", 0)
-            stats_lines.append(f"├ {cname}：发帖{msgs} 浏览{views} 转发{forwards}")
+            stats_lines.append(f"├ {cname}：发帖{posts} 浏览{views} 转发{forwards}")
         else:
             db_stats = rm.db.get_channel_posts_in_range(cid, week_ago_ts, now_ts)
             posts = db_stats.get("posts", 0) if db_stats else 0
             views = db_stats.get("views", 0) if db_stats else 0
-            stats_lines.append(f"├ {cname}：发帖{posts} 浏览{views}")
+            forwards = db_stats.get("forwards", 0) if db_stats else 0
+            stats_lines.append(f"├ {cname}：发帖{posts} 浏览{views} 转发{forwards}")
+
+        # ── 运营指标 ──
+        reach_rate = (views / max(ch_count, 1)) * 100
+        interact_rate = (forwards / max(views, 1)) * 100
+        ops_lines.append(f"├ {cname}：触达{reach_rate:.0f}% 互动{interact_rate:.1f}%")
 
     if channel_lines:
         channel_lines[-1] = channel_lines[-1].replace("├", "└", 1)
     if stats_lines:
         stats_lines[-1] = stats_lines[-1].replace("├", "└", 1)
+    if ops_lines:
+        ops_lines[-1] = ops_lines[-1].replace("├", "└", 1)
 
-    data_source = "📡 Telegram官方统计" if any_api else "📊 自统计（仅Bot消息）"
+    data_source = "📡 Telegram官方统计" if any_api else "📊 自统计"
 
-    html = f"""📡 <b>频道数据周报</b> · {week_ago} ~ {today}
+    html = f"""📢 <b>频道数据周报</b> · {week_ago} ~ {today}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -1582,11 +1796,227 @@ def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, we
 {chr(10).join(stats_lines)}
 
 ━━━━━━━━━━━━━━━━━━
+
+💡 <b>运营洞察</b>
+{chr(10).join(ops_lines)}
+
+━━━━━━━━━━━━━━━━━━
 <i>{data_source} · Mory小助理</i>"""
-    
+
     with rm.locked('bot'):
         rm.bot.send_message(admin_id, html, parse_mode="HTML")
     logger.info(f"✅ 频道周报已发送 API={'是' if any_api else '否'}")
+
+
+def _job_monthly_report(rm):
+    """【v4.9.6新增】每月数据报告 - 群月报+频道月报
+    每月1号 9:00 执行
+    """
+    if not _try_claim_and_lock("monthly_report", rm.db, 86400 * 28):
+        return
+    try:
+        admin_id = rm.config.get("ADMIN_ID", 0)
+        if not admin_id:
+            _release_task("monthly_report", rm.db)
+            return
+
+        now = datetime.now(_CST)
+        today = now.strftime("%Y-%m-%d")
+        # 本月1号
+        month_start = now.replace(day=1).strftime("%Y-%m-%d")
+        # 上月1号（用于环比）
+        if now.month == 1:
+            prev_month_start = now.replace(year=now.year - 1, month=12, day=1).strftime("%Y-%m-%d")
+        else:
+            prev_month_start = now.replace(month=now.month - 1, day=1).strftime("%Y-%m-%d")
+
+        _send_monthly_group_report(rm, admin_id, today, month_start, prev_month_start)
+        _send_monthly_channel_report(rm, admin_id, today, month_start, prev_month_start)
+
+        _confirm_task_done("monthly_report", rm.db, 86400 * 28)
+        logger.info("✅ 每月数据报告已发送（群+频道）")
+    except Exception as e:
+        logger.error(f"每月数据报告失败：{e}")
+        _release_task("monthly_report", rm.db)
+        _retry_task(rm, _job_monthly_report, "monthly_report")
+
+
+def _send_monthly_group_report(rm, admin_id: int, today: str, month_start: str, prev_month_start: str):
+    """【v4.9.7重构】群数据月报 — 移除浏览/回复，新增运营洞察"""
+    gid = rm.config.get("GROUP_ID", 0)
+    this_month = rm.db.get_weekly_group_stats(month_start, today, chat_id=gid)
+    last_month = rm.db.get_weekly_group_stats(prev_month_start, month_start, chat_id=gid)
+
+    total_members = 0
+    if gid:
+        try:
+            with rm.locked('bot'):
+                total_members = rm.bot.get_chat_member_count(gid)
+        except Exception:
+            total_members = rm.db.get_group_total_members_latest(gid)
+
+    def pct(cur, prev):
+        if prev == 0: return "🆕" if cur > 0 else "➖"
+        diff = ((cur - prev) / prev) * 100
+        if diff > 0: return f"📈+{diff:.0f}%"
+        if diff < 0: return f"📉{diff:.0f}%"
+        return "➖0%"
+
+    def trend(cur, prev):
+        if cur > prev: return "📈"
+        if cur < prev: return "📉"
+        return "➖"
+
+    retention = 0
+    if this_month["joined"] > 0:
+        retention = max(0, (this_month["joined"] - this_month["left"]) / this_month["joined"] * 100)
+
+    # ── 运营指标 ──
+    activity_rate = (this_month.get("active_users", 0) / max(total_members, 1)) * 100
+    churn_warning = ""
+    if this_month["joined"] > 0 and (this_month["left"] / this_month["joined"]) > 0.5:
+        churn_warning = " ⚠️"
+
+    data_source = "📊 自统计（事件追踪+校准）"
+    month_display = month_start[:7]
+
+    html = f"""🏠 <b>群数据月报</b> · {month_display}
+
+━━━━━━━━━━━━━━━━━━
+
+📊 <b>本月群动态</b>
+├ 入群：{this_month['joined']} {trend(this_month['joined'], last_month['joined'])}
+├ 离群：{this_month['left']} {trend(this_month['left'], last_month['left'])}
+├ 净增：{this_month['net']:+d} {trend(this_month['net'], last_month['net'])}
+└ 当前成员：{total_members}
+
+━━━━━━━━━━━━━━━━━━
+
+💡 <b>运营洞察</b>
+├ 月活跃度：{activity_rate:.1f}%
+├ 留存率：{retention:.0f}%
+├ 流失预警：离群/入群={this_month['left']}/{this_month['joined']}{churn_warning}
+
+━━━━━━━━━━━━━━━━━━
+
+📈 <b>月环比</b>
+├ 入群变化：{pct(this_month['joined'], last_month['joined'])}
+├ 离群变化：{pct(this_month['left'], last_month['left'])}
+└ 净增变化：{pct(this_month['net'], last_month['net'])}
+
+━━━━━━━━━━━━━━━━━━
+
+📉 <b>上月同期</b>
+├ 入群{last_month['joined']}/离群{last_month['left']}/净增{last_month['net']:+d}
+
+━━━━━━━━━━━━━━━━━━
+<i>{data_source} · Mory小助理</i>"""
+
+    with rm.locked('bot'):
+        rm.bot.send_message(admin_id, html, parse_mode="HTML")
+    logger.info("✅ 群月报已发送")
+
+
+def _send_monthly_channel_report(rm, admin_id: int, today: str, month_start: str, prev_month_start: str):
+    """【v4.9.7重构】频道数据月报 — 成员变化 + 发帖浏览 + 运营指标"""
+    channel_ids = rm.config.get("CHANNEL_IDS", [])
+    if not channel_ids:
+        return
+
+    token = rm.config.get("TOKEN", "")
+    channel_lines = []
+    stats_lines = []
+    ops_lines = []
+    any_api = False
+    month_display = month_start[:7]
+
+    for ch in channel_ids:
+        cid = ch.get("id", 0) if isinstance(ch, dict) else ch
+        cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
+
+        # ── 获取当前成员数 ──
+        ch_count = 0
+        try:
+            with rm.locked('bot'):
+                ch_count = rm.bot.get_chat_member_count(cid)
+        except Exception as e:
+            logger.debug(f"频道月报获取失败: {cname} err={e}")
+            ch_count = rm.db.get_group_total_members_latest(cid)
+
+        # ── 获取本月成员变化 ──
+        member_changes = rm.db.get_channel_monthly_member_changes(cid, month_display)
+        joined = member_changes["joined"]
+        left = member_changes["left"]
+        net = joined - left
+
+        channel_lines.append(f"├ {cname}：{ch_count}人 月+{net:+d} (+{joined}/-{left})")
+
+        # ── 发帖/浏览统计 ──
+        month_start_ts = int(datetime.strptime(month_start, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
+        now_ts = int(datetime.now(_CST).timestamp())
+
+        api_ch = None
+        if token:
+            try:
+                api_ch = get_channel_daily_stats(token, cid)
+                if api_ch:
+                    any_api = True
+            except Exception:
+                pass
+
+        posts = 0
+        views = 0
+        forwards = 0
+
+        if api_ch:
+            posts = api_ch.get("messages_today", 0)
+            views = api_ch.get("views_today", 0)
+            forwards = api_ch.get("forwards_today", 0)
+            stats_lines.append(f"├ {cname}：发帖{posts} 浏览{views} 转发{forwards}")
+        else:
+            db_stats = rm.db.get_channel_posts_in_range(cid, month_start_ts, now_ts)
+            posts = db_stats.get("posts", 0) if db_stats else 0
+            views = db_stats.get("views", 0) if db_stats else 0
+            forwards = db_stats.get("forwards", 0) if db_stats else 0
+            stats_lines.append(f"├ {cname}：发帖{posts} 浏览{views} 转发{forwards}")
+
+        # ── 运营指标 ──
+        reach_rate = (views / max(ch_count, 1)) * 100
+        interact_rate = (forwards / max(views, 1)) * 100
+        ops_lines.append(f"├ {cname}：触达{reach_rate:.0f}% 互动{interact_rate:.1f}%")
+
+    if channel_lines:
+        channel_lines[-1] = channel_lines[-1].replace("├", "└", 1)
+    if stats_lines:
+        stats_lines[-1] = stats_lines[-1].replace("├", "└", 1)
+    if ops_lines:
+        ops_lines[-1] = ops_lines[-1].replace("├", "└", 1)
+
+    data_source = "📡 Telegram官方统计" if any_api else "📊 自统计"
+
+    html = f"""📢 <b>频道数据月报</b> · {month_display}
+
+━━━━━━━━━━━━━━━━━━
+
+📊 <b>各频道月数据</b>
+{chr(10).join(channel_lines)}
+
+━━━━━━━━━━━━━━━━━━
+
+📈 <b>发帖/浏览统计</b>
+{chr(10).join(stats_lines)}
+
+━━━━━━━━━━━━━━━━━━
+
+💡 <b>运营洞察</b>
+{chr(10).join(ops_lines)}
+
+━━━━━━━━━━━━━━━━━━
+<i>{data_source} · Mory小助理</i>"""
+
+    with rm.locked('bot'):
+        rm.bot.send_message(admin_id, html, parse_mode="HTML")
+    logger.info(f"✅ 频道月报已发送 API={'是' if any_api else '否'}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2137,6 +2567,8 @@ def _start_with_apscheduler(rm):
     # 每日数据报告（v4.2.4）- 私聊发送
     scheduler.add_job(_job_daily_report, "cron", hour=9, minute=10, args=[rm], id="daily_report", max_instances=1, coalesce=True, misfire_grace_time=60)
     scheduler.add_job(_job_weekly_report, "cron", day_of_week="mon", hour=9, minute=30, args=[rm], id="weekly_report", max_instances=1, coalesce=True, misfire_grace_time=3600)
+    scheduler.add_job(_job_monthly_report, "cron", day=1, hour=9, minute=30, args=[rm], id="monthly_report", max_instances=1, coalesce=True, misfire_grace_time=3600)
+    scheduler.add_job(_refresh_channel_post_views, "cron", hour="*/1", minute=40, args=[rm], id="refresh_channel_views", max_instances=1, coalesce=True, misfire_grace_time=3600)
     
     # 每日塔罗搭讪（v4.2.5）- 随机30%概率
     scheduler.add_job(_job_tarot_flirt, "cron", hour=15, minute=0, args=[rm], id="tarot_flirt", max_instances=1, coalesce=True, misfire_grace_time=60)

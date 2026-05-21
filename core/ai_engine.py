@@ -113,10 +113,10 @@ def fetch_real_news() -> str:
     七源同时请求，最快返回的优先使用，总超时15秒。
     """
     import re
+    import json
     import concurrent.futures
 
     def _dedup(raw_list):
-        """去重+过滤无效条目"""
         seen, unique = set(), []
         for t in raw_list:
             t = t.strip()
@@ -125,130 +125,73 @@ def fetch_real_news() -> str:
                 unique.append(t)
         return unique
 
-    # ════ 源1：百度热搜 ════
-    def _fetch_baidu():
+    def _parse_baidu(text):
+        titles = re.findall(r'"word":"([^"]+)"', text)
+        if not titles:
+            titles = re.findall(r'<a[^>]*title="([^"]+)"[^>]*>', text)
+        return titles
+
+    def _parse_weibo(text):
         try:
-            resp = _get_news_session().get("https://top.baidu.com/board?tab=realtime",
-                                timeout=10)
-            if resp.status_code == 200 and len(resp.text) > 500:
-                titles = re.findall(r'"word":"([^"]+)"', resp.text)
-                if not titles:
-                    titles = re.findall(r'<a[^>]*title="([^"]+)"[^>]*>', resp.text)
-                unique = _dedup(titles)
-                if unique:
-                    logger.info(f"📰 百度热搜成功：{min(len(unique),12)}条")
-                    return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
+            items = json.loads(text).get("data", {}).get("realtime", [])
+            return [item.get("word", "") for item in items[:15]]
+        except Exception:
+            return []
+
+    def _parse_toutiao(text):
+        return re.findall(r'<td class="al"><a[^>]*>([^<]+)</a>', text)
+
+    def _parse_zhihu(text):
+        titles = re.findall(r'<meta itemprop="name" content="([^"]+)"', text)
+        if not titles:
+            titles = re.findall(r'"title":"([^"]+)"', text)
+        return titles
+
+    def _parse_douyin(text):
+        return re.findall(r'<td class="al"><a[^>]*>([^<]+)</a>', text)
+
+    def _parse_36kr(text):
+        titles = re.findall(r'"title":"([^"]+)"', text)
+        if not titles:
+            titles = re.findall(r'<a[^>]*class="item-title"[^>]*>([^<]+)</a>', text)
+        return titles
+
+    def _parse_thepaper(text):
+        titles = re.findall(r'<h2 class="news_title">[^<]*<a[^>]*>([^<]+)</a>', text)
+        if not titles:
+            titles = re.findall(r'"title":"([^"]+)"', text)
+        return titles
+
+    NEWS_SOURCES = [
+        {"name": "百度热搜", "url": "https://top.baidu.com/board?tab=realtime", "timeout": 10, "min_len": 500, "parser": _parse_baidu},
+        {"name": "微博热搜", "url": "https://weibo.com/ajax/side/hotSearch", "timeout": 8, "min_len": 0, "parser": _parse_weibo},
+        {"name": "今日头条", "url": "https://tophub.today/n/KqndgxeLl9", "timeout": 8, "min_len": 1000, "parser": _parse_toutiao},
+        {"name": "知乎热榜", "url": "https://www.zhihu.com/hot", "timeout": 8, "min_len": 500, "parser": _parse_zhihu},
+        {"name": "抖音热点", "url": "https://tophub.today/n/DpQvNABoNE", "timeout": 8, "min_len": 500, "parser": _parse_douyin},
+        {"name": "36氪快讯", "url": "https://36kr.com/newsflashes", "timeout": 8, "min_len": 500, "parser": _parse_36kr},
+        {"name": "澎湃新闻", "url": "https://www.thepaper.cn/", "timeout": 8, "min_len": 500, "parser": _parse_thepaper},
+    ]
+
+    def _fetch_news_source(src):
+        try:
+            resp = _get_news_session().get(src["url"], timeout=src["timeout"])
+            if resp.status_code != 200:
+                return None
+            if src["min_len"] and len(resp.text) < src["min_len"]:
+                return None
+            titles = src["parser"](resp.text)
+            unique = _dedup(titles)
+            if unique:
+                logger.info(f"📰 {src['name']}成功：{min(len(unique), 12)}条")
+                return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
         except Exception as e:
-            logger.warning(f"📰 百度热搜失败：{e}")
+            logger.warning(f"📰 {src['name']}失败：{e}")
         return None
 
-    # ════ 源2：微博热搜API（JSON数据更可靠）═════
-    def _fetch_weibo():
-        try:
-            resp = _get_news_session().get("https://weibo.com/ajax/side/hotSearch",
-                                timeout=8)
-            if resp.status_code == 200:
-                items = resp.json().get("data", {}).get("realtime", [])
-                raw = [item.get("word", "") for item in items[:15]]
-                unique = _dedup(raw)
-                if unique:
-                    logger.info(f"📰 微博热搜成功：{min(len(unique),12)}条")
-                    return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
-        except Exception as e:
-            logger.warning(f"📰 微博热搜失败：{e}")
-        return None
-
-    # ════ 源3：今日头条热榜 ════
-    def _fetch_toutiao():
-        try:
-            resp = _get_news_session().get("https://tophub.today/n/KqndgxeLl9",
-                                timeout=8)
-            if resp.status_code == 200 and len(resp.text) > 1000:
-                titles = re.findall(r'<td class="al"><a[^>]*>([^<]+)</a>', resp.text)
-                unique = _dedup(titles)
-                if unique:
-                    logger.info(f"📰 今日头条成功：{min(len(unique),12)}条")
-                    return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
-        except Exception as e:
-            logger.warning(f" 今日头条失败：{e}")
-        return None
-
-    # ════ 源4：知乎热榜 ════
-    def _fetch_zhihu():
-        try:
-            resp = _get_news_session().get("https://www.zhihu.com/hot",
-                                timeout=8)
-            if resp.status_code == 200 and len(resp.text) > 500:
-                titles = re.findall(r'<meta itemprop="name" content="([^"]+)"', resp.text)
-                if not titles:
-                    titles = re.findall(r'"title":"([^"]+)"', resp.text)
-                unique = _dedup(titles)
-                if unique:
-                    logger.info(f"📰 知乎热榜成功：{min(len(unique),12)}条")
-                    return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
-        except Exception as e:
-            logger.warning(f"📰 知乎热榜失败：{e}")
-        return None
-
-    # ════ 源5：抖音热点 ════
-    def _fetch_douyin():
-        try:
-            resp = _get_news_session().get("https://tophub.today/n/DpQvNABoNE",
-                                timeout=8)
-            if resp.status_code == 200 and len(resp.text) > 500:
-                titles = re.findall(r'<td class="al"><a[^>]*>([^<]+)</a>', resp.text)
-                unique = _dedup(titles)
-                if unique:
-                    logger.info(f"📰 抖音热点成功：{min(len(unique),12)}条")
-                    return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
-        except Exception as e:
-            logger.warning(f"📰 抖音热点失败：{e}")
-        return None
-
-    # ════ 源6：36氪快讯 ═══
-    def _fetch_36kr():
-        try:
-            resp = _get_news_session().get("https://36kr.com/newsflashes",
-                                timeout=8)
-            if resp.status_code == 200 and len(resp.text) > 500:
-                titles = re.findall(r'"title":"([^"]+)"', resp.text)
-                if not titles:
-                    titles = re.findall(r'<a[^>]*class="item-title"[^>]*>([^<]+)</a>', resp.text)
-                unique = _dedup(titles)
-                if unique:
-                    logger.info(f"📰 36氪成功：{min(len(unique),12)}条")
-                    return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
-        except Exception as e:
-            logger.warning(f"📰 36氪失败：{e}")
-        return None
-
-    # ════ 源7：澎湃新闻 ════
-    def _fetch_thepaper():
-        try:
-            resp = _get_news_session().get("https://www.thepaper.cn/",
-                                timeout=8)
-            if resp.status_code == 200 and len(resp.text) > 500:
-                titles = re.findall(r'<h2 class="news_title">[^<]*<a[^>]*>([^<]+)</a>', resp.text)
-                if not titles:
-                    titles = re.findall(r'"title":"([^"]+)"', resp.text)
-                unique = _dedup(titles)
-                if unique:
-                    logger.info(f" 澎湃新闻成功：{min(len(unique),12)}条")
-                    return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
-        except Exception as e:
-            logger.warning(f"📰 澎湃新闻失败：{e}")
-        return None
-
-    # 七源并行，任一成功即返回
     with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
         futures = {
-            executor.submit(_fetch_baidu): "百度",
-            executor.submit(_fetch_weibo): "微博",
-            executor.submit(_fetch_toutiao): "头条",
-            executor.submit(_fetch_zhihu): "知乎",
-            executor.submit(_fetch_douyin): "抖音",
-            executor.submit(_fetch_36kr): "36氪",
-            executor.submit(_fetch_thepaper): "澎湃",
+            executor.submit(_fetch_news_source, src): src["name"]
+            for src in NEWS_SOURCES
         }
         for f in concurrent.futures.as_completed(futures, timeout=15):
             result = f.result()
@@ -564,6 +507,11 @@ class AIEngine:
                 logger.warning(f"🔄 [{tier}] 模型切换(含慢速) → {candidate}")
                 return
             logger.error(f"🚫 [{tier}] 所有模型均不可用")
+            try:
+                from modules.auto_tasks import report_fault
+                report_fault("层级池模型不可用", f"{tier}池所有模型均不可用", "⚠️")
+            except Exception:
+                pass
 
     def _ensure_tier_model(self, tier: str):
         """确保指定层级池的当前模型可用"""
@@ -672,6 +620,11 @@ class AIEngine:
             
             # 所有模型都被拉黑或过期了
             logger.error(f"🚫 [{pool_name}] 所有模型均已拉黑或过期！请检查API余额或更新模型配置")
+            try:
+                from modules.auto_tasks import report_fault
+                report_fault("模型池全部拉黑", f"{pool_name}池所有模型均已拉黑或过期，请检查API余额", "🚨")
+            except Exception:
+                pass
 
     @staticmethod
     def _get_festival_persona() -> str:
@@ -705,19 +658,23 @@ class AIEngine:
             return (modes[mode].replace("{seed_hint}", seed_hint), True)
         return (modes[mode], False)
 
-    def _build_persona(self, mode: str, seed: int = 0, news_content: str = "") -> str:
+    def _build_persona(self, mode: str, seed: int = 0, news_content: str = "", is_priv: bool = False) -> str:
         """根据模式动态拼装 system prompt，seed用于防重复
         
         参数：
             mode: 模式名称
             seed: 随机种子
-            news_content: 【新增】真实新闻内容，用于新闻模式
+            news_content: 真实新闻内容，用于新闻模式
+            is_priv: [Trae] 是否私聊场景，影响人设追加
         
         结构化人设拼装顺序：
         1. BASE_PERSONA — 核心人设（稳定不变）
         2. STYLE_APPEND — 风格追加（改风格/加热词时追加，可清空）
         3. KNOWLEDGE — 业务知识库
         4. ADDED_KNOWLEDGE — 追加知识（学习时追加，可清空）
+        5. [Trae] 场景感知追加（私聊/群聊差异化）
+        6. 节日人格追加
+        7. 模式人格追加（或完整替换）
         兼容旧配置：如果只有SYSTEM_PROMPT则自动迁移
         """
         cfg = self.config
@@ -741,6 +698,12 @@ class AIEngine:
             knowledge = cfg.get("KNOWLEDGE", "")
             persona = f"{base}\n\n【业务知识库】：{knowledge}"
 
+        # [Trae] 场景感知追加
+        if is_priv:
+            persona += "\n\n【当前场景：私聊】你现在是在和对方1对1私聊，请切换到私聊模式——更亲密、更慢节奏、更愿意分享私密想法、更容易撒娇和吃醋。回复可以稍长一些、更走心。"
+        else:
+            persona += "\n\n【当前场景：群聊】你现在是在群里聊天，请切换到群聊模式——更活跃、更会整活、回复偏短一击即中、偶尔高冷。注意分寸，不过度撩某一个。"
+
         # 节日人格
         persona += self._get_festival_persona()
         # 模式人格
@@ -751,7 +714,7 @@ class AIEngine:
         return persona
 
     def ask(self, question: str, mode: str = "normal", retry: int = 3, seed: int = 0,
-            tools: list = None, tool_choice: str = "auto") -> str | None:
+            tools: list = None, tool_choice: str = "auto", is_priv: bool = False) -> str | None:
         """
         调用AI，失败时自动重试并切换模型。
         返回字符串，失败返回 None。
@@ -819,6 +782,11 @@ class AIEngine:
                             break
                     if not degraded:
                         logger.error(f"🚫 所有层级模型均不可用，回退到原llm池")
+                        try:
+                            from modules.auto_tasks import report_fault
+                            report_fault("三层路由全失败", "所有层级模型均不可用，已回退原llm池", "🚨")
+                        except Exception:
+                            pass
                         use_tier_routing = False
                 if use_tier_routing and current_tier_model:
                     active_model = current_tier_model
@@ -857,13 +825,14 @@ class AIEngine:
             payload = {
                 "model": active_model,
                 "messages": [
-                    # 【修复v21.43】新闻模式时，将 question 作为真实新闻内容传入
-                    {"role": "system", "content": self._build_persona(mode, seed, question if mode in ("news", "afternoon_news", "evening_news") else "")},
+                    {"role": "system", "content": self._build_persona(mode, seed, question if mode in ("news", "afternoon_news", "evening_news") else "", is_priv=is_priv)},
                     {"role": "user",   "content": question}
                 ],
-                "temperature": 0.88,
-                "top_p": 0.95,
-                "max_tokens": 500
+                "temperature": self.config.get("TEMPERATURE", 0.92),
+                "top_p": self.config.get("TOP_P", 0.92),
+                "max_tokens": self.config.get("MAX_TOKENS", 400),
+                "frequency_penalty": self.config.get("FREQUENCY_PENALTY", 0.5),
+                "presence_penalty": self.config.get("PRESENCE_PENALTY", 0.4)
             }
             
             # ── Function Calling 支持 ──
@@ -959,13 +928,10 @@ class AIEngine:
             time.sleep(wait)
 
         logger.error("❌ AI引擎：所有模型均失败")
-        # 全局故障通知：所有模型都不可用时通知管理员
         try:
-            from core.logging_util import get_logger
-            _fail_logger = get_logger("ai_engine_notify")
-            if not hasattr(self, "_last_fail_notify") or time.time() - self._last_fail_notify > 600:
-                self._last_fail_notify = time.time()
-                _fail_logger.warning("📢 所有模型失败，尝试发送故障通知（需在调用层处理）")
+            from modules.auto_tasks import report_fault
+            report_fault("AI模型全部失败", "所有模型均失败，用户消息无法回复", "🚨",
+                         f"尝试模型数: {attempt + 1}")
         except Exception:
             pass
         return None

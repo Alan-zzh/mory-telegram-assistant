@@ -137,6 +137,16 @@ ALL_CONFIGS = {
         "examples": ["把回复延迟上限改成60秒"]
     },
     
+    "REPLY_SPEED": {
+        "category": "核心互动",
+        "name": "回复速度",
+        "type": "choice",
+        "choices": ["fast", "normal", "slow", "human"],
+        "default": "human",
+        "desc": "回复速度模式：fast=秒回, normal=3-5秒, slow=5-12秒, human=智能拟人",
+        "examples": ["把回复速度调成慢一点", "回复速度改成human", "调成fast"]
+    },
+    
     "MAX_MSG_LENGTH": {
         "category": "核心互动",
         "name": "最大回复长度",
@@ -645,6 +655,7 @@ def _find_config_key(msg: str) -> str | None:
         "回复概率": "REPLY_CHANCE",
         "回复几率": "REPLY_CHANCE",
         "回复延迟": "REPLY_DELAY_MAX",
+        "回复速度": "REPLY_SPEED",
         "回复长度": "MAX_MSG_LENGTH",
         "碎片寻宝": "PUZZLE_ENABLED",
         "寻宝": "PUZZLE_ENABLED",
@@ -1097,13 +1108,45 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None
     return False
 
 
+def _handle_modify_choice(msg: str, config: dict, key: str, info: dict, m, save_config_fn, mory_bot=None) -> bool:
+    """[Trae] 处理choice类型配置的修改（如回复速度）"""
+    msg_lower = msg.lower()
+    choices = info.get("choices", [])
+    
+    speed_aliases = {
+        "快": "fast", "秒回": "fast", "快速": "fast", "最快": "fast",
+        "正常": "normal", "中等": "normal", "默认": "normal",
+        "慢": "slow", "慢点": "slow", "慢一点": "slow", "缓慢": "slow",
+        "拟人": "human", "智能": "human", "像人": "human", "真人": "human",
+    }
+    
+    for alias, val in speed_aliases.items():
+        if alias in msg_lower:
+            if val in choices:
+                config[key] = val
+                save_config_fn()
+                speed_desc = {"fast": "秒回模式", "normal": "正常速度(3-5秒)", "slow": "慢速(5-12秒)", "human": "智能拟人(根据回复长度自动)"}
+                mory_bot.reply_and_track(m, f"✅ 回复速度已调整为：{speed_desc.get(val, val)}")
+                logger.info(f"修改{key}: {val}")
+                return True
+    
+    for choice_val in choices:
+        if choice_val in msg_lower:
+            config[key] = choice_val
+            save_config_fn()
+            mory_bot.reply_and_track(m, f"✅ 已修改「{info['name']}」为 {choice_val}")
+            logger.info(f"修改{key}: {choice_val}")
+            return True
+    
+    mory_bot.reply_and_track(m, f"⚠️ 可选值：{' / '.join(choices)}\n例如：把回复速度调成慢一点")
+    return True
+
+
 def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
     """处理数值修改命令"""
-    # 检查是否包含"改成"或"改成"
     if not ("改成" in msg or "改为" in msg or "调成" in msg):
         return False
     
-    # 找到配置key
     key = _find_config_key(msg)
     if not key:
         return False
@@ -1111,6 +1154,9 @@ def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn, mory_b
     info = ALL_CONFIGS.get(key)
     if not info:
         return False
+
+    if info["type"] == "choice":
+        return _handle_modify_choice(msg, config, key, info, m, save_config_fn, mory_bot)
     
     # 根据类型解析值
     val = None
@@ -1137,7 +1183,7 @@ def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn, mory_b
         if isinstance(current, str):
             try:
                 current = json.loads(current)
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 current = {}
         if not isinstance(current, dict):
             current = {"messages_per_minute": 10, "ban_minutes": 5}
@@ -1256,21 +1302,31 @@ def _handle_list_operations(msg: str, config: dict, bot, m, save_config_fn, mory
             return False
         
         if is_add:
-            if word not in items:
-                items.append(word)
+            new_words = [w.strip() for w in re.split(r'[，,、/|；;\s]+', word) if w.strip()]
+            added = []
+            for w in new_words:
+                if w not in items:
+                    items.append(w)
+                    added.append(w)
+            if added:
                 config[key] = items
                 save_config_fn()
-                mory_bot.reply_and_track(m, f"✅ 已增加反感词「{word}」")
+                mory_bot.reply_and_track(m, f"✅ 已增加反感词：{'、'.join(added)}")
             else:
-                mory_bot.reply_and_track(m, f"⚠️ 「{word}」已在列表中")
+                mory_bot.reply_and_track(m, f"⚠️ 这些词已在列表中")
         else:
-            if word in items:
-                items.remove(word)
+            removed = []
+            for w in re.split(r'[，,、/|；;\s]+', word):
+                w = w.strip()
+                if w in items:
+                    items.remove(w)
+                    removed.append(w)
+            if removed:
                 config[key] = items
                 save_config_fn()
-                mory_bot.reply_and_track(m, f"✅ 已删除反感词「{word}」")
+                mory_bot.reply_and_track(m, f"✅ 已删除反感词：{'、'.join(removed)}")
             else:
-                mory_bot.reply_and_track(m, f"⚠️ 「{word}」不在列表中")
+                mory_bot.reply_and_track(m, f"⚠️ 这些词不在列表中")
         return True
     
     # 敏感词
@@ -1291,21 +1347,31 @@ def _handle_list_operations(msg: str, config: dict, bot, m, save_config_fn, mory
             return False
         
         if is_add:
-            if word not in items:
-                items.append(word)
+            new_words = [w.strip() for w in re.split(r'[，,、/|；;\s]+', word) if w.strip()]
+            added = []
+            for w in new_words:
+                if w not in items:
+                    items.append(w)
+                    added.append(w)
+            if added:
                 config[key] = items
                 save_config_fn()
-                mory_bot.reply_and_track(m, f"✅ 已增加敏感词「{word}」")
+                mory_bot.reply_and_track(m, f"✅ 已增加敏感词：{'、'.join(added)}")
             else:
-                mory_bot.reply_and_track(m, f"⚠️ 「{word}」已在列表中")
+                mory_bot.reply_and_track(m, f"⚠️ 这些词已在列表中")
         else:
-            if word in items:
-                items.remove(word)
+            removed = []
+            for w in re.split(r'[，,、/|；;\s]+', word):
+                w = w.strip()
+                if w in items:
+                    items.remove(w)
+                    removed.append(w)
+            if removed:
                 config[key] = items
                 save_config_fn()
-                mory_bot.reply_and_track(m, f"✅ 已删除敏感词「{word}」")
+                mory_bot.reply_and_track(m, f"✅ 已删除敏感词：{'、'.join(removed)}")
             else:
-                mory_bot.reply_and_track(m, f"⚠️ 「{word}」不在列表中")
+                mory_bot.reply_and_track(m, f"⚠️ 这些词不在列表中")
         return True
     
     return False
@@ -1346,11 +1412,344 @@ def _handle_model_switch(msg: str, config: dict, bot, m, save_config_fn, mory_bo
     return False
 
 
+def _handle_model_restore(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
+    """处理模型恢复：模型恢复 xxx"""
+    if "模型恢复" not in msg and "恢复模型" not in msg:
+        return False
+    model_hint = msg.replace("模型恢复", "").replace("恢复模型", "").strip()
+    if not model_hint:
+        mory_bot.reply_and_track(m, "⚠️ 请指定要恢复的模型名，如「模型恢复 qwen3-max」")
+        return True
+    blacklisted = config.get("BLACKLISTED_MODELS", [])
+    if not isinstance(blacklisted, list):
+        blacklisted = []
+    matched = [m for m in blacklisted if hint in m for hint in [model_hint]] if model_hint else []
+    if not matched:
+        matched = [m for m in blacklisted if model_hint in m]
+    if not matched:
+        mory_bot.reply_and_track(m, f"⚠️ 黑名单中没有找到包含「{model_hint}」的模型\n当前黑名单：{', '.join(blacklisted[:5]) or '空'}")
+        return True
+    for m_name in matched:
+        blacklisted.remove(m_name)
+    config["BLACKLISTED_MODELS"] = blacklisted
+    save_config_fn()
+    mory_bot.reply_and_track(m, f"✅ 已恢复模型：{'、'.join(matched)}")
+    return True
+
+
+def _handle_admin_management(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
+    """处理管理员管理：删除管理员 xxx"""
+    if "删除管理员" not in msg and "移除管理员" not in msg:
+        return False
+    hint = msg.replace("删除管理员", "").replace("移除管理员", "").strip()
+    if not hint:
+        mory_bot.reply_and_track(m, "⚠️ 请指定要删除的管理员ID，如「删除管理员 123456」")
+        return True
+    admin_ids = config.get("ADMIN_IDS", [])
+    if isinstance(admin_ids, int):
+        admin_ids = [admin_ids]
+    if not isinstance(admin_ids, list):
+        admin_ids = []
+    primary = config.get("ADMIN_ID", 0)
+    try:
+        target_id = int(hint)
+    except ValueError:
+        mory_bot.reply_and_track(m, "⚠️ 管理员ID必须是数字")
+        return True
+    if target_id == primary:
+        mory_bot.reply_and_track(m, "⛔ 不能删除主人管理员")
+        return True
+    if target_id in admin_ids:
+        admin_ids.remove(target_id)
+        config["ADMIN_IDS"] = admin_ids
+        save_config_fn()
+        mory_bot.reply_and_track(m, f"✅ 已删除管理员 {target_id}")
+    else:
+        mory_bot.reply_and_track(m, f"⚠️ {target_id} 不是管理员")
+    return True
+
+
+def _handle_ad_rule_management(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None, ad_detector=None) -> bool:
+    """处理广告规则管理指令"""
+    msg_clean = (msg or "").strip()
+    markers = ["广告规则", "拦截规则"]
+    if not any(marker in msg_clean for marker in markers):
+        return False
+
+    if ad_detector is None:
+        mory_bot.reply_and_track(m, "⚠️ 广告检测模块未初始化")
+        return True
+
+    # 查看广告规则
+    if any(k in msg_clean for k in ["查看广告规则", "列出广告规则", "广告规则列表", "看广告规则"]):
+        rules = ad_detector.list_rules()
+        if not rules:
+            mory_bot.reply_and_track(m, "📋 暂无广告规则")
+            return True
+        lines = ["📋 当前广告规则：", ""]
+        for idx, rule in enumerate(rules, 1):
+            status = "✅" if rule.get("enabled") else "⛔"
+            builtin_tag = "🔒" if rule.get("builtin") else ""
+            lines.append(f"{idx}. {status} {rule.get('name', rule.get('id', '?'))} {builtin_tag}")
+            lines.append(f"   类型: {rule.get('type', '?')} | 动作: {rule.get('action', '?')}")
+            lines.append(f"   ID: {rule.get('id', '?')}")
+        stats = ad_detector.get_stats()
+        lines.append("")
+        lines.append(f"📊 统计: 已拦截 {stats['total_detected']} 次 | 阈值 {stats['score_threshold']} 分")
+        mory_bot.reply_and_track(m, "\n".join(lines))
+        return True
+
+    # 测试广告规则
+    if msg_clean.startswith(("测试广告规则", "测试广告检测")):
+        test_text = msg_clean
+        for prefix in ["测试广告规则", "测试广告检测"]:
+            test_text = test_text.replace(prefix, "", 1).strip()
+        for sep in [":", "："]:
+            if sep in test_text:
+                test_text = test_text.split(sep, 1)[1].strip()
+                break
+        if not test_text:
+            mory_bot.reply_and_track(m, "⚠️ 请提供测试文本，例如：测试广告规则 日入3K加微信")
+            return True
+        result = ad_detector.test_text("", test_text)
+        mory_bot.reply_and_track(m, f"🧪 测试结果：\n{result}")
+        return True
+
+    # 广告规则统计
+    if any(k in msg_clean for k in ["广告规则统计", "广告统计", "拦截统计"]):
+        stats = ad_detector.get_stats()
+        lines = [
+            "📊 广告检测统计：",
+            f"  已拦截: {stats['total_detected']} 次",
+            f"  误判: {stats['false_positives']} 次",
+            f"  评分阈值: {stats['score_threshold']} 分",
+            f"  自定义规则: {stats['custom_rules_count']} 条",
+            f"  内置规则: {stats['builtin_rules_count']} 条",
+        ]
+        mory_bot.reply_and_track(m, "\n".join(lines))
+        return True
+
+    # 新增广告规则
+    if msg_clean.startswith(("新增", "添加", "增加")):
+        body = msg_clean
+        for prefix in ["新增", "添加", "增加"]:
+            body = body.replace(prefix, "", 1).strip()
+        for marker in markers:
+            body = body.replace(marker, "").strip()
+        body = body.lstrip(":：").strip()
+
+        if not body:
+            mory_bot.reply_and_track(m, "⚠️ 请描述新规则，例如：新增广告规则 关键词包含'日赚'和'微信'就封")
+            return True
+
+        keywords = _normalize_keywords(body)
+        if not keywords:
+            mory_bot.reply_and_track(m, "⚠️ 未识别到关键词，请检查格式")
+            return True
+
+        rule_name = f"自定义-{keywords[0]}"
+        success, message = ad_detector.add_custom_rule({
+            "name": rule_name,
+            "type": "combo",
+            "conditions": {"keywords": keywords, "required_count": 2},
+            "action": "ban",
+        })
+        if success:
+            save_config_fn()
+        mory_bot.reply_and_track(m, message)
+        return True
+
+    # 删除广告规则
+    if msg_clean.startswith(("删除", "移除", "去掉")):
+        body = msg_clean
+        for prefix in ["删除", "移除", "去掉"]:
+            body = body.replace(prefix, "", 1).strip()
+        for marker in markers:
+            body = body.replace(marker, "").strip()
+        body = body.lstrip(":：").strip()
+
+        if not body:
+            mory_bot.reply_and_track(m, "⚠️ 请指定要删除的规则ID或名称")
+            return True
+
+        success, message = ad_detector.remove_custom_rule(body)
+        if success:
+            save_config_fn()
+        mory_bot.reply_and_track(m, message)
+        return True
+
+    # 开启/关闭广告规则
+    is_enable = msg_clean.startswith(("开启", "启用", "打开"))
+    is_disable = msg_clean.startswith(("关闭", "禁用", "停用"))
+    if is_enable or is_disable:
+        body = msg_clean
+        for prefix in ["开启", "启用", "打开", "关闭", "禁用", "停用"]:
+            body = body.replace(prefix, "", 1).strip()
+        for marker in markers:
+            body = body.replace(marker, "").strip()
+        body = body.lstrip(":：").strip()
+
+        if not body:
+            mory_bot.reply_and_track(m, "⚠️ 请指定要操作规则ID或名称")
+            return True
+
+        success, message = ad_detector.toggle_rule(body, is_enable)
+        if success:
+            save_config_fn()
+        mory_bot.reply_and_track(m, message)
+        return True
+
+    return False
+
+
+def _handle_task_control(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
+    """处理任务控制：关闭早间新闻 / 开启塔罗搭讪 等"""
+    task_map = {
+        "早安问候": "AUTO_GREETING",
+        "早安": "AUTO_GREETING",
+        "午安问候": "AUTO_GREETING",
+        "晚安问候": "AUTO_GOODNIGHT",
+        "晚安": "AUTO_GOODNIGHT",
+        "早间新闻": "AUTO_MORNING_NEWS",
+        "午间新闻": "AUTO_AFTERNOON_NEWS",
+        "晚间新闻": "AUTO_EVENING_NEWS",
+        "新闻播报": "AUTO_NEWS",
+        "签到": "SIGNUP_ENABLED",
+        "碎片寻宝": "PUZZLE_ENABLED",
+        "寻宝": "PUZZLE_ENABLED",
+        "挽回": "RECOVER_ENABLED",
+        "阅后即焚": "BURN_AFTER",
+    }
+    is_enable = any(msg.startswith(k) for k in ["开启", "打开", "启用"])
+    is_disable = any(msg.startswith(k) for k in ["关闭", "禁用", "停用"])
+    if not (is_enable or is_disable):
+        return False
+    for alias, key in task_map.items():
+        if alias in msg:
+            config[key] = is_enable
+            save_config_fn()
+            action = "开启" if is_enable else "关闭"
+            mory_bot.reply_and_track(m, f"✅ 已{action}「{alias}」")
+            return True
+    return False
+
+
+def _handle_persona_teaching(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
+    """[Trae] 处理自然语言人设调教指令
+
+    识别管理员对Bot人设/风格/行为的自然语言调整请求，
+    将其翻译为STYLE_APPEND追加内容。
+
+    示例：
+    - "以后对我温柔一点" → 追加风格调整
+    - "说话再骚一点" → 追加风格调整
+    - "别那么快回复" → 修改REPLY_SPEED
+    - "私聊的时候更黏人" → 追加私聊场景话术
+    - "以后叫我哥哥" → 追加称呼偏好
+    - "别再用'你觉得呢'结尾了" → 追加禁忌表达
+    - "回复短一点" → 追加回复长度偏好
+    """
+    msg_clean = (msg or "").strip()
+
+    teaching_keywords = [
+        "以后", "说话", "回复", "语气", "风格", "叫我", "称呼",
+        "更", "再", "别", "不要", "少", "多", "调教",
+    ]
+    has_teaching_intent = sum(1 for kw in teaching_keywords if kw in msg_clean) >= 2
+    if not has_teaching_intent:
+        return False
+
+    speed_patterns = ["别那么快回复", "回复太快", "秒回", "回复慢一点", "回复速度"]
+    for pattern in speed_patterns:
+        if pattern in msg_clean:
+            if "快" in msg_clean or "秒回" in msg_clean:
+                config["REPLY_SPEED"] = "slow"
+                save_config_fn()
+                mory_bot.reply_and_track(m, "✅ 收到～以后回复慢一点，不秒回了")
+                _add_teaching_log(config, "回复速度调慢", save_config_fn)
+                return True
+            elif "慢" in msg_clean:
+                config["REPLY_SPEED"] = "normal"
+                save_config_fn()
+                mory_bot.reply_and_track(m, "✅ 好的～回复速度调正常了")
+                _add_teaching_log(config, "回复速度调正常", save_config_fn)
+                return True
+
+    reply_chance_patterns = ["群里别太主动", "群里少说话", "群里安静点", "群里多说话", "群里主动点"]
+    for pattern in reply_chance_patterns:
+        if pattern in msg_clean:
+            current = config.get("REPLY_CHANCE", 10)
+            if "少" in msg_clean or "安静" in msg_clean or "别太主动" in msg_clean:
+                new_val = max(1, current - 5)
+            else:
+                new_val = min(50, current + 10)
+            config["REPLY_CHANCE"] = new_val
+            save_config_fn()
+            mory_bot.reply_and_track(m, f"✅ 群聊回复概率已调整为 {new_val}%")
+            _add_teaching_log(config, f"群聊回复概率→{new_val}%", save_config_fn)
+            return True
+
+    _ensure_structured(config)
+    style = config.get("STYLE_APPEND", "")
+    if len(style) > 3000:
+        mory_bot.reply_and_track(m, "⚠️ 风格追加已经很长了，请先用「撤销调教」清理一下再调教～")
+        return True
+
+    timestamp = datetime.now().strftime('%m/%d %H:%M')
+    instruction = f"\n【{timestamp}调教指令】：{msg_clean}。严格执行此调整直到主人再次修改。"
+    config["STYLE_APPEND"] = style + instruction
+    save_config_fn()
+
+    _add_teaching_log(config, msg_clean, save_config_fn)
+
+    confirmations = {
+        "温柔": "收到～以后更温柔一点 💕",
+        "骚": "好的～说话再撩一点 😏",
+        "黏人": "嗯嗯～以后更黏人一点 🥺",
+        "高冷": "收到～以后高冷一点 🧊",
+        "短": "好的～以后回复短一点",
+        "长": "好的～以后回复可以长一点",
+        "叫": "好的～以后这么叫你",
+        "别用": "收到～以后不用那个了",
+        "不要": "收到～以后不那样了",
+    }
+    reply = "✅ 收到～我记住了，以后就这样"
+    for key, resp in confirmations.items():
+        if key in msg_clean:
+            reply = f"✅ {resp}"
+            break
+
+    mory_bot.reply_and_track(m, reply)
+    logger.info(f"📝 人设调教：{msg_clean[:50]}")
+    return True
+
+
+def _add_teaching_log(config: dict, instruction: str, save_config_fn):
+    """[Trae] 记录调教指令到TEACHING_LOG"""
+    log = config.get("TEACHING_LOG", [])
+    if not isinstance(log, list):
+        log = []
+    from datetime import datetime
+    log.append(f"[{datetime.now().strftime('%m/%d %H:%M')}] {instruction}")
+    if len(log) > 20:
+        log = log[-20:]
+    config["TEACHING_LOG"] = log
+    save_config_fn()
+
+
+def _ensure_structured(config: dict):
+    """确保config已迁移到结构化字段（BASE_PERSONA等）"""
+    if "BASE_PERSONA" not in config and "SYSTEM_PROMPT" in config:
+        config["BASE_PERSONA"] = config.pop("SYSTEM_PROMPT")
+        config.setdefault("STYLE_APPEND", "")
+        config.setdefault("ADDED_KNOWLEDGE", "")
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 主入口
 # ══════════════════════════════════════════════════════════════════════════
 
-def handle_natural_admin(bot, m, config: dict, save_config_fn, mory_bot=None, is_admin: bool = False) -> bool:
+def handle_natural_admin(bot, m, config: dict, save_config_fn, mory_bot=None, is_admin: bool = False, ad_detector=None) -> bool:
     """
     处理自然语言配置指令。
     返回 True 表示已消费该消息。
@@ -1372,12 +1771,32 @@ def handle_natural_admin(bot, m, config: dict, save_config_fn, mory_bot=None, is
     if _handle_special_auto_reply_config(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
         return True
 
+    # 1.6 [Trae] 人设调教（自然语言调整Bot风格/行为）
+    if _handle_persona_teaching(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
+        return True
+
     # 2. 开关命令（开启/关闭xxx）
     if _handle_toggle(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
         return True
 
     # 3. 模型切换
     if _handle_model_switch(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
+        return True
+
+    # 3.5 模型恢复
+    if _handle_model_restore(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
+        return True
+
+    # 3.6 管理员管理
+    if _handle_admin_management(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
+        return True
+
+    # 3.7 任务控制
+    if _handle_task_control(msg, config, bot, m, save_config_fn, mory_bot=mory_bot):
+        return True
+
+    # 3.8 广告规则管理
+    if _handle_ad_rule_management(msg, config, bot, m, save_config_fn, mory_bot=mory_bot, ad_detector=ad_detector):
         return True
 
     # 4. 列表操作（增加/删除xxx）

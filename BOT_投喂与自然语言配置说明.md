@@ -113,4 +113,4 @@
 
 这份文件就在这里：
 
-- [BOT_投喂与自然语言配置说明.md](C:/Users/Administrator/Desktop/mory_assistant/BOT_投喂与自然语言配置说明.md)
+- [BOT_投喂与自然语言配置说明.md](BOT_投喂与自然语言配置说明.md)

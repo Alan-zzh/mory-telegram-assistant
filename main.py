@@ -97,10 +97,9 @@
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
-import os, sys, json, time, random, logging, traceback
+import os, sys, json, time, random, logging, traceback, threading
 from datetime import datetime
 from threading import Lock
-from logging.handlers import RotatingFileHandler
 from core.logging_util import configure_logging, get_logger, set_logging_context, clear_logging_context
 import concurrent.futures
 _append_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="append")
@@ -199,6 +198,7 @@ from modules.group_mgr  import (handle_new_members, check_banned_words,
 from modules.auto_tasks import start_background
 from modules.content    import (handle_easter_eggs, handle_photo,
                                   draw_tarot, get_fortune, is_late_night)
+from modules.ad_detector import AdDetector
 
 # ── 连续对话追踪（内存字典 + 线程安全）────────────────────────────
 # key=uid, value={"count": int, "last_time": float}
@@ -225,6 +225,139 @@ def _cleanup_conv_tracker():
             sorted_uids = sorted(_conv_tracker.items(), key=lambda x: x[1]["last_time"])
             for uid, _ in sorted_uids[:len(_conv_tracker) - _MAX_CONV_ENTRIES]:
                 del _conv_tracker[uid]
+
+
+def _calc_humanized_delay(text: str, is_priv: bool, conv_count: int = 0) -> float:
+    """[Trae] 计算拟人化回复延迟（秒），让Bot不再秒回
+
+    规则：
+    - 根据回复长度分级：短/中/长
+    - 私聊比群聊稍慢（更亲密更慢节奏）
+    - 深夜(0-5点)额外加2-4秒（"困了打字慢"）
+    - 连续对话第3轮起延迟递减（"聊嗨了回复变快"）
+    - ±30%随机抖动避免机械感
+    """
+    cfg_speed = CONFIG.get("REPLY_SPEED", "human")
+    speed_presets = {
+        "fast":   (0.5, 2.0),
+        "normal": (2.0, 5.0),
+        "slow":   (5.0, 12.0),
+        "human":  None,
+    }
+    preset = speed_presets.get(cfg_speed, None)
+    if preset and cfg_speed != "human":
+        lo, hi = preset
+        return round(random.uniform(lo, hi), 1)
+
+    cn_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    if cn_chars <= 20:
+        base = random.uniform(2.0, 4.5)
+    elif cn_chars <= 60:
+        base = random.uniform(3.0, 7.0)
+    else:
+        base = random.uniform(5.0, 10.0)
+
+    if is_priv:
+        base *= 1.2
+
+    hour = datetime.now().hour
+    if 0 <= hour < 5:
+        base += random.uniform(2.0, 4.0)
+
+    if conv_count >= 3:
+        reduction = min(conv_count * 0.4, 2.5)
+        base = max(1.0, base - reduction)
+
+    jitter = base * random.uniform(-0.3, 0.3)
+    base += jitter
+
+    return round(max(0.5, min(15.0, base)), 1)
+
+
+def _delayed_reply(bot, chat_id, reply_to_msg, text, delay_seconds, mory_bot, is_priv=False):
+    """[Trae] 非阻塞延迟发送回复，期间持续typing状态
+
+    用threading.Timer实现延迟，不阻塞线程池。
+    后台线程每5秒续一次typing状态直到消息发出。
+    群聊消息发送后自动添加反馈按钮。
+    """
+    def _do_send():
+        try:
+            sent = mory_bot.reply_and_track(reply_to_msg, text)
+            if sent and not is_priv:
+                try:
+                    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+                    fb_markup = InlineKeyboardMarkup()
+                    fb_markup.row(
+                        InlineKeyboardButton("👍", callback_data=f"fb_like_{sent.message_id}"),
+                        InlineKeyboardButton("👎", callback_data=f"fb_dislike_{sent.message_id}"),
+                    )
+                    bot.edit_message_reply_markup(chat_id=sent.chat.id, message_id=sent.message_id, reply_markup=fb_markup)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"延迟发送失败: {e}")
+
+    bot.send_chat_action(chat_id, "typing")
+
+    timer = threading.Timer(delay_seconds, _do_send)
+    timer.daemon = True
+    timer.start()
+
+    if delay_seconds > 4:
+        def _keep_typing():
+            remaining = delay_seconds
+            while remaining > 0:
+                sleep_time = min(5.0, remaining)
+                time.sleep(sleep_time)
+                remaining -= sleep_time
+                if remaining > 0:
+                    try:
+                        bot.send_chat_action(chat_id, "typing")
+                    except Exception:
+                        break
+        t = threading.Thread(target=_keep_typing, daemon=True)
+        t.start()
+
+
+def _split_for_private(text: str) -> list[str]:
+    """[Trae] 将长回复拆分为两段，用于私聊分段发送
+
+    拆分规则：在自然语句边界（。！？…~）处拆分
+    第一段占总长度40-60%
+    """
+    if len(text) < 60:
+        return [text]
+
+    split_chars = ['。', '！', '？', '…', '~', '～', '！', '？']
+    mid = int(len(text) * random.uniform(0.4, 0.6))
+
+    best_pos = -1
+    for i in range(mid, min(mid + 20, len(text))):
+        if text[i] in split_chars:
+            best_pos = i + 1
+            break
+
+    if best_pos == -1:
+        for i in range(max(mid - 20, 0), mid):
+            if text[i] in split_chars:
+                best_pos = i + 1
+                break
+
+    if best_pos <= 0 or best_pos >= len(text):
+        return [text]
+
+    part1 = text[:best_pos].rstrip()
+    part2 = text[best_pos:].lstrip()
+
+    if not part1 or not part2:
+        return [text]
+
+    if not part1.endswith(('…', '~', '～', '—')):
+        part1 += '…'
+
+    return [part1, part2]
+
 
 # ── 视奸雷达冷却机制（内存字典 + 线程安全）────────────────────────
 # 防止同一用户频繁触发导致管理员被刷屏
@@ -371,6 +504,9 @@ ai  = AIEngine(CONFIG)
 _load_dynamic_states(CONFIG)
 bot = telebot.TeleBot(CONFIG["TOKEN"], threaded=True, num_threads=50, use_class_middlewares=True)
 
+# ── 广告检测引擎（v4.5.36新增，零TOKEN消耗）──
+ad_detector = AdDetector(CONFIG)
+
 # 【修复】全局缓存bot自身信息，只调用1次get_me()
 _bot_me = bot.get_me()
 BOT_ID = _bot_me.id
@@ -400,9 +536,19 @@ try:
                     db = DB(os.path.join(base_dir, "mory.db"))
                     _load_dynamic_states(CONFIG)
                     logger.info("✅ 数据库从备份恢复成功！")
+                    try:
+                        from modules.auto_tasks import report_fault
+                        report_fault("数据库异常已自动恢复", f"从备份{_latest_backup}恢复成功", "⚠️")
+                    except Exception:
+                        pass
                 except Exception as restore_err:
                     logger.critical(f"❌ 数据库恢复失败：{restore_err}")
                     logger.critical("   → 请手动从 backup/ 目录恢复")
+                    try:
+                        from modules.auto_tasks import report_fault
+                        report_fault("数据库损坏且恢复失败", str(restore_err), "🚨")
+                    except Exception:
+                        pass
             else:
                 logger.error("   → 无可用备份，请手动检查数据库")
         else:
@@ -507,6 +653,45 @@ class ReplySnifferMiddleware(BaseMiddleware):
 
 # 挂载中间件（必须在所有 @bot.message_handler 之前）
 bot.setup_middleware(ReplySnifferMiddleware(db))
+
+@bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("fb_"))
+def on_feedback_callback(call):
+    try:
+        parts = call.data.split("_")
+        if len(parts) < 3:
+            return
+        feedback = parts[1]
+        if feedback not in ("like", "dislike"):
+            return
+        try:
+            bot_msg_id = int(parts[2])
+        except ValueError:
+            return
+        chat_id = call.message.chat.id
+        user_id = call.from_user.id
+        db.record_feedback(bot_msg_id, chat_id, user_id, feedback)
+        emoji = "👍" if feedback == "like" else "👎"
+        bot.answer_callback_query(call.id, text=f"已收到{emoji}反馈，谢谢！", show_alert=False)
+        try:
+            markup = call.message.reply_markup
+            if markup and hasattr(markup, 'keyboard'):
+                new_keyboard = []
+                for row in markup.keyboard:
+                    new_row = []
+                    for btn in row:
+                        if hasattr(btn, 'callback_data') and btn.callback_data == call.data:
+                            from telebot.types import InlineKeyboardButton as IKB
+                            new_row.append(IKB(text=f"{emoji} ✓", callback_data="fb_done"))
+                        else:
+                            new_row.append(btn)
+                    new_keyboard.append(new_row)
+                from telebot.types import InlineKeyboardMarkup
+                bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id,
+                                              reply_markup=InlineKeyboardMarkup(new_keyboard))
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"反馈回调异常：{e}")
 
 # ════════════════════════ 消息处理器 ══════════════════════════════════
 
@@ -809,10 +994,121 @@ def _do_dispatch(m):
         clear_logging_context()
         return
 
-    # ── P3.5：AI广告检测（v4.5.26新增）───────────────────────────────
-    if is_group and check_ad_content(bot, m, CONFIG, db, ai):
-        clear_logging_context()
-        return
+    # ── P3.5：智能广告检测（v4.5.36，零TOKEN消耗）────────────────────────
+    # [Trae] v4.6.3 重构：支持延迟封禁机制
+    # 流程：
+    #   1. 先用 detect() 判断是否为广告（即时封禁场景）
+    #   2. 如果不是即时广告，用 track_suspicious_user() 累计评分
+    #   3. 累计评分达到阈值 → 延迟封禁 + 删除该用户所有历史消息
+    if is_group:
+        username = (m.from_user.first_name or "") + (m.from_user.last_name or "")
+        ad_result = ad_detector.detect(username=username, msg=msg)
+
+        # 场景A：即时命中广告规则 → 直接处理（原有逻辑）
+        if ad_result["is_ad"]:
+            try:
+                bot.delete_message(chat_id, m.message_id)
+            except Exception as e:
+                logger.warning(f"删除广告消息失败: {e}")
+            if ad_result["action"] == "ban":
+                try:
+                    bot.restrict_chat_member(
+                        chat_id, uid,
+                        until_date=0,
+                        can_send_messages=False,
+                        can_send_media_messages=False,
+                        can_send_other_messages=False,
+                    )
+                    logger.warning(f"🚫 广告用户永久禁言: {uname}({uid})")
+                except Exception as e:
+                    logger.warning(f"禁言广告用户失败: {e}")
+            admin_id = CONFIG.get("ADMIN_ID", 0)
+            if admin_id:
+                try:
+                    bot.send_message(admin_id,
+                        f"🚫 广告已处理（智能检测）\n"
+                        f"👤 用户：{uname}({uid})\n"
+                        f"💬 消息：{msg[:150]}{'...' if len(msg) > 150 else ''}\n"
+                        f"📋 操作：删除消息{' + 永久禁言' if ad_result['action'] == 'ban' else ''}\n"
+                        f"🎯 原因：{ad_result['reason']}\n"
+                        f"💡 如误封请手动解禁")
+                except Exception as e:
+                    logger.warning(f"广告通知发送失败: {e}")
+            clear_logging_context()
+            return
+
+        # 场景B：未即时命中，但可能有可疑评分 → 进入延迟追踪
+        # 只要有内容评分（>0）就追踪，累计达到阈值后封禁
+        content_score = ad_result.get("score", 0)
+        if content_score > 0:
+            track_result = ad_detector.track_suspicious_user(
+                user_id=uid,
+                msg_id=m.message_id,
+                chat_id=chat_id,
+                text=msg,
+                score=content_score
+            )
+
+            if track_result["action"] == "ban":
+                # 延迟封禁触发：封禁用户 + 删除所有历史消息
+                logger.warning(f"[AD] 🚫 延迟封禁执行: uid={uid}, 累计评分={track_result['total_score']}")
+
+                # 1. 删除该用户所有被追踪的历史消息
+                messages_to_delete = ad_detector.get_user_messages_to_delete(uid)
+                deleted_count = 0
+                for msg_info in messages_to_delete:
+                    try:
+                        bot.delete_message(msg_info["chat_id"], msg_info["msg_id"])
+                        deleted_count += 1
+                    except Exception as e:
+                        logger.debug(f"删除历史消息失败 msg_id={msg_info['msg_id']}: {e}")
+
+                # 2. 永久禁言
+                try:
+                    bot.restrict_chat_member(
+                        chat_id, uid,
+                        until_date=0,
+                        can_send_messages=False,
+                        can_send_media_messages=False,
+                        can_send_other_messages=False,
+                    )
+                    logger.warning(f"🚫 延迟封禁-用户永久禁言: {uname}({uid})")
+                except Exception as e:
+                    logger.warning(f"延迟封禁-禁言失败: {e}")
+
+                # 3. 通知管理员
+                admin_id = CONFIG.get("ADMIN_ID", 0)
+                if admin_id:
+                    try:
+                        # 构建历史消息摘要
+                        history_lines = []
+                        for i, hm in enumerate(track_result["messages"][-5:], 1):  # 最近5条
+                            history_lines.append(f"  {i}. {hm['text'][:50]} (评分+{hm['score']})")
+                        history_text = "\n".join(history_lines)
+
+                        bot.send_message(admin_id,
+                            f"🚫 延迟封禁已触发\n"
+                            f"👤 用户：{uname}({uid})\n"
+                            f"📊 累计评分：{track_result['total_score']}\n"
+                            f"🗑 删除消息：{deleted_count}条\n"
+                            f"📜 历史消息：\n{history_text}\n"
+                            f"💡 如误封请手动解禁，并告知我调整规则")
+                    except Exception as e:
+                        logger.warning(f"延迟封禁通知失败: {e}")
+
+                # 4. 清除追踪记录（已处理完毕）
+                ad_detector.clear_user_tracking(uid)
+                clear_logging_context()
+                return
+
+            elif track_result["action"] == "watch":
+                # 继续观察，只记录不拦截
+                logger.info(f"[AD] 👁️ 用户追踪中: uid={uid}, 累计评分={track_result['total_score']}")
+
+        # 旧版关键词检测作为兜底（防漏网）
+        if check_ad_content(bot, m, CONFIG, db, ai):
+            clear_logging_context()
+            return
 
     # ── P4：反刷机制 ─────────────────────────────────────────────────
     if is_group and check_spam(bot, m, CONFIG, db):
@@ -838,7 +1134,7 @@ def _do_dispatch(m):
         if admin_id:
             admin_ids.add(admin_id)
         is_admin_user = uid in admin_ids
-        if handle_natural_admin(bot, m, CONFIG, save_config, mory_bot=mory_bot, is_admin=is_admin_user):
+        if handle_natural_admin(bot, m, CONFIG, save_config, mory_bot=mory_bot, is_admin=is_admin_user, ad_detector=ad_detector):
             logger.info(f"🗣️ 自然语言配置已处理 uid={uid} msg={msg[:30]}")
             clear_logging_context()
             return
@@ -904,6 +1200,94 @@ def _do_dispatch(m):
         if random.randint(1, 20) == 1:  # 5%概率触发科普，避免刷屏
             mory_bot.reply_and_track(m, analysis["slang_reply"])  # 【架构v21.44】显式追踪
 
+    # ── P9.7：用户反馈/找Mory（安抚回复 + 通知管理员，不走AI闲聊）───
+    # 【v4.7.1 新增】拦截反馈类消息，避免AI对"被封了"等严肃消息输出撩人内容
+    # 【v4.12.1 优化】群聊→引导私聊(不说老板)；私聊→尝试自助解封+甩锅阿福
+    if analysis.get("mode") in ("feedback", "contact_mory"):
+        if is_group:
+            # 群聊：安抚 + 引导私聊（不说"老板/boss"，只说"Mory"）
+            feedback_reply = random.choice([
+                f"{uname}收到啦～你私聊我，我帮你处理哦～",
+                f"{uname}好的～来私聊我吧，这边不太方便说～",
+                f"嗯嗯～直接私聊我就行，我帮你转达Mory～",
+            ])
+            mory_bot.reply_and_track(m, feedback_reply)
+            # 通知管理员
+            admin_id = CONFIG.get("ADMIN_ID", 0)
+            if admin_id:
+                try:
+                    bot.send_message(admin_id,
+                        f"📢 用户反馈通知\n"
+                        f"👤 {uname}({uid})\n"
+                        f"💬 消息：{msg[:150]}\n"
+                        f"🏷 类型：{'用户遇到问题' if analysis['mode'] == 'feedback' else '用户想找Mory'}\n"
+                        f"💡 已引导私聊处理")
+                except Exception as e:
+                    logger.warning(f"反馈通知发送失败：{e}")
+        else:
+            # 私聊：尝试自助解封
+            if "解封" in msg or "解禁" in msg or "被封" in msg or "封了" in msg or "禁言" in msg:
+                gid = CONFIG.get("GROUP_ID", 0)
+                unban_success = False
+                if gid:
+                    try:
+                        from telebot.types import ChatPermissions
+                        bot.restrict_chat_member(
+                            gid, uid,
+                            permissions=ChatPermissions(
+                                can_send_messages=True,
+                                can_send_media_messages=True,
+                                can_send_other_messages=True,
+                                can_add_web_page_previews=True,
+                            )
+                        )
+                        db.blacklist_remove(uid)
+                        unban_success = True
+                        logger.info(f"✅ 私聊自助解封成功: {uname}({uid})")
+                    except Exception as e:
+                        logger.warning(f"私聊自助解封失败: {e}")
+                        unban_success = False
+
+                if unban_success:
+                    # 甩锅绿茶话术（随机，甩锅阿福误判）
+                    blame = random.choice([
+                        "这该死的阿福又误判了！真不好意思啊～",
+                        "阿福那个笨蛋又抽风了，害你被封，抱歉抱歉～",
+                        "又是阿福的锅！它最近老犯傻，我替它道歉～",
+                        "阿福出bug了，把你误封了，真的对不起呀～",
+                        "那个笨阿福又搞事了！害你受委屈了～",
+                    ])
+                    feedback_reply = f"已经帮你解封啦～{blame}现在可以回群里正常发言了！以后有任何问题都可以私聊我哦～"
+                else:
+                    blame = random.choice([
+                        "这该死的阿福又误判了！",
+                        "阿福那个笨蛋又抽风了！",
+                        "又是阿福的锅！",
+                    ])
+                    feedback_reply = f"{blame}出了点状况暂时无法解封，我已经通知Mory了，她会尽快来帮你处理的～以后有事直接私聊我就行！"
+                    # 通知管理员解封失败
+                    admin_id = CONFIG.get("ADMIN_ID", 0)
+                    if admin_id:
+                        try:
+                            bot.send_message(admin_id,
+                                f"🚨 用户自助解封失败\n"
+                                f"👤 {uname}({uid})\n"
+                                f"💬 消息：{msg[:150]}\n"
+                                f"💡 请手动解封")
+                        except Exception:
+                            pass
+            else:
+                # 私聊普通反馈（非解封）
+                feedback_reply = random.choice([
+                    "收到啦～我已经记下来了，Mory会尽快来处理的！有事随时私聊我哦～",
+                    "好的好的～我帮你转达给Mory，她看到就会来处理～以后有事直接找我就行！",
+                    "嗯嗯～已经通知Mory了，别着急哦～有任何问题都可以私聊我～",
+                ])
+            mory_bot.reply_and_track(m, feedback_reply)
+
+        clear_logging_context()
+        return
+
     # ── P10：AI回复逻辑 ───────────────────────────────────────────────
     mode = analysis["mode"]
     is_at    = f"@{BOT_USERNAME}" in msg
@@ -952,9 +1336,7 @@ def _do_dispatch(m):
                 _conv_tracker[uid] = {"count": 1, "last_time": now_ts}
             conv_count = _conv_tracker[uid]["count"]
 
-    # 【修复v21.46】移除阻塞式sleep，改为发送typing状态即可
-    # AI请求本身就需要几秒钟，天然就是"打字延迟"，无需额外sleep
-    # 原因：time.sleep(5-10秒) 会霸占线程池，导致高并发时Bot假死
+    # [Trae] 拟人化延迟：发送typing状态，AI请求期间用户会看到"正在输入"
     bot.send_chat_action(chat_id, "typing")
 
     # 【修复v21.46】Function Calling 触发逻辑：群聊normal模式即可触发
@@ -963,12 +1345,13 @@ def _do_dispatch(m):
     if is_group and mode == "normal":
         use_tools = _get_function_tools()  # 定义在文件顶部
     
-    resp = ai.ask(msg, mode=mode, tools=use_tools)
+    resp = ai.ask(msg, mode=mode, tools=use_tools, is_priv=is_priv)
 
-    if resp is None and mode != "normal":
+    if resp is None:
         try:
-            from modules.auto_tasks import _notify_admin_system_failure
-            _notify_admin_system_failure(_emergency_rm, f"AI引擎故障（mode={mode}）", f"用户消息: {msg[:50]}", "🚨")
+            from modules.auto_tasks import report_fault
+            report_fault("AI引擎故障", f"mode={mode}，用户消息无法回复", "🚨" if mode != "normal" else "⚠️",
+                         f"用户消息: {msg[:80]}")
         except Exception as notify_err:
             logger.error(f"故障通知发送失败: {notify_err}")
 
@@ -1017,7 +1400,34 @@ def _do_dispatch(m):
                 except Exception as e:
                     logger.warning(f"连续对话追加失败（跳过）：{e}")
 
-        sent = mory_bot.reply_and_track(m, resp)
+        # [Trae] 拟人化延迟发送 + 私聊分段发送
+        delay = _calc_humanized_delay(resp, is_priv, conv_count)
+
+        should_split = (
+            is_priv
+            and len(resp) > 60
+            and random.randint(1, 100) <= 30
+            and conv_count < 3
+        )
+        hour_now = datetime.now().hour
+        if is_priv and 0 <= hour_now < 5 and len(resp) > 60 and random.randint(1, 100) <= 50:
+            should_split = True
+
+        if should_split:
+            parts = _split_for_private(resp)
+            if len(parts) == 2:
+                _delayed_reply(bot, chat_id, m, parts[0], delay, mory_bot, is_priv)
+                part2_delay = delay + random.uniform(2.0, 5.0)
+                _delayed_reply(bot, chat_id, m, parts[1], part2_delay, mory_bot, is_priv)
+                sent = None
+            else:
+                _delayed_reply(bot, chat_id, m, resp, delay, mory_bot, is_priv)
+                sent = None
+        else:
+            _delayed_reply(bot, chat_id, m, resp, delay, mory_bot, is_priv)
+            sent = None
+
+        # [Trae] 反馈按钮已移入 _delayed_reply 内部处理
 
         # 【架构v21.44】阅后即焚追踪由 MoryBot.reply_and_track() 显式处理
         
@@ -1107,6 +1517,44 @@ def _get_late_night_fallback(uname):
     return random.choice(templates)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 【v4.9.7新增】频道帖子实时捕获 — 解决频道发帖/浏览数据全为0的问题
+# ═══════════════════════════════════════════════════════════════════════════
+
+@bot.channel_post_handler(func=lambda m: True)
+def on_channel_post(m):
+    """捕获频道新帖，记录到 channel_posts 表"""
+    cid = m.chat.id
+    # 仅处理配置中的目标频道
+    channel_ids = CONFIG.get("CHANNEL_IDS", [])
+    target_ids = set()
+    for ch in channel_ids:
+        target_ids.add(ch.get("id", 0) if isinstance(ch, dict) else ch)
+    if cid not in target_ids:
+        return
+    views = getattr(m, 'views', 0) or 0
+    forwards = getattr(m, 'forward_count', 0) or 0
+    content_type = m.content_type if hasattr(m, 'content_type') else "text"
+    db.track_channel_post(cid, m.message_id, int(m.date.timestamp()), views, forwards, content_type)
+    logger.info(f"📺 频道帖子捕获: chat_id={cid} msg_id={m.message_id} views={views} type={content_type}")
+
+
+@bot.edited_channel_post_handler(func=lambda m: True)
+def on_edited_channel_post(m):
+    """捕获频道帖子编辑事件，更新浏览量"""
+    cid = m.chat.id
+    channel_ids = CONFIG.get("CHANNEL_IDS", [])
+    target_ids = set()
+    for ch in channel_ids:
+        target_ids.add(ch.get("id", 0) if isinstance(ch, dict) else ch)
+    if cid not in target_ids:
+        return
+    views = getattr(m, 'views', 0) or 0
+    forwards = getattr(m, 'forward_count', 0) or 0
+    db.update_channel_post_views(cid, m.message_id, views, forwards)
+    logger.debug(f"📺 频道帖子浏览量更新: chat_id={cid} msg_id={m.message_id} views={views}")
+
+
 # ════════════════════════ 启动 ════════════════════════════════════════
 # 【v4.3.2修复I-06】优雅停机：注册atexit和信号处理器
 import atexit
@@ -1167,4 +1615,9 @@ if __name__ == "__main__":
         logger.info("⏹️ 机器人已停止")
     except Exception as e:
         logger.critical(f"❌ 机器人崩溃：{e}\n{traceback.format_exc()}")
+        try:
+            from modules.auto_tasks import report_fault
+            report_fault("Bot崩溃退出", f"{type(e).__name__}: {str(e)[:200]}", "🚨")
+        except Exception:
+            pass
         sys.exit(1)
