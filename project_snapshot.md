@@ -1,7 +1,7 @@
-# Mory小助理 项目快照 v5.16.2
+# Mory小助理 项目快照 v5.16.3
 
 > 新AI会话必读：本文件 + `AGENTS.md`（项目规则+老坑铁律） + `AI_DEBUG_HISTORY.md`
-> 最后更新：2026-06-12（v5.16.2 [Codex] 广告治理不踢人策略纠正）
+> 最后更新：2026-06-12（v5.16.3 [Codex] 工作区脏改动收敛）
 
 ---
 
@@ -10,7 +10,7 @@
 | 项目 | 值 |
 |------|-----|
 | 名称 | Mory小助理 - 运营型商业 AI 转化机器人 |
-| 版本 | v5.16.2 |
+| 版本 | v5.16.3 |
 | 技术栈 | Python3 + pyTelegramBotAPI + SQLite(WAL) + Flask + gunicorn+gevent |
 | 部署 | VPS（systemd作为唯一进程管理） |
 | 存储 | `mory.db`(SQLite) + `config.json`(配置) |

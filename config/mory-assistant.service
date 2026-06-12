@@ -1,0 +1,16 @@
+[Unit]
+Description=Mory Assistant Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/mory_assistant
+# 加 EnvironmentFile 确保凭据（TG_TOKEN、DASHSCOPE_KEY等）注入到进程
+EnvironmentFile=/home/ubuntu/mory_assistant/.env
+ExecStart=/usr/bin/python3 main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

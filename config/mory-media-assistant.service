@@ -1,0 +1,16 @@
+[Unit]
+Description=Mory Media Assistant（媒体内容Bot）
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/mory_assistant
+# 媒体 Bot：通过 --media 参数区分主 Bot
+ExecStart=/usr/bin/python3 main.py --media
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/ubuntu/mory_assistant/.env
+
+[Install]
+WantedBy=multi-user.target

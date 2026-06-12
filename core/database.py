@@ -1,9 +1,11 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════╗
-║  core/database.py  ·  SQLite线程安全数据层                              ║
+║  core/database.py  ·  SQLite线程安全数据层（精简版）                     ║
 ║                                                                        ║
 ║  功能：                                                                ║
 ║    统一管理所有持久化数据。所有模块通过 main.py 创建的 db 单例访问。     ║
+║    业务方法已拆分到 core/db_repos/ 下的7个Repo类。                     ║
+║    通过 __getattr__ 委托实现100%向后兼容。                             ║
 ║                                                                        ║
 ║  数据表清单：                                                          ║
 ║    users             → 用户画像（uid/名称/首次/最后活跃/消息数/关键词）  ║
@@ -42,30 +44,81 @@ class DB:
     """
     统一数据管理器（线程安全）。
     所有模块通过单例 `db` 访问。
+    业务方法已拆分到7个Repo，通过 __getattr__ 委托实现向后兼容。
     """
 
     def __init__(self, db_file: str):
         self.db_file = db_file
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
+        self.lock = _db_lock  # 暴露全局锁给Repo使用
         # 【修复】：开启 WAL 模式，提升多线程下 SQLite 并发性能，杜绝 Locked 报错
         self.conn.execute("PRAGMA journal_mode=WAL;")
         # 【v4.3.2修复F-07】WAL自动checkpoint，防止WAL文件无限增长
         self.conn.execute("PRAGMA wal_autocheckpoint=1000;")
         self._init_tables()
+        # 初始化7个Repo实例
+        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo
+        self.users = UserRepo(self)
+        self.groups = GroupRepo(self)
+        self.points = PointsRepo(self)
+        self.tracking = TrackingRepo(self)
+        self.config = ConfigRepo(self)
+        self.social = SocialRepo(self)
+        self.questions = QuestionRepo(self)
+        self.relay = RelayRepo(self)
 
     # 【v4.3.2修复F-05】添加close()方法，确保SQLite连接正确关闭
     def close(self):
         """关闭数据库连接，释放资源"""
-        try:
-            if self.conn:
-                self.conn.close()
-                logger.info("✅ 数据库连接已关闭")
-        except Exception as e:
-            logger.warning(f"数据库关闭异常：{e}")
+        with _db_lock:
+            try:
+                if self.conn:
+                    self.conn.close()
+                    _logger = getattr(self, '_logger', logger)
+                    _logger.info("✅ 数据库连接已关闭")
+            except Exception as e:
+                _logger = getattr(self, '_logger', logger)
+                _logger.warning(f"数据库关闭异常：{e}")
 
     def __del__(self):
-        """析构时自动关闭连接"""
-        self.close()
+        """析构时自动关闭连接（安全版本：不引用模块级logger，避免shutdown时None）"""
+        try:
+            if self.conn:
+                with _db_lock:
+                    self.conn.close()
+        except Exception:
+            pass
+
+    # ──────────────────────────── 异常处理辅助 ──────────────────────────
+    def _log_db_error(self, operation: str, error: Exception, level: str = "warning", context: str = ""):
+        """
+        【v4.18 统一异常处理】数据库操作异常的集中日志记录
+
+        Args:
+            operation: 操作描述（如"ALTER TABLE", "INSERT INTO points_log"）
+            error: 异常对象
+            level: 日志级别（"warning", "error", "critical"）
+            context: 额外上下文信息（如 uid、task_name 等）
+        """
+        msg = f"数据库操作失败: {operation}"
+        if context:
+            msg += f" | {context}"
+        msg += f" | 错误: {str(error)[:100]}"
+
+        if level == "warning":
+            logger.warning(msg)
+        elif level == "error":
+            logger.error(msg)
+        elif level == "critical":
+            logger.critical(msg)
+            # 严重故障上报管理员
+            try:
+                from modules.auto_tasks import report_fault
+                report_fault("数据库严重错误", msg, "🚨")
+            except Exception:
+                pass
+        else:
+            logger.warning(msg)
 
     # ─────────────────────────────── 初始化 ──────────────────────────────
     def _init_tables(self):
@@ -144,6 +197,14 @@ class DB:
                 date INTEGER
             )""")
 
+            # 全局黑名单（广告封禁专用，跨群生效）
+            c.execute("""CREATE TABLE IF NOT EXISTS global_blacklist (
+                user_id INTEGER PRIMARY KEY,
+                reason TEXT,
+                added_by INTEGER,
+                added_at TEXT
+            )""")
+
             # 转化漏斗（【修复v21.34】事件日志表，支持多次记录）
             c.execute("""CREATE TABLE IF NOT EXISTS conversion_events (
                 id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,6 +213,20 @@ class DB:
                 ts    INTEGER,
                 mode  TEXT DEFAULT ''
             )""")
+            # [TRAE SOLO CN] v5.12.3 新增：conversions 转化追踪表（AGENTS.md 商业闭环核心表）
+            c.execute("""CREATE TABLE IF NOT EXISTS conversions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER,
+                event TEXT,
+                value REAL DEFAULT 0,
+                chat_id INTEGER DEFAULT 0,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_conversions_uid ON conversions(uid)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_conversions_event ON conversions(event)")
+            # [TRAE SOLO CN] v5.12.3 补充：conversion_events 表索引（加速漏斗查询和用户维度查询）
+            c.execute("CREATE INDEX IF NOT EXISTS idx_conversion_events_uid ON conversion_events(uid)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_conversion_events_event ON conversion_events(event)")
 
             # 垃圾信息/反刷记录
             c.execute("""CREATE TABLE IF NOT EXISTS spam_track (
@@ -235,6 +310,48 @@ class DB:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_channel_member_snapshot ON channel_member_snapshot(chat_id, snapshot_date)")
 
+            # 【v4.13.1新增】验证码记录表
+            c.execute("""CREATE TABLE IF NOT EXISTS verification_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                user_id INTEGER,
+                answer TEXT,
+                ts INTEGER,
+                verify_date TEXT,
+                passed INTEGER DEFAULT 0,
+                UNIQUE(chat_id, user_id, verify_date)
+            )""")
+
+            # 【v4.13.1新增】联邦封禁表
+            c.execute("""CREATE TABLE IF NOT EXISTS federation_bans (
+                user_id INTEGER PRIMARY KEY,
+                banned_by INTEGER,
+                reason TEXT,
+                chat_id INTEGER,
+                ts INTEGER
+            )""")
+
+            # 【v4.13.1新增】夜间模式设置表
+            c.execute("""CREATE TABLE IF NOT EXISTS night_mode_settings (
+                chat_id INTEGER PRIMARY KEY,
+                start_hour INTEGER DEFAULT 23,
+                end_hour INTEGER DEFAULT 7,
+                enabled INTEGER DEFAULT 0
+            )""")
+
+            # 【v4.13.1新增】欢迎配置表
+            c.execute("""CREATE TABLE IF NOT EXISTS welcome_configs (
+                chat_id INTEGER PRIMARY KEY,
+                welcome_text TEXT,
+                goodbye_text TEXT,
+                rules_text TEXT,
+                enable_welcome INTEGER DEFAULT 1,
+                enable_goodbye INTEGER DEFAULT 0,
+                enable_rules INTEGER DEFAULT 0,
+                clean_welcome INTEGER DEFAULT 0,
+                media_file_id TEXT
+            )""")
+
             # 【v4.3.0新增】用户勋章表
             c.execute("""CREATE TABLE IF NOT EXISTS user_badges (
                 uid INTEGER,
@@ -257,6 +374,31 @@ class DB:
             # 添加关键词索引，加速匹配
             c.execute("CREATE INDEX IF NOT EXISTS idx_keyword_trigger_enabled ON keyword_triggers(enabled)")
 
+            # 【v5.12.0新增】孤儿播报追踪表（升级/早安午安晚安/定时播报等，30S或链式互删）
+            # 复合主键 (chat_id, category)：每个群每个播报类型只保留最新一条
+            # [Trae CN] 用于"发新消息删旧消息"互删机制和孤儿播报30S自动删除
+            c.execute("""CREATE TABLE IF NOT EXISTS broadcast_tracking (
+                chat_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                msg_id INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, category)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_broadcast_tracking_ts ON broadcast_tracking(ts)")
+
+            # 【v5.12.0新增】孤儿清理日志表 - 记录每次 _job_burn_orphan 执行的统计
+            # [Trae CN] 用于 Dashboard /api/orphan/stats 可视化和运维审计
+            c.execute("""CREATE TABLE IF NOT EXISTS orphan_cleanup_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_at INTEGER NOT NULL,
+                found_count INTEGER NOT NULL DEFAULT 0,
+                deleted_count INTEGER NOT NULL DEFAULT 0,
+                skipped_count INTEGER NOT NULL DEFAULT 0,
+                error TEXT DEFAULT NULL,
+                trigger TEXT DEFAULT 'scheduled'  -- scheduled / manual / force
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_orphan_cleanup_log_run_at ON orphan_cleanup_log(run_at)")
+
             c.execute("""CREATE TABLE IF NOT EXISTS task_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_key TEXT NOT NULL,
@@ -264,7 +406,23 @@ class DB:
                 exec_ts REAL NOT NULL
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_task_log_key_date ON task_log(task_key, exec_date)")
-            
+
+            # [v5.14.0新增] 商业搭讪事件表 - 记录 Bot 主动搭讪用户的完整链路
+            # 用于 Dashboard /api/engage/* 可视化、转化追踪、运营复盘
+            c.execute("""CREATE TABLE IF NOT EXISTS proactive_engage_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                uname TEXT NOT NULL DEFAULT '',
+                msg TEXT NOT NULL DEFAULT '',
+                matched_keyword TEXT NOT NULL DEFAULT '',
+                reply_text TEXT NOT NULL DEFAULT '',
+                ts INTEGER NOT NULL,
+                converted INTEGER NOT NULL DEFAULT 0
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_proactive_engage_log_uid ON proactive_engage_log(uid)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_proactive_engage_log_ts ON proactive_engage_log(ts)")
+
             # 【v4.5.31】防连发：清理重复记录 + 添加UNIQUE约束
             try:
                 c.execute("""DELETE FROM task_log WHERE id NOT IN (
@@ -285,10 +443,562 @@ class DB:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_reply_feedback_ts ON reply_feedback(ts)")
 
+            # ── 【v4.14新增】签到/商城/红包/抽奖/认证/标签/统计表 ──────
+            c.execute("""CREATE TABLE IF NOT EXISTS checkin_records (
+                uid INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                continuous_days INTEGER DEFAULT 1,
+                points_earned INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL,
+                UNIQUE(uid, date)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_checkin_uid ON checkin_records(uid)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS invite_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inviter_uid INTEGER NOT NULL,
+                invitee_uid INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_invite_inviter ON invite_records(inviter_uid)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS coupon_claims (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'points',
+                value INTEGER NOT NULL DEFAULT 0,
+                days INTEGER NOT NULL DEFAULT 0,
+                expires_at INTEGER NOT NULL DEFAULT 0,
+                claimed_by INTEGER DEFAULT 0,
+                claimed_at INTEGER DEFAULT 0,
+                used_at INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                UNIQUE(code)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_coupon_code ON coupon_claims(code)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_coupon_claimed_by ON coupon_claims(claimed_by)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS shop_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                points_cost INTEGER NOT NULL,
+                stock INTEGER DEFAULT -1,
+                description TEXT DEFAULT '',
+                category TEXT DEFAULT 'default',
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS exchange_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                item_name TEXT DEFAULT '',
+                points_cost INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending'
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_exchange_uid ON exchange_records(uid)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS redpackets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                total_points INTEGER NOT NULL,
+                count INTEGER NOT NULL,
+                remaining INTEGER NOT NULL,
+                mode TEXT DEFAULT 'random',
+                msg_id INTEGER DEFAULT 0,
+                expired INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS redpacket_claims (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                redpacket_id INTEGER NOT NULL,
+                uid INTEGER NOT NULL,
+                amount INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                UNIQUE(redpacket_id, uid)
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS lotteries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creator_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                prize TEXT NOT NULL,
+                prize_count INTEGER DEFAULT 1,
+                duration_min INTEGER DEFAULT 60,
+                end_ts INTEGER NOT NULL,
+                msg_id INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'active',
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS lottery_participants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lottery_id INTEGER NOT NULL,
+                uid INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                UNIQUE(lottery_id, uid)
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS certified_users (
+                uid INTEGER PRIMARY KEY,
+                certified_by INTEGER NOT NULL,
+                reason TEXT DEFAULT '',
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS user_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                tag TEXT NOT NULL,
+                added_by INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                UNIQUE(uid, tag)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_usertags_uid ON user_tags(uid)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS user_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                note TEXT NOT NULL,
+                added_by INTEGER NOT NULL,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_usernotes_uid ON user_notes(uid)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS speech_daily (
+                uid INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                chat_id INTEGER NOT NULL,
+                count INTEGER DEFAULT 0,
+                PRIMARY KEY (uid, date, chat_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_speech_uid_date ON speech_daily(uid, date)")
+            # 【v4.17.0新增】日报按日期+群组查询的复合索引
+            c.execute("CREATE INDEX IF NOT EXISTS idx_speech_date_chat ON speech_daily(date, chat_id)")
+
+            # ── 【v4.15新增】积分增强/AFK/任务/成就/盲盒/转盘表 ──────
+            c.execute("""CREATE TABLE IF NOT EXISTS points_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                change_amount INTEGER NOT NULL,
+                balance_after INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_points_log_uid ON points_log(uid)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_points_log_uid_ts ON points_log(uid, ts)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS afk_status (
+                uid INTEGER PRIMARY KEY,
+                reason TEXT DEFAULT '',
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS daily_quests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                quest_type TEXT NOT NULL,
+                completed INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL,
+                UNIQUE(uid, date, quest_type)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_daily_quests_uid_date ON daily_quests(uid, date)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS achievements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                achievement_id TEXT NOT NULL,
+                earned_at INTEGER NOT NULL,
+                UNIQUE(uid, achievement_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_achievements_uid ON achievements(uid)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS blind_box_prizes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                probability REAL NOT NULL DEFAULT 1.0,
+                prize_type TEXT NOT NULL DEFAULT 'points',
+                value INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS lucky_wheel_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                reward INTEGER NOT NULL DEFAULT 0,
+                spin_count INTEGER NOT NULL DEFAULT 1,
+                ts INTEGER NOT NULL,
+                UNIQUE(uid, date)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_lucky_wheel_uid_date ON lucky_wheel_results(uid, date)")
+            # 兼容旧表：添加 spin_count 列
+            try:
+                c.execute("ALTER TABLE lucky_wheel_results ADD COLUMN spin_count INTEGER NOT NULL DEFAULT 1")
+            except Exception as e:
+                self._log_db_error("ALTER TABLE lucky_wheel_results ADD COLUMN spin_count", e, "warning", "表结构迁移")
+
+            # ── 【v4.16新增】高级群管功能表 ──────
+            c.execute("""CREATE TABLE IF NOT EXISTS warnings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                reason TEXT DEFAULT '',
+                warned_by INTEGER NOT NULL,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_warnings_uid_chat ON warnings(uid, chat_id)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS message_locks (
+                chat_id INTEGER NOT NULL,
+                lock_type TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, lock_type)
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS group_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                note_name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                UNIQUE(chat_id, note_name)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_group_notes_chat ON group_notes(chat_id)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS custom_commands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                cmd_name TEXT NOT NULL,
+                response TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                UNIQUE(chat_id, cmd_name)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_custom_cmds_chat ON custom_commands(chat_id)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS scheduled_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                send_time TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                enabled INTEGER DEFAULT 1
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_chat ON scheduled_messages(chat_id)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS vote_kicks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                target_uid INTEGER NOT NULL,
+                initiator_id INTEGER NOT NULL,
+                reason TEXT DEFAULT '',
+                yes_votes TEXT DEFAULT '',
+                no_votes TEXT DEFAULT '',
+                status TEXT DEFAULT 'active',
+                msg_id INTEGER DEFAULT 0,
+                end_ts INTEGER NOT NULL,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_vote_kicks_chat ON vote_kicks(chat_id)")
+
+            # ── 【v4.17新增】主流Bot功能补齐表 ──────
+            c.execute("""CREATE TABLE IF NOT EXISTS clean_service_settings (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS disabled_commands (
+                chat_id INTEGER NOT NULL,
+                cmd_name TEXT NOT NULL,
+                ts INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, cmd_name)
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS admin_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                operator_uid INTEGER NOT NULL,
+                target_uid INTEGER DEFAULT 0,
+                action TEXT NOT NULL,
+                reason TEXT DEFAULT '',
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_admin_logs_chat ON admin_logs(chat_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_admin_logs_ts ON admin_logs(ts)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS deleted_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                uid INTEGER NOT NULL,
+                content TEXT DEFAULT '',
+                content_type TEXT DEFAULT 'text',
+                msg_id INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_deleted_msgs_chat ON deleted_messages(chat_id)")
+
+            # [TRAE SOLO CN] v5.15.3 新增：消息追踪表 message_snapshots（AGENTS.md 教训 #17 落实）
+            # Bot API 无法枚举群历史消息，删除历史消息必须依赖此表的 msg_id 记录
+            # 之前 v5.15.2 P1 拦截只 return True 静默吞了，没记 msg_id → 18:36 教白嫖消息删不掉
+            c.execute("""CREATE TABLE IF NOT EXISTS message_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                msg_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                text TEXT DEFAULT '',
+                ts INTEGER NOT NULL,
+                is_ad INTEGER DEFAULT 0,
+                deleted INTEGER DEFAULT 0,
+                UNIQUE(chat_id, msg_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_msg_snapshots_chat_ts ON message_snapshots(chat_id, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_msg_snapshots_user ON message_snapshots(user_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_msg_snapshots_ad ON message_snapshots(is_ad, deleted)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS connected_chats (
+                uid INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                PRIMARY KEY (uid)
+            )""")
+
+            # ── 【v4.18新增】主流Bot完整功能补齐表 ──────
+            c.execute("""CREATE TABLE IF NOT EXISTS antiflood_settings (
+                chat_id INTEGER PRIMARY KEY,
+                window INTEGER DEFAULT 5,
+                threshold INTEGER DEFAULT 5,
+                mute_duration INTEGER DEFAULT 60,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS approved_users (
+                chat_id INTEGER NOT NULL,
+                uid INTEGER NOT NULL,
+                approved_by INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, uid)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_approved_chat ON approved_users(chat_id)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS blocklist_modes (
+                chat_id INTEGER PRIMARY KEY,
+                mode TEXT DEFAULT 'delete',
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS force_subscribe (
+                chat_id INTEGER PRIMARY KEY,
+                channel_username TEXT DEFAULT '',
+                channel_id INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                trigger_ts INTEGER NOT NULL,
+                content TEXT DEFAULT '',
+                sent INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_reminders_uid ON reminders(uid)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_reminders_trigger ON reminders(trigger_ts)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS anti_channel_settings (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS nsfw_settings (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 0,
+                threshold REAL DEFAULT 0.7,
+                ts INTEGER NOT NULL
+            )""")
+
+            # ── 【v5.0.0设置面板完全体新增】配置表补齐 ──────
+            # 警告设置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS warning_settings (
+                chat_id INTEGER PRIMARY KEY,
+                warn_limit INTEGER DEFAULT 3,
+                warn_action TEXT DEFAULT 'mute',
+                warn_duration INTEGER DEFAULT 3600,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 慢速模式（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS slow_mode_config (
+                chat_id INTEGER PRIMARY KEY,
+                interval INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 举报配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS report_settings (
+                chat_id INTEGER PRIMARY KEY,
+                cooldown INTEGER DEFAULT 300,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 投票踢人配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS votekick_config (
+                chat_id INTEGER PRIMARY KEY,
+                min_yes INTEGER DEFAULT 5,
+                min_ratio REAL DEFAULT 0.6,
+                duration INTEGER DEFAULT 300,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 反突袭配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS anti_raid_config (
+                chat_id INTEGER PRIMARY KEY,
+                threshold INTEGER DEFAULT 5,
+                window INTEGER DEFAULT 60,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 盲盒配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS blind_box_config (
+                chat_id INTEGER PRIMARY KEY,
+                cost INTEGER DEFAULT 50,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 转盘配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS lucky_wheel_config (
+                chat_id INTEGER PRIMARY KEY,
+                cost INTEGER DEFAULT 30,
+                free_spins INTEGER DEFAULT 1,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 红包配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS redpacket_config (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 1,
+                min_amount INTEGER DEFAULT 1,
+                max_amount INTEGER DEFAULT 100,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 抽奖配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS lottery_config (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 签到配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS checkin_config (
+                chat_id INTEGER PRIMARY KEY,
+                base_points INTEGER DEFAULT 5,
+                streak_bonus TEXT DEFAULT '{"3":5,"7":15}',
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 商城配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS shop_config (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 优惠券配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS coupon_config (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 打赏配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS tip_config (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 1,
+                min_amount INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 每日任务配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS daily_quest_config (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 成就配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS achievement_config (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 积分衰减配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS points_decay_config (
+                chat_id INTEGER PRIMARY KEY,
+                rate REAL DEFAULT 0.01,
+                minimum INTEGER DEFAULT 10,
+                enabled INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+
+            # AFK配置（按群）
+            c.execute("""CREATE TABLE IF NOT EXISTS afk_config (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 1,
+                ts INTEGER NOT NULL
+            )""")
+
+            # 【v5.0.0新增】广告检测追踪表（持久化可疑用户评分）
+            c.execute("""CREATE TABLE IF NOT EXISTS ad_suspicious_users (
+                user_id INTEGER PRIMARY KEY,
+                score INTEGER DEFAULT 0,
+                first_seen TEXT,
+                messages TEXT DEFAULT '[]',
+                updated_at INTEGER
+            )""")
+
+            # [TRAE SOLO CN] v5.8.1 新增：群成员追踪表（渐进式构建完整成员列表）
+            c.execute("""CREATE TABLE IF NOT EXISTS group_members (
+                uid INTEGER,
+                chat_id INTEGER,
+                username TEXT DEFAULT '',
+                display_name TEXT DEFAULT '',
+                bio TEXT DEFAULT '',
+                status TEXT DEFAULT 'member',
+                first_seen INTEGER,
+                last_checked INTEGER,
+                PRIMARY KEY (uid, chat_id)
+            )""")
+
             # ── 兼容性迁移：旧数据库缺少的列自动补齐 ──────────────────
             try:
                 self.conn.execute("SELECT replied FROM reply_tracking LIMIT 0")
-            except Exception:
+            except Exception as e:
+                self._log_db_error("SELECT replied FROM reply_tracking", e, "warning", "检查列是否存在")
                 self.conn.execute("ALTER TABLE reply_tracking ADD COLUMN replied INTEGER DEFAULT 0")
                 logger.info("🔄 数据库迁移：reply_tracking 补充 replied 列")
 
@@ -304,15 +1014,93 @@ class DB:
                 logger.warning(f"🔄 reply_tracking 迁移检查跳过：{e}")
             try:
                 self.conn.execute("SELECT conversion_status FROM users LIMIT 0")
-            except Exception:
+            except Exception as e:
+                self._log_db_error("SELECT conversion_status FROM users", e, "warning", "检查列是否存在")
                 self.conn.execute("ALTER TABLE users ADD COLUMN conversion_status TEXT DEFAULT 'unknown'")
                 logger.info("🔄 数据库迁移：users 补充 conversion_status 列")
 
             try:
                 c.execute("SELECT chat_id FROM group_stats LIMIT 1")
-            except Exception:
+            except Exception as e:
+                self._log_db_error("SELECT chat_id FROM group_stats", e, "warning", "检查列是否存在")
                 c.execute("ALTER TABLE group_stats ADD COLUMN chat_id INTEGER DEFAULT 0")
                 logger.info("✅ group_stats表已添加chat_id列")
+
+            # checkin_records 补充 current_streak 列
+            try:
+                self.conn.execute("SELECT current_streak FROM checkin_records LIMIT 0")
+            except Exception as e:
+                self._log_db_error("SELECT current_streak FROM checkin_records", e, "warning", "检查列是否存在")
+                self.conn.execute("ALTER TABLE checkin_records ADD COLUMN current_streak INTEGER DEFAULT 0")
+                logger.info("🔄 数据库迁移：checkin_records 补充 current_streak 列")
+
+            # ── [v5.15.0新增] 问题追踪与FAQ蒸馏表 ──────
+            # 用户问题记录表（记录每条用户提问，用于FAQ蒸馏和问题分析）
+            c.execute("""CREATE TABLE IF NOT EXISTS user_questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                question_text TEXT NOT NULL DEFAULT '',
+                mode TEXT NOT NULL DEFAULT '',
+                intent TEXT NOT NULL DEFAULT '',
+                keyword_tag TEXT NOT NULL DEFAULT '',
+                question_category TEXT NOT NULL DEFAULT 'other',
+                is_convert INTEGER NOT NULL DEFAULT 0,
+                ai_reply_summary TEXT NOT NULL DEFAULT '',
+                faq_hit_id INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_questions_uid ON user_questions(uid)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_questions_ts ON user_questions(ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_questions_category ON user_questions(question_category)")
+
+            # FAQ知识库表（审核通过的FAQ条目，用于智能匹配回复）
+            c.execute("""CREATE TABLE IF NOT EXISTS faq_knowledge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_pattern TEXT NOT NULL DEFAULT '',
+                question_category TEXT NOT NULL DEFAULT 'other',
+                answer_template TEXT NOT NULL DEFAULT '',
+                ai_polish INTEGER NOT NULL DEFAULT 1,
+                match_mode TEXT NOT NULL DEFAULT 'keyword',
+                priority INTEGER NOT NULL DEFAULT 0,
+                hit_count INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'approved',
+                created_by TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_faq_knowledge_category ON faq_knowledge(question_category)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_faq_knowledge_status ON faq_knowledge(status)")
+
+            # FAQ候选表（高频问题自动蒸馏生成，待人工审核）
+            c.execute("""CREATE TABLE IF NOT EXISTS faq_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_pattern TEXT NOT NULL DEFAULT '',
+                question_category TEXT NOT NULL DEFAULT 'other',
+                sample_questions TEXT NOT NULL DEFAULT '',
+                frequency INTEGER NOT NULL DEFAULT 0,
+                mode TEXT NOT NULL DEFAULT '',
+                intent TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                reviewed_by TEXT NOT NULL DEFAULT '',
+                reviewed_at INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_faq_candidates_status ON faq_candidates(status)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_faq_candidates_category ON faq_candidates(question_category)")
+
+            # 中继会话追踪（双向通信：管理员回复转发消息时查找原始用户）
+            c.execute("""CREATE TABLE IF NOT EXISTS relay_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_chat_id INTEGER,
+                admin_msg_id INTEGER,
+                user_id INTEGER,
+                user_chat_id INTEGER,
+                source_type TEXT DEFAULT 'private',
+                ts INTEGER DEFAULT 0
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_relay_admin_msg ON relay_sessions(admin_chat_id, admin_msg_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_relay_ts ON relay_sessions(ts)")
 
             self.conn.commit()
 
@@ -336,1349 +1124,86 @@ class DB:
 
         logger.info("✅ 数据库初始化完成（含11个性能索引）")
 
-    # ─────────────────────────────── 用户 ────────────────────────────────
-    def upsert_user(self, uid: int, name: str, msg_type: str = "group"):
-        ts = int(time.time())
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""INSERT OR IGNORE INTO users
-                (uid, name, first_seen, last_active) VALUES (?,?,?,?)""",
-                (uid, name, ts, ts))
-            if msg_type == "group":
-                c.execute("UPDATE users SET last_active=?, group_messages=group_messages+1, name=? WHERE uid=?",
-                          (ts, name, uid))
-            else:
-                c.execute("UPDATE users SET last_active=?, private_messages=private_messages+1, name=? WHERE uid=?",
-                          (ts, name, uid))
-            self.conn.commit()
-
-    def upsert_user_with_points(self, uid: int, name: str, msg_type: str = "group", pts: int = 1):
-        ts = int(time.time())
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""INSERT OR IGNORE INTO users
-                (uid, name, first_seen, last_active) VALUES (?,?,?,?)""",
-                (uid, name, ts, ts))
-            if msg_type == "group":
-                c.execute("UPDATE users SET last_active=?, group_messages=group_messages+1, name=? WHERE uid=?",
-                          (ts, name, uid))
-            else:
-                c.execute("UPDATE users SET last_active=?, private_messages=private_messages+1, name=? WHERE uid=?",
-                          (ts, name, uid))
-            c.execute("INSERT OR IGNORE INTO user_levels VALUES (?,1,0,?,?)", (uid, ts, ts))
-            c.execute("UPDATE user_levels SET points=points+?, last_active=? WHERE uid=?",
-                      (pts, ts, uid))
-            c.execute("SELECT points FROM user_levels WHERE uid=?", (uid,))
-            total = c.fetchone()[0]
-            level = 1
-            if total >= 500: level = 4
-            elif total >= 100: level = 3
-            elif total >= 20: level = 2
-            c.execute("UPDATE user_levels SET level=? WHERE uid=?", (level, uid))
-            self.conn.commit()
-
-    def get_user(self, uid: int):
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT * FROM users WHERE uid=?", (uid,))
-            return c.fetchone()
-
-    def add_keyword(self, uid: int, keyword: str):
-        """追加用户画像关键词"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT keywords FROM users WHERE uid=?", (uid,))
-            row = c.fetchone()
-            if row:
-                existing = row[0] or ""
-                if keyword not in existing:
-                    new_kw = (existing + "," + keyword).strip(",")
-                    c.execute("UPDATE users SET keywords=? WHERE uid=?", (new_kw, uid))
-            self.conn.commit()
-
-    def get_active_users(self, since_ts: int):
-        """获取since_ts之后活跃的用户列表"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT uid, name, keywords FROM users WHERE last_active>?", (since_ts,))
-            return c.fetchall()
-
-    def get_inactive_users(self, before_ts: int, exclude_uid: int):
-        """获取before_ts之前未活跃的用户（醋意挽回用）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT uid, name FROM users WHERE last_active<? AND uid!=?",
-                      (before_ts, exclude_uid))
-            return c.fetchall()
-
-    def reset_last_active(self, uid: int):
-        ts = int(time.time())
-        with _db_lock:
-            self.conn.execute("UPDATE users SET last_active=? WHERE uid=?", (ts, uid))
-            self.conn.commit()
-
-    # ─────────────────────────────── 叫醒 ────────────────────────────────
-    def set_wake_up(self, uid: int, wake_time: str):
-        with _db_lock:
-            self.conn.execute("INSERT OR REPLACE INTO wake_up VALUES (?,?)", (uid, wake_time))
-            self.conn.commit()
-
-    def get_all_wake_ups(self):
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT uid, wake_time FROM wake_up")
-            return c.fetchall()
-
-    # ─────────────────────────────── 寻宝 ────────────────────────────────
-    def inc_puzzle_score(self, uid: int) -> tuple:
-        """
-        尝试增加寻宝积分。每天最多计1次，连续7天凑齐7分可领奖。
-        返回 (当前分数, 今日是否已计, 连续天数)
-        """
-        today = datetime.now(_CST).strftime("%Y-%m-%d")  # 【修复v21.47】使用北京时间
-        try:
-            with _db_lock:
-                c = self.conn.cursor()
-                c.execute("INSERT OR IGNORE INTO puzzle_scores VALUES (?,0)", (uid,))
-                # 检查今天是否已计分
-                c.execute("SELECT 1 FROM puzzle_daily WHERE uid=? AND date=?", (uid, today))
-                if c.fetchone():
-                    # 今天已计分
-                    c.execute("SELECT score FROM puzzle_scores WHERE uid=?", (uid,))
-                    return (c.fetchone()[0], True, 0)
-                # 今天未计分，加分
-                c.execute("INSERT OR REPLACE INTO puzzle_daily VALUES (?,?,?)", (uid, today, int(time.time())))
-                c.execute("UPDATE puzzle_scores SET score=score+1 WHERE uid=?", (uid,))
-                c.execute("SELECT score FROM puzzle_scores WHERE uid=?", (uid,))
-                score = c.fetchone()[0]
-                # 计算连续天数（连续7天有记录）
-                consecutive = self._calc_consecutive_days(uid)
-                if score >= 7:
-                    c.execute("UPDATE puzzle_scores SET score=0 WHERE uid=?", (uid,))
-                    self.conn.commit()
-                    return (7, False, consecutive)
-                self.conn.commit()
-                return (score, False, consecutive)
-        except Exception as e:
-            logger.error(f"寻宝积分操作失败 uid={uid}: {e}")
-            try:
-                from modules.auto_tasks import report_fault
-                report_fault("数据库操作失败", f"寻宝积分操作失败 uid={uid}: {str(e)[:80]}", "⚠️")
-            except Exception:
-                pass
-            return (0, False, 0)
-
-    def _calc_consecutive_days(self, uid: int) -> int:
-        """计算用户连续签到天数（由调用方保证在_db_lock内调用，不再重复获取锁）"""
-        c = self.conn.cursor()
-        c.execute("SELECT date FROM puzzle_daily WHERE uid=? ORDER BY date DESC", (uid,))
-        dates = [row[0] for row in c.fetchall()]
-        if not dates:
-            return 0
-        count = 1
-        from datetime import datetime as dt
-        for i in range(1, len(dates)):
-            try:
-                prev = dt.strptime(dates[i-1], "%Y-%m-%d")
-                curr = dt.strptime(dates[i], "%Y-%m-%d")
-                if (prev - curr).days == 1:
-                    count += 1
-                else:
-                    break
-            except Exception:
-                break
-        return count
-
-    # ─────────────────────────────── 购物车 ──────────────────────────────
-    def set_cart(self, uid: int):
-        with _db_lock:
-            self.conn.execute("INSERT OR REPLACE INTO cart_recovery VALUES (?,?)",
-                             (uid, int(time.time())))
-            self.conn.commit()
-
-    def get_expired_carts(self, delay_seconds: int = 86400):
-        cutoff = int(time.time()) - delay_seconds
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT uid FROM cart_recovery WHERE ts<?", (cutoff,))
-            rows = [r[0] for r in c.fetchall()]
-            if rows:
-                # 【v4.3.2修复S-09】添加长度限制，防止IN子句过长
-                rows = rows[:100]
-                self.conn.execute(f"DELETE FROM cart_recovery WHERE uid IN ({','.join('?'*len(rows))})",
-                                 rows)
-                self.conn.commit()
-            return rows
-
-    # ─────────────────────────────── 阅后即焚 ────────────────────────────
-    def track_reply(self, bot_msg_id: int, chat_id: int, user_msg_id: int):
-        """记录机器人回复，追踪原消息是否被删（复合主键：bot_msg_id+chat_id）"""
-        with _db_lock:
-            try:
-                if not bot_msg_id or not chat_id or not user_msg_id:
-                    logger.error(f"📌 track_reply参数无效: bot={bot_msg_id} chat={chat_id} user={user_msg_id}")
-                    return
-
-                ts = int(time.time())
-                self.conn.execute("INSERT OR REPLACE INTO reply_tracking (bot_msg_id, chat_id, user_msg_id, ts, replied) VALUES (?,?,?,?,0)",
-                                 (bot_msg_id, chat_id, user_msg_id, ts))
-                self.conn.commit()
-                logger.info(f"📌 阅后即焚追踪成功：bot={bot_msg_id} chat={chat_id} user={user_msg_id} ts={ts}")
-            except Exception as e:
-                logger.error(f"📌 阅后即焚追踪失败：{e}")
-                try:
-                    from modules.auto_tasks import report_fault
-                    report_fault("阅后即焚追踪失败", f"bot_msg={bot_msg_id} chat={chat_id}: {str(e)[:80]}", "⚠️")
-                except Exception:
-                    pass
-
-    def mark_replied(self, bot_msg_id: int, chat_id: int = 0):
-        """用户回复了机器人的消息，标记为已回复（不自动删除）"""
-        with _db_lock:
-            if chat_id:
-                self.conn.execute("UPDATE reply_tracking SET replied=1 WHERE bot_msg_id=? AND chat_id=?",
-                                 (bot_msg_id, chat_id))
-            else:
-                self.conn.execute("UPDATE reply_tracking SET replied=1 WHERE bot_msg_id=?",
-                                 (bot_msg_id,))
-            self.conn.commit()
-
-    def get_replies_to(self, user_msg_id: int, chat_id: int):
-        """获取机器人对某条消息的所有回复（用于消息被删时同步删除）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT bot_msg_id, replied FROM reply_tracking
-                         WHERE user_msg_id=? AND chat_id=?""", (user_msg_id, chat_id))
-            return c.fetchall()
-
-    def get_recent_unreplied(self, min_age: int = 300, max_age: int = 1800, limit: int = 10):
-        """获取最近未回复的消息（用于探测用户是否删消息）
-        
-        Args:
-            min_age: 最小存活秒数（默认5分钟，避免探测刚发的消息）
-            max_age: 最大存活秒数（默认30分钟）
-            limit: 最多返回条数（防止一次探测太多）
-        """
-        now = int(time.time())
-        since = now - max_age
-        until = now - min_age
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE ts BETWEEN ? AND ? AND user_msg_id>0 AND replied=0
-                         ORDER BY ts ASC LIMIT ?""", (since, until, limit))
-            return c.fetchall()
-
-    def get_orphan_messages(self, window: int = 86400):
-        """返回超过window秒未被回复的孤儿消息。
-        
-        【审查修复】只有replied=0的消息才算孤儿。
-        用户回复了机器人的消息应该获得豁免，不应被清理。
-        注意：不再自动删除数据库记录，由调用方处理（保持职责分离）。
-        """
-        cutoff = int(time.time()) - window
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE ts<? AND user_msg_id>0 AND replied=0""", (cutoff,))
-            return c.fetchall()
-
-    def get_unreplied_messages(self):
-        """返回所有未被回复的机器人消息（不限时间，用于清群无人理）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE replied=0""")
-            return c.fetchall()
-
-    def get_ignored_messages(self, min_age: int = 1800):
-        """智能判断「真正无人理」的消息：
-        - replied=0（没人显式回复）
-        - 且消息已存在超过 min_age 秒（默认30分钟，避免误删刚发的）
-        - 返回 (bot_msg_id, chat_id, user_msg_id)
-        """
-        cutoff = int(time.time()) - min_age
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE replied=0 AND ts<?""", (cutoff,))
-            return c.fetchall()
-
-    def get_all_tracked_messages(self, window: int = 86400):
-        """返回窗口内的所有追踪消息（不限replied状态，用于清全部回复）"""
-        now = int(time.time())
-        since = now - window
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE ts>?""", (since,))
-            return c.fetchall()
-
-    def get_unconfirmed_messages(self, window: int = 86400):
-        """返回window时间内未被回复的追踪消息（探测原消息是否还在）。
-        
-        【审查修复v21.47】
-        - 窗口从1小时扩大到24小时，修复23小时探测盲区
-        - 按时间倒序，确保优先探测新消息
-        - 尊重"豁免保护"：只有replied=0的消息才需要探测
-        """
-        now = int(time.time())
-        since = now - window
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
-                         WHERE ts>? AND user_msg_id>0 AND replied=0 ORDER BY ts DESC""", (since,))
-            return c.fetchall()
-
-    def delete_tracked(self, bot_msg_id: int, chat_id: int = 0):
-        """删除阅后即焚追踪记录"""
-        with _db_lock:
-            if chat_id:
-                self.conn.execute("DELETE FROM reply_tracking WHERE bot_msg_id=? AND chat_id=?", (bot_msg_id, chat_id))
-            else:
-                self.conn.execute("DELETE FROM reply_tracking WHERE bot_msg_id=?", (bot_msg_id,))
-            self.conn.commit()
-
-    # ─────────────────────────────── 等级/积分 ───────────────────────────
-    def get_user_points(self, uid: int):
-        """查询单用户积分，返回int或None（不存在时）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT points FROM user_levels WHERE uid=?", (uid,))
-            row = c.fetchone()
-            return row[0] if row else None
-
-    def add_points(self, uid: int, pts: int):
-        ts = int(time.time())
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("INSERT OR IGNORE INTO user_levels VALUES (?,1,0,?,?)", (uid, ts, ts))
-            c.execute("UPDATE user_levels SET points=points+?, last_active=? WHERE uid=?",
-                      (pts, ts, uid))
-            c.execute("SELECT points FROM user_levels WHERE uid=?", (uid,))
-            total = c.fetchone()[0]
-            level = 1
-            if total >= 500: level = 4
-            elif total >= 100: level = 3
-            elif total >= 20: level = 2
-            c.execute("UPDATE user_levels SET level=? WHERE uid=?", (level, uid))
-            self.conn.commit()
-
-    def get_leaderboard(self, limit: int = 10):
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT u.uid, u.name, COALESCE(ul.points,0), COALESCE(ul.level,1)
-                         FROM users u LEFT JOIN user_levels ul ON u.uid=ul.uid
-                         ORDER BY COALESCE(ul.points,0) DESC LIMIT ?""", (limit,))
-            return c.fetchall()
-
-    # ─────────────────────────────── 禁言 ────────────────────────────────
-    def mute_user(self, uid: int, chat_id: int, minutes: int, reason: str = "违反群规"):
-        until = int(time.time()) + minutes * 60
-        with _db_lock:
-            self.conn.execute("INSERT OR REPLACE INTO mute_records VALUES (?,?,?,?)",
-                             (uid, chat_id, until, reason))
-            self.conn.commit()
-
-    def is_muted(self, uid: int) -> bool:
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT mute_until FROM mute_records WHERE uid=?", (uid,))
-            row = c.fetchone()
-            if row:
-                if row[0] > int(time.time()):
-                    return True
-                self.conn.execute("DELETE FROM mute_records WHERE uid=?", (uid,))
-                self.conn.commit()
-            return False
-
-    # ─────────────────────────────── 黑名单 ──────────────────────────────
-    def blacklist_add(self, uid: int, reason: str = "垃圾信息"):
-        with _db_lock:
-            self.conn.execute("INSERT OR IGNORE INTO blacklist VALUES (?,?,?)",
-                             (uid, reason, int(time.time())))
-            self.conn.commit()
-
-    def blacklist_remove(self, uid: int):
-        """从黑名单移除用户（用于自助解封）"""
-        with _db_lock:
-            self.conn.execute("DELETE FROM blacklist WHERE uid=?", (uid,))
-            self.conn.commit()
-
-    def is_blacklisted(self, uid: int) -> bool:
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT 1 FROM blacklist WHERE uid=?", (uid,))
-            return c.fetchone() is not None
-
-    # ─────────────────────────────── 转化漏斗（事件化） ───────────────────
-    def log_conversion_event(self, uid: int, event: str, mode: str = ""):
-        """event: touched | interested | consulted | paid"""
-        with _db_lock:
-            self.conn.execute(
-                "INSERT INTO conversion_events(uid, event, ts, mode) VALUES (?, ?, ?, ?)",
-                (uid, event, int(time.time()), mode)
-            )
-            self.conn.commit()
-
-    def get_funnel_summary(self):
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT
-                COUNT(DISTINCT CASE WHEN event='touched'    THEN uid END),
-                COUNT(DISTINCT CASE WHEN event='interested' THEN uid END),
-                COUNT(DISTINCT CASE WHEN event='consulted'  THEN uid END),
-                COUNT(DISTINCT CASE WHEN event='paid'       THEN uid END)
-                FROM conversion_events""")
-            return c.fetchone()
-
-    # ─────────────────────────────── 反刷 ────────────────────────────────
-    def check_spam(self, uid: int, limit: int, window: int = 60) -> bool:
-        """返回True代表触发刷屏阈值"""
-        now = int(time.time())
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT msg_count, window_start FROM spam_track WHERE uid=?", (uid,))
-            row = c.fetchone()
-            if not row or now - row[1] > window:
-                self.conn.execute("INSERT OR REPLACE INTO spam_track VALUES (?,1,?)", (uid, now))
-                self.conn.commit()
-                return False
-            count = row[0] + 1
-            self.conn.execute("UPDATE spam_track SET msg_count=? WHERE uid=?", (count, uid))
-            self.conn.commit()
-            return count >= limit
-
-    # ─────────────────────────────── 简报 ────────────────────────────────
-    def get_daily_report(self) -> dict:
-        ts = int(time.time())
-        day_ago = ts - 86400
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT COUNT(*) FROM users WHERE last_active>?", (day_ago,))
-            active = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM users WHERE first_seen>?", (day_ago,))
-            new_users = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM users")
-            total = c.fetchone()[0]
-            funnel = self.get_funnel_summary()
-            c.execute("""SELECT u.name, COALESCE(ul.points,0) FROM users u
-                         LEFT JOIN user_levels ul ON u.uid=ul.uid
-                         ORDER BY COALESCE(ul.points,0) DESC LIMIT 5""")
-            top5 = c.fetchall()
-            c.execute("SELECT COUNT(*) FROM blacklist")
-            blacklist_cnt = c.fetchone()[0]
-        return {
-            "active": active,
-            "new_users": new_users,
-            "total": total,
-            "funnel": funnel or (0,0,0,0),
-            "top5": top5,
-            "blacklist": blacklist_cnt,
-        }
-
-    # ─────────────────────────────── 画像简报 ────────────────────────────
-    def get_user_profile(self, uid: int) -> dict | None:
-        """获取用户完整画像数据，用于「查看画像」指令"""
-        with _db_lock:
-            c = self.conn.cursor()
-            # 用户基础信息
-            c.execute("SELECT * FROM users WHERE uid=?", (uid,))
-            row = c.fetchone()
-            if not row:
-                return None
-            user_data = {
-                "uid": row[0],
-                "name": row[1],
-                "first_seen": row[2],
-                "last_active": row[3],
-                "group_messages": row[4],
-                "private_messages": row[5],
-                "keywords": row[6] or "",
-                "conversion_status": row[7] or "unknown",
-            }
-            # 等级积分
-            c.execute("""SELECT level, points FROM user_levels WHERE uid=?""", (uid,))
-            lv_row = c.fetchone()
-            user_data["level"] = lv_row[0] if lv_row else 1
-            user_data["points"] = lv_row[1] if lv_row else 0
-            # 转化漏斗（从事件表聚合）
-            c.execute("""SELECT
-                COUNT(CASE WHEN event='touched'    THEN 1 END),
-                COUNT(CASE WHEN event='interested' THEN 1 END),
-                COUNT(CASE WHEN event='consulted'  THEN 1 END),
-                COUNT(CASE WHEN event='paid'       THEN 1 END)
-                FROM conversion_events WHERE uid=?""", (uid,))
-            fn_row = c.fetchone()
-            user_data["funnel"] = {
-                "touched": fn_row[0] if fn_row else 0,
-                "interested": fn_row[1] if fn_row else 0,
-                "consulted": fn_row[2] if fn_row else 0,
-                "paid": fn_row[3] if fn_row else 0,
-            }
-            # 活跃时段分析
-            c.execute("SELECT last_active FROM users WHERE uid=?", (uid,))
-            la_row = c.fetchone()
-            if la_row and la_row[0]:
-                hour = datetime.fromtimestamp(la_row[0], _CST).hour
-                if 0 <= hour < 6:
-                    user_data["active_time"] = "深夜活跃"
-                elif 6 <= hour < 12:
-                    user_data["active_time"] = "上午活跃"
-                elif 12 <= hour < 18:
-                    user_data["active_time"] = "下午活跃"
-                else:
-                    user_data["active_time"] = "晚间活跃"
-            else:
-                user_data["active_time"] = "未知"
-            return user_data
-
-    def get_all_user_profiles(self) -> list:
-        """获取所有用户的画像数据列表，用于批量分析（优化为单次JOIN查询）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            # 【修复】：用 JOIN 一条 SQL 查出所有数据，避免 N+1 查询风暴
-            c.execute("""
-                SELECT u.uid, u.name, u.first_seen, u.last_active,
-                       u.group_messages, u.private_messages, u.keywords, u.conversion_status,
-                       COALESCE(ul.level, 1), COALESCE(ul.points, 0),
-                       COALESCE(ft.touched, 0), COALESCE(ft.interested, 0),
-                       COALESCE(ft.consulted, 0), COALESCE(ft.paid, 0)
-                FROM users u
-                LEFT JOIN user_levels ul ON u.uid = ul.uid
-                LEFT JOIN (
-                    SELECT uid,
-                        COUNT(CASE WHEN event='touched'    THEN 1 END) AS touched,
-                        COUNT(CASE WHEN event='interested' THEN 1 END) AS interested,
-                        COUNT(CASE WHEN event='consulted'  THEN 1 END) AS consulted,
-                        COUNT(CASE WHEN event='paid'       THEN 1 END) AS paid
-                    FROM conversion_events GROUP BY uid
-                ) ft ON u.uid = ft.uid
-                ORDER BY u.last_active DESC
-            """)
-            rows = c.fetchall()
-        
-        profiles = []
-        for r in rows:
-            hour = datetime.fromtimestamp(r[3], _CST).hour if r[3] else 0
-            if 0 <= hour < 6: active_time = "深夜活跃"
-            elif 6 <= hour < 12: active_time = "上午活跃"
-            elif 12 <= hour < 18: active_time = "下午活跃"
-            else: active_time = "晚间活跃"
-
-            profiles.append({
-                "uid": r[0], "name": r[1], "first_seen": r[2], "last_active": r[3],
-                "group_messages": r[4], "private_messages": r[5], "keywords": r[6] or "",
-                "conversion_status": r[7] or "unknown",
-                "level": r[8], "points": r[9],
-                "funnel": {"touched": r[10], "interested": r[11], "consulted": r[12], "paid": r[13]},
-                "active_time": active_time
-            })
-        return profiles
-
-    # ─────────────────────────────── 系统动态状态 ─────────────────────────
-    def get_system_state(self, key: str, default=None):
-        """
-        获取系统动态状态（从数据库读取，替代 config.json 中的动态字段）。
-        
-        Args:
-            key: 状态键名
-            default: 默认值（不存在时返回）
-        
-        Returns:
-            状态值（字符串），或 default
-        
-        使用场景：
-            - CURRENT_MODEL_INDEX: 当前使用的模型索引
-            - IMAGE_POOL: 图片池缓存
-            - VOICE_POOL: 语音池缓存
-            - _LAST_LEAK_WEEK: 上次背刺泄密的周号
-        """
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT value FROM system_states WHERE key=?", (key,))
-            row = c.fetchone()
-            if row:
-                return row[0]
-            return default
-
-    def set_system_state(self, key: str, value):
-        """
-        设置系统动态状态（写入数据库，不修改 config.json）。
-        
-        Args:
-            key: 状态键名
-            value: 状态值（会自动转为字符串存储）
-        """
-        with _db_lock:
-            ts = int(time.time())
-            self.conn.execute(
-                "INSERT OR REPLACE INTO system_states (key, value, updated_at) VALUES (?, ?, ?)",
-                (key, str(value), ts)
-            )
-            self.conn.commit()
-            logger.debug(f"📌 系统状态更新: {key}={value}")
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 【v4.2.3】群数据统计
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def record_group_join(self, chat_id: int = 0, user_id: int = 0):
-        """记录用户入群（带user_id幂等保护）"""
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            # 【v4.9.5】幂等性保护：同一用户同一天多次入群只记一次
-            if user_id:
-                c.execute("SELECT 1 FROM group_join_log WHERE date=? AND chat_id=? AND user_id=?", (today, chat_id, user_id))
-                if c.fetchone():
-                    logger.debug(f"📊 入群去重: uid={user_id} chat_id={chat_id} date={today}")
-                    return
-                c.execute("INSERT OR IGNORE INTO group_join_log (date, chat_id, user_id, ts) VALUES (?,?,?,?)",
-                         (today, chat_id, user_id, int(time.time())))
-            c.execute("SELECT joined_count FROM group_stats WHERE date=? AND chat_id=?", (today, chat_id))
-            row = c.fetchone()
-            if row:
-                c.execute("UPDATE group_stats SET joined_count=joined_count+1, net_count=net_count+1 WHERE date=? AND chat_id=?", (today, chat_id))
-            else:
-                c.execute("INSERT INTO group_stats (date, joined_count, left_count, net_count, chat_id, created_at) VALUES (?,1,0,1,?,?)",
-                         (today, chat_id, int(time.time())))
-            self.conn.commit()
-            logger.debug(f"📊 记录入群: chat_id={chat_id} date={today}")
-
-    def record_group_left(self, chat_id: int = 0, user_id: int = 0):
-        """记录用户离群（带user_id幂等保护）"""
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            # 【v4.9.5】幂等性保护：同一用户同一天多次离群只记一次
-            if user_id:
-                c.execute("SELECT 1 FROM group_left_log WHERE date=? AND chat_id=? AND user_id=?", (today, chat_id, user_id))
-                if c.fetchone():
-                    logger.debug(f"📊 离群去重: uid={user_id} chat_id={chat_id} date={today}")
-                    return
-                c.execute("INSERT OR IGNORE INTO group_left_log (date, chat_id, user_id, ts) VALUES (?,?,?,?)",
-                         (today, chat_id, user_id, int(time.time())))
-            c.execute("SELECT left_count FROM group_stats WHERE date=? AND chat_id=?", (today, chat_id))
-            row = c.fetchone()
-            if row:
-                c.execute("UPDATE group_stats SET left_count=left_count+1, net_count=net_count-1 WHERE date=? AND chat_id=?", (today, chat_id))
-            else:
-                c.execute("INSERT INTO group_stats (date, joined_count, left_count, net_count, chat_id, created_at) VALUES (?,0,1,-1,?,?)",
-                         (today, chat_id, int(time.time())))
-            self.conn.commit()
-            logger.debug(f"📊 记录离群: chat_id={chat_id} date={today}")
-
-    def update_group_total_members(self, total: int, chat_id: int = 0):
-        """更新群成员总数"""
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT id FROM group_stats WHERE date=? AND chat_id=?", (today, chat_id))
-            row = c.fetchone()
-            if row:
-                c.execute("UPDATE group_stats SET total_members=? WHERE date=? AND chat_id=?", (total, today, chat_id))
-            else:
-                c.execute("INSERT INTO group_stats (date, joined_count, left_count, net_count, total_members, chat_id, created_at) VALUES (?,0,0,0,?,?,?)",
-                         (today, total, chat_id, int(time.time())))
-            self.conn.commit()
-
-    def get_group_stats(self, days: int = 7) -> list:
-        """获取最近N天的群统计"""
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT date, joined_count, left_count, net_count, total_members
-                         FROM group_stats ORDER BY date DESC LIMIT ?""", (days,))
-            return c.fetchall()
-
-    def get_group_stats_by_date(self, target_date: str = None) -> list:
-        """获取指定日期的群统计"""
-        if not target_date:
-            target_date = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT date, chat_id, joined_count, left_count, net_count, total_members
-                         FROM group_stats WHERE date = ?""", (target_date,))
-            return c.fetchall()
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 【v4.2.3】频道内容追踪
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def track_channel_message(self, chat_id: int, message_id: int, content_type: str = "text"):
-        """记录机器人发的频道/群消息，用于追踪浏览量"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""INSERT OR IGNORE INTO channel_tracking
-                         (chat_id, message_id, content_type, posted_at, initial_views, current_views, last_checked_at)
-                         VALUES (?,?,?,?,0,0,?)""",
-                     (chat_id, message_id, content_type, int(time.time()), int(time.time())))
-            self.conn.commit()
-
-    def update_channel_views(self, chat_id: int, message_id: int, views: int):
-        """更新消息浏览量"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""UPDATE channel_tracking SET current_views=?, last_checked_at=?
-                         WHERE chat_id=? AND message_id=?""",
-                     (views, int(time.time()), chat_id, message_id))
-            self.conn.commit()
-
-    def get_channel_tracking(self, chat_id: int = 0, limit: int = 20) -> list:
-        """获取频道内容表现数据"""
-        with _db_lock:
-            c = self.conn.cursor()
-            if chat_id:
-                c.execute("""SELECT chat_id, message_id, content_type, posted_at, current_views
-                             FROM channel_tracking WHERE chat_id=? ORDER BY posted_at DESC LIMIT ?""",
-                         (chat_id, limit))
-            else:
-                c.execute("""SELECT chat_id, message_id, content_type, posted_at, current_views
-                             FROM channel_tracking ORDER BY posted_at DESC LIMIT ?""", (limit,))
-            return c.fetchall()
-
-    def get_channel_stats_summary(self) -> dict:
-        """获取频道统计摘要"""
-        with _db_lock:
-            c = self.conn.cursor()
-            # 【v4.3.2修复S-02】每次execute后立即保存fetchone结果，不重复调用
-            c.execute("SELECT COUNT(*) FROM channel_tracking")
-            row = c.fetchone()
-            total_posts = row[0] if row else 0
-            # 总浏览量
-            c.execute("SELECT COALESCE(SUM(current_views),0) FROM channel_tracking")
-            row = c.fetchone()
-            total_views = row[0] if row else 0
-            # 今日发布数
-            today = datetime.now(_CST).strftime("%Y-%m-%d")
-            c.execute("SELECT COUNT(*) FROM channel_tracking WHERE date(posted_at, 'unixepoch', '+8 hours')=?", (today,))
-            row = c.fetchone()
-            today_posts = row[0] if row else 0
-            # 平均浏览量
-            avg_views = total_views // max(total_posts, 1)
-        return {
-            "total_posts": total_posts,
-            "total_views": total_views,
-            "today_posts": today_posts,
-            "avg_views": avg_views
-        }
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 【v4.5.25】日报增强查询
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def get_daily_active_users(self, date_str: str = None) -> int:
-        """【v4.9.5修复】获取指定日期与Bot互动的活跃用户数（从reply_tracking统计，而非last_active）"""
-        if not date_str:
-            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
-            day_end = day_start + 86400
-            # 统计当天回复过Bot的唯一用户数（更准确的互动定义）
-            c.execute("SELECT COUNT(DISTINCT user_msg_id) FROM reply_tracking WHERE ts>=? AND ts<? AND replied=1", (day_start, day_end))
-            row = c.fetchone()
-            return row[0] if row else 0
-
-    def get_daily_bot_messages(self, date_str: str = None) -> int:
-        """获取指定日期Bot发送的消息数（从channel_tracking表）"""
-        if not date_str:
-            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT COUNT(*) FROM channel_tracking WHERE date(posted_at, 'unixepoch', '+8 hours')=?", (date_str,))
-            row = c.fetchone()
-            return row[0] if row else 0
-
-    def get_daily_replies(self, date_str: str = None) -> int:
-        """获取指定日期用户回复Bot消息数（从reply_tracking表）"""
-        if not date_str:
-            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
-            day_end = day_start + 86400
-            c.execute("SELECT COUNT(*) FROM reply_tracking WHERE ts>=? AND ts<? AND replied=1", (day_start, day_end))
-            row = c.fetchone()
-            return row[0] if row else 0
-
-    def get_group_total_members_latest(self, chat_id: int = 0) -> int:
-        """获取群成员总数（取最近一条记录的total_members）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT total_members FROM group_stats WHERE chat_id=? ORDER BY date DESC LIMIT 1", (chat_id,))
-            row = c.fetchone()
-            return row[0] if row and row[0] else 0
-
-    def calibrate_group_stats(self, chat_id: int, current_count: int):
-        """【v4.5.36新增】成员数校准：对比API实时人数与昨日记录，修正漏记的净增"""
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        yesterday = (datetime.now(_CST) - timedelta(days=1)).strftime("%Y-%m-%d")
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT total_members FROM group_stats WHERE chat_id=? AND date=? ORDER BY date DESC LIMIT 1",
-                     (chat_id, yesterday))
-            row = c.fetchone()
-            yesterday_total = row[0] if row and row[0] else 0
-
-            if yesterday_total <= 0:
-                return
-
-            c.execute("SELECT net_count FROM group_stats WHERE chat_id=? AND date=?", (chat_id, today))
-            today_row = c.fetchone()
-            event_net = today_row[0] if today_row else 0
-
-            actual_net = current_count - yesterday_total
-            delta = actual_net - event_net
-
-            if abs(delta) > 1:
-                if today_row:
-                    c.execute("UPDATE group_stats SET net_count=net_count+? WHERE date=? AND chat_id=?",
-                             (delta, today, chat_id))
-                else:
-                    c.execute("INSERT INTO group_stats (date, joined_count, left_count, net_count, total_members, chat_id, created_at) VALUES (?,?,?,0,?,?,?)",
-                             (today, max(delta, 0), max(-delta, 0), delta, current_count, chat_id, int(time.time())))
-                self.conn.commit()
-                logger.info(f"📊 校准: chat_id={chat_id} 事件净增={event_net} 实际净增={actual_net} 修正={delta:+d}")
-
-    def get_group_stats_by_chat_id(self, target_date: str, chat_id: int) -> dict:
-        """【v4.5.36新增】获取指定日期+chat_id的群统计"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT joined_count, left_count, net_count, total_members
-                         FROM group_stats WHERE date=? AND chat_id=?""", (target_date, chat_id))
-            row = c.fetchone()
-            if row:
-                return {"joined": row[0] or 0, "left": row[1] or 0, "net": row[2] or 0, "total": row[3] or 0}
-            return {"joined": 0, "left": 0, "net": 0, "total": 0}
-
-    def get_weekly_group_stats(self, start_date: str, end_date: str, chat_id: int = 0) -> dict:
-        """获取指定日期范围的群统计汇总【v4.5.36修复】chat_id参数化，不再硬编码0"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT COALESCE(SUM(joined_count),0), COALESCE(SUM(left_count),0),
-                         COALESCE(SUM(net_count),0), AVG(total_members)
-                         FROM group_stats WHERE date>=? AND date<=? AND chat_id=?""",
-                     (start_date, end_date, chat_id))
-            row = c.fetchone()
-            if row:
-                return {"joined": row[0], "left": row[1], "net": row[2], "avg_members": int(row[3] or 0)}
-            return {"joined": 0, "left": 0, "net": 0, "avg_members": 0}
-
-    def get_weekly_channel_member_stats(self, chat_id: int, start_date: str, end_date: str) -> dict:
-        """获取指定频道在日期范围内的成员数变化"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT MIN(total_members), MAX(total_members), AVG(total_members)
-                         FROM group_stats WHERE chat_id=? AND date>=? AND date<=?""",
-                     (chat_id, start_date, end_date))
-            row = c.fetchone()
-            if row and row[2]:
-                return {"min": row[0] or 0, "max": row[1] or 0, "avg": int(row[2])}
-            return {"min": 0, "max": 0, "avg": 0}
-
-    def get_channel_posts_in_range(self, chat_id: int, start_ts: int, end_ts: int) -> dict:
-        """【v4.9.5修复】获取频道在时间范围内的发帖和浏览量统计（包含原生内容+Bot消息）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            # Bot消息
-            c.execute("""SELECT COUNT(*), COALESCE(SUM(current_views),0)
-                         FROM channel_tracking WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
-                     (chat_id, start_ts, end_ts))
-            bot_row = c.fetchone()
-            # 频道原生内容
-            c.execute("""SELECT COUNT(*), COALESCE(SUM(views),0)
-                         FROM channel_posts WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
-                     (chat_id, start_ts, end_ts))
-            native_row = c.fetchone()
-            total_posts = (bot_row[0] if bot_row else 0) + (native_row[0] if native_row else 0)
-            total_views = (bot_row[1] if bot_row else 0) + (native_row[1] if native_row else 0)
-            return {"posts": total_posts, "views": total_views, "avg_views": total_views // max(total_posts, 1)}
-
-    def get_channel_daily_stats(self, chat_id: int, date_str: str = None) -> dict:
-        """【v4.9.5修复】获取频道指定日期的发帖和浏览量统计（包含原生内容+Bot消息）"""
-        if not date_str:
-            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
-        day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
-        day_end = day_start + 86400
-        with _db_lock:
-            c = self.conn.cursor()
-            # Bot消息
-            c.execute("""SELECT COUNT(*), COALESCE(SUM(current_views),0)
-                         FROM channel_tracking WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
-                     (chat_id, day_start, day_end))
-            bot_row = c.fetchone()
-            # 频道原生内容
-            c.execute("""SELECT COUNT(*), COALESCE(SUM(views),0)
-                         FROM channel_posts WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
-                     (chat_id, day_start, day_end))
-            native_row = c.fetchone()
-            total_posts = (bot_row[0] if bot_row else 0) + (native_row[0] if native_row else 0)
-            total_views = (bot_row[1] if bot_row else 0) + (native_row[1] if native_row else 0)
-            return {"posts": total_posts, "views": total_views, "avg_views": total_views // max(total_posts, 1)}
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 【v4.9.5新增】频道原生内容管理
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def track_channel_post(self, chat_id: int, message_id: int, posted_at: int, views: int = 0, forwards: int = 0, content_type: str = "text"):
-        """记录频道原生内容（非Bot发送的消息）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""INSERT OR IGNORE INTO channel_posts
-                         (chat_id, message_id, posted_at, views, forwards, content_type)
-                         VALUES (?,?,?,?,?,?)""",
-                     (chat_id, message_id, posted_at, views, forwards, content_type))
-            self.conn.commit()
-
-    def update_channel_post_views(self, chat_id: int, message_id: int, views: int, forwards: int = 0):
-        """更新频道原生内容的浏览量"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""UPDATE channel_posts SET views=?, forwards=?
-                         WHERE chat_id=? AND message_id=?""",
-                     (views, forwards, chat_id, message_id))
-            self.conn.commit()
-
-    def get_channel_post_stats(self, chat_id: int, date_str: str = None) -> dict:
-        """获取频道原生内容统计"""
-        if not date_str:
-            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
-        day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
-        day_end = day_start + 86400
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT COUNT(*), COALESCE(SUM(views),0), COALESCE(SUM(forwards),0)
-                         FROM channel_posts WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
-                     (chat_id, day_start, day_end))
-            row = c.fetchone()
-            if row:
-                return {"posts": row[0], "views": row[1], "forwards": row[2], "avg_views": row[1] // max(row[0], 1)}
-            return {"posts": 0, "views": 0, "forwards": 0, "avg_views": 0}
-
-    def get_channel_recent_posts(self, chat_id: int, limit: int = 10) -> list:
-        """【v4.9.7新增】获取频道最近N条帖子（用于浏览量刷新）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT message_id, views, forwards FROM channel_posts
-                         WHERE chat_id=? ORDER BY posted_at DESC LIMIT ?""",
-                     (chat_id, limit))
-            rows = c.fetchall()
-        return [{"message_id": r[0], "views": r[1], "forwards": r[2]} for r in rows]
-
-    def get_channel_top_posts(self, chat_id: int, date_str: str = None, threshold: float = 2.0) -> int:
-        """【v4.9.7新增】获取频道指定日期浏览量超过均值*threshold的爆款帖数"""
-        if not date_str:
-            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
-        day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
-        day_end = day_start + 86400
-        with _db_lock:
-            c = self.conn.cursor()
-            # 先算平均浏览量
-            c.execute("""SELECT COALESCE(AVG(views),0) FROM channel_posts
-                         WHERE chat_id=? AND posted_at>=? AND posted_at<? AND views>0""",
-                     (chat_id, day_start, day_end))
-            avg_views = c.fetchone()[0]
-            if avg_views <= 0:
-                return 0
-            # 再算超过阈值的帖子数
-            c.execute("""SELECT COUNT(*) FROM channel_posts
-                         WHERE chat_id=? AND posted_at>=? AND posted_at<? AND views>?""",
-                     (chat_id, day_start, day_end, avg_views * threshold))
-            count = c.fetchone()[0]
-        return count
-
-    def get_channel_avg_views(self, chat_id: int, date_str: str = None) -> float:
-        """【v4.9.7新增】获取频道指定日期的平均浏览量"""
-        if not date_str:
-            date_str = datetime.now(_CST).strftime("%Y-%m-%d")
-        day_start = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_CST).timestamp())
-        day_end = day_start + 86400
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT COALESCE(AVG(views),0) FROM channel_posts
-                         WHERE chat_id=? AND posted_at>=? AND posted_at<?""",
-                     (chat_id, day_start, day_end))
-            row = c.fetchone()
-        return row[0] if row else 0.0
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 【v4.3.0新增】活跃勋章系统
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def earn_badge(self, uid: int, badge_id: str) -> bool:
-        """
-        授予用户勋章（已拥有则忽略）
-        
-        Args:
-            uid: 用户ID
-            badge_id: 勋章ID
-        
-        Returns:
-            True表示新获得勋章，False表示已有
-        """
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT 1 FROM user_badges WHERE uid=? AND badge_id=?", (uid, badge_id))
-            if c.fetchone():
-                return False  # 已有
-            c.execute("INSERT INTO user_badges VALUES (?,?,?)", (uid, badge_id, int(time.time())))
-            self.conn.commit()
-            logger.info(f"🏅 授予勋章: uid={uid} badge={badge_id}")
-            return True
-
-    def get_user_badges(self, uid: int) -> list:
-        """获取用户所有勋章"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT badge_id, earned_at FROM user_badges WHERE uid=? ORDER BY earned_at DESC", (uid,))
-            return c.fetchall()
-
-    def get_all_badges_leaderboard(self, limit: int = 10) -> list:
-        """获取拥有最多勋章的用户排行榜"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""
-                SELECT u.uid, u.name, COUNT(b.badge_id) as badge_count
-                FROM users u
-                LEFT JOIN user_badges b ON u.uid = b.uid
-                GROUP BY u.uid
-                ORDER BY badge_count DESC
-                LIMIT ?
-            """, (limit,))
-            return c.fetchall()
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 【v4.4.9新增】关键词自动回复系统
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def add_keyword_trigger(self, keyword: str, reply_text: str, reply_type: str = "static", action_type: str = ""):
-        """
-        添加关键词触发规则
-        """
-        with _db_lock:
-            ts = int(time.time())
-            c = self.conn.cursor()
-            c.execute("""
-                INSERT INTO keyword_triggers (keyword, reply_text, reply_type, action_type, enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 1, ?, ?)
-            """, (keyword, reply_text, reply_type, action_type, ts, ts))
-            self.conn.commit()
-            logger.info(f"🔑 添加关键词触发: {keyword}")
-
-    def get_all_keyword_triggers(self) -> list:
-        """获取所有启用的关键词触发规则"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""
-                SELECT id, keyword, reply_text, reply_type, action_type, enabled, created_at, updated_at
-                FROM keyword_triggers
-                WHERE enabled = 1
-                ORDER BY id DESC
-            """)
-            rows = c.fetchall()
-            return [
-                {
-                    "id": r[0],
-                    "keyword": r[1],
-                    "reply_text": r[2],
-                    "reply_type": r[3],
-                    "action_type": r[4],
-                    "enabled": r[5],
-                    "created_at": r[6],
-                    "updated_at": r[7]
-                }
-                for r in rows
-            ]
-
-    def delete_keyword_trigger(self, trigger_id: int):
-        """删除关键词触发规则"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("DELETE FROM keyword_triggers WHERE id = ?", (trigger_id,))
-            self.conn.commit()
-            logger.info(f"🔑 删除关键词触发: id={trigger_id}")
-
-    def update_keyword_trigger(self, trigger_id: int, **kwargs):
-        """更新关键词触发规则"""
-        with _db_lock:
-            ts = int(time.time())
-            c = self.conn.cursor()
-            allowed_fields = ["keyword", "reply_text", "reply_type", "action_type", "enabled"]
-            set_clause = []
-            params = []
-            for field, value in kwargs.items():
-                if field in allowed_fields:
-                    set_clause.append(f"{field} = ?")
-                    params.append(value)
-            if not set_clause:
-                return
-            set_clause.append("updated_at = ?")
-            params.extend([ts, trigger_id])
-            sql = f"UPDATE keyword_triggers SET {', '.join(set_clause)} WHERE id = ?"
-            c.execute(sql, params)
-            self.conn.commit()
-            logger.info(f"🔑 更新关键词触发: id={trigger_id}")
-
-    def match_keyword_trigger(self, text: str) -> list:
-        """
-        匹配关键词触发规则（返回匹配到的所有规则，按优先级排序）
-        
-        Args:
-            text: 用户输入的文本
-            
-        Returns:
-            [{"id": int, "keyword": str, ...}]
-        """
-        text_lower = text.lower()
-        all_triggers = self.get_all_keyword_triggers()
-        matched = []
-        for trigger in all_triggers:
-            if trigger["keyword"].lower() in text_lower:
-                matched.append(trigger)
-        return matched
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 【v4.3.9】任务执行日志（持久化去重）
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def claim_task(self, task_key: str) -> bool:
-        """【v4.5.32→v4.7.0】数据库级原子抢占：跨进程防重核心防线
-        纯INSERT OR IGNORE + UNIQUE索引，无SELECT（SELECT会引入竞态窗口）
-        SQLite的UNIQUE约束保证跨进程原子性：后到者插入被拒绝
-        返回True表示抢占成功，False表示已被抢占（同次或历史执行）"""
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        ts = time.time()
-        with _db_lock:
-            try:
-                cur = self.conn.execute(
-                    "INSERT OR IGNORE INTO task_log (task_key, exec_date, exec_ts) VALUES (?, ?, ?)",
-                    (task_key, today, ts)
-                )
-                self.conn.commit()
-                result = cur.rowcount > 0
-                logger.info(f"📋 [DB] claim_task({task_key}, {today}) rowcount={cur.rowcount} result={result}")
-                return result
-            except Exception as e:
-                logger.warning(f"📋 [DB] claim_task({task_key}) 失败: {e}")
-                try:
-                    from modules.auto_tasks import report_fault
-                    report_fault("数据库任务抢占失败", f"claim_task({task_key})异常: {str(e)[:100]}", "⚠️")
-                except Exception:
-                    pass
-                return False
-
-    def is_task_executed_today(self, task_key: str) -> bool:
-        """查询任务今日是否已执行"""
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with _db_lock:
-            try:
-                row = self.conn.execute(
-                    "SELECT 1 FROM task_log WHERE task_key=? AND exec_date=? LIMIT 1",
-                    (task_key, today)
-                ).fetchone()
-                result = row is not None
-                logger.info(f"📋 [DB] is_task_executed_today({task_key}, {today}) = {result}")
-                return result
-            except Exception as e:
-                logger.warning(f"📋 [DB] is_task_executed_today({task_key}) 失败: {e}")
-                return False
-
-    def cleanup_old_task_log(self, days: int = 7):
-        """清理超过N天的任务执行记录"""
-        cutoff = (datetime.now(_CST) - timedelta(days=days)).strftime("%Y-%m-%d")
-        with _db_lock:
-            try:
-                cur = self.conn.execute("DELETE FROM task_log WHERE exec_date < ?", (cutoff,))
-                self.conn.commit()
-                if cur.rowcount > 0:
-                    logger.info(f"🧹 清理{cur.rowcount}条过期task_log记录(>{days}天)")
-            except Exception as e:
-                logger.warning(f"cleanup_old_task_log失败: {e}")
-
-    def delete_user(self, uid: int):
-        """删除无效用户及其关联数据（购物车挽回/醋意挽回中清理400用户）"""
-        with _db_lock:
-            try:
-                self.conn.execute("DELETE FROM cart_recovery WHERE uid=?", (uid,))
-                self.conn.execute("DELETE FROM users WHERE uid=?", (uid,))
-                self.conn.commit()
-            except Exception as e:
-                logger.warning(f"delete_user失败 uid={uid}: {e}")
-
-    def cleanup_old_records(self, cutoff: int):
-        """清理过期的追踪记录（线程安全）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("DELETE FROM reply_tracking WHERE ts < ?", (cutoff,))
-            deleted_track = c.rowcount
-            c.execute("DELETE FROM spam_track WHERE COALESCE(window_start,0) < ?", (cutoff,))
-            deleted_spam = c.rowcount
-            c.execute("DELETE FROM puzzle_daily WHERE ts < ?", (cutoff,))
-            deleted_puzzle = c.rowcount
-            self.conn.commit()
-        return deleted_track, deleted_spam, deleted_puzzle
-
-    def get_tracking_stats(self):
-        """获取追踪统计（线程安全）"""
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("SELECT COUNT(*) FROM reply_tracking")
-            total = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM reply_tracking WHERE replied=0")
-            unreplied = c.fetchone()[0]
-        return total, unreplied
-
-    def record_feedback(self, bot_msg_id: int, chat_id: int, user_id: int, feedback: str) -> bool:
-        with _db_lock:
-            try:
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO reply_feedback (bot_msg_id, chat_id, user_id, feedback, ts) VALUES (?, ?, ?, ?, ?)",
-                    (bot_msg_id, chat_id, user_id, feedback, int(time.time()))
-                )
-                self.conn.commit()
-                return True
-            except Exception as e:
-                logger.error(f"record_feedback error: {e}")
-                return False
-
-    def get_feedback_stats(self, days: int = 7) -> dict:
-        with _db_lock:
-            try:
-                cutoff = int(time.time()) - days * 86400
-                c = self.conn.cursor()
-                c.execute("SELECT feedback, COUNT(*) FROM reply_feedback WHERE ts >= ? GROUP BY feedback", (cutoff,))
-                counts = {"like": 0, "dislike": 0}
-                for row in c.fetchall():
-                    if row[0] in counts:
-                        counts[row[0]] = row[1]
-                total = counts["like"] + counts["dislike"]
-                rate = round(counts["like"] / total * 100, 1) if total > 0 else 0
-                c.execute("SELECT COUNT(*) FROM reply_feedback WHERE ts >= ? AND feedback = 'dislike'", (cutoff,))
-                recent_dislike = c.fetchone()[0]
-                return {"like": counts["like"], "dislike": counts["dislike"], "total": total, "satisfaction_rate": rate, "recent_dislike": recent_dislike}
-            except Exception as e:
-                logger.error(f"get_feedback_stats error: {e}")
-                return {"like": 0, "dislike": 0, "total": 0, "satisfaction_rate": 0, "recent_dislike": 0}
-
-    def get_recent_feedback(self, limit: int = 20) -> list:
-        with _db_lock:
-            try:
-                c = self.conn.cursor()
-                c.execute("SELECT bot_msg_id, chat_id, user_id, feedback, ts FROM reply_feedback ORDER BY ts DESC LIMIT ?", (limit,))
-                return [{"bot_msg_id": r[0], "chat_id": r[1], "user_id": r[2], "feedback": r[3], "ts": r[4]} for r in c.fetchall()]
-            except Exception as e:
-                logger.error(f"get_recent_feedback error: {e}")
-                return []
-
-    def record_channel_member_snapshot(self, chat_id: int, member_count: int, snapshot_date: str = None) -> bool:
-        """【v4.9.6新增】记录频道成员数快照（每小时调用一次）"""
-        if not snapshot_date:
-            snapshot_date = datetime.now(_CST).strftime("%Y-%m-%d-%H")
-        try:
-            with _db_lock:
-                ts = int(time.time())
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO channel_member_snapshot (chat_id, member_count, snapshot_date, created_at) VALUES (?,?,?,?)",
-                    (chat_id, member_count, snapshot_date, ts)
-                )
-                self.conn.commit()
-            return True
-        except Exception as e:
-            logger.warning(f"record_channel_member_snapshot失败: chat_id={chat_id} err={e}")
-            return False
-
-    def get_channel_member_changes(self, chat_id: int, start_date: str, end_date: str) -> dict:
-        """【v4.9.6新增】获取频道在日期范围内的成员变化（新增/离开）
-        
-        Args:
-            chat_id: 频道ID
-            start_date: 开始日期（如 "2026-05-20"）
-            end_date: 结束日期（如 "2026-05-21"）
-        
-        Returns:
-            {"joined": int, "left": int, "start_count": int, "end_count": int}
-        """
-        with _db_lock:
-            c = self.conn.cursor()
-            # 获取开始日期最早的快照（作为基准）
-            c.execute("""SELECT member_count FROM channel_member_snapshot 
-                         WHERE chat_id=? AND snapshot_date LIKE ? ORDER BY snapshot_date ASC LIMIT 1""",
-                     (chat_id, f"{start_date}%"))
-            start_row = c.fetchone()
-            start_count = start_row[0] if start_row else 0
-            
-            # 获取结束日期最晚的快照（作为当前）
-            c.execute("""SELECT member_count FROM channel_member_snapshot 
-                         WHERE chat_id=? AND snapshot_date LIKE ? ORDER BY snapshot_date DESC LIMIT 1""",
-                     (chat_id, f"{end_date}%"))
-            end_row = c.fetchone()
-            end_count = end_row[0] if end_row else 0
-            
-            # 如果开始日期没有快照，用结束日期的前一个可用快照
-            if start_count == 0 and end_count > 0:
-                c.execute("""SELECT member_count FROM channel_member_snapshot 
-                             WHERE chat_id=? AND snapshot_date < ? ORDER BY snapshot_date DESC LIMIT 1""",
-                         (chat_id, start_date))
-                prev_row = c.fetchone()
-                start_count = prev_row[0] if prev_row else 0
-        
-        # 计算变化：正数=新增，负数=离开
-        diff = end_count - start_count
-        if diff >= 0:
-            return {"joined": diff, "left": 0, "start_count": start_count, "end_count": end_count}
-        else:
-            return {"joined": 0, "left": abs(diff), "start_count": start_count, "end_count": end_count}
-
-    def get_channel_weekly_member_changes(self, chat_id: int, start_date: str, end_date: str) -> dict:
-        """【v4.9.6新增】获取频道在周报日期范围内的成员变化
-        
-        Args:
-            chat_id: 频道ID
-            start_date: 周报开始日期
-            end_date: 周报结束日期
-        
-        Returns:
-            {"joined": int, "left": int, "start_count": int, "end_count": int}
-        """
-        return self.get_channel_member_changes(chat_id, start_date, end_date)
-
-    def get_channel_monthly_member_changes(self, chat_id: int, month_date: str) -> dict:
-        """【v4.9.6新增】获取频道月报的成员变化
-        month_date 格式: "2026-05"
-        
-        Returns:
-            {"joined": int, "left": int, "start_count": int, "end_count": int}
-        """
-        # 取该月1号的快照和月末快照
-        start_date = f"{month_date}-01"
-        # 计算月末日期
-        parts = month_date.split("-")
-        year, month = int(parts[0]), int(parts[1])
-        if month == 12:
-            end_date = f"{year + 1}-01-01"
-        else:
-            end_date = f"{year}-{month + 1:02d}-01"
-        
-        with _db_lock:
-            c = self.conn.cursor()
-            c.execute("""SELECT member_count FROM channel_member_snapshot 
-                         WHERE chat_id=? AND snapshot_date LIKE ? ORDER BY snapshot_date ASC LIMIT 1""",
-                     (chat_id, f"{start_date}%"))
-            start_row = c.fetchone()
-            start_count = start_row[0] if start_row else 0
-            
-            c.execute("""SELECT member_count FROM channel_member_snapshot 
-                         WHERE chat_id=? AND snapshot_date < ? ORDER BY snapshot_date DESC LIMIT 1""",
-                     (chat_id, end_date))
-            end_row = c.fetchone()
-            end_count = end_row[0] if end_row else 0
-        
-        diff = end_count - start_count
-        if diff >= 0:
-            return {"joined": diff, "left": 0, "start_count": start_count, "end_count": end_count}
-        else:
-            return {"joined": 0, "left": abs(diff), "start_count": start_count, "end_count": end_count}
-
-
+    # ──────────────────────────── 向后兼容委托 ──────────────────────────
+    _REPO_METHOD_MAP = {
+        # user_repo
+        'upsert_user': 'users', 'upsert_user_with_points': 'users', 'get_user': 'users',
+        'add_keyword': 'users', 'get_active_users': 'users', 'get_inactive_users': 'users',
+        'reset_last_active': 'users', 'update_last_active': 'users', 'earn_badge': 'users', 'get_user_badges': 'users',
+        'get_all_badges_leaderboard': 'users', 'get_user_profile': 'users',
+        'get_all_user_profiles': 'users', 'delete_user': 'users',
+        # group_repo
+        'record_group_join': 'groups', 'record_group_left': 'groups',
+        'update_group_total_members': 'groups', 'get_group_stats': 'groups',
+        'get_group_stats_by_date': 'groups', 'get_group_stats_by_chat_id': 'groups',
+        'get_weekly_group_stats': 'groups', 'get_weekly_channel_member_stats': 'groups',
+        'calibrate_group_stats': 'groups', 'get_group_total_members_latest': 'groups',
+        'mute_user': 'groups', 'is_muted': 'groups',
+        'blacklist_add': 'groups', 'blacklist_remove': 'groups', 'is_blacklisted': 'groups',
+        'check_spam': 'groups',
+        'record_channel_member_snapshot': 'groups', 'get_channel_member_changes': 'groups',
+        'get_channel_weekly_member_changes': 'groups', 'get_channel_monthly_member_changes': 'groups',
+        'upsert_group_member': 'groups', 'remove_group_member': 'groups',
+        'get_group_member_count': 'groups', 'get_all_group_member_ids': 'groups',
+        # points_repo
+        'get_user_points': 'points', 'add_points': 'points',
+        'get_points_log': 'points', 'get_today_speech_points': 'points',
+        'get_leaderboard': 'points', 'get_daily_report': 'points',
+        # tracking_repo
+        'track_reply': 'tracking', 'mark_replied': 'tracking', 'get_replies_to': 'tracking',
+        'track_bot_message': 'tracking',  # [Trae CN v5.12.0补] 之前漏注册，导致 _send_and_track 报属性错误
+        'get_recent_unreplied': 'tracking', 'get_orphan_messages': 'tracking',
+        'get_unreplied_messages': 'tracking', 'get_ignored_messages': 'tracking',
+        'get_all_tracked_messages': 'tracking', 'get_unconfirmed_messages': 'tracking',
+        'delete_tracked': 'tracking', 'get_tracking_stats': 'tracking',
+        'cleanup_old_records': 'tracking',
+        'track_channel_message': 'tracking', 'update_channel_views': 'tracking',
+        'get_channel_tracking': 'tracking', 'get_channel_stats_summary': 'tracking',
+        'get_daily_active_users': 'tracking', 'get_daily_bot_messages': 'tracking',
+        'get_daily_replies': 'tracking',
+        'track_channel_post': 'tracking', 'update_channel_post_views': 'tracking',
+        'get_channel_post_stats': 'tracking', 'get_channel_recent_posts': 'tracking',
+        'get_channel_top_posts': 'tracking', 'get_channel_avg_views': 'tracking',
+        'get_channel_posts_in_range': 'tracking', 'get_channel_daily_stats': 'tracking',
+        # tracking_repo - v5.11.0 孤儿播报追踪
+        'track_broadcast': 'tracking', 'get_last_broadcast': 'tracking',
+        'delete_broadcast': 'tracking', 'cleanup_old_broadcasts': 'tracking',
+        # tracking_repo - v5.12.0 孤儿清理监控
+        'log_orphan_cleanup': 'tracking', 'get_last_orphan_cleanup': 'tracking',
+        'get_orphan_cleanup_history': 'tracking', 'get_orphan_stats': 'tracking',
+        # tracking_repo - v5.14.0 商业搭讪事件
+        'log_proactive_engage': 'tracking', 'get_recent_engages': 'tracking',
+        'get_engaged_stats': 'tracking',
+        # config_repo
+        'get_system_state': 'config', 'set_system_state': 'config',
+        'add_keyword_trigger': 'config', 'get_all_keyword_triggers': 'config',
+        'delete_keyword_trigger': 'config', 'update_keyword_trigger': 'config',
+        'match_keyword_trigger': 'config',
+        'claim_task': 'config', 'is_task_executed_today': 'config',
+        'cleanup_old_task_log': 'config',
+        # social_repo
+        'set_wake_up': 'social', 'get_all_wake_ups': 'social',
+        'inc_puzzle_score': 'social', '_calc_consecutive_days': 'social',
+        'set_cart': 'social', 'get_expired_carts': 'social',
+        'log_conversion_event': 'social', 'get_user_consult_count': 'social',
+        'get_funnel_summary': 'social',
+        'record_feedback': 'social', 'get_feedback_stats': 'social', 'get_recent_feedback': 'social',
+        # question_repo - v5.15.0 问题追踪与FAQ蒸馏
+        'log_question': 'questions', 'update_question_reply': 'questions',
+        'get_question_stats': 'questions', 'get_top_questions': 'questions',
+        'get_category_distribution': 'questions', 'get_questions': 'questions',
+        'search_faq': 'questions', 'increment_faq_hit': 'questions',
+        'create_faq_candidate': 'questions', 'get_pending_candidates': 'questions',
+        'approve_candidate': 'questions', 'reject_candidate': 'questions',
+        'get_faq_knowledge': 'questions', 'add_faq_knowledge': 'questions',
+        'update_faq_knowledge': 'questions', 'delete_faq_knowledge': 'questions',
+        'distill_candidates': 'questions',
+        # relay_repo
+        'save_session': 'relay', 'find_by_admin_msg': 'relay', 'clean_expired': 'relay',
+    }
+
+    def __getattr__(self, name):
+        repo_name = self._REPO_METHOD_MAP.get(name)
+        if repo_name:
+            return getattr(getattr(self, repo_name), name)
+        raise AttributeError(f"'DB' object has no attribute '{name}'")

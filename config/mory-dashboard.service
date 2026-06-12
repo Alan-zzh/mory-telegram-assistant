@@ -1,0 +1,19 @@
+[Unit]
+Description=Mory Assistant Dashboard
+After=network.target mory-assistant.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/mory_assistant
+# 用 gunicorn + gevent 替代 Flask dev server，稳定 + 防阻塞
+# 用 python3 -m gunicorn 替代直接 gunicorn 路径
+# （apt 安装的 python3-gunicorn 有时不提供 /usr/bin/gunicorn 二进制）
+ExecStart=/usr/bin/python3 -m gunicorn -k gevent -w 2 -b 0.0.0.0:6616 dashboard.wsgi:app
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/ubuntu/mory_assistant/.env
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

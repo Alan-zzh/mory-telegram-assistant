@@ -21,6 +21,13 @@
 
 - [Codex] 保留 `.env`、`config.json`、`mory.db`、`backup/`、`logs/`、部署脚本、SSH helper、成员扫描、广告验证、孤儿清理、VPS 清理类脚本。
 
+## 2026-06-12 工作区脏改动收敛
+
+- [Codex] 已把历史 staged/unstaged 混合状态重新整理为单一 staged 状态，消除 `AD/MD/MM/AM` 半合并。
+- [Codex] `config.json` 改为本地运行文件：保留在磁盘，退出 Git 跟踪；`.gitignore` 继续忽略它。
+- [Codex] 清理旧 debug 脚本和旧 `universal_ai_router/` 目录，保留可维护脚本：`deploy_vps.py`、`scripts/ssh_helper.py`、`scripts/restart_bot.py`、`scripts/cleanup_vps.py`、成员扫描、广告验证、孤儿清理。
+- [Codex] `backup/` 与 `logs/` 纳入忽略规则，防止本地备份和运行日志再次污染工作区。
+
 ## VPS 清理
 
 - [Codex] 已执行。原则：只清 `/home/ubuntu/mory_assistant/` 下缓存、旧临时脚本、过期日志和无用备份；不触碰 `.env`、`config.json`、`mory.db`、systemd 配置。

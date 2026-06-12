@@ -17,13 +17,13 @@ import threading
 import json
 from datetime import datetime
 from typing import Dict, List, Optional
-from core.logging_util import get_monitor_logger, get_logger
+from core.logging_util import get_logger
 
 class SystemMonitor:
     """系统监控类"""
     
     def __init__(self):
-        self.logger = get_monitor_logger()
+        self.logger = get_logger('monitor')
         self.app_logger = get_logger('main')
         self.metrics = {
             'system': {},
@@ -43,6 +43,15 @@ class SystemMonitor:
         self.max_history = 1000  # 最大历史数据量
         self.running = False
         self.thread = None
+        # 实时累积计数器（用于替代硬编码零值）
+        self._api_calls = 0
+        self._api_failures = 0
+        self._response_times = []  # 存储最近响应时间
+        self._error_count = 0
+        self._total_operations = 0
+        self._messages_processed = 0
+        self._max_response_samples = 100
+        self._db = None
         
     def start(self):
         """启动监控线程"""
@@ -116,26 +125,59 @@ class SystemMonitor:
             self.logger.error(f"收集系统指标失败: {e}")
             return {}
     
+    # ── 实时指标记录接口（供外部模块调用） ──────────────────────────
+    def record_api_call(self, response_time: float = 0.0, success: bool = True):
+        """记录一次API调用及其耗时"""
+        self._api_calls += 1
+        if not success:
+            self._api_failures += 1
+        if response_time > 0:
+            self._response_times.append(response_time)
+            if len(self._response_times) > self._max_response_samples:
+                self._response_times.pop(0)
+        self._total_operations += 1
+
+    def record_error(self):
+        """记录一次错误"""
+        self._error_count += 1
+        self._total_operations += 1
+
+    def record_message_processed(self):
+        """记录处理了一条消息"""
+        self._messages_processed += 1
+
+    def set_db(self, db):
+        """注入数据库实例，用于查询活跃用户等业务指标"""
+        self._db = db
+
     def _collect_app_metrics(self) -> Dict:
-        """收集应用性能指标"""
-        # 这里可以从应用状态中收集指标
-        # 例如：响应时间、错误率、API调用次数等
+        """收集应用性能指标（基于实时累积数据）"""
+        avg_response = 0.0
+        if self._response_times:
+            avg_response = sum(self._response_times) / len(self._response_times)
+        error_rate = 0.0
+        if self._total_operations > 0:
+            error_rate = round(self._error_count / self._total_operations * 100, 2)
         return {
-            'response_time': 0.0,  # 待实现
-            'error_rate': 0.0,  # 待实现
-            'api_calls': 0,  # 待实现
-            'api_failures': 0,  # 待实现
+            'response_time': round(avg_response, 3),
+            'error_rate': error_rate,
+            'api_calls': self._api_calls,
+            'api_failures': self._api_failures,
             'timestamp': datetime.now().isoformat()
         }
     
     def _collect_business_metrics(self) -> Dict:
-        """收集业务指标"""
-        # 这里可以从业务逻辑中收集指标
-        # 例如：消息处理量、用户活跃度、转化率等
+        """收集业务指标（基于实时累积数据）"""
+        active_users = 0
+        if self._db:
+            try:
+                active_users = self._db.get_daily_active_users()
+            except Exception as e:
+                self.logger.error(f"查询今日活跃用户数失败: {e}")
         return {
-            'messages_processed': 0,  # 待实现
-            'active_users': 0,  # 待实现
-            'conversion_rate': 0.0,  # 待实现
+            'messages_processed': self._messages_processed,
+            'active_users': active_users,
+            'conversion_rate': 0.0,  # 占位：需接入业务转化漏斗数据后计算
             'timestamp': datetime.now().isoformat()
         }
     

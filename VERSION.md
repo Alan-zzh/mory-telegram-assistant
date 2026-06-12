@@ -1,3 +1,7 @@
+## v5.16.3 | 2026-06-12
+
+- **[Codex] 工作区脏改动收敛**：合并已存在的模块化拆分和目录分层；`config.json` 退出 Git 跟踪但保留本地运行文件；`.gitignore` 补齐 `backup/`、`logs/`、运行配置和临时文件规则；清理旧 debug 脚本、旧 `universal_ai_router/`、`start.sh`、`deploy.sh`、`windows_helper.py`；补齐成员扫描和技术文档索引；修复 Dashboard 缺环境变量时 GBK 控制台错误分支。
+
 ## v5.16.2 | 2026-06-12
 
 - **[Codex] 广告治理策略纠正**：广告账号不踢人，统一永久禁言 + 删除消息 + 双黑名单 + `message_snapshots` 历史清理；新增 `modules/ad_enforcement.py` 统一入口；emoji 面具复用广告正则；头像 OCR 补充账号标签；早午晚问候读取配置时间和开关；商业搭讪加入落库冷却和分阶段 fallback。

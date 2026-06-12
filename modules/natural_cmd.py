@@ -16,6 +16,7 @@
 
 import json
 import re
+from datetime import datetime
 from core.logging_util import get_logger
 
 logger = get_logger("natural_cmd")
@@ -1423,7 +1424,7 @@ def _handle_model_restore(msg: str, config: dict, bot, m, save_config_fn, mory_b
     blacklisted = config.get("BLACKLISTED_MODELS", [])
     if not isinstance(blacklisted, list):
         blacklisted = []
-    matched = [m for m in blacklisted if hint in m for hint in [model_hint]] if model_hint else []
+    matched = [m for m in blacklisted if model_hint in m] if model_hint else []
     if not matched:
         matched = [m for m in blacklisted if model_hint in m]
     if not matched:
@@ -1729,7 +1730,6 @@ def _add_teaching_log(config: dict, instruction: str, save_config_fn):
     log = config.get("TEACHING_LOG", [])
     if not isinstance(log, list):
         log = []
-    from datetime import datetime
     log.append(f"[{datetime.now().strftime('%m/%d %H:%M')}] {instruction}")
     if len(log) > 20:
         log = log[-20:]

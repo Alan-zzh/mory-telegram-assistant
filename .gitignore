@@ -9,9 +9,12 @@ config.json
 !.env.example
 core/vps_config.py.bak
 backups/
+backup/
+logs/
 *.db
 *.db-journal
 *.db-wal
+_ssh_known_hosts
 
 # ── 🟡 敏感脚本（临时诊断/修复用，含VPS密码）─────────────────────────────
 force_*.py
@@ -21,7 +24,12 @@ fix_*.py
 diagnostic*.py
 scan*.py
 deploy_*.py
+!deploy_vps.py
 full_sync*.py
+
+# ── 根目录临时测试文件（下划线前缀，已归档到 tests/_archive/）────────────
+_*.py
+_*_*.py
 
 # ── 备份 & 临时文件 ──────────────────────────────────────────────────────
 backup_*/

@@ -5,6 +5,10 @@ TrendRadar 新闻获取模块
 
 import requests
 import random
+import threading
+import concurrent.futures
+import re
+import json
 from datetime import datetime
 from core.logging_util import get_logger
 
@@ -116,11 +120,15 @@ def _is_entertainment_title(title: str) -> bool:
     return any(kw in title for kw in keywords)
 
 
-def fetch_trendradar_news() -> str:
+def fetch_trendradar_news(_depth: int = 0) -> str:
     """
     多源混合获取新闻：主源(TrendRadar全量) + 娱乐源(微博/抖音)
     确保每批新闻至少包含1-2条娱乐/生活类内容
     """
+    # 递归深度保护：最多重试1次（2层深度），防止无限递归（Bug 4a）
+    if _depth >= 2:
+        logger.warning(f"递归深度超过上限({_depth})，终止递归")
+        return ""
     try:
         _clear_shared_cache_if_new_day()
         cache = _get_shared_cache()
@@ -141,7 +149,7 @@ def fetch_trendradar_news() -> str:
             if cache:
                 logger.info("今日新闻已全部推送过，清空缓存重新获取")
                 cache.clear()
-                return fetch_trendradar_news()
+                return fetch_trendradar_news(_depth + 1)
             return ""
 
         logger.info(f"多源混合新闻: 主源{len(main_lines)}条 + 娱乐{len([l for l in mixed if _is_entertainment_title(l)])}条, 共{len(mixed)}条")
@@ -254,3 +262,114 @@ def _fallback_single_source(cache: set) -> str:
         return ""
     except Exception:
         return ""
+
+
+# ── 多源并行新闻获取（从 ai_engine.py 迁移）──────────────────────
+
+_news_session_local = threading.local()
+
+
+def _get_news_session():
+    """线程级Session复用，避免每次fetch创建7个TCP连接"""
+    if not hasattr(_news_session_local, 'session'):
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        })
+        _news_session_local.session = session
+    return _news_session_local.session
+
+
+def fetch_real_news() -> str:
+    """
+    从网络实时抓取今日热点新闻（多源并行容错）。
+    数据源：百度热搜 > 微博热搜API > 今日头条 > 知乎热榜 > 抖音热点 > 36氪 > 澎湃新闻
+    七源同时请求，最快返回的优先使用，总超时15秒。
+    """
+
+    def _dedup(raw_list):
+        seen, unique = set(), []
+        for t in raw_list:
+            t = t.strip()
+            if t and t not in seen and len(t) > 2 and not t.startswith('http') and not t.isdigit():
+                seen.add(t)
+                unique.append(t)
+        return unique
+
+    def _parse_baidu(text):
+        titles = re.findall(r'"word":"([^"]+)"', text)
+        if not titles:
+            titles = re.findall(r'<a[^>]*title="([^"]+)"[^>]*>', text)
+        return titles
+
+    def _parse_weibo(text):
+        try:
+            items = json.loads(text).get("data", {}).get("realtime", [])
+            return [item.get("word", "") for item in items[:15]]
+        except Exception:
+            return []
+
+    def _parse_toutiao(text):
+        return re.findall(r'<td class="al"><a[^>]*>([^<]+)</a>', text)
+
+    def _parse_zhihu(text):
+        titles = re.findall(r'<meta itemprop="name" content="([^"]+)"', text)
+        if not titles:
+            titles = re.findall(r'"title":"([^"]+)"', text)
+        return titles
+
+    def _parse_douyin(text):
+        return re.findall(r'<td class="al"><a[^>]*>([^<]+)</a>', text)
+
+    def _parse_36kr(text):
+        titles = re.findall(r'"title":"([^"]+)"', text)
+        if not titles:
+            titles = re.findall(r'<a[^>]*class="item-title"[^>]*>([^<]+)</a>', text)
+        return titles
+
+    def _parse_thepaper(text):
+        titles = re.findall(r'<h2 class="news_title">[^<]*<a[^>]*>([^<]+)</a>', text)
+        if not titles:
+            titles = re.findall(r'"title":"([^"]+)"', text)
+        return titles
+
+    NEWS_SOURCES = [
+        {"name": "百度热搜", "url": "https://top.baidu.com/board?tab=realtime", "timeout": 10, "min_len": 500, "parser": _parse_baidu},
+        {"name": "微博热搜", "url": "https://weibo.com/ajax/side/hotSearch", "timeout": 8, "min_len": 0, "parser": _parse_weibo},
+        {"name": "今日头条", "url": "https://tophub.today/n/KqndgxeLl9", "timeout": 8, "min_len": 1000, "parser": _parse_toutiao},
+        {"name": "知乎热榜", "url": "https://www.zhihu.com/hot", "timeout": 8, "min_len": 500, "parser": _parse_zhihu},
+        {"name": "抖音热点", "url": "https://tophub.today/n/DpQvNABoNE", "timeout": 8, "min_len": 500, "parser": _parse_douyin},
+        {"name": "36氪快讯", "url": "https://36kr.com/newsflashes", "timeout": 8, "min_len": 500, "parser": _parse_36kr},
+        {"name": "澎湃新闻", "url": "https://www.thepaper.cn/", "timeout": 8, "min_len": 500, "parser": _parse_thepaper},
+    ]
+
+    def _fetch_news_source(src):
+        try:
+            resp = _get_news_session().get(src["url"], timeout=src["timeout"])
+            if resp.status_code != 200:
+                return None
+            if src["min_len"] and len(resp.text) < src["min_len"]:
+                return None
+            titles = src["parser"](resp.text)
+            unique = _dedup(titles)
+            if unique:
+                logger.info(f"📰 {src['name']}成功：{min(len(unique), 12)}条")
+                return "\n".join(f"{i}. {t}" for i, t in enumerate(unique[:12], 1))
+        except Exception as e:
+            logger.warning(f"📰 {src['name']}失败：{e}")
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
+        futures = {
+            executor.submit(_fetch_news_source, src): src["name"]
+            for src in NEWS_SOURCES
+        }
+        for f in concurrent.futures.as_completed(futures, timeout=15):
+            result = f.result()
+            if result:
+                return result
+
+    logger.error("📰 所有7个新闻源均失败")
+    return ""

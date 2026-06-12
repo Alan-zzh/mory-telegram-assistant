@@ -200,10 +200,10 @@ class KeywordTrigger:
             if action_type == "deploy":
                 if self.mory_bot:
                     self.mory_bot.reply_without_track(message, "🚀 部署已触发！")
-                    self.mory_bot.reply_without_track(message, "✅ 代码已更新，请在VPS执行 `bash start.sh restart` 重启Bot")
+                    self.mory_bot.reply_without_track(message, "✅ 代码已更新，请在VPS执行 `sudo systemctl restart mory-assistant` 重启Bot")
                 else:
                     bot.reply_to(message, "🚀 部署已触发！")
-                    bot.reply_to(message, "✅ 代码已更新，请在VPS执行 `bash start.sh restart` 重启Bot")
+                    bot.reply_to(message, "✅ 代码已更新，请在VPS执行 `sudo systemctl restart mory-assistant` 重启Bot")
                 return True
             else:
                 logger.warning(f"🔑 未知的动作类型: {action_type}")

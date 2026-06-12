@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 创建必要的目录
-RUN mkdir -p logs backups
+RUN mkdir -p logs backups data
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
@@ -31,7 +31,7 @@ ENV TZ=Asia/Shanghai
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('https://api.telegram.org')" || exit 1
+    CMD pgrep -f 'python.*main.py' > /dev/null || exit 1
 
 # 启动脚本
 CMD ["python3", "main.py"]

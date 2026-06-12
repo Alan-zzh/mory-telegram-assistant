@@ -1,0 +1,192 @@
+import time
+import random
+from datetime import datetime, timedelta, timezone
+from core.database import _db_lock
+from core.logging_util import get_logger
+
+_CST = timezone(timedelta(hours=8))
+logger = get_logger("lucky_wheel")
+
+
+def _weighted_reward():
+    """按权重分布随机生成1-100的积分奖励"""
+    roll = random.random()
+    if roll < 0.40:
+        return random.randint(1, 10)
+    elif roll < 0.70:
+        return random.randint(11, 30)
+    elif roll < 0.90:
+        return random.randint(31, 60)
+    else:
+        return random.randint(61, 100)
+
+
+def _today_str():
+    """返回今天的日期字符串（CST）"""
+    return datetime.now(_CST).strftime("%Y-%m-%d")
+
+
+def handle_lucky_wheel(bot, m, config, db, args=""):
+    """处理幸运转盘命令"""
+    uid = m.from_user.id
+    text = (m.text or "").strip()
+    cost_per_spin = config.get("LUCKY_WHEEL_COST", 10)
+    today = _today_str()
+
+    # 等级免费转盘次数
+    from modules.points_enhanced import _get_applicable_privilege
+    level_free_spins = _get_applicable_privilege(db, uid, "wheel_free_spins", config) or 0
+
+    # 解析转盘次数
+    parts = text.split()
+    count = 1
+    if len(parts) >= 2:
+        try:
+            count = int(parts[1])
+        except ValueError:
+            bot.reply_to(m, "❌ 转盘次数请输入数字，如「转盘 3」")
+            return
+
+    if count < 1:
+        bot.reply_to(m, "❌ 转盘次数至少为1")
+        return
+
+    with _db_lock:
+        # 查询今日转盘记录
+        row = db.conn.execute(
+            "SELECT id, reward, spin_count FROM lucky_wheel_results WHERE uid=? AND date=?",
+            (uid, today),
+        ).fetchone()
+
+        # 今日总免费次数 = 基础1次 + 等级额外次数
+        total_free = 1 + level_free_spins
+        used_spins = row[2] if row else 0
+        remaining_free = max(0, total_free - used_spins)
+
+        if count == 1:
+            # 单次转盘
+            if remaining_free > 0:
+                # 使用免费次数
+                reward = _weighted_reward()
+                if row is None:
+                    db.conn.execute(
+                        "INSERT INTO lucky_wheel_results (uid, date, reward, spin_count, ts) VALUES (?, ?, ?, 1, ?)",
+                        (uid, today, reward, int(time.time())),
+                    )
+                else:
+                    db.conn.execute(
+                        "UPDATE lucky_wheel_results SET reward=reward+?, spin_count=spin_count+1, ts=? WHERE uid=? AND date=?",
+                        (reward, int(time.time()), uid, today),
+                    )
+                db.conn.commit()
+                _lv_result = db.add_points(uid, reward, source="wheel")
+                current = db.get_user_points(uid) or 0
+                free_info = f"（免费 {used_spins + 1}/{total_free}）" if total_free > 1 else ""
+                bot.reply_to(
+                    m,
+                    f"🎡 幸运转盘！{free_info}\n🎲 获得积分：{reward}\n💎 当前积分：{current}",
+                )
+                logger.info(f"用户{uid}免费转盘获得{reward}积分")
+                # 检查升级通知
+                from modules.points_enhanced import check_level_up
+                check_level_up(bot, m.chat.id, uid, m.from_user.first_name or str(uid), _lv_result, config)
+            else:
+                # 免费次数已用完，付费
+                current_points = db.get_user_points(uid) or 0
+                if current_points < cost_per_spin:
+                    bot.reply_to(
+                        m,
+                        f"🎡 今日免费转盘已用完（共{total_free}次）\n❌ 积分不足！付费转盘需要{cost_per_spin}积分，当前仅有{current_points}积分",
+                    )
+                    return
+
+                db.add_points(uid, -cost_per_spin, source="wheel_cost")
+                reward = _weighted_reward()
+                db.conn.execute(
+                    "UPDATE lucky_wheel_results SET reward=reward+?, spin_count=spin_count+1, ts=? WHERE uid=? AND date=?",
+                    (reward, int(time.time()), uid, today),
+                )
+                db.conn.commit()
+                _lv_result2 = db.add_points(uid, reward, source="wheel")
+                current = db.get_user_points(uid) or 0
+                bot.reply_to(
+                    m,
+                    f"🎡 幸运转盘（付费）\n💰 消耗积分：{cost_per_spin}\n🎲 获得积分：{reward}\n💎 当前积分：{current}",
+                )
+                logger.info(f"用户{uid}付费转盘获得{reward}积分")
+                # 检查升级通知
+                from modules.points_enhanced import check_level_up
+                check_level_up(bot, m.chat.id, uid, m.from_user.first_name or str(uid), _lv_result2, config)
+        else:
+            # 多次转盘
+            if count > 10:
+                bot.reply_to(m, "❌ 单次最多转10次")
+                return
+
+            # 计算免费次数和付费次数
+            free_spins = min(remaining_free, count)
+            paid_spins = count - free_spins
+            total_cost = paid_spins * cost_per_spin
+
+            if total_cost > 0:
+                current_points = db.get_user_points(uid) or 0
+                if current_points < total_cost:
+                    bot.reply_to(
+                        m,
+                        f"❌ 积分不足！转盘{count}次（免费{free_spins}次+付费{paid_spins}次）需要{total_cost}积分，当前仅有{current_points}积分",
+                    )
+                    return
+                db.add_points(uid, -total_cost, source="wheel_cost")
+
+            # 计算总奖励
+            total_reward = sum(_weighted_reward() for _ in range(count))
+
+            # 更新记录
+            if row is None:
+                db.conn.execute(
+                    "INSERT INTO lucky_wheel_results (uid, date, reward, spin_count, ts) VALUES (?, ?, ?, ?, ?)",
+                    (uid, today, total_reward, count, int(time.time())),
+                )
+            else:
+                db.conn.execute(
+                    "UPDATE lucky_wheel_results SET reward=reward+?, spin_count=spin_count+?, ts=? WHERE uid=? AND date=?",
+                    (total_reward, count, int(time.time()), uid, today),
+                )
+            db.conn.commit()
+
+            # 发放奖励
+            _lv_result3 = db.add_points(uid, total_reward, source="wheel")
+
+            current = db.get_user_points(uid) or 0
+            cost_info = f"\n💰 消耗积分：{total_cost}" if total_cost > 0 else ""
+            free_info = f"\n🎁 免费次数：{free_spins}/{total_free}" if free_spins > 0 else ""
+            bot.reply_to(
+                m,
+                f"🎡 幸运转盘 x{count}！{free_info}{cost_info}\n🎲 总获得：{total_reward}\n💎 当前积分：{current}",
+            )
+            logger.info(f"用户{uid}转盘{count}次（免费{free_spins}付费{paid_spins}），消耗{total_cost}，获得{total_reward}积分")
+            # 检查升级通知
+            from modules.points_enhanced import check_level_up
+            check_level_up(bot, m.chat.id, uid, m.from_user.first_name or str(uid), _lv_result3, config)
+
+
+def handle_wheel_history(bot, m, config, db):
+    """查看转盘历史记录（最近7天）"""
+    uid = m.from_user.id
+    today = datetime.now(_CST).date()
+
+    with _db_lock:
+        rows = db.conn.execute(
+            "SELECT date, reward FROM lucky_wheel_results WHERE uid=? AND date>=? ORDER BY date DESC",
+            (uid, (today - timedelta(days=6)).strftime("%Y-%m-%d")),
+        ).fetchall()
+
+    if not rows:
+        bot.reply_to(m, "📋 近7天暂无转盘记录")
+        return
+
+    lines = ["🎡 近7天转盘记录："]
+    for date_str, reward in rows:
+        lines.append(f"{date_str}：{reward}积分")
+
+    bot.reply_to(m, "\n".join(lines))

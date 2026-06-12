@@ -28,52 +28,26 @@
 
 import random
 import time
-import requests
 from io import BytesIO
 from datetime import datetime, timezone, timedelta
 from core.logging_util import get_logger
+from core.keyword_manager import (
+    _DEFAULT_TAROT_CARDS,
+    _DEFAULT_FORTUNE_TEXTS,
+    _DEFAULT_BADGES,
+)
+
+_CST = timezone(timedelta(hours=8))
 
 logger = get_logger("content")
 
 # ─────────────────────── 完整22张大阿卡那塔罗牌库 ───────────────────────
-TAROT_CARDS = {
-    "愚人":     "❌ 鲁莽的新开始。今天要三思而后行。",
-    "魔术师":   "✨ 掌握主动权的日子。该出手就出手。",
-    "女祭司":   "🔮 神秘而深邃。今天会有惊喜发现。",
-    "皇帝":     "👑 权力与掌控。你今天有主宰感。",
-    "皇后":     "👸 优雅而富有。这是收获的预兆。",
-    "教皇":     "⛪ 精神升华。修身养性的好时机。",
-    "恋人":     "💕 二选一的困局，但无论选什么都是对的。",
-    "战车":     "🏃 飞快前进。不要踩刹车。",
-    "力量":     "💪 内在磨练成果。你比想象中更强大。",
-    "隐士":     "🕯️ 沉默与思考的周期。充电时刻到了。",
-    "命运之轮": "♻️ 轮回与变化。运气随时可能转向。",
-    "正义":     "⚖️ 公平与因果。该来的都会来。",
-    "倒吊人":   "🙃 换个角度看世界。困境即机遇。",
-    "死神":     "💀 结束与开始的交界。不是坏事，是蜕变。",
-    "节制":     "🌊 平衡与和谐。温和的力量最强大。",
-    "恶魔":     "😈 欲望的引诱。要分辨真心与迷恋。",
-    "塔":       "⚡ 突如其来的变故。改变后会更好。",
-    "星星":     "⭐ 希望与憧憬。梦想就在不远处。",
-    "月亮":     "🌙 直觉与潜意识。听从内心的声音。",
-    "太阳":     "☀️ 光明与喜悦。好运马上就来。",
-    "审判":     "📯 觉醒与重生。你将成为新的自己。",
-    "世界":     "🌍 完成与圆满。一个完美的结局。",
-}
+# 【重构】默认值已迁移到 core/keyword_manager.py + data/tarot_cards.json
+# 此处保留为兼容旧代码的 fallback
+TAROT_CARDS = _DEFAULT_TAROT_CARDS
 
 # ─────────────────────── 今日运势签库 ─────────────────────────────────
-FORTUNE_TEXTS = [
-    "今日宜大胆，运气偏爱勇者。",
-    "桃花暗涌，保持神秘感最迷人。",
-    "财运流动，注意把握时机。",
-    "贵人就在身边，多表达感谢。",
-    "直觉比逻辑更准，相信自己。",
-    "今天适合说出那句话。",
-    "低调行事，暗中积累能量。",
-    "一切顺遂，今日宜主动出击。",
-    "静待花开，着急没有用。",
-    "好事将至，耐心是你的武器。",
-]
+FORTUNE_TEXTS = _DEFAULT_FORTUNE_TEXTS
 
 
 def draw_tarot(name: str = "亲爱的") -> str:
@@ -104,24 +78,24 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
     if "契合度" in msg:
         mory_bot.reply_and_track(m,
             f"✨ 星盘扫描中...\n\n"
-            f"结论：你的灵魂和 {bot_name} 老板契合度高达 **99.9%**！\n"
+            f"结论：你的灵魂和 {bot_name} 契合度高达 **99.9%**！\n"
             f"你简直就是为她量身定制的守护者！💫")
         return True
 
     # 大冒险
     if "大冒险" in msg:
         dares = [
-            f"🎲 请在群里发一句对{bot_name}老板最深情的告白！",
-            f"🎲 说出你手机里存了{bot_name}老板几张照片？",
-            f"🎲 描述一下你梦里的{bot_name}老板是什么样的？",
-            f"🎲 用3个词形容你眼中的{bot_name}老板！",
+            f"🎲 请在群里发一句对{bot_name}最深情的告白！",
+            f"🎲 说出你手机里存了{bot_name}几张照片？",
+            f"🎲 描述一下你梦里的{bot_name}是什么样的？",
+            f"🎲 用3个词形容你眼中的{bot_name}！",
         ]
         mory_bot.reply_and_track(m, random.choice(dares))
         return True
 
     # Mory密码彩蛋
     if f"{bot_name}密码" in msg or "密码" == msg.strip():
-        mory_bot.reply_and_track(m, f"🤫 嘘... 奖励你一个专属飞吻 💋\n悄悄告诉你，{bot_name}老板今天心情特别好哦～")
+        mory_bot.reply_and_track(m, f"🤫 嘘... 奖励你一个专属飞吻 💋\n悄悄告诉你，{bot_name}今天心情特别好哦～")
         return True
 
     # 碎片寻宝
@@ -263,14 +237,18 @@ def handle_photo(bot, m, config: dict, mory_bot=None, ai=None):
     is_admin = uid == config["ADMIN_ID"]
 
     # 获取图片数据（通用）
+    # [TRAE SOLO CN] 安全修复：不再将 Token 拼入 URL（防止异常日志泄露 Token）
     try:
         file_info = bot.get_file(m.photo[-1].file_id)
         try:
             img_bytes = bot.download_file(file_info.file_path)
         except Exception:
-            img_bytes = requests.get(
-                f"https://api.telegram.org/file/bot{config['TOKEN']}/{file_info.file_path}"
-            ).content
+            # 二次重试 download_file，避免将 Token 拼入 URL 导致泄露风险
+            try:
+                img_bytes = bot.download_file(file_info.file_path)
+            except Exception as dl_err:
+                logger.error(f"图片下载失败（重试后）: {dl_err}")
+                return
     except Exception as e:
         logger.error(f"图片下载失败：{e}")
         return
@@ -281,7 +259,7 @@ def handle_photo(bot, m, config: dict, mory_bot=None, ai=None):
         return
 
     # 普通用户：AI识图撩人回复
-    if ai and config.get("ENABLE_VISION_REPLY", True):
+    if ai and config.get("ENABLE_VISION_REPLY", False):
         _handle_user_photo_vision(bot, m, config, img_bytes, ai)
 
 
@@ -326,7 +304,7 @@ def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes, mory_bot):
         bio.seek(0)
 
         bot.send_photo(gid, bio,
-                       caption=f"{config['BOT_NAME']}老板发新图啦～ 想看无遮挡版？你懂的～ 🔥")
+                       caption=f"{config['BOT_NAME']}发新图啦～ 想看无遮挡版？你懂的～ 🔥")
         mory_bot.reply_and_track(m, "✅ 打码完成并已推群")
         logger.info("📸 图片打码推群成功")
 
@@ -353,7 +331,7 @@ def _handle_user_photo_vision(bot, m, config: dict, img_bytes: bytes, ai):
         return
     
     # AI识图prompt
-    prompt = f"""你是Mory老板，一个可爱又有点小色色的闺蜜。
+    prompt = f"""你是Mory，一个可爱又有点小色色的闺蜜。
 
 用户「{uname}」在群里发了一张照片，请用傲娇又撩人的语气评价这张照片。
 
@@ -403,27 +381,8 @@ def is_late_night() -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 
 # 勋章定义
-BADGES = {
-    # 活跃类勋章
-    "early_bird": {"name": "早起鸟", "emoji": "🐦", "desc": "每天8点前发消息"},
-    "night_owl": {"name": "夜猫子", "emoji": "🦉", "desc": "每天23点后发消息"},
-    "social_butterfly": {"name": "社牛", "emoji": "🦋", "desc": "群消息超过100条"},
-    "chatty_cathy": {"name": "话痨", "emoji": "💬", "desc": "单日消息超过50条"},
-    
-    # 互动类勋章
-    "first_fan": {"name": "铁粉", "emoji": "❤️", "desc": "连续7天活跃"},
-    "super_fan": {"name": "超级铁粉", "emoji": "💖", "desc": "连续30天活跃"},
-    "og_member": {"name": "OG会员", "emoji": "👑", "desc": "加入超过30天"},
-    
-    # 特殊类勋章
-    "treasure_hunter": {"name": "寻宝达人", "emoji": "💎", "desc": "碎片寻宝满7天"},
-    "tarot_master": {"name": "塔罗师", "emoji": "🔮", "desc": "查看运势超过10次"},
-    "lucky_star": {"name": "幸运星", "emoji": "⭐", "desc": "被随机点名3次"},
-    
-    # 消费类勋章
-    "early_adopter": {"name": "尝鲜客", "emoji": "🚀", "desc": "首日体验会员"},
-    "loyal_customer": {"name": "老会员", "emoji": "💎", "desc": "连续付费超过3个月"},
-}
+# 【重构】默认值已迁移到 core/keyword_manager.py + data/badges.json
+BADGES = _DEFAULT_BADGES
 
 
 def check_and_award_badges(uid: int, db, msg_count_today: int = 0) -> list:

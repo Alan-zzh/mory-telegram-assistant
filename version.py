@@ -6,11 +6,12 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.16.2"
+VERSION = "v5.16.3"
 
-CONFIG_VERSION = "5.16.2"
+CONFIG_VERSION = "5.16.3"
 
 VERSION_HISTORY = [
+    "v5.16.3: [Codex] 工作区脏改动收敛 - 合并模块化拆分(core/db_repos/core/handlers/dashboard/api/modules全量分层)+config.json退出Git跟踪并保留本地运行文件+.gitignore补backup/logs/config.json+清理旧debug脚本/旧universal_ai_router目录/start.sh/deploy.sh/windows_helper+补MEMBER_SCAN_METHOD和技术文档索引+验证54条单测和全量py_compile通过",
     "v5.16.2: [Codex] 广告治理策略纠正 - 广告账号不踢人，统一永久禁言+删除消息+global_blacklist+blacklist+message_snapshots历史清理；新增modules/ad_enforcement.py统一入口；emoji面具复用广告主正则；头像OCR补充看我简/主页/钱包/打底/进群了解；早午晚问候时间和开关配置化；商业搭讪落库冷却+分阶段fallback；文档纠正旧踢人规则",
     "v5.16.1: 看我简介变体+bio核心骗术模式补充 - USERNAME_PATTERNS扩展字符集(个/jie/接/界/衔+拼音jianjie/jian-jie+无前缀看X简X)+BIO_PATTERNS补充一天保X万/数字+打底/带X钱包/想做兄弟/进群找了解/付出保X+31条单测全通过",
     "v5.16.0: 未实现功能汇总全部执行 - Dashboard gunicorn+gevent WSGI部署 + mory-assistant.service EnvironmentFile + logs/config目录同步 + 备份保留策略(保留最近2个) + 部署验证自动化(4步systemctl/health/log/config) + 多Bot Dashboard独立(DASHBOARD_MODE分区+media服务文件) + FAQ自动回复配置上线 + 暗病修复(Dashboard media模式自动建库+gunicorn apt安装+Windows stdout UTF-8+python3 -m gunicorn路径)",

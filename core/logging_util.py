@@ -37,7 +37,7 @@ def clear_logging_context():
 
 class ContextLogger(logging.LoggerAdapter):
     """自动注入上下文的LoggerAdapter"""
-    
+
     def process(self, msg, kwargs):
         # 获取当前上下文
         context = get_logging_context()
@@ -59,7 +59,7 @@ def get_logger(name: str) -> ContextLogger:
 
 class JsonFormatter(logging.Formatter):
     """JSON格式的日志格式化器"""
-    
+
     def format(self, record):
         log_record = {
             'timestamp': self.formatTime(record, self.datefmt),
@@ -92,7 +92,7 @@ def configure_logging(
 ):
     """
     配置日志系统
-    
+
     Args:
         level: 日志级别
         log_file: 日志文件路径，None则不输出到文件
@@ -104,10 +104,10 @@ def configure_logging(
     # 清除现有handler（避免重复）
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
-    
+
     # 设置级别
     root_logger.setLevel(level)
-    
+
     # 创建格式化器
     if json_format:
         formatter = JsonFormatter()
@@ -115,7 +115,7 @@ def configure_logging(
         formatter = logging.Formatter(
             '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
         )
-    
+
     # 文件处理器
     if log_file:
         file_handler = RotatingFileHandler(
@@ -126,7 +126,7 @@ def configure_logging(
         )
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
-    
+
     # 控制台处理器
     if console_output:
         # 检查是否在后台运行（通过 nohup 或其他重定向）
@@ -138,7 +138,7 @@ def configure_logging(
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setFormatter(formatter)
             root_logger.addHandler(console_handler)
-    
+
     # 屏蔽无关日志
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('telebot').setLevel(logging.WARNING)
@@ -146,7 +146,7 @@ def configure_logging(
 def exception_handler(logger_name: str = 'main'):
     """
     异常处理装饰器：自动捕获异常，记录日志，并可选择重新抛出或返回默认值
-    
+
     Usage:
         @exception_handler('module_name')
         def risky_function():
@@ -169,13 +169,26 @@ def exception_handler(logger_name: str = 'main'):
         return wrapper
     return decorator
 
-def log_execution(logger_name: str = 'main', level: int = logging.DEBUG):
+def _filter_sensitive(kwargs: dict) -> dict:
+    """过滤 kwargs 中的敏感参数（密码/密钥/令牌等），避免泄露到日志"""
+    SENSITIVE_KEYS = {'password', 'passwd', 'secret', 'token', 'api_key', 'api_key_secret',
+                      'access_token', 'refresh_token', 'private_key', 'key', 'auth'}
+    return {k: ('******' if any(s in k.lower() for s in SENSITIVE_KEYS) else v)
+            for k, v in kwargs.items()}
+
+
+def log_execution(logger_name: str = 'main', level: int = logging.DEBUG,
+                  sensitive_params: tuple = None):
     """
     记录函数执行的装饰器（输入/输出/耗时）
-    
+
     Usage:
         @log_execution('module_name')
         def some_function(arg):
+            ...
+
+        @log_execution('api', sensitive_params=('password', 'token'))
+        def login(user, password, token):
             ...
     """
     def decorator(func):
@@ -183,10 +196,17 @@ def log_execution(logger_name: str = 'main', level: int = logging.DEBUG):
             logger = get_logger(logger_name)
             if logger.isEnabledFor(level):
                 # 记录输入（敏感信息需过滤）
+                filtered_kwargs = _filter_sensitive(kwargs)
+                if sensitive_params:
+                    # 额外过滤用户指定的敏感参数名（位置参数按名过滤）
+                    filtered_kwargs.update({
+                        k: '******' for k in filtered_kwargs
+                        if k in sensitive_params
+                    })
                 logger.log(
                     level,
                     f"Enter {func.__module__}.{func.__name__} "
-                    f"args={args} kwargs={kwargs}"
+                    f"args={args} kwargs={filtered_kwargs}"
                 )
                 start_time = time.time() if level <= logging.DEBUG else None
             try:

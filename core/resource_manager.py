@@ -37,21 +37,21 @@ logger = get_logger("resource_manager")
 class ResourceManager:
     """
     线程安全资源管理器。
-    
+
     管理以下共享资源（由外部传入）：
     - bot: Telegram bot 实例（pyTelegramBotAPI）
     - ai: AIEngine 实例
     - db: DB 数据库实例
     - config: 配置字典（只读）
     - save_config_fn: 保存配置的函数（可调用）
-    
+
     为每个资源提供独立的锁，并通过上下文管理器确保安全访问。
     """
-    
+
     def __init__(self, bot=None, ai=None, db=None, config=None, save_config_fn=None):
         """
         初始化资源管理器。
-        
+
         Args:
             bot: Telegram bot 实例（必须）
             ai: AIEngine 实例（必须）
@@ -64,7 +64,7 @@ class ResourceManager:
         self._db = db
         self._config = config
         self._save_config_fn = save_config_fn
-        
+
         # 为每个资源创建独立的锁
         self._locks = {
             'bot': threading.RLock(),
@@ -72,51 +72,51 @@ class ResourceManager:
             'db': threading.RLock(),  # 注意：database.py 已有自己的锁，此处作为额外保护
             'config': threading.RLock(),
         }
-        
+
         # 任务执行线程池（简化版：使用单个后台线程执行长时间任务）
         self._task_queue = []
         self._task_lock = threading.Lock()
         self._task_thread = None
         self._task_running = False
-        
+
         logger.info("🛡️  资源管理器初始化完成")
-    
+
     @property
     def bot(self):
         """获取 bot 实例（使用前应通过 locked('bot') 加锁）"""
         return self._bot
-    
+
     @property
     def ai(self):
         """获取 ai 实例（使用前应通过 locked('ai') 加锁）"""
         return self._ai
-    
+
     @property
     def db(self):
         """获取 db 实例（使用前应通过 locked('db') 加锁）"""
         return self._db
-    
+
     @property
     def config(self):
         """获取配置字典（只读，使用前应通过 locked('config') 加锁）"""
         return self._config
-    
+
     @property
     def save_config_fn(self):
         """获取保存配置的函数（使用前应通过 locked('config') 加锁）"""
         return self._save_config_fn
-    
+
     def locked(self, resource_name: str, timeout: float = 30.0):
         """
         返回一个上下文管理器，用于安全地访问指定资源。
-        
+
         Args:
             resource_name: 资源名称，'bot'、'ai'、'db'、'config' 之一
             timeout: 获取锁的超时时间（秒），超时则抛出 TimeoutError
-        
+
         Returns:
             上下文管理器，在 with 块内资源锁已被获取
-            
+
         Usage:
             with rm.locked('bot'):
                 rm.bot.send_message(...)
@@ -124,34 +124,34 @@ class ResourceManager:
         lock = self._locks.get(resource_name)
         if lock is None:
             raise ValueError(f"未知资源: {resource_name}")
-        
+
         class _ResourceLock:
             def __init__(self, lock, timeout):
                 self.lock = lock
                 self.timeout = timeout
                 self.acquired = False
-            
+
             def __enter__(self):
                 if not self.lock.acquire(timeout=self.timeout):
                     raise TimeoutError(f"获取资源 {resource_name} 锁超时")
                 self.acquired = True
                 return self
-            
+
             def __exit__(self, exc_type, exc_val, exc_tb):
                 if self.acquired:
                     self.lock.release()
                 return False  # 不吞异常
-        
+
         return _ResourceLock(lock, timeout)
-    
+
     def locked_multi(self, resource_names: List[str], timeout: float = 30.0):
         """
         同时锁定多个资源（按字母顺序获取锁，避免死锁）。
-        
+
         Args:
             resource_names: 资源名称列表，如 ['bot', 'ai']
             timeout: 获取每个锁的超时时间（秒）
-        
+
         Returns:
             上下文管理器，在 with 块内所有资源锁已被获取
         """
@@ -163,13 +163,13 @@ class ResourceManager:
             if lock is None:
                 raise ValueError(f"未知资源: {name}")
             locks.append(lock)
-        
+
         class _MultiResourceLock:
             def __init__(self, locks, timeout):
                 self.locks = locks
                 self.timeout = timeout
                 self.acquired = []
-            
+
             def __enter__(self):
                 for i, lock in enumerate(self.locks):
                     if not lock.acquire(timeout=self.timeout):
@@ -179,87 +179,87 @@ class ResourceManager:
                         raise TimeoutError(f"获取第 {i+1} 个资源锁超时")
                     self.acquired.append(lock)
                 return self
-            
+
             def __exit__(self, exc_type, exc_val, exc_tb):
                 # 按相反顺序释放锁
                 for lock in reversed(self.acquired):
                     lock.release()
                 return False
-        
+
         return _MultiResourceLock(locks, timeout)
-    
+
     def execute_task(self, func: Callable, args: tuple = (), kwargs: dict = None,
                      resources: List[str] = None, timeout: float = 30.0) -> Any:
         """
         在资源锁的保护下执行任务，支持超时。
-        
+
         Args:
             func: 要执行的函数
             args: 位置参数
             kwargs: 关键字参数
             resources: 需要锁定的资源列表，为 None 时不加锁
             timeout: 任务执行超时时间（秒）
-        
+
         Returns:
             函数返回值，若超时则返回 None
-        
+
         Raises:
             TimeoutError: 任务执行超时
             Exception: 函数抛出的异常
         """
         if kwargs is None:
             kwargs = {}
-        
+
         def _wrapped():
             if resources:
                 with self.locked_multi(resources, timeout=30.0):
                     return func(*args, **kwargs)
             else:
                 return func(*args, **kwargs)
-        
+
         # 创建一个线程来执行任务，以便我们可以设置超时
         result_container = []
         exception_container = []
-        
+
         def _worker():
             try:
                 result = _wrapped()
                 result_container.append(result)
             except Exception as e:
                 exception_container.append(e)
-        
+
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
         thread.join(timeout=timeout)
-        
+
         if thread.is_alive():
             logger.warning(f"⚠️ 任务 {func.__name__} 执行超时（{timeout}秒）")
             raise TimeoutError(f"任务执行超时: {timeout}秒")
-        
+
         if exception_container:
             raise exception_container[0]
-        
+
         return result_container[0] if result_container else None
-    
+
     def submit_background_task(self, func: Callable, args: tuple = (), kwargs: dict = None,
                                resources: List[str] = None, name: str = "background_task"):
         """
         提交一个后台任务，该任务将在独立的线程中执行，不阻塞调用者。
         任务执行失败会记录日志，但不会影响主循环。
-        
+
         Args:
             func: 要执行的函数
             args: 位置参数
             kwargs: 关键字参数
             resources: 需要锁定的资源列表
             name: 任务名称，用于日志记录
-        
+
         Returns:
             threading.Thread: 已启动的后台线程对象
         """
         if kwargs is None:
             kwargs = {}
-        
+
         def _wrapped():
             try:
                 logger.info(f"🔧 后台任务开始: {name}")
@@ -271,16 +271,7 @@ class ResourceManager:
                 logger.info(f"✅ 后台任务完成: {name}")
             except Exception as e:
                 logger.error(f"❌ 后台任务失败 {name}: {e}", exc_info=True)
-        
+
         thread = threading.Thread(target=_wrapped, daemon=True, name=f"BG-{name}")
         thread.start()
         return thread
-    
-    def start_task_processor(self):
-        """启动任务处理器（预留功能，当前版本未实现队列）"""
-        # 预留：未来可以实现任务队列和线程池
-        pass
-    
-    def stop_task_processor(self):
-        """停止任务处理器（预留功能）"""
-        pass

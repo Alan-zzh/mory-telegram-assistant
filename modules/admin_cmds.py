@@ -278,7 +278,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             try:
                 target_id = int(parts[1].lstrip("@"))
                 content = parts[2]
-                bot.send_message(target_id, f"📢 {config['BOT_NAME']}老板说：\n\n{content}")
+                bot.send_message(target_id, f"📢 {config['BOT_NAME']}说：\n\n{content}")
                 mory_bot.reply_and_track(m, f"✅ 已私信用户 @{parts[1].lstrip('@')}")
                 logger.info(f"📨 代发→{target_id}：{content[:50]}")
             except Exception as e:
@@ -516,7 +516,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             lines.append(f"   黑名单：{', '.join(list(blacklisted)[:5])}")
         reply_chance = config.get("REPLY_CHANCE", 10)
         lines.append(f"💬 回复概率：{reply_chance}%")
-        auto_greeting = config.get("AUTO_GREETING", True)
+        auto_greeting = config.get("AUTO_GREETING", False)
         lines.append(f"🌅 早安问候：{'✅' if auto_greeting else '❌'}")
         spam_limit = config.get("SPAM_LIMIT", 5)
         lines.append(f"🛡️ 刷屏限制：{spam_limit}条")

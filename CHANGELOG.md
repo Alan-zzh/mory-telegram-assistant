@@ -1,3 +1,21 @@
+## v5.16.3 [2026-06-12] [Codex]
+### 工作区脏改动收敛 + 目录分层清理
+
+**整理内容**：
+- [Codex] 合并已存在的模块化拆分：`core/db_repos/`、`core/handlers/`、`dashboard/api/`、`dashboard/templates/`、`modules/` 业务模块分层落地。
+- [Codex] `config.json` 退出 Git 跟踪，保留本地运行文件；后续提交只维护 `config.json.example` 和 `.env.example`。
+- [Codex] `.gitignore` 补齐 `backup/`、`logs/`、运行配置、数据库、临时脚本和部署脚本例外规则。
+- [Codex] 清理旧调试脚本、旧 `universal_ai_router/` 目录、`start.sh`、`deploy.sh`、`windows_helper.py`，保留 `deploy_vps.py`、`scripts/ssh_helper.py`、`scripts/restart_bot.py`、`scripts/cleanup_vps.py` 等可维护脚本。
+- [Codex] 补齐 `MEMBER_SCAN_METHOD.md` 与 `docs/technical/` 技术文档，文档集中到约定目录。
+- [Codex] 修复 `dashboard/app.py` 缺 `DASHBOARD_SECRET` 时 GBK 控制台打印 emoji 导致的二次 `UnicodeEncodeError`。
+
+**验证**：
+- [Codex] `python -m pytest tests/unit/test_ad_patterns_v5161.py tests/unit/test_convert_keywords.py tests/unit/test_proactive_engage.py tests/unit/test_ad_enforcement.py tests/unit/test_emoji_mask_detector.py tests/unit/test_auto_tasks_greeting_config.py -q` → 54 passed。
+- [Codex] `python -m py_compile $(git ls-files '*.py')` 等价全量编译通过。
+- [Codex] 关键模块导入冒烟通过：`main`、`core.bot_initializer`、`core.message_dispatcher`、`core.database`、`dashboard.app`、`modules.auto_tasks`、`modules.ad_detector`、`modules.group_mgr`、`modules.proactive_engage`。
+
+---
+
 ## v5.16.2 [2026-06-12] [Codex]
 ### 广告治理策略纠正 + 智能化暗病修复 + 环境清理
 

@@ -2,7 +2,36 @@
 
 > **本文件专门写给AI自己看**
 > 新会话开始时，AI 必须先读 `AGENTS.md`（项目规则+老坑铁律）+ `project_snapshot.md` + 本文件
-> **最后更新**：2026-06-12（v5.16.2 [Codex] 广告治理不踢人策略纠正）
+> **最后更新**：2026-06-12（v5.16.3 [Codex] 工作区脏改动收敛）
+
+---
+
+## v5.16.3 [2026-06-12] [Codex] 工作区脏改动收敛 + 目录分层清理
+
+### 触发
+用户要求把工作区脏改动彻底修复，能清理的清理、该合并的合并，确保本地和 VPS 都干净、有层次、符合既定设计。
+
+### 根因
+1. [Codex] 工作区存在大量历史 staged 改动和 unstaged 删除交叉，表现为 `AD/MD/MM/AM` 混合状态。
+2. [Codex] 部分实验产物只在索引中存在，工作区已删除；部分旧脚本/旧路由目录已删除但未 stage。
+3. [Codex] `config.json` 虽已写入 `.gitignore`，但历史上仍被 Git 跟踪，导致运行配置和密钥变更持续污染工作区。
+4. [Codex] Dashboard 缺 `DASHBOARD_SECRET` 的错误分支在 GBK 控制台打印 emoji，会触发二次 `UnicodeEncodeError`。
+
+### 修复
+1. [Codex] 备份当前脏区状态到 `backup/codex_20260612_234319_dirty_workspace/`。
+2. [Codex] 以真实工作区为准重新 stage，合并模块化拆分和目录分层。
+3. [Codex] `git rm --cached config.json`，保留本地文件但从版本控制移除；`.gitignore` 补 `backup/`、`logs/`。
+4. [Codex] 清理旧 debug 脚本、旧 `universal_ai_router/`、`start.sh`、`deploy.sh`、`windows_helper.py`。
+5. [Codex] 修复 `dashboard/app.py` 错误分支输出，避免诊断信息在 Windows GBK 控制台再次崩溃。
+
+### 验证
+- [Codex] 54 条相关单测通过。
+- [Codex] `git ls-files '*.py'` 全量 `py_compile` 通过。
+- [Codex] 关键模块导入冒烟通过。
+
+### 教训
+- [Codex] 以后出现 `AD/MD/MM/AM` 大量混合状态时，先备份状态清单，再用真实工作区重新 stage，不要在半索引状态下提交。
+- [Codex] `config.json` 属于运行配置，不应进入 Git；提交前必须检查 `.env`、数据库、运行配置和备份目录。
 
 ---
 
