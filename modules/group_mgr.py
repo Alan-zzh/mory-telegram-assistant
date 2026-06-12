@@ -37,6 +37,12 @@
 import random
 import re
 from core.logging_util import get_logger
+from core.keyword_manager import (
+    _DEFAULT_AD_KEYWORDS,
+    _DEFAULT_AUTO_MUTE_NAMES,
+    _DEFAULT_CONVERT_SUBSTR,
+    _DEFAULT_CONVERT_WORD,
+)
 from modules.ad_detector import check_username_suspicious
 from modules.avatar_detector import check_and_ban_if_porn_avatar
 
@@ -53,34 +59,14 @@ def _get_bot_id(bot):
     return _bot_cached_id
 
 
-def handle_new_members(bot, m, config: dict, db):
+def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
     """新人入群欢迎"""
     _bot_id = _get_bot_id(bot)
-    auto_mute_names = config.get("AUTO_MUTE_NAMES", [
-        # 加密货币类
-        "虚拟币", "搬砖", "币圈", "炒币", "数字货币",
-        "加密货币", "区块链投资", "合约交易", "量化交易",
-        "USDT", "BTC", "ETH交易", "空投", "挖矿",
-        # 赚钱黑话类
-        "日入", "日赚", "日挣", "躺赚", "稳赚", "暴利",
-        "月入", "年入", "保底", "零成本", "无风险",
-        "搞米", "安全搞米", "放电宝", "充电宝",
-        # 招募引流类
-        "招团队", "拉人头", "招代理", "招加盟",
-        "兼职", "副业", "刷单", "做任务",
-        # 色情引流类
-        "裸聊", "约炮", "同城交友", "上门服务",
-        # 灰色产业类
-        "洗钱", "跑分", "代付", "代收", "资金盘",
-        "博彩", "赌博", "娱乐城", "菠菜",
-        # 联系方式引流类（一眼广告）
-        "加我", "私聊我", "私我", "关注我", "点击链接",
-        "微信号", "QQ群", "Telegram群", "群号",
-        "看简介", "看我简介", "看我主页", "看我资料",
-        # [Trae] v4.6.4 新增：针对截图案例的一眼广告词
-        "各地", "约", "学生", "M36D", "白虎",
-        "传递", "800约", "各地约",
-    ])
+    # 优先从 KeywordManager 获取，兼容旧调用方式
+    if keyword_manager:
+        auto_mute_names = keyword_manager.get_auto_mute_names()
+    else:
+        auto_mute_names = config.get("AUTO_MUTE_NAMES", _DEFAULT_AUTO_MUTE_NAMES)
     
     for user in m.new_chat_members:
         if user.id == _bot_id:
@@ -118,38 +104,28 @@ def handle_new_members(bot, m, config: dict, db):
             logger.warning(f"头像检测失败 {user_display}: {e}")
 
         if matched_keyword or is_suspicious or avatar_banned:
-            try:
-                bot.restrict_chat_member(
-                    m.chat.id, user.id,
-                    until_date=0,
-                    can_send_messages=False,
-                    can_send_media_messages=False,
-                    can_send_other_messages=False,
-                )
-                if matched_keyword:
-                    logger.warning(f"🚫 自动永久禁言：{user_display} 命中关键词={matched_keyword}")
-                    notify_reason = f"🔑 命中关键词：{matched_keyword}"
-                elif avatar_banned:
-                    logger.warning(f"🚫 自动永久禁言：{user_display} 原因=头像检测违规")
-                    notify_reason = f"🔑 原因：头像检测违规"
-                else:
-                    logger.warning(f"🚫 自动永久禁言：{user_display} 原因={suspicious_reason}")
-                    notify_reason = f"🔑 原因：{suspicious_reason}"
-                admin_id = config.get("ADMIN_ID", 0)
-                if admin_id:
-                    try:
-                        bot.send_message(admin_id,
-                            f"🚫 自动禁言通知\n"
-                            f"👤 用户：{user_display}\n"
-                            f"{notify_reason}\n"
-                            f"📋 操作：永久禁言\n"
-                            f"💡 如误封请手动解禁")
-                    except Exception:
-                        pass
-                continue
-            except Exception as e:
-                logger.error(f"自动禁言失败 {user_display}：{e}")
-        
+            if matched_keyword:
+                logger.warning(f"🚫 已加黑名单：{user_display} 命中关键词={matched_keyword}")
+                notify_reason = f"🔑 命中关键词：{matched_keyword}"
+            elif avatar_banned:
+                logger.warning(f"🚫 已加黑名单：{user_display} 原因=头像检测违规")
+                notify_reason = f"🔑 原因：头像检测违规"
+            else:
+                logger.warning(f"🚫 已加黑名单：{user_display} 原因={suspicious_reason}")
+                notify_reason = f"🔑 原因：{suspicious_reason}"
+            from modules.ad_enforcement import enforce_ad_user
+            enforce_ad_user(
+                bot=bot,
+                db=db,
+                config=config,
+                chat_id=m.chat.id,
+                uid=user.id,
+                uname=user_display,
+                reason=f"入群广告资料拦截: {notify_reason}",
+                notify_admin=True,
+            )
+            continue
+
         db.upsert_user(user.id, user.first_name or "新人", "group")
         db.add_points(user.id, 0)
 
@@ -228,20 +204,20 @@ def check_banned_words(bot, m, config: dict, db) -> bool:
     return False
 
 
-def check_ad_content(bot, m, config: dict, db, ai) -> bool:
+def check_ad_content(bot, m, config: dict, db, keyword_manager=None) -> bool:
     """
     广告检测（v4.5.26新增）— 纯规则匹配，零token消耗
     检测消息内容是否为广告/引流/诈骗/营销
     
     流程：
-    1. 硬编码关键词匹配，命中直接处理
+    1. 关键词匹配（从 KeywordManager 或 config 加载），命中直接处理
     2. 确认广告 → 删除消息 + 永久禁言 + 通知管理员
     
     Returns:
         True表示已处理（删除+禁言），False表示非广告
     """
     msg = (m.text or "").strip()
-    if not msg or len(msg) < 5:
+    if not msg or len(msg) < 2:
         return False
     
     chat_id = m.chat.id
@@ -252,26 +228,11 @@ def check_ad_content(bot, m, config: dict, db, ai) -> bool:
     if uusername:
         user_display += f" @{uusername}"
     
-    ad_keywords = [
-        "加我", "私聊我", "私我", "关注我", "点击链接", "点我", "扫码",
-        "赚钱", "日入", "日赚", "日挣", "月入", "躺赚", "稳赚", "暴利",
-        "兼职", "副业", "刷单", "做任务", "拉人头",
-        "免费领", "免费送", "限时优惠", "抢购", "秒杀",
-        "微信号", "QQ群", "Telegram群", "群号",
-        "http://", "https://", "t.me/", "t.me+",
-        "菠菜", "博彩", "赌博", "娱乐城", "真人视讯",
-        "贷款", "信用卡", "套现", "代还",
-        "代购", "微商", "代理", "加盟",
-        "红包", "返利", "佣金", "拉新",
-        "推广", "引流", "精准引流", "涨粉",
-        "网赚", "网赚项目", "创业项目", "无货源",
-        "日结", "周结", "手工活", "手机赚钱",
-        "投注", "彩票", "六合彩", "时时彩",
-        "裸聊", "约炮", "同城交友", "上门服务",
-        # [Trae] v4.6.6 新增：兜底关键词补全
-        "搬砖", "招团队", "虚拟币", "数字货币", "加密货币",
-        "新手", "当天上手", "就能上手", "零基础",
-    ]
+    # 优先从 KeywordManager 获取，兼容旧调用方式
+    if keyword_manager:
+        ad_keywords = keyword_manager.get_ad_keywords()
+    else:
+        ad_keywords = config.get("AD_KEYWORDS", _DEFAULT_AD_KEYWORDS)
 
     hit_kw = None
     msg_lower = msg.lower()
@@ -288,35 +249,32 @@ def check_ad_content(bot, m, config: dict, db, ai) -> bool:
     
     logger.warning(f"🚫 广告检测命中: {user_display} 关键词={hit_kw}")
     
-    try:
-        bot.delete_message(chat_id, m.message_id)
-    except Exception as e:
-        logger.warning(f"删除广告消息失败: {e}")
-    
-    try:
-        bot.restrict_chat_member(
-            chat_id, uid,
-            until_date=0,
-            can_send_messages=False,
-            can_send_media_messages=False,
-            can_send_other_messages=False,
-        )
-        logger.warning(f"🚫 广告用户永久禁言: {user_display}")
-    except Exception as e:
-        logger.warning(f"禁言广告用户失败: {e}")
-    
-    admin_id = config.get("ADMIN_ID", 0)
-    if admin_id:
+    if config.get("ENABLE_MESSAGE_DELETION", False):
         try:
-            bot.send_message(admin_id,
-                f"🚫 广告已处理\n"
-                f"👤 用户：{user_display}\n"
-                f"💬 消息：{msg[:150]}{'...' if len(msg) > 150 else ''}\n"
-                f"📋 操作：删除消息 + 永久禁言\n"
-                f"🎯 命中关键词：{hit_kw}\n"
-                f"💡 如误封请手动解禁")
+            bot.delete_message(chat_id, m.message_id)
+            logger.info(f"[广告检测] 已删除消息 msg_id={m.message_id} uid={uid}")
         except Exception as e:
-            logger.warning(f"广告通知发送失败: {e}")
+            err_msg = str(e)
+            if "message to delete not found" in err_msg.lower():
+                logger.debug(f"[广告检测] 消息已被删除或不存在 msg_id={m.message_id}")
+            else:
+                logger.warning(f"[广告检测] 删除消息失败: {e}")
+    else:
+        logger.info(f"[广告检测] 消息删除已禁用，跳过删除: msg_id={m.message_id} uid={uid}")
+    
+    from modules.ad_enforcement import enforce_ad_user
+    enforce_ad_user(
+        bot=bot,
+        db=db,
+        config=config,
+        chat_id=chat_id,
+        uid=uid,
+        uname=user_display,
+        reason=f"旧版关键词兜底命中: {hit_kw}",
+        message=m,
+        current_msg_id=m.message_id,
+        notify_admin=True,
+    )
     
     return True
 
@@ -364,14 +322,58 @@ def handle_left_member(bot, m, config: dict, db=None):
     try:
         bot.send_message(uid,
             f"😢 {name}，你真的要走吗？\n\n"
-            f"你这样悄悄离开，{config['BOT_NAME']}老板会很伤心的...\n\n"
+            f"你这样悄悄离开，{config['BOT_NAME']}会很伤心的...\n\n"
             f"欢迎随时回来，我会一直在这里等你的～")
         logger.info(f"💌 流失打捞：{uid}")
     except Exception as e:
         logger.warning(f"流失打捞私聊失败 uid={uid}：{e}")
 
 
-def detect_keywords(msg: str, config: dict) -> dict:
+# 商业关键词集合（v5.14.0 扩展）
+# 短词用子串匹配，5字符以上的复合词用全词匹配，避免"包月"误匹配"包月嫂"等无关词
+# 【重构】默认值已迁移到 core/keyword_manager.py，此处保留为兼容旧代码的 fallback
+_CONVERT_KEYWORDS_SUBSTR = _DEFAULT_CONVERT_SUBSTR
+
+# 全词匹配关键词（仅用于需要避免误匹配的长词）
+_CONVERT_KEYWORDS_WORD = _DEFAULT_CONVERT_WORD
+
+
+def _is_convert_message(msg: str, keyword_manager=None) -> bool:
+    """[v5.14.0] 判断消息是否属于商业咨询类（convert 模式）
+
+    匹配规则：
+    - 短关键词（≤4字）：子串匹配
+    - 长关键词（≥5字）：全词匹配（用空格/标点切分后判断），避免"包月"误匹配"包月嫂"
+
+    Args:
+        msg: 用户消息文本
+        keyword_manager: KeywordManager 实例（可选，优先使用）
+    """
+    if not msg:
+        return False
+
+    # 优先使用 KeywordManager
+    if keyword_manager:
+        return keyword_manager.is_convert_message(msg)
+
+    # fallback：使用模块级变量
+    # 子串匹配（短词）
+    if any(k in msg for k in _CONVERT_KEYWORDS_SUBSTR):
+        return True
+
+    # 全词匹配（长词）
+    # 用非中文字符切分
+    import re as _re
+    words = _re.split(r'[^\u4e00-\u9fff]+', msg)
+    words = [w for w in words if w]
+    for w in words:
+        if w in _CONVERT_KEYWORDS_WORD:
+            return True
+
+    return False
+
+
+def detect_keywords(msg: str, config: dict, keyword_manager=None) -> dict:
     """
     提取消息特征，返回模式和标记字典
     {
@@ -404,7 +406,7 @@ def detect_keywords(msg: str, config: dict) -> dict:
         "冷": "冷的话多穿点，别逞强冻着自己～",
         "热": "这么热的天，喝杯奶茶降降温吧～",
         "刮风": "风好大，头发都要被吹乱了哈哈～",
-        "阴天": "阴天也要保持好心情哦，像老板一样美～",
+        "阴天": "阴天也要保持好心情哦，像Mory一样美～",
         "多云": "多云天气刚好，不晒也不冷～",
         "雷": "打雷了！别怕，小助理陪你～",
         "雾霾": "今天雾霾严重，出门记得戴口罩哦！",
@@ -448,7 +450,7 @@ def detect_keywords(msg: str, config: dict) -> dict:
         result["mode"] = "treehole"
     elif "梦到" in msg and ("Mory" in msg or "老板" in msg):
         result["mode"] = "dream"
-    elif any(k in msg for k in ["多少钱", "价格", "怎么买", "门槛", "开通", "会员"]):
+    elif _is_convert_message(msg, keyword_manager):
         result["is_cart"] = True
         result["mode"] = "convert"
 

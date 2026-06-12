@@ -8,7 +8,7 @@
 ║                                                                        ║
 ║  功能清单：                                                            ║
 ║    1. 新闻播报（9:00/13:00/20:30）                                    ║
-║    2. 早/午/晚安问候（8:00/12:30/23:00）                             ║
+║    2. 早/午/晚安问候（[Codex] 读取 GREETING_CONFIG 配置时间）          ║
 ║    3. 叫醒服务（每分钟检查）                                           ║
 ║    4. 阅后即焚探测（每3分钟一次）                                      ║
 ║    5. 阅后即焚孤儿清理（每小时一次）                                   ║
@@ -30,15 +30,24 @@ import time
 import random
 import glob
 import os
+import json
 import threading
 import html
 from typing import Any, Dict
 from datetime import datetime, timedelta, timezone
+from core.helpers import can_delete_message, can_orphan_cleanup, get_broadcast_auto_delete_config
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
-from core.telegram_stats import get_group_daily_stats, get_channel_daily_stats, test_api_availability
+from core.task_transaction import TaskTransactionManager
+from modules.redpacket import check_expired_redpackets
+
 
 logger = get_logger("auto_tasks")
+
+
+class _TaskAbort(Exception):
+    """任务中止（非异常，但不应确认完成，需释放数据库锁）"""
+    pass
 
 # 尝试导入 APScheduler（可选依赖，未安装则回退到旧版 while True）
 try:
@@ -60,6 +69,339 @@ _last_task_run = {}
 _task_lock = threading.Lock()
 
 _scheduler_instance = None
+
+# 【v5.11.0 可靠性框架】注册任务清单 + abort 历史
+_REGISTERED_JOBS = []  # [(job_id, trigger, func_name)]
+_ABORT_HISTORY = {}  # {task_name: [(time, reason)]}
+_ABORT_HISTORY_LOCK = threading.Lock()
+_ABORT_P0_ALERTED = set()  # 已发送 P0 告警的 task_name
+_LAST_HEARTBEAT = 0
+_LAST_HEARTBEAT_LOCK = threading.Lock()
+_WATCHDOG_TIMEOUT_SEC = 900  # 15 分钟
+
+# 关键任务清单（健康检查用）
+_CRITICAL_TASKS = [
+    # (job_id, expected_hour, expected_minute, grace_minute)
+    ("greeting_morning",   8,   5, 30),
+    ("greeting_afternoon", 12, 35, 30),
+    ("greeting_evening",   23,  5, 30),
+    ("news_morning",       9,   5, 30),
+    ("news_afternoon",     13,  5, 30),
+    ("news_evening",       20, 35, 30),
+    ("daily_report",       9,  10, 30),
+    ("weekly_report",      None, None, 3600),  # 每周一
+    ("monthly_report",     None, None, 3600),  # 每月1日
+]
+
+
+def _register_job(scheduler, func, job_id: str, **trigger_kwargs):
+    """【v5.11.0】统一的 add_job 包装：自动记录到 _REGISTERED_JOBS 用于启动清单"""
+    job = scheduler.add_job(func, id=job_id, max_instances=1, coalesce=True, **trigger_kwargs)
+    _REGISTERED_JOBS.append({
+        "job_id": job_id,
+        "func_name": func.__name__ if hasattr(func, "__name__") else str(func),
+        "trigger": trigger_kwargs,
+    })
+    return job
+
+
+def _record_abort(task_name: str, reason: str):
+    """【v5.11.0】记录任务 abort 原因到 _ABORT_HISTORY，连续 3 次触发 P0 告警"""
+    now = int(time.time())
+    with _ABORT_HISTORY_LOCK:
+        if task_name not in _ABORT_HISTORY:
+            _ABORT_HISTORY[task_name] = []
+        _ABORT_HISTORY[task_name].append((now, reason))
+        # 仅保留最近 10 次
+        _ABORT_HISTORY[task_name] = _ABORT_HISTORY[task_name][-10:]
+        count = len(_ABORT_HISTORY[task_name])
+    logger.warning(f"⚠️ [{task_name}] abort: {reason} (连续 {count} 次)")
+
+    # 连续 3 次 abort → P0 告警
+    if count >= 3 and task_name not in _ABORT_P0_ALERTED:
+        _ABORT_P0_ALERTED.add(task_name)
+        try:
+            _fault_reporter.report(
+                "任务连续abort",
+                f"任务 {task_name} 连续 {count} 次被 abort，最近原因: {reason}",
+                "🚨"
+            )
+        except Exception as e:
+            logger.error(f"P0 告警失败: {e}")
+
+
+def _parse_hhmm(value, default_hour: int, default_minute: int) -> tuple[int, int]:
+    """[Codex] 解析 HH:MM 配置，异常时回落默认时间。"""
+    try:
+        if isinstance(value, str) and ":" in value:
+            hour, minute = value.split(":", 1)
+            hour_i = int(hour)
+            minute_i = int(minute)
+            if 0 <= hour_i <= 23 and 0 <= minute_i <= 59:
+                return hour_i, minute_i
+        if isinstance(value, int) and 0 <= value <= 23:
+            return value, default_minute
+    except Exception:
+        pass
+    return default_hour, default_minute
+
+
+def _get_greeting_time(config: dict, period: str) -> tuple[int, int]:
+    """[Codex] 问候时间读取配置，兼容老键。"""
+    cfg = config.get("GREETING_CONFIG", {}) if isinstance(config, dict) else {}
+    defaults = {
+        "morning": (8, 5, "morning_time", "GREETING_HOUR"),
+        "afternoon": (12, 35, "afternoon_time", "AFTERNOON_GREETING_HOUR"),
+        "evening": (23, 5, "evening_time", "GOODNIGHT_HOUR"),
+    }
+    default_hour, default_minute, time_key, legacy_hour_key = defaults.get(period, defaults["morning"])
+    if time_key in cfg:
+        return _parse_hhmm(cfg.get(time_key), default_hour, default_minute)
+    if legacy_hour_key in config:
+        return _parse_hhmm(config.get(legacy_hour_key), default_hour, default_minute)
+    return default_hour, default_minute
+
+
+def _is_greeting_enabled(config: dict, period: str) -> bool:
+    """[Codex] 早午晚问候分别读取开关，兼容 AUTO_GREETING / AUTO_GOODNIGHT。"""
+    cfg = config.get("GREETING_CONFIG", {}) if isinstance(config, dict) else {}
+    key_map = {
+        "morning": "morning_enabled",
+        "afternoon": "afternoon_enabled",
+        "evening": "evening_enabled",
+    }
+    if key_map.get(period) in cfg:
+        return bool(cfg.get(key_map[period]))
+    if period == "evening":
+        return bool(config.get("AUTO_GOODNIGHT", config.get("AUTO_GREETING", False)))
+    return bool(config.get("AUTO_GREETING", False))
+
+
+def _is_greeting_window(now: datetime, config: dict, period: str, window_minute: int = 5) -> bool:
+    """[Codex] legacy loop 使用配置时间窗口，不再写死 8/12/23 点。"""
+    hour, minute = _get_greeting_time(config, period)
+    return now.hour == hour and minute <= now.minute < min(60, minute + window_minute)
+
+
+def _update_heartbeat():
+    """【v5.11.0】更新心跳时间戳"""
+    global _LAST_HEARTBEAT
+    with _LAST_HEARTBEAT_LOCK:
+        _LAST_HEARTBEAT = int(time.time())
+
+
+def _check_heartbeat() -> bool:
+    """【v5.11.0】检查心跳是否超时"""
+    with _LAST_HEARTBEAT_LOCK:
+        return (int(time.time()) - _LAST_HEARTBEAT) > _WATCHDOG_TIMEOUT_SEC
+
+
+def _format_zero_data(value, kind: str = "count") -> str:
+    """【v5.11.0】0 值显示优化：发帖=0 时显示"暂无"，互动=0% 时显示"—"。
+
+    kind:
+        - count: 0 → "暂无"
+        - percent: 0.0 → "—"
+        - ratio: 0.0 → "—"
+    """
+    if kind == "count":
+        return "暂无" if value == 0 else str(value)
+    if kind in ("percent", "ratio"):
+        return "—" if value == 0 else f"{value:.1f}"
+    return str(value)
+
+
+def _compute_health_score(rm) -> int:
+    """【v5.11.0】健康度评分：5 维度 0-100 分。
+
+    维度：
+        1. 任务执行率 (30%)
+        2. AI 引擎可用性 (25%)
+        3. 数据库完整性 (20%)
+        4. 配置一致性 (15%)
+        5. 磁盘空间 (10%)
+    """
+    scores = {}
+
+    # 1. 任务执行率
+    try:
+        recent_tasks = rm.db.get_recent_task_logs(hours=24) if hasattr(rm.db, 'get_recent_task_logs') else []
+        if recent_tasks:
+            success_rate = sum(1 for t in recent_tasks if t.get("status") == "success") / len(recent_tasks)
+            scores["tasks"] = int(success_rate * 100)
+        else:
+            scores["tasks"] = 100
+    except Exception:
+        scores["tasks"] = 80
+
+    # 2. AI 引擎可用性
+    try:
+        if rm.ai and hasattr(rm.ai, "ping"):
+            scores["ai"] = 100 if rm.ai.ping() else 50
+        else:
+            scores["ai"] = 75
+    except Exception:
+        scores["ai"] = 60
+
+    # 3. 数据库完整性
+    try:
+        integrity = rm.db.check_integrity() if hasattr(rm.db, "check_integrity") else "ok"
+        scores["db"] = 100 if integrity == "ok" else 70
+    except Exception:
+        scores["db"] = 70
+
+    # 4. 配置一致性
+    try:
+        config_ok = rm.config.get("TOKEN", "") and rm.config.get("ADMIN_ID", 0)
+        scores["config"] = 100 if config_ok else 50
+    except Exception:
+        scores["config"] = 70
+
+    # 5. 磁盘空间
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage("/")
+        free_pct = (free / total) * 100
+        if free_pct > 20:
+            scores["disk"] = 100
+        elif free_pct > 10:
+            scores["disk"] = 70
+        else:
+            scores["disk"] = 30
+    except Exception:
+        scores["disk"] = 80
+
+    weights = {"tasks": 0.30, "ai": 0.25, "db": 0.20, "config": 0.15, "disk": 0.10}
+    health_score = sum(scores[k] * weights[k] for k in scores)
+    return int(health_score)
+
+
+def _job_heartbeat(rm):
+    """【v5.11.0】每 5 分钟更新心跳"""
+    _update_heartbeat()
+
+
+def _job_proactive_audit(rm):
+    """【v5.11.0】每天 03:30 预防性自审计：检查 DB / config / AI / 任务 / 日志 / 磁盘 / 备份"""
+    try:
+        issues = []
+
+        # 1. DB 完整性
+        try:
+            if hasattr(rm.db, "check_integrity"):
+                result = rm.db.check_integrity()
+                if result != "ok":
+                    issues.append(f"🔴 [P0] 数据库完整性异常: {result}")
+        except Exception as e:
+            issues.append(f"🟡 [P1] 数据库检查失败: {e}")
+
+        # 2. 配置一致性
+        try:
+            example_path = os.path.join(os.path.dirname(__file__), "..", "config.json.example")
+            with open(example_path, 'r', encoding='utf-8') as f:
+                example = json.load(f)
+            missing = [k for k in example.keys() if k not in rm.config and k not in ("TOKEN", "ADMIN_ID")]
+            if missing:
+                issues.append(f"🔴 [P0] 配置缺失 {len(missing)} 项: {missing[:5]}...")
+        except Exception as e:
+            issues.append(f"🟡 [P1] 配置检查失败: {e}")
+
+        # 3. AI 模型池
+        try:
+            if rm.ai and hasattr(rm.ai, "ping"):
+                if not rm.ai.ping():
+                    issues.append("🔴 [P0] AI 引擎不可用")
+        except Exception as e:
+            issues.append(f"🟡 [P1] AI 检查失败: {e}")
+
+        # 4. 任务执行率
+        try:
+            if hasattr(rm.db, "get_recent_task_logs"):
+                recent = rm.db.get_recent_task_logs(hours=24)
+                if recent:
+                    failed = sum(1 for t in recent if t.get("status") == "failed")
+                    if failed > 0:
+                        issues.append(f"🟡 [P1] 24h 内 {failed} 个任务执行失败")
+        except Exception as e:
+            pass
+
+        # 5. 磁盘空间
+        try:
+            import shutil
+            total, used, free = shutil.disk_usage("/")
+            free_pct = (free / total) * 100
+            if free_pct < 10:
+                issues.append(f"🔴 [P0] 磁盘空间不足: {free_pct:.1f}%")
+            elif free_pct < 20:
+                issues.append(f"🟡 [P1] 磁盘空间偏紧: {free_pct:.1f}%")
+        except Exception:
+            pass
+
+        # 6. 备份文件
+        try:
+            backup_dir = os.path.join(os.path.dirname(__file__), "..", "backups")
+            if os.path.isdir(backup_dir):
+                backups = sorted(glob.glob(os.path.join(backup_dir, "*.db")), key=os.path.getmtime, reverse=True)
+                if not backups:
+                    issues.append("🔴 [P0] 备份目录为空")
+                else:
+                    age_hours = (time.time() - os.path.getmtime(backups[0])) / 3600
+                    if age_hours > 48:
+                        issues.append(f"🟡 [P1] 最新备份 {age_hours:.0f} 小时前")
+        except Exception:
+            pass
+
+        # 7. 健康度评分
+        health_score = _compute_health_score(rm)
+        if health_score < 60:
+            issues.append(f"🔴 [P0] 健康度过低: {health_score}")
+        elif health_score < 80:
+            issues.append(f"🟡 [P1] 健康度偏低: {health_score}")
+
+        # 输出报告
+        if not issues:
+            report = f"✅ 自审计通过\n健康度: {health_score}/100\n所有维度正常"
+        else:
+            report = (
+                f"📊 自审计报告\n"
+                f"健康度: {health_score}/100\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                + "\n".join(issues)
+            )
+
+        admin_id = rm.config.get("ADMIN_ID", 0)
+        if admin_id:
+            with rm.locked('bot'):
+                rm.bot.send_message(admin_id, report)
+        logger.info(f"预防性自审计完成: 健康度={health_score} 问题={len(issues)}")
+    except Exception as e:
+        logger.error(f"预防性自审计失败: {e}")
+
+
+def _watchdog_check(rm):
+    """【v5.11.0】watchdog 线程：检测心跳超时 + 自动重启"""
+    while True:
+        time.sleep(60)
+        if _check_heartbeat():
+            try:
+                _fault_reporter.report(
+                    "心跳超时",
+                    f"心跳超时 {_WATCHDOG_TIMEOUT_SEC}s，触发自动重启",
+                    "🚨"
+                )
+            except Exception:
+                pass
+            logger.critical(f"心跳超时 {_WATCHDOG_TIMEOUT_SEC}s，触发自动重启")
+            time.sleep(5)
+            os._exit(42)  # systemd Restart=always 会自动拉起
+
+
+def _start_watchdog(rm):
+    """【v5.11.0】启动 watchdog 后台线程"""
+    _update_heartbeat()  # 初始化心跳
+    t = threading.Thread(target=_watchdog_check, args=(rm,), daemon=True)
+    t.start()
+    logger.info(f"watchdog 启动：超时阈值={_WATCHDOG_TIMEOUT_SEC}s")
 
 
 class _TaskGuard:
@@ -110,6 +452,11 @@ class _TaskGuard:
                         f"🕐 时间：{datetime.now(_CST).strftime('%Y-%m-%d %H:%M:%S')}\n"
                         f"💡 可能存在并发重复执行，请检查日志"
                     )
+
+    def record_intercept(self, task_name: str, reason: str):
+        """【v4.13.2】记录正常拦截（内存锁/数据库锁），不触发告警"""
+        with self._lock:
+            logger.info(f"🛡️ [TaskGuard] {task_name} 正常拦截（{reason}）")
 
     def record_claim_fail(self, task_name: str, reason: str):
         with self._lock:
@@ -311,6 +658,7 @@ def _try_claim_and_lock(task_name: str, db, min_interval_sec: int = 7200) -> boo
     """
     【v4.9.1】原子抢占：内存检查 + 数据库原子锁定一步完成 + TaskGuard监控
     【v4.9.3修复】record_call移到锁成功之后，避免被拦截的调用触发误报告警
+    【v5.9.0 DEPRECATED】已被 TaskTransactionManager 替代，保留仅供内部兼容
 
     解决v4.7.0的"先执行后确认"流程导致的并发重复播报：
     两个线程同时通过_try_claim_task和is_task_executed_today检查，
@@ -331,13 +679,13 @@ def _try_claim_and_lock(task_name: str, db, min_interval_sec: int = 7200) -> boo
         last = _last_task_run.get(task_name, 0)
         if now - last < min_interval_sec:
             logger.info(f"⏳ [{task_name}] 内存锁跳过，距上次成功{now-last}秒 < {min_interval_sec}秒")
-            _task_guard.record_claim_fail(task_name, "内存锁拦截")
+            _task_guard.record_intercept(task_name, "内存锁拦截")
             return False
     try:
         result = db.claim_task(task_name)
         if not result:
             logger.info(f"🔒 [{task_name}] 数据库锁拦截（今日已执行或被其他线程抢占）")
-            _task_guard.record_claim_fail(task_name, "数据库锁拦截")
+            _task_guard.record_intercept(task_name, "数据库锁拦截")
             return False
         # 【v4.9.3】只在真正抢占成功时记录，避免被锁拦截的调用触发误报
         _task_guard.record_call(task_name)
@@ -354,6 +702,7 @@ def _try_claim_and_lock(task_name: str, db, min_interval_sec: int = 7200) -> boo
 def _release_task(task_name: str, db):
     """
     【v4.9.0】任务失败时释放数据库锁，允许重试
+    【v5.9.0 DEPRECATED】已被 TaskTransactionManager 替代，保留仅供内部兼容
     
     配合_try_claim_and_lock使用：抢占成功后如果执行失败，
     必须释放数据库锁，否则重试会被is_task_executed_today拦截。
@@ -377,6 +726,7 @@ def _db_lock_from_db(db):
 def _confirm_task_done(task_name: str, db, min_interval_sec: int = 7200):
     """
     【v4.9.0】任务成功后确认完成：设置内存锁（数据库锁已在_try_claim_and_lock中设置）
+    【v5.9.0 DEPRECATED】已被 TaskTransactionManager 替代，保留仅供内部兼容
     
     流程演变：
     - v4.7.0前：_try_claim_task(提前锁定) → 执行 → 失败后双重锁卡死
@@ -392,7 +742,7 @@ def _confirm_task_done(task_name: str, db, min_interval_sec: int = 7200):
 def _can_run(task_name: str, min_interval_sec: int = 300) -> bool:
     """
     检查任务是否可以运行（仅检查，不标记）
-    注意：已被_try_claim_task替代，保留以兼容旧代码
+    【v5.9.0 DEPRECATED】已被 TaskTransactionManager 替代，保留仅供内部兼容
     """
     now = int(time.time())
     with _task_lock:
@@ -404,7 +754,7 @@ def _can_run(task_name: str, min_interval_sec: int = 300) -> bool:
 
 
 def _mark_done(task_name: str):
-    """标记任务为已成功完成（仅在实际成功后调用）"""
+    """【v5.9.0 DEPRECATED】标记任务为已成功完成，已被 TaskTransactionManager 替代，保留仅供内部兼容"""
     now = int(time.time())
     with _task_lock:
         _last_task_run[task_name] = now
@@ -483,8 +833,7 @@ def _build_news_ai_mode(time_desc: str, source_name: str) -> str:
 
 def _get_preferred_news_lines(time_desc: str) -> tuple[list[str], str]:
     """优先用 TrendRadar，失败后再降级到原多源新闻"""
-    from core.trendradar_news import fetch_trendradar_news
-    from core.ai_engine import fetch_real_news
+    from core.trendradar_news import fetch_trendradar_news, fetch_real_news
 
     trendradar_news = fetch_trendradar_news() or ""
     lines = _prepare_news_lines(trendradar_news, f"{time_desc}新闻-TrendRadar")
@@ -560,10 +909,67 @@ def _send_and_track(rm, chat_id, text, user_msg_id=0):
             _schedule_auto_delete(rm, chat_id, sent.message_id, 24 * 3600)
             if chat_id < 0:
                 rm.db.track_channel_message(chat_id, sent.message_id, "text")
+                rm.db.track_bot_message(chat_id, sent.message_id)
         return sent
     except Exception as e:
         logger.error(f"发送失败：{e}")
         return None
+
+
+def _send_greeting(rm, chat_id, text, category: str = "greeting"):
+    """[Trae CN v5.12.0] 发送早安/午安/晚安问候，支持"发新删旧"链式互删
+
+    行为：
+    1. 读取 BROADCAST_AUTO_DELETE.greeting_chain_delete 配置
+    2. 若开启，查询本群上一条 category="greeting" 的消息 → 删除
+       - 发午安时自动删早安；发晚安时自动删午安
+    3. 发送新问候，入库 broadcast_tracking（category=greeting）
+    4. 24H TTL兜底删除（依赖 _schedule_auto_delete）
+
+    Args:
+        rm: ResourceManager 实例
+        chat_id: 群ID
+        text: 消息文本
+        category: 类别（统一用 "greeting" 实现互删，不分早/午/晚）
+
+    Returns:
+        Message对象 或 None
+    """
+    auto_cfg = get_broadcast_auto_delete_config(rm.config)
+
+    # [Trae CN] 链式互删：发新问候前先删上一条同类问候
+    if auto_cfg["greeting_chain_delete"] and hasattr(rm, "db") and rm.db is not None:
+        try:
+            last = rm.db.get_last_broadcast(chat_id, "greeting")
+            if last and last[0]:
+                last_msg_id, last_ts = last
+                # 安全删除（不抛错）
+                try:
+                    if can_delete_message(rm.config):
+                        with rm.locked('bot'):
+                            rm.bot.delete_message(chat_id, last_msg_id)
+                        logger.info(
+                            f"🗑️ 链式互删：已删除上一条问候 [{category}] msg={last_msg_id} ts={last_ts}"
+                        )
+                except Exception as del_err:
+                    logger.debug(f"链式互删失败（继续发新问候）: {del_err}")
+                # 不论成功失败，都清掉旧追踪
+                try:
+                    rm.db.delete_broadcast(chat_id, "greeting")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"链式互删查询失败（继续发新问候）: {e}")
+
+    # 发送新问候
+    sent = _send_and_track(rm, chat_id, text)
+    if sent and hasattr(sent, 'message_id') and hasattr(rm, "db") and rm.db is not None:
+        try:
+            rm.db.track_broadcast(chat_id, "greeting", sent.message_id)
+            logger.info(f"📌 问候追踪入库：chat={chat_id} category={category} msg={sent.message_id}")
+        except Exception as e:
+            logger.debug(f"问候追踪入库失败: {e}")
+    return sent
 
 
 def _schedule_auto_delete(rm, chat_id, message_id, delay_seconds):
@@ -587,9 +993,12 @@ def _schedule_auto_delete(rm, chat_id, message_id, delay_seconds):
 def _do_delete_message(rm, chat_id, message_id):
     """APScheduler回调：删除指定消息"""
     try:
-        with rm.locked('bot'):
-            rm.bot.delete_message(chat_id, message_id)
-        logger.info(f"🗑️ 定时消息已自动删除: chat={chat_id}, msg={message_id}")
+        if can_delete_message(rm.config):
+            with rm.locked('bot'):
+                rm.bot.delete_message(chat_id, message_id)
+            logger.info(f"🗑️ 定时消息已自动删除: chat={chat_id}, msg={message_id}")
+        else:
+            logger.info(f"消息删除已禁用，跳过删除: chat={chat_id}, msg={message_id}")
     except Exception as e:
         logger.debug(f"定时消息删除失败（可能已被手动删除）: {e}")
 
@@ -601,45 +1010,45 @@ def _do_delete_message(rm, chat_id, message_id):
 def _execute_news_task(rm, task_name: str, time_desc: str):
     """
     执行新闻播报任务的公共函数
-    
-    【v4.9.0】新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
+
+    【v5.9.0】使用 TaskTransactionManager 替代手动 _try_claim_and_lock / _release_task / _confirm_task_done
+    【v5.11.0】abort 原因记录到 _ABORT_HISTORY，连续 3 次触发 P0 告警
     """
-    if not _try_claim_and_lock(task_name, rm.db, 7200):
-        return
-    
     try:
-        with rm.locked('config'):
-            gid = rm.config.get("GROUP_ID", 0)
-        if gid == 0:
-            _release_task(task_name, rm.db)
-            return
-        
-        logger.info(f"📰 触发{time_desc}新闻播报（统一主流程）")
-        seed = random.randint(100000, 999999)
-
-        lines, source_name = _get_preferred_news_lines(time_desc)
-        if not lines:
-            logger.warning(f"{time_desc}新闻：所有源均失败，跳过发送")
-            _notify_admin_news_failure(rm, f"{time_desc}新闻")
-            _release_task(task_name, rm.db)
-            return
-        news_input = "\n".join(lines)
-
-        ai_mode = _build_news_ai_mode(time_desc, source_name)
-        with rm.locked('ai'):
-            news = rm.ai.ask(news_input, mode=ai_mode, seed=seed)
-
-        if news:
-            sent = _send_and_track(rm, gid, news)
-            if sent:
-                _remember_news_lines(lines)
-                _confirm_task_done(task_name, rm.db, 7200)
-                logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}）")
+        with TaskTransactionManager(task_name, rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+            if not tx.claimed:
                 return
-        _release_task(task_name, rm.db)
+            gid = rm.config.get("GROUP_ID", 0)
+            if gid == 0:
+                _record_abort(task_name, "GROUP_ID为0")
+                raise _TaskAbort("GROUP_ID为0")
+
+            logger.info(f"📰 触发{time_desc}新闻播报（统一主流程）")
+            seed = random.randint(100000, 999999)
+
+            lines, source_name = _get_preferred_news_lines(time_desc)
+            if not lines:
+                logger.warning(f"{time_desc}新闻：所有源均失败，跳过发送")
+                _notify_admin_news_failure(rm, f"{time_desc}新闻")
+                _record_abort(task_name, "新闻源均失败")
+                raise _TaskAbort("新闻源均失败")
+            news_input = "\n".join(lines)
+
+            ai_mode = _build_news_ai_mode(time_desc, source_name)
+            news = rm.ai.ask(news_input, mode=ai_mode, seed=seed, news_content=news_input)
+
+            if news:
+                sent = _send_and_track(rm, gid, news)
+                if sent:
+                    _remember_news_lines(lines)
+                    logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}）")
+                    return
+            _record_abort(task_name, "新闻发送失败")
+            raise _TaskAbort("新闻发送失败")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"{time_desc}新闻播报失败：{e}")
-        _release_task(task_name, rm.db)
         _retry_task(rm, lambda rm: _execute_news_task(rm, task_name, time_desc), task_name)
 
 
@@ -677,90 +1086,225 @@ def _job_trendradar_evening(rm):
     logger.info("ℹ️ trendradar_evening 已并入 news_evening 统一主流程")
 
 
+# ── 动态随机话术池（去AI化，与ai_engine人设系统一致）── [TRAE SOLO CN]
+
+# 早安/午安/晚安播报尾语池（替代原来的固定unban_hint）
+# 注意：群聊公开回复只说Mory，不说"老板/boss" [TRAE SOLO CN]
+_MORNING_SUFFIXES = [
+    "\n\n有问题随时戳我，Mory一直在～",
+    "\n\n找不到我？私聊秒回哦～",
+    "\n\n有事私聊，群里不方便说的我都接～",
+    "\n\n被误伤的私聊我，马上帮你搞定～",
+    "\n\n想找Mory？私聊比群里快～",
+    "\n\n遇到问题来找我，别自己憋着～",
+    "\n\n有什么事私聊说，群里人多嘴杂的～",
+    "\n\n需要帮忙的戳我私聊，看到就回～",
+]
+
+_AFTERNOON_SUFFIXES = [
+    "\n\n下午有啥事私聊我，别客气～",
+    "\n\n找不到人？来私聊找Mory准没错～",
+    "\n\n有问题私聊，群里说不方便的我都懂～",
+    "\n\n被误封的私聊我，帮你搞定～",
+    "\n\n想聊的来私聊，群里我不好意思说太多～",
+    "\n\n下午犯困可以来找我聊天呀～",
+    "\n\n有事直接私聊，Mory下午都在～",
+    "\n\n遇到啥问题私聊说，群里太吵了～",
+]
+
+_EVENING_SUFFIXES = [
+    "\n\n睡前有事私聊我，晚上我更闲～",
+    "\n\n被误伤的晚上也来找我，看到就处理～",
+    "\n\n晚上想聊天私聊来，群里我不好意思太撩～",
+    "\n\n有问题私聊，深夜我也在的～",
+    "\n\n晚上找我私聊更有意思哦～",
+    "\n\n睡前想找人说话就来私聊吧～",
+    "\n\n晚上遇到问题私聊我，秒回～",
+    "\n\n深夜私聊，Mory更温柔～",
+]
+
+# 叫醒服务备用文案池（去AI化，更自然；少用"哥哥"，称呼多样化）
+_WAKEUP_FALLBACKS = [
+    "起床啦～太阳都晒进来了，再不起来要变猪了哦☀️",
+    "醒醒～新的一天，运气说不定今天特别好呢🌞",
+    "嘿～该起了！我比你早一步醒了，快起来陪我～💪",
+    "起来了吗？今天也要元气满满哦✨",
+    "早安～别赖了，再不起来我就去掀被子了啊😏",
+    "起床起床！咖啡都帮你准备好了（并没有）☕",
+    "太阳公公催你起床了～再不起来他可走了哦🌅",
+    "叮～你的专属叫醒服务到了，今天也要加油呀💫",
+    "醒了吗？我等你好久了，快起来～🥱",
+    "早～今天的你比昨天更帅一点点，快起来验证一下😎",
+]
+
+# 醋意挽回备用文案池（更自然，去模板化）
+_REACTIVATE_FALLBACKS = [
+    "你最近是不是很忙呀…都看不到你了🥺",
+    "哼，好久没来找我了，是不是把我忘了😢",
+    "诶？你人呢…我等了好久都没等到你来💔",
+    "你是不是…有别的猫猫了？都不来找我了😤",
+    "好无聊…你不在的日子群都变安静了🫠",
+    "我居然有点想你了…才怪！就是有点不习惯你不在而已😤",
+    "你不在的时候我都在干嘛？在等你来找我啊笨蛋🫣",
+    "最近怎么不见人了？是不是我哪里惹你不开心了🥀",
+]
+
+# 购物车挽回备用文案池（更隐晦，不提价格）
+_CART_RECOVERY_FALLBACKS = [
+    "昨天你问了那个事…还想了解吗？来私聊我细说～",
+    "你昨天好像还有话没说完？我在呢，随时来找我🌸",
+    "是不是还在犹豫呀？没事的，有些事慢慢聊就清楚了～",
+    "昨天聊到一半你就跑了…是不是害羞了？来嘛～✨",
+    "你昨天问的那个，我帮你留了个位置，要不要来看看？🤫",
+    "有些事群里不方便说太细，你来私聊我给你讲清楚～",
+    "昨天没聊完的，我这边还有你感兴趣的后续哦～",
+    "别纠结啦～来找我聊聊，说不定有惊喜呢💕",
+]
+
+# 塔罗搭讪转化钩子池（更自然，去模板化）
+_TAROT_HOOKS = [
+    "这牌后面还藏着一段呢，想知道吗",
+    "其实这张牌还有另一层意思…",
+    "有些话这里说不完，你懂的～",
+    "今天这牌还有后半段没揭晓",
+    "你今天的运势其实还有隐藏彩蛋",
+    "光看这几行可不够，后面还有呢",
+    "这运势只是冰山一角哦",
+    "老粉都知道，这牌还有另一面～",
+    "今天的好事不止这些，还有呢",
+    "这牌暗示的东西比表面深多了",
+    "想知道这张牌真正想说啥吗",
+    "有些缘分得慢慢聊才能懂呢",
+    "今天运势后面跟着个小惊喜",
+    "这牌的解读嘛…三言两语说不清",
+    "有些话得悄悄说才更有味道",
+    "其实我还有个更详细的版本…",
+    "这牌的深层含义，私聊我跟你说",
+    "运势卡片背后还写了句话呢",
+]
+
+# 背刺泄密前缀池（群聊只说Mory，不说"老板/boss"）[TRAE SOLO CN]
+_LEAK_PREFIXES = [
+    "🤫 Mory不在...偷偷跟你们说：\n\n",
+    "🤫嘘——别告诉Mory我说的：\n\n",
+    "🤫趁Mory不注意，偷偷爆料：\n\n",
+    "🤫你们凑过来，我只说一次：\n\n",
+    "🤫偷偷告诉你们一个秘密：\n\n",
+    "🤫她让我保密的，但我想跟你们说：\n\n",
+    "🤫嘘——这个你们肯定不知道：\n\n",
+]
+
+
+def _get_dynamic_suffix(time_period: str) -> str:
+    """根据时段获取随机播报尾语 [TRAE SOLO CN]"""
+    if time_period == "morning":
+        return random.choice(_MORNING_SUFFIXES)
+    elif time_period == "afternoon":
+        return random.choice(_AFTERNOON_SUFFIXES)
+    elif time_period == "evening":
+        return random.choice(_EVENING_SUFFIXES)
+    return random.choice(_MORNING_SUFFIXES + _AFTERNOON_SUFFIXES + _EVENING_SUFFIXES)
+
+
+# AI主体已包含功能引导时的关键词检测 [TRAE SOLO CN]
+_SUFFIX_TRIGGER_KEYWORDS = ["私聊", "找我", "戳我", "误封", "有问题", "来找我", "找我私"]
+
+
+def _needs_suffix(msg: str) -> bool:
+    """判断AI生成的播报是否已包含功能引导，需要补suffix则返回True [TRAE SOLO CN]"""
+    return not any(kw in msg for kw in _SUFFIX_TRIGGER_KEYWORDS)
+
+
 def _job_greeting_morning(rm):
-    """早安问候（8:00）"""
-    if not _try_claim_and_lock("greeting_morning", rm.db, 7200):
-        return
+    """早安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删"""
     try:
-        with rm.locked('config'):
-            gid = rm.config.get("GROUP_ID", 0)
-        if gid == 0:
-            _release_task("greeting_morning", rm.db)
+        if not _is_greeting_enabled(rm.config, "morning"):
+            logger.info("[Codex] 早安问候未开启，跳过")
             return
-        
-        seed = random.randint(100000, 999999)
-        with rm.locked('ai'):
-            msg = rm.ai.ask("早安", mode="morning", seed=seed)
-        if msg:
-            msg = msg.replace("\n", " ").strip()[:250]
-            unban_hint = "\n\n🆘 误封或有问题？私聊我，Mory秒帮你处理～"
-            sent = _send_and_track(rm, gid, f"☀️ {msg}{unban_hint}")
-            if sent:
-                _confirm_task_done("greeting_morning", rm.db, 7200)
-                logger.info(f"☀️ 早安已发送：{msg}")
+        with TaskTransactionManager("greeting_morning", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+            if not tx.claimed:
                 return
-        _release_task("greeting_morning", rm.db)
+            gid = rm.config.get("GROUP_ID", 0)
+            if gid == 0:
+                _record_abort("greeting_morning", "GROUP_ID为0")
+                raise _TaskAbort("GROUP_ID为0")
+
+            seed = random.randint(100000, 999999)
+            msg = rm.ai.ask("早安", mode="morning", seed=seed)
+            if msg:
+                msg = msg.replace("\n", " ").strip()[:250]
+                suffix = _get_dynamic_suffix("morning") if _needs_suffix(msg) else ""
+                sent = _send_greeting(rm, gid, f"☀️ {msg}{suffix}", "greeting_morning")
+                if sent:
+                    logger.info(f"☀️ 早安已发送：{msg}")
+                    return
+            raise _TaskAbort("早安发送失败")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"早安问候失败：{e}")
-        _release_task("greeting_morning", rm.db)
         _retry_task(rm, _job_greeting_morning, "greeting_morning")
 
 
 def _job_greeting_afternoon(rm):
-    """午安问候（12:30）"""
-    if not _try_claim_and_lock("greeting_afternoon", rm.db, 7200):
-        return
+    """午安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删"""
     try:
-        with rm.locked('config'):
-            gid = rm.config.get("GROUP_ID", 0)
-        if gid == 0:
-            _release_task("greeting_afternoon", rm.db)
+        if not _is_greeting_enabled(rm.config, "afternoon"):
+            logger.info("[Codex] 午安问候未开启，跳过")
             return
-        
-        seed = random.randint(100000, 999999)
-        with rm.locked('ai'):
-            msg = rm.ai.ask("午安", mode="afternoon", seed=seed)
-        if msg:
-            msg = msg.replace("\n", " ").strip()[:250]
-            unban_hint = "\n\n🆘 误封或有问题？私聊我，Mory秒帮你处理～"
-            sent = _send_and_track(rm, gid, f"🍃 {msg}{unban_hint}")
-            if sent:
-                _confirm_task_done("greeting_afternoon", rm.db, 7200)
-                logger.info(f"🍃 午安已发送：{msg}")
+        with TaskTransactionManager("greeting_afternoon", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+            if not tx.claimed:
                 return
-        _release_task("greeting_afternoon", rm.db)
+            gid = rm.config.get("GROUP_ID", 0)
+            if gid == 0:
+                _record_abort("greeting_afternoon", "GROUP_ID为0")
+                raise _TaskAbort("GROUP_ID为0")
+
+            seed = random.randint(100000, 999999)
+            msg = rm.ai.ask("午安", mode="afternoon", seed=seed)
+            if msg:
+                msg = msg.replace("\n", " ").strip()[:250]
+                suffix = _get_dynamic_suffix("afternoon") if _needs_suffix(msg) else ""
+                sent = _send_greeting(rm, gid, f"🍃 {msg}{suffix}", "greeting_afternoon")
+                if sent:
+                    logger.info(f"🍃 午安已发送：{msg}")
+                    return
+            raise _TaskAbort("午安发送失败")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"午安问候失败：{e}")
-        _release_task("greeting_afternoon", rm.db)
         _retry_task(rm, _job_greeting_afternoon, "greeting_afternoon")
 
 
 def _job_greeting_evening(rm):
-    """晚安问候（23:00）"""
-    if not _try_claim_and_lock("greeting_evening", rm.db, 7200):
-        return
+    """晚安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删"""
     try:
-        with rm.locked('config'):
-            gid = rm.config.get("GROUP_ID", 0)
-        if gid == 0:
-            _release_task("greeting_evening", rm.db)
+        if not _is_greeting_enabled(rm.config, "evening"):
+            logger.info("[Codex] 晚安问候未开启，跳过")
             return
-        
-        seed = random.randint(100000, 999999)
-        with rm.locked('ai'):
-            msg = rm.ai.ask("晚安", mode="evening", seed=seed)
-        if msg:
-            msg = msg.replace("\n", " ").strip()[:250]
-            unban_hint = "\n\n🆘 误封或有问题？私聊我，Mory秒帮你处理～"
-            sent = _send_and_track(rm, gid, f"🌙 {msg}{unban_hint}")
-            if sent:
-                _confirm_task_done("greeting_evening", rm.db, 7200)
-                logger.info(f"🌙 晚安已发送：{msg}")
+        with TaskTransactionManager("greeting_evening", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+            if not tx.claimed:
                 return
-        _release_task("greeting_evening", rm.db)
+            gid = rm.config.get("GROUP_ID", 0)
+            if gid == 0:
+                _record_abort("greeting_evening", "GROUP_ID为0")
+                raise _TaskAbort("GROUP_ID为0")
+
+            seed = random.randint(100000, 999999)
+            msg = rm.ai.ask("晚安", mode="evening", seed=seed)
+            if msg:
+                msg = msg.replace("\n", " ").strip()[:250]
+                suffix = _get_dynamic_suffix("evening") if _needs_suffix(msg) else ""
+                sent = _send_greeting(rm, gid, f"🌙 {msg}{suffix}", "greeting_evening")
+                if sent:
+                    logger.info(f"🌙 晚安已发送：{msg}")
+                    return
+            raise _TaskAbort("晚安发送失败")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"晚安问候失败：{e}")
-        _release_task("greeting_evening", rm.db)
         _retry_task(rm, _job_greeting_evening, "greeting_evening")
 
 
@@ -769,7 +1313,7 @@ def _generate_wakeup_message(uid: int, now: datetime, rm) -> str:
     seed = uid + int(now.timestamp())
     hour = now.hour
     
-    prompt = f"""你是Mory老板，一个贴心的小姐姐。现在是北京时间{hour}点。
+    prompt = f"""你是Mory，一个贴心的小姐姐。现在是北京时间{hour}点。
 
 给用户生成一条叫醒消息，要求：
 1. 30-50字，撒娇撩人风格
@@ -790,14 +1334,8 @@ def _generate_wakeup_message(uid: int, now: datetime, rm) -> str:
     except Exception:
         pass
     
-    # 备用文案
-    fallbacks = [
-        "起床啦哥哥～ 太阳晒屁股了，新的一天也要充满活力哦！☀️",
-        "嘿～该起来啦！再睡就要错过好运了哦～🌞",
-        "哥哥醒醒～小Mory都醒了，你还在赖床吗？快起来嘛～💪",
-        "早安呀哥哥！新的一天，新的运气，快起来迎接美好吧～✨",
-    ]
-    return random.choice(fallbacks)
+    # 备用文案（使用动态话术池）
+    return random.choice(_WAKEUP_FALLBACKS)
 
 
 def _job_wakeup_check(rm):
@@ -820,63 +1358,167 @@ def _job_wakeup_check(rm):
 
 
 def _job_burn_probe(rm):
-    """
-    【v4.5.35彻底废弃】阅后即焚探测已完全移除
-
-    原因：
-    1. forward_message探测会触发Telegram 429限流
-    2. main.py的global_reply_sniffer已实时标记replied=1
-    3. _job_burn_orphan的Phase1 TTL清理已足够处理孤儿消息
-    4. 此函数保留空实现仅兼容旧版循环调用，APScheduler中已移除调度
-    """
+    # DEPRECATED: kept for backward compatibility - 旧版 _legacy_task_loop 仍调用此函数
     pass
+
+
+def _job_clean_relay_sessions(rm):
+    """清理过期的中继会话记录（每小时）
+
+    清理超过24小时的relay_sessions记录，释放存储。
+    """
+    try:
+        db = rm.db
+        deleted = db.clean_expired(max_age=86400)
+        if deleted > 0:
+            logger.info(f"🧹 中继会话清理：删除{deleted}条过期记录")
+    except Exception as e:
+        logger.warning(f"中继会话清理失败：{e}")
 
 
 def _job_burn_orphan(rm):
     """阅后即焚孤儿清理（每10分钟）
-    
+
     两阶段清理：
     Phase 1: 清理超过30分钟未回复的孤儿消息（直接删除Bot回复）
     Phase 2: 探测5-30分钟内的未回复消息，检测用户是否已删原消息
+
+    【v5.12.0变更】：
+    1. 每次执行都写入 orphan_cleanup_log 表，Dashboard 可视化
+    2. ENABLE_MESSAGE_DELETION=False 时不再静默跳过，发管理员告警（每24h一次）
+
+    【v5.12.4变更】：
+    1. 窗口从 24小时 缩到 30分钟（用户决策）
+    2. 开关从 ENABLE_MESSAGE_DELETION 改为独立 ORPHAN_CLEANUP_ENABLED
+    3. 孤儿清理完全独立于全局消息删除开关
     """
     try:
-        # ── Phase 1: 清理超时孤儿（24小时窗口）──
-        logger.info("🔍 [Phase1] 检查超时孤儿消息...")
-        orphans = rm.db.get_orphan_messages(86400)
+        # ── Phase 1: 清理超时孤儿（30分钟窗口，用户决策）──
+        logger.info("🔍 [Phase1] 检查超时孤儿消息（30分钟窗口）...")
+        # [v5.12.4] get_orphan_messages 默认窗口改为 1800（30分钟），不再传 86400
+        orphans = rm.db.get_orphan_messages()
         if orphans:
-            logger.info(f"🗑️ 发现{len(orphans)}条超时孤儿（>24小时未回复），开始清理...")
-            success_count = 0
-            fail_count = 0
-            for bot_mid, cid, user_mid in orphans:
+            # [v5.12.4] 改用独立开关 ORPHAN_CLEANUP_ENABLED（默认 true），不再依赖 ENABLE_MESSAGE_DELETION
+            if can_orphan_cleanup(rm.config):
+                logger.info(f"🗑️ 发现{len(orphans)}条超时孤儿（>30分钟未回复），开始清理...")
+                success_count = 0
+                fail_count = 0
+                for bot_mid, cid, user_mid in orphans:
+                    try:
+                        with rm.locked('bot'):
+                            rm.bot.delete_message(cid, int(bot_mid))
+                        success_count += 1
+                    except Exception as del_err:
+                        fail_count += 1
+                        logger.debug(f"  删除失败：bot_mid={bot_mid}, err={del_err}")
+                    rm.db.delete_tracked(bot_mid, cid)
+                logger.info(f"✅ Phase1完成：成功{success_count}条，失败{fail_count}条")
+                # [Trae CN v5.12.0] 写入 orphan_cleanup_log
                 try:
-                    with rm.locked('bot'):
-                        rm.bot.delete_message(cid, int(bot_mid))
-                    success_count += 1
-                except Exception as del_err:
-                    fail_count += 1
-                    logger.debug(f"  删除失败：bot_mid={bot_mid}, err={del_err}")
-                rm.db.delete_tracked(bot_mid, cid)
-            logger.info(f"✅ Phase1完成：成功{success_count}条，失败{fail_count}条")
+                    rm.db.log_orphan_cleanup(
+                        found_count=len(orphans),
+                        deleted_count=success_count,
+                        skipped_count=fail_count,
+                        trigger="scheduled",
+                    )
+                except Exception as log_err:
+                    logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
+            else:
+                # [v5.12.4] 改用独立开关告警（不依赖 ENABLE_MESSAGE_DELETION）
+                _handle_orphan_disabled_alert(rm, len(orphans))
+                logger.info(f"[孤儿清理] ORPHAN_CLEANUP_ENABLED=False, 跳过删除{len(orphans)}条孤儿消息")
+                # [TRAE SOLO CN v5.12.3] 修复：开关关闭时不删追踪记录，保留孤儿信息以便后续开启开关后能清理
+                # 之前的逻辑会删除追踪记录，导致即使后续开启开关也无法再找到这些孤儿消息
+                # [Trae CN v5.12.0] 写入 orphan_cleanup_log 标记 skipped
+                try:
+                    rm.db.log_orphan_cleanup(
+                        found_count=len(orphans),
+                        deleted_count=0,
+                        skipped_count=len(orphans),
+                        error="ORPHAN_CLEANUP_ENABLED=False",
+                        trigger="scheduled",
+                    )
+                except Exception as log_err:
+                    logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
         else:
             logger.info("✅ Phase1：无超时孤儿")
+            # [Trae CN v5.12.0] 无孤儿时也写一条空运行日志
+            try:
+                rm.db.log_orphan_cleanup(
+                    found_count=0, deleted_count=0, skipped_count=0,
+                    trigger="scheduled",
+                )
+            except Exception as log_err:
+                logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
 
         # ── Phase 2: 探测用户是否删了原消息 ──
         # 【v4.5.35修复】Phase2 forward探测已废弃，原因：
         # 1. forward_message探测会触发Telegram 429限流
         # 2. 用户删原消息后Bot回复变成"回复了一条不存在消息"，不影响功能
-        # 3. Phase1的24小时TTL清理已足够处理孤儿消息
+        # 3. Phase1的30分钟TTL清理已足够处理孤儿消息
         # 4. 保留Phase1清理，Phase2改为仅记录日志不执行探测
         logger.info("✅ [Phase2] 已跳过forward探测（v4.5.35废弃），依赖Phase1 TTL清理")
 
     except Exception as e:
         logger.error(f"❌ 阅后即焚孤儿清理失败：{e}", exc_info=True)
+        # [Trae CN v5.12.0] 失败时也写日志
+        try:
+            rm.db.log_orphan_cleanup(
+                found_count=0, deleted_count=0, skipped_count=0,
+                error=str(e)[:200], trigger="scheduled",
+            )
+        except Exception:
+            pass
+
+
+# [Trae CN v5.12.0] 孤儿清理告警状态（模块级缓存，防刷屏）
+_orphan_disabled_alert_state = {"last_alert_ts": 0}
+_ORPHAN_DISABLED_ALERT_INTERVAL = 86400  # 24小时一次
+
+
+def _handle_orphan_disabled_alert(rm, orphan_count: int):
+    """[Trae CN v5.12.0] ENABLE_MESSAGE_DELETION=False 时通知管理员（每24h一次）
+
+    之前逻辑：静默跳过，用户在群里看到的孤儿消息永远没删也无处查
+    改造后：日志告警 + 管理员私聊（24h内不重复告警）
+    """
+    now_ts = int(time.time())
+    last_ts = _orphan_disabled_alert_state["last_alert_ts"]
+
+    logger.warning(
+        f"⚠️ ENABLE_MESSAGE_DELETION=False, {orphan_count} 条孤儿堆积待清理"
+    )
+
+    if now_ts - last_ts < _ORPHAN_DISABLED_ALERT_INTERVAL:
+        return  # 24h 内不重复告警
+
+    admin_id = rm.config.get("ADMIN_ID", 0)
+    if not admin_id:
+        return  # 没配置管理员就只写日志
+
+    try:
+        alert_msg = (
+            f"⚠️ <b>孤儿消息清理告警</b>\n\n"
+            f"当前 <code>ENABLE_MESSAGE_DELETION=False</code>，"
+            f"本次发现 <b>{orphan_count}</b> 条超时孤儿无法被删除。\n\n"
+            f"开启方式：\n"
+            f"1. Dashboard → 设置 → 消息管理 → 启用消息删除\n"
+            f"2. 或修改 config.json: <code>\"ENABLE_MESSAGE_DELETION\": true</code>\n\n"
+            f"本告警每 24 小时最多发送一次。"
+        )
+        with rm.locked('bot'):
+            rm.bot.send_message(admin_id, alert_msg, parse_mode="HTML")
+        _orphan_disabled_alert_state["last_alert_ts"] = now_ts
+        logger.info(f"📨 孤儿清理告警已发管理员 admin_id={admin_id}")
+    except Exception as e:
+        logger.error(f"孤儿清理告警发送失败: {e}")
 
 
 def _generate_reactivate_message(uid: int, rm) -> str:
     """AI生成醋意挽回消息"""
     seed = uid + int(time.time()) // 86400  # 每天固定
     
-    prompt = f"""你是Mory老板，一个有点小醋意的小姐姐。
+    prompt = f"""你是Mory，一个有点小醋意的小姐姐。
 
 一个用户已经3天没来聊天了，你要写一条消息把他叫回来。
 
@@ -900,25 +1542,19 @@ def _generate_reactivate_message(uid: int, rm) -> str:
     except Exception:
         pass
     
-    # 备用文案
-    fallbacks = [
-        "哥哥这几天去哪了呀？是不是有新欢了？Mory都想你了呢...快回来嘛～💕",
-        "你是不是把人家忘了呀...好几天都不来找我，是不是外面有别的猫猫了？😢",
-        "诶？哥哥是不是把我忘了...好伤心哦，有空回来陪Mory聊聊天嘛～🥺",
-        "哼！都不来找我，是不是觉得我不可爱了？快回来让我看看你！👀",
-    ]
-    return random.choice(fallbacks)
+    # 备用文案（使用动态话术池）
+    return random.choice(_REACTIVATE_FALLBACKS)
 
 
 def _job_reactivate(rm):
     """醋意挽回（每小时）- AI生成个性化消息"""
-    if not _try_claim_and_lock("reactivate", rm.db, 3600):
-        return
     try:
-        ts = int(time.time())
-        three_days_ago = ts - 259200
-        
-        with rm.locked_multi(['db', 'bot', 'config']):
+        with TaskTransactionManager("reactivate", rm.db, resources=['bot', 'config'], min_interval_sec=3600) as tx:
+            if not tx.claimed:
+                return
+            ts = int(time.time())
+            three_days_ago = ts - 259200
+            
             inactive = rm.db.get_inactive_users(three_days_ago, rm.config.get("ADMIN_ID", 0))
             sent_count = 0
             for uid, _name in inactive[:3]:
@@ -936,20 +1572,19 @@ def _job_reactivate(rm):
                             logger.debug(f"💔 醋意挽回跳过无效用户 uid={uid}（已清理）")
                         else:
                             logger.warning(f"醋意挽回发送失败 uid={uid}：{e}")
-            if sent_count > 0:
-                _confirm_task_done("reactivate", rm.db, 3600)
-            else:
-                _release_task("reactivate", rm.db)
+            if sent_count == 0:
+                raise _TaskAbort("无发送目标")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"醋意挽回失败：{e}")
-        _release_task("reactivate", rm.db)
 
 
 def _generate_cart_recovery_message(uid: int, rm) -> str:
     """AI生成购物车挽回消息"""
     seed = uid + int(time.time()) // 43200  # 每半天固定
     
-    prompt = f"""你是Mory老板，一个贴心的小姐姐。
+    prompt = f"""你是Mory，一个贴心的小姐姐。
 
 一个用户昨天问了门槛/价格但没付费就走了，你要写一条消息把他叫回来。
 
@@ -974,22 +1609,16 @@ def _generate_cart_recovery_message(uid: int, rm) -> str:
     except Exception:
         pass
     
-    # 备用文案
-    fallbacks = [
-        "哥哥昨天问完就跑了...是不是有什么顾虑呀？有什么想问的尽管问嘛，Mory帮你解答～😊",
-        "是不是钱不够呀？没关系呀，先来聊聊天嘛～说不定有惊喜哦！💕",
-        "哥哥昨天是不是不好意思呀？放心，Mory很温柔的，来嘛来嘛～🌸",
-        "昨天问了就不理人家了...Mory可是专门在想哥哥呢，快回来嘛～✨",
-    ]
-    return random.choice(fallbacks)
+    # 备用文案（使用动态话术池）
+    return random.choice(_CART_RECOVERY_FALLBACKS)
 
 
 def _job_cart_recovery(rm):
     """购物车挽回（每小时）- AI生成个性化消息"""
-    if not _try_claim_and_lock("cart_recovery", rm.db, 3600):
-        return
     try:
-        with rm.locked_multi(['db', 'bot', 'config']):
+        with TaskTransactionManager("cart_recovery", rm.db, resources=['bot', 'config'], min_interval_sec=3600) as tx:
+            if not tx.claimed:
+                return
             sent_count = 0
             for uid in rm.db.get_expired_carts(86400):
                 try:
@@ -1005,70 +1634,66 @@ def _job_cart_recovery(rm):
                         logger.debug(f"💔 购物车挽回跳过无效用户 uid={uid}（已清理users+cart_recovery）")
                     else:
                         logger.warning(f"购物车挽回发送失败 uid={uid}：{e}")
-            if sent_count > 0:
-                _confirm_task_done("cart_recovery", rm.db, 3600)
-            else:
-                _release_task("cart_recovery", rm.db)
+            if sent_count == 0:
+                raise _TaskAbort("无发送目标")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"购物车挽回失败：{e}")
-        _release_task("cart_recovery", rm.db)
 
 
 def _job_leak(rm):
-    """【v4.9.0】背刺泄密（每周一次）
-    
-    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
-    """
-    if not _try_claim_and_lock("leak", rm.db, 86400):
-        return
+    """【v5.9.0】背刺泄密（每周一次）- 使用 TaskTransactionManager"""
     try:
-        now = datetime.now(_CST)
-        current_week = now.isocalendar()[1]
-        
-        with rm.locked_multi(['config']):
+        with TaskTransactionManager("leak", rm.db, resources=['ai', 'config'], min_interval_sec=86400) as tx:
+            if not tx.claimed:
+                return
+            now = datetime.now(_CST)
+            current_week = now.isocalendar()[1]
+            
             gid = rm.config.get("GROUP_ID", 0)
             last_leak_week = rm.config.get("_LAST_LEAK_WEEK", -1)
         
-        if gid == 0 or current_week == last_leak_week or now.weekday() < 2:
-            _release_task("leak", rm.db)
-            return
+            if gid == 0 or current_week == last_leak_week or now.weekday() < 2:
+                raise _TaskAbort("条件不满足")
         
-        seed = random.randint(100000, 999999)
-        scene_hint = random.choice([
-            "在便利店买东西", "一个人看电视剧", "刷手机的时候",
-            "发呆的时候", "跟闺蜜聊天", "自拍的时候", "做饭的时候",
-            "洗澡前", "刚睡醒", "走路的时候", "吃零食的时候",
-            "整理房间", "加班的时候", "逛街的时候", "坐地铁的时候",
-            "打视频电话", "化妆的时候", "喝奶茶的时候", "拍照片",
-        ])
-        leak_prompt = (
-            f"种子{seed}，场景：{scene_hint}。"
-            f"用极度八卦、偷偷摸摸的语气，泄露一个关于Mory老板非常可爱、"
-            f"生活化的小癖好或小秘密。要求：\n"
-            f"1. 必须是全新的、独特的内容，绝对不能重复\n"
-            f"2. 要有画面感和生活气息\n"
-            f"3. 控制在25字以内\n"
-            f"4. 不要出现任何编号、序号或列表格式"
-        )
+            seed = random.randint(100000, 999999)
+            scene_hint = random.choice([
+                "在便利店买东西", "一个人看电视剧", "刷手机的时候",
+                "发呆的时候", "跟闺蜜聊天", "自拍的时候", "做饭的时候",
+                "洗澡前", "刚睡醒", "走路的时候", "吃零食的时候",
+                "整理房间", "加班的时候", "逛街的时候", "坐地铁的时候",
+                "打视频电话", "化妆的时候", "喝奶茶的时候", "拍照片",
+            ])
+            leak_prompt = (
+                f"种子{seed}，场景：{scene_hint}。"
+                f"用极度八卦、偷偷摸摸的语气，泄露一个关于Mory非常可爱、"
+                f"生活化的小癖好或小秘密。要求：\n"
+                f"1. 必须是全新的、独特的内容，绝对不能重复\n"
+                f"2. 要有画面感和生活气息\n"
+                f"3. 控制在25字以内\n"
+                f"4. 不要出现任何编号、序号或列表格式\n"
+                f"5. 只说Mory，不以任何'老板/boss'自称"
+            )
         
-        with rm.locked('ai'):
             leak = rm.ai.ask(leak_prompt, mode="leak")
         
-        if leak:
-            try:
-                sent = _send_and_track(rm, gid, f"🤫 老板不在... 偷偷跟你们说：\n\n{leak}")
-                if sent:
-                    rm.config["_LAST_LEAK_WEEK"] = current_week
-                    rm.save_config_fn()
-                    _confirm_task_done("leak", rm.db, 86400)
-                    logger.info(f"🤫 背刺泄密触发(周{current_week})：{leak[:30]}")
-                    return
-            except Exception as e:
-                logger.warning(f"背刺泄密发送失败：{e}")
-        _release_task("leak", rm.db)
+            if leak:
+                try:
+                    leak_prefix = random.choice(_LEAK_PREFIXES)
+                    sent = _send_and_track(rm, gid, f"{leak_prefix}{leak}")
+                    if sent:
+                        rm.config["_LAST_LEAK_WEEK"] = current_week
+                        rm.save_config_fn()
+                        logger.info(f"🤫 背刺泄密触发(周{current_week})：{leak[:30]}")
+                        return
+                except Exception as e:
+                    logger.warning(f"背刺泄密发送失败：{e}")
+            raise _TaskAbort("泄密发送失败")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"背刺泄密失败：{e}")
-        _release_task("leak", rm.db)
         _retry_task(rm, _job_leak, "leak")
 
 
@@ -1098,7 +1723,7 @@ def _job_ttl_cleanup(rm):
     except Exception as e:
         logger.error(f"TTL清理失败：{e}")
     try:
-        from main import _cleanup_conv_tracker, _cleanup_radar_cooldown
+        from core.message_dispatcher import _cleanup_conv_tracker, _cleanup_radar_cooldown
         _cleanup_conv_tracker()
         _cleanup_radar_cooldown()
     except Exception as e:
@@ -1145,38 +1770,49 @@ def _job_channel_views(rm):
         logger.error(f"成员数统计失败：{e}")
 
 
-def _sync_channel_posts(rm, channel_ids: list):
-    """【v4.9.7废弃】此函数通过 get_updates() 获取频道帖子，但 infinity_polling 已消费所有更新，永远获取不到数据。
-    已被 channel_post_handler + _refresh_channel_post_views 替代。保留函数体避免引用报错。"""
-    for ch in channel_ids:
-        cid = ch.get("id", 0) if isinstance(ch, dict) else ch
-        cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
-        try:
-            # 获取频道最近24小时的消息
-            now = int(time.time())
-            day_ago = now - 86400
-            # 使用 getUpdates 或 getChatHistory 获取消息
-            # 注意：Bot API 不直接支持 getChatHistory，这里用 getUpdates 过滤
-            with rm.locked('bot'):
-                # 获取Bot在频道中的最新消息ID
-                updates = rm.bot.get_updates(limit=100, timeout=10)
-                for update in updates:
-                    if hasattr(update, 'channel_post') and update.channel_post:
-                        msg = update.channel_post
-                        if msg.chat.id == cid and msg.date >= day_ago:
-                            views = getattr(msg, 'views', 0) or 0
-                            forwards = getattr(msg, 'forward_count', 0) or 0
-                            rm.db.track_channel_post(
-                                cid, msg.message_id, msg.date,
-                                views=views, forwards=forwards,
-                                content_type=getattr(msg, 'content_type', 'text')
-                            )
-                            # 更新浏览量
-                            if views > 0:
-                                rm.db.update_channel_post_views(cid, msg.message_id, views, forwards)
-            logger.info(f"📊 频道内容同步: {cname}")
-        except Exception as e:
-            logger.debug(f"频道内容同步失败: {cname} err={e}")
+def _job_check_expired_redpackets(rm):
+    """检查过期红包，退回未领取积分"""
+    try:
+        check_expired_redpackets(rm.bot, rm.config, rm.db)
+    except Exception as e:
+        logger.error(f"红包过期检查失败：{e}")
+
+
+def _job_faq_distill(rm):
+    """FAQ蒸馏（每日）- 从用户问题中提取高频问题生成FAQ候选
+
+    扫描最近7天的用户问题，按归一化文本聚合，
+    频次>=min_frequency的组创建FAQ候选，通知管理员审核。
+    """
+    try:
+        # 检查FAQ追踪功能是否启用
+        if not rm.config.get("FAQ_TRACKING_ENABLED", False):
+            return
+
+        min_frequency = rm.config.get("FAQ_MIN_FREQUENCY", 3)
+
+        with TaskTransactionManager("faq_distill", rm.db, min_interval_sec=86400) as tx:
+            if not tx.claimed:
+                return
+
+            count = rm.db.distill_candidates(min_frequency=min_frequency, days=7)
+
+            if count > 0:
+                logger.info(f"📋 FAQ蒸馏完成：发现 {count} 个新高频问题候选")
+                # 通知管理员审核
+                _fault_reporter.report(
+                    "FAQ蒸馏",
+                    f"发现 {count} 个新高频问题候选，请到Dashboard审核",
+                    "📋",
+                )
+            else:
+                logger.info("📋 FAQ蒸馏完成：无新高频问题候选")
+                raise _TaskAbort("无新高频问题候选")
+    except _TaskAbort:
+        pass
+    except Exception as e:
+        logger.error(f"FAQ蒸馏失败：{e}")
+        _fault_reporter.report("FAQ蒸馏失败", str(e)[:200], "⚠️")
 
 
 def _update_channel_member_counts(rm, channel_ids: list):
@@ -1220,11 +1856,12 @@ def _refresh_channel_post_views(rm):
                         # 获取最新浏览量
                         new_views = getattr(fwd, 'views', 0) or 0
                         new_forwards = getattr(fwd, 'forward_count', 0) or 0
-                        # 立即删除转发消息
-                        try:
-                            rm.bot.delete_message(admin_id, fwd.message_id)
-                        except Exception:
-                            pass
+                        # 立即删除转发消息（受全局开关控制）
+                        if can_delete_message(rm.config):
+                            try:
+                                rm.bot.delete_message(admin_id, fwd.message_id)
+                            except Exception:
+                                pass
                     # 更新数据库
                     if new_views > 0:
                         rm.db.update_channel_post_views(cid, msg_id, new_views, new_forwards)
@@ -1242,41 +1879,38 @@ def _refresh_channel_post_views(rm):
 
 
 def _job_daily_report(rm):
-    """【v4.9.0】每日数据报告 - 拆分为群报告+频道报告，私聊发送
-    
-    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
-    """
-    if not _try_claim_and_lock("daily_report", rm.db, 7200):
-        return
+    """【v5.9.0】每日数据报告 - 使用 TaskTransactionManager"""
     try:
-        admin_id = rm.config.get("ADMIN_ID", 0)
-        if not admin_id:
-            _release_task("daily_report", rm.db)
-            return
+        with TaskTransactionManager("daily_report", rm.db, min_interval_sec=7200) as tx:
+            if not tx.claimed:
+                return
+            admin_id = rm.config.get("ADMIN_ID", 0)
+            if not admin_id:
+                raise _TaskAbort("ADMIN_ID为0")
         
-        now = datetime.now(_CST)
-        today = now.strftime("%Y-%m-%d")
-        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        gid = rm.config.get("GROUP_ID", 0)
+            now = datetime.now(_CST)
+            today = now.strftime("%Y-%m-%d")
+            yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+            gid = rm.config.get("GROUP_ID", 0)
         
-        def trend(cur, prev):
-            if cur > prev: return "📈"
-            if cur < prev: return "📉"
-            return "➖"
+            def trend(cur, prev):
+                if cur > prev: return "📈"
+                if cur < prev: return "📉"
+                return "➖"
 
-        _send_daily_group_report(rm, admin_id, today, yesterday, gid, trend)
-        _send_daily_channel_report(rm, admin_id, today, trend)
+            _send_daily_group_report(rm, admin_id, today, yesterday, gid, trend)
+            _send_daily_channel_report(rm, admin_id, today, trend)
         
-        _confirm_task_done("daily_report", rm.db, 7200)
-        logger.info(f"✅ 每日数据报告已发送（群+频道）")
+            logger.info(f"✅ 每日数据报告已发送（群+频道）")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"每日数据报告失败：{e}")
-        _release_task("daily_report", rm.db)
         _retry_task(rm, _job_daily_report, "daily_report")
 
 
 def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid: int, trend_fn):
-    """【v4.9.7重构】群数据日报 — 移除浏览/回复，新增运营洞察"""
+    """【v4.9.7重构 + v5.11.0】群数据日报 — 移除浏览/回复，新增运营洞察 + 0值优化"""
     token = rm.config.get("TOKEN", "")
     api_data = None
     api_yest_data = None
@@ -1284,7 +1918,9 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
 
     if token and gid:
         try:
-            api_data = get_group_daily_stats(token, gid)
+            # 【v5.11.0】预留：未来接入 getChatStatistics API
+            # api_data = rm.bot.getChatStatistics(chat_id=gid) if has_perm else None
+            api_data = None
             if api_data:
                 use_api = True
                 logger.info(f"📊 群日报使用API数据")
@@ -1332,14 +1968,14 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
                     total_members = rm.bot.get_chat_member_count(gid)
             except Exception:
                 total_members = rm.db.get_group_total_members_latest(gid)
-        active_today = rm.db.get_daily_active_users(today)
+        active_today = rm.db.get_daily_active_users(today, gid)
         msgs_today = rm.db.get_daily_bot_messages(today)
         data_source = "📊 自统计（事件追踪+校准）"
 
     joined_yest = joined_yest_db
     left_yest = left_yest_db
     net_yest = net_yest_db
-    active_yest = rm.db.get_daily_active_users(yesterday)
+    active_yest = rm.db.get_daily_active_users(yesterday, gid)
     msgs_yest = rm.db.get_daily_bot_messages(yesterday)
 
     # ── 运营指标计算 ──
@@ -1402,7 +2038,7 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
 
 
 def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
-    """【v4.9.7重构】频道数据日报 — 运营指标 + 健康度评分"""
+    """【v4.9.7重构 + v5.11.0】频道数据日报 — 0值显示优化为"暂无"或"—"，避免误导用户"""
     channel_ids = rm.config.get("CHANNEL_IDS", [])
     if not channel_ids:
         return
@@ -1449,10 +2085,14 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
             channel_lines.append(f"├ {cname}：{ch_count}人 ({ch_type}) 今日无变化")
 
         # ── 获取发帖/浏览数据 ──
+        # 【v5.11.0】移除硬编码占位：api_ch = None 已删，保留 API 接入位
         api_ch = None
         if token:
             try:
-                api_ch = get_channel_daily_stats(token, cid)
+                # 【v5.11.0】预留：未来接入 Telegram Bot API getChatStatistics
+                # 需要 bot 在频道中是 admin 且 Telegram 开通了统计 API 权限
+                # api_ch = rm.bot.get_chat_statistics(chat_id=cid)
+                api_ch = None
                 if api_ch:
                     any_api = True
             except Exception:
@@ -1466,6 +2106,7 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
         views_today = 0
         forwards_today = 0
         avg_views = 0
+        has_data = False  # 【v5.11.0】追踪是否有真实数据
 
         if api_ch:
             posts_today = api_ch.get("messages_today", 0)
@@ -1477,6 +2118,7 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
                 views_today = db_stats.get("views", 0)
                 forwards_today = rm.db.get_channel_post_stats(cid, today).get("forwards", 0)
             avg_views = views_today // max(posts_today, 1)
+            has_data = posts_today > 0 or views_today > 0
         else:
             try:
                 today_stats = rm.db.get_channel_daily_stats(cid, today)
@@ -1485,6 +2127,7 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
                 views_today = today_stats.get("views", 0)
                 forwards_today = native_stats.get("forwards", 0)
                 avg_views = today_stats.get("avg_views", 0)
+                has_data = posts_today > 0 or views_today > 0
             except Exception as e:
                 logger.debug(f"频道统计获取失败: {cname} err={e}")
 
@@ -1492,11 +2135,16 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
         total_views_today += views_today
         total_forwards_today += forwards_today
 
+        # 【v5.11.0】0 值显示优化：发帖=0 时显示"暂无"，均阅=0 时显示"—"
+        posts_str = _format_zero_data(posts_today, "count")
+        views_str = _format_zero_data(views_today, "count")
+        avg_views_str = "—" if avg_views == 0 else str(avg_views)
+
         stats_lines.append(
             f"├ {cname}："
-            f"发帖{posts_today}{trend_fn(posts_today, posts_yest)} "
-            f"浏览{views_today}{trend_fn(views_today, views_yest)} "
-            f"均阅{avg_views}"
+            f"发帖{posts_str}{trend_fn(posts_today, posts_yest)} "
+            f"浏览{views_str}{trend_fn(views_today, views_yest)} "
+            f"均阅{avg_views_str}"
         )
 
         # ── 运营指标计算 ──
@@ -1504,9 +2152,16 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
         interact_rate = (forwards_today / max(views_today, 1)) * 100
         hot_posts = rm.db.get_channel_top_posts(cid, today, threshold=2.0)
 
+        # 【v5.11.0】0 值显示优化
+        reach_str = _format_zero_data(reach_rate, "percent")
+        interact_str = _format_zero_data(interact_rate, "percent")
+
         ops_lines.append(
-            f"├ {cname}：触达{reach_rate:.0f}% 互动{interact_rate:.1f}% 爆款{hot_posts}条"
+            f"├ {cname}：触达{reach_str}% 互动{interact_str}% 爆款{hot_posts}条"
         )
+
+        if not has_data:
+            logger.info(f"📊 频道 {cname} 当日无发帖/浏览数据，显示为'暂无'")
 
     if channel_lines:
         channel_lines[-1] = channel_lines[-1].replace("├", "└", 1)
@@ -1604,33 +2259,30 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
 
 
 def _job_weekly_report(rm):
-    """【v4.9.0】每周数据报告 - 群周报+频道周报，含趋势分析
-    
-    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
-    """
-    if not _try_claim_and_lock("weekly_report", rm.db, 86400):
-        return
+    """【v5.9.0】每周数据报告 - 使用 TaskTransactionManager"""
     try:
-        admin_id = rm.config.get("ADMIN_ID", 0)
-        if not admin_id:
-            _release_task("weekly_report", rm.db)
-            return
+        with TaskTransactionManager("weekly_report", rm.db, min_interval_sec=86400) as tx:
+            if not tx.claimed:
+                return
+            admin_id = rm.config.get("ADMIN_ID", 0)
+            if not admin_id:
+                raise _TaskAbort("ADMIN_ID为0")
         
-        now = datetime.now(_CST)
-        today = now.strftime("%Y-%m-%d")
-        week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-        two_weeks_ago = (now - timedelta(days=14)).strftime("%Y-%m-%d")
-        week_ago_ts = int((now - timedelta(days=7)).timestamp())
-        now_ts = int(now.timestamp())
+            now = datetime.now(_CST)
+            today = now.strftime("%Y-%m-%d")
+            week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+            two_weeks_ago = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+            week_ago_ts = int((now - timedelta(days=7)).timestamp())
+            now_ts = int(now.timestamp())
         
-        _send_weekly_group_report(rm, admin_id, today, week_ago, two_weeks_ago)
-        _send_weekly_channel_report(rm, admin_id, today, week_ago, week_ago_ts, now_ts)
+            _send_weekly_group_report(rm, admin_id, today, week_ago, two_weeks_ago)
+            _send_weekly_channel_report(rm, admin_id, today, week_ago, week_ago_ts, now_ts)
         
-        _confirm_task_done("weekly_report", rm.db, 86400)
-        logger.info("✅ 每周数据报告已发送（群+频道）")
+            logger.info("✅ 每周数据报告已发送（群+频道）")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"每周数据报告失败：{e}")
-        _release_task("weekly_report", rm.db)
         _retry_task(rm, _job_weekly_report, "weekly_report")
 
 
@@ -1747,7 +2399,7 @@ def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, we
         api_ch = None
         if token:
             try:
-                api_ch = get_channel_daily_stats(token, cid)
+                api_ch = None
                 if api_ch:
                     any_api = True
             except Exception:
@@ -1809,35 +2461,33 @@ def _send_weekly_channel_report(rm, admin_id: int, today: str, week_ago: str, we
 
 
 def _job_monthly_report(rm):
-    """【v4.9.6新增】每月数据报告 - 群月报+频道月报
-    每月1号 9:00 执行
-    """
-    if not _try_claim_and_lock("monthly_report", rm.db, 86400 * 28):
-        return
+    """【v5.9.0】每月数据报告 - 使用 TaskTransactionManager"""
     try:
-        admin_id = rm.config.get("ADMIN_ID", 0)
-        if not admin_id:
-            _release_task("monthly_report", rm.db)
-            return
+        with TaskTransactionManager("monthly_report", rm.db, min_interval_sec=86400 * 28) as tx:
+            if not tx.claimed:
+                return
+            admin_id = rm.config.get("ADMIN_ID", 0)
+            if not admin_id:
+                raise _TaskAbort("ADMIN_ID为0")
 
-        now = datetime.now(_CST)
-        today = now.strftime("%Y-%m-%d")
-        # 本月1号
-        month_start = now.replace(day=1).strftime("%Y-%m-%d")
-        # 上月1号（用于环比）
-        if now.month == 1:
-            prev_month_start = now.replace(year=now.year - 1, month=12, day=1).strftime("%Y-%m-%d")
-        else:
-            prev_month_start = now.replace(month=now.month - 1, day=1).strftime("%Y-%m-%d")
+            now = datetime.now(_CST)
+            today = now.strftime("%Y-%m-%d")
+            # 本月1号
+            month_start = now.replace(day=1).strftime("%Y-%m-%d")
+            # 上月1号（用于环比）
+            if now.month == 1:
+                prev_month_start = now.replace(year=now.year - 1, month=12, day=1).strftime("%Y-%m-%d")
+            else:
+                prev_month_start = now.replace(month=now.month - 1, day=1).strftime("%Y-%m-%d")
 
-        _send_monthly_group_report(rm, admin_id, today, month_start, prev_month_start)
-        _send_monthly_channel_report(rm, admin_id, today, month_start, prev_month_start)
+            _send_monthly_group_report(rm, admin_id, today, month_start, prev_month_start)
+            _send_monthly_channel_report(rm, admin_id, today, month_start, prev_month_start)
 
-        _confirm_task_done("monthly_report", rm.db, 86400 * 28)
-        logger.info("✅ 每月数据报告已发送（群+频道）")
+            logger.info("✅ 每月数据报告已发送（群+频道）")
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"每月数据报告失败：{e}")
-        _release_task("monthly_report", rm.db)
         _retry_task(rm, _job_monthly_report, "monthly_report")
 
 
@@ -1958,7 +2608,7 @@ def _send_monthly_channel_report(rm, admin_id: int, today: str, month_start: str
         api_ch = None
         if token:
             try:
-                api_ch = get_channel_daily_stats(token, cid)
+                api_ch = None
                 if api_ch:
                     any_api = True
             except Exception:
@@ -2056,25 +2706,8 @@ def _get_tarot_cache(uid: int, dt: datetime) -> Dict:
 
 
 def _get_fallback_hook(theme: str, uname: str) -> str:
-    """撩人转化文案 - 绿茶口吻，隐晦引导（AI失败时的备用）"""
-    hooks = [
-        f"这牌还有更深层的意思呢，想知道吗",
-        f"其实这张牌背面藏着另一段故事哦",
-        f"有些话这里说不完，你懂的",
-        f"今天这牌其实还有后半段没揭晓呢",
-        f"你今天的运势其实还有隐藏玩法",
-        f"有些惊喜光看这几行字可不够呢",
-        f"这运势只是冰山一角，水面下才精彩",
-        f"老粉都知道，这牌还有另一面",
-        f"其实今天的好事不止这些，还有呢",
-        f"这牌暗示的东西，可比表面深多了",
-        f"想知道这张牌真正想告诉你的事吗",
-        f"有些缘分，只有慢慢聊才能懂呢",
-        f"今天这运势后面还跟着个彩蛋哦",
-        f"这牌的解读嘛，三言两语可说不清",
-        f"有些话得悄悄说才更有味道呢",
-    ]
-    return random.choice(hooks)
+    """撩人转化文案 - 绿茶口吻，隐晦引导（AI失败时的备用）[TRAE SOLO CN] 使用动态话术池"""
+    return random.choice(_TAROT_HOOKS)
 
 
 def _generate_tarot_data(seed_uid: int) -> Dict:
@@ -2105,7 +2738,7 @@ def _generate_tarot_ai_content(tarot: Dict, seed: int, rm) -> Dict:
     """调用AI生成完整的塔罗运势内容（整卡控制在一屏内，约130字）"""
     seed_for_ai = seed or random.randint(100000, 999999)
     
-    prompt = f"""你是Mory老板，一个撩人的塔罗师，像闺蜜一样亲切。
+    prompt = f"""你是Mory，一个撩人的塔罗师，像闺蜜一样亲切。
 
 根据以下信息生成塔罗运势，全部要浓缩在一屏能看完的长度：
 
@@ -2305,9 +2938,7 @@ def _get_fallback_tarot_content(tarot: Dict) -> Dict:
 
 
 def _job_tarot_flirt(rm):
-    """【v4.9.0】每日塔罗搭讪（30%概率，针对群里活跃用户）
-    
-    新流程：_try_claim_and_lock(原子抢占) → 执行 → 失败时_release_task(释放锁)
+    """【v5.9.0】每日塔罗搭讪（30%概率，针对群里活跃用户）- 使用 TaskTransactionManager
     
     【特性】
     - 同一人同一天结果固定（北京时间为准）
@@ -2320,62 +2951,56 @@ def _job_tarot_flirt(rm):
         _tarot_daily_cache = {}
         _tarot_cache_last_date = today_key
 
-    if not _try_claim_and_lock("tarot_flirt", rm.db, 7200):
-        return
-    
-    if random.random() > 0.30:
-        _release_task("tarot_flirt", rm.db)
-        return
-    
     try:
-        gid = rm.config.get("GROUP_ID", 0)
-        admin_id = rm.config.get("ADMIN_ID", 0)
-        if not gid or not admin_id:
-            return
-        
-        logger.info("🎴 触发每日塔罗搭讪任务")
-        
-        # 获取群成员
-        try:
-            members = rm.bot.get_chat_member_count(gid)
-            if members < 5:
+        with TaskTransactionManager("tarot_flirt", rm.db, resources=['ai', 'bot'], min_interval_sec=7200) as tx:
+            if not tx.claimed:
                 return
-        except Exception:
-            pass
-        
-        # 获取最近活跃用户（替代不存在的get_chat_history）
-        recent_users = {}
-        try:
-            ts_1h_ago = int(time.time()) - 3600
-            active_users = rm.db.get_active_users(ts_1h_ago)
-            for uid, uname, keywords in active_users[:20]:
-                if uid != admin_id:
-                    recent_users[uid] = (uname or "哥哥", keywords or "")
-        except Exception as e:
-            logger.debug(f"获取活跃用户失败：{e}")
-            return
-        
-        if not recent_users:
-            return
-        
-        # 随机选一个用户和消息
-        uid, (uname, user_msg) = random.choice(list(recent_users.items()))
-        
-        logger.info(f"🎴 塔罗搭讪目标: {uname} 说: {user_msg[:30]}")
-        
-        # 获取该用户今日运势（北京时间缓存）
-        tarot_base = _get_tarot_cache(uid, datetime.now())
-        
-        # 调用AI生成完整运势内容
-        tarot = _generate_tarot_ai_content(tarot_base, uid, rm)
-        
-        # 开场白
-        opener_text = random.choice(['哥哥～', '嘿～', '在吗～', '哎～', '诶～'])
-        opener_action = random.choice(['看到你说的', '刷到你这句', '你刚才说'])
-        
-        # AI生成隐晦撩人转化结尾（绝不能提会员/付费/订阅）
-        convert_seed = random.randint(10000, 99999)
-        convert_prompt = f"""你是Mory老板，一个撩人的塔罗师。
+            if random.random() > 0.30:
+                raise _TaskAbort("30%概率跳过")
+            
+            gid = rm.config.get("GROUP_ID", 0)
+            admin_id = rm.config.get("ADMIN_ID", 0)
+            if not gid or not admin_id:
+                raise _TaskAbort("群ID或管理员ID为0")
+            
+            logger.info("🎴 触发每日塔罗搭讪任务")
+            
+            try:
+                members = rm.bot.get_chat_member_count(gid)
+                if members < 5:
+                    raise _TaskAbort("群成员太少")
+            except _TaskAbort:
+                raise
+            except Exception:
+                pass
+            
+            recent_users = {}
+            try:
+                ts_1h_ago = int(time.time()) - 3600
+                active_users = rm.db.get_active_users(ts_1h_ago)
+                for uid, uname, keywords in active_users[:20]:
+                    if uid != admin_id:
+                        recent_users[uid] = (uname or "哥哥", keywords or "")
+            except Exception as e:
+                logger.debug(f"获取活跃用户失败：{e}")
+                raise _TaskAbort("获取活跃用户失败")
+            
+            if not recent_users:
+                raise _TaskAbort("无活跃用户")
+            
+            uid, (uname, user_msg) = random.choice(list(recent_users.items()))
+            
+            logger.info(f"🎴 塔罗搭讪目标: {uname} 说: {user_msg[:30]}")
+            
+            tarot_base = _get_tarot_cache(uid, datetime.now())
+            
+            tarot = _generate_tarot_ai_content(tarot_base, uid, rm)
+            
+            opener_text = random.choice(['哥哥～', '嘿～', '在吗～', '哎～', '诶～'])
+            opener_action = random.choice(['看到你说的', '刷到你这句', '你刚才说'])
+            
+            convert_seed = random.randint(10000, 99999)
+            convert_prompt = f"""你是Mory，一个撩人的塔罗师。
 
 给刚测完「{tarot['theme']}」的「{uname}」写一句撩人引导语。
 
@@ -2388,38 +3013,34 @@ def _job_tarot_flirt(rm):
 6. 不要emoji
 
 seed={convert_seed}"""
-        
-        try:
-            with rm.locked('ai'):
+            
+            try:
                 convert_hint = rm.ai.ask(convert_prompt, mode="convert_hook", seed=convert_seed)
-            if not convert_hint or len(convert_hint) < 10:
+                if not convert_hint or len(convert_hint) < 10:
+                    convert_hint = _get_fallback_hook(tarot['theme'], uname)
+            except Exception:
                 convert_hint = _get_fallback_hook(tarot['theme'], uname)
-        except Exception:
-            convert_hint = _get_fallback_hook(tarot['theme'], uname)
-        
-        # 构建HTML卡片消息（高度随机：40%短版 / 60%长版）
-        short_mode = random.random() < 0.4
-        
-        # 【v4.5.35修复】所有动态内容统一HTML转义，防止XSS/格式错乱
-        safe_uname = html.escape(str(uname))
-        safe_opener = html.escape(str(opener_text))
-        safe_action = html.escape(str(opener_action))
-        safe_user_msg = html.escape(str(user_msg[:10]))
-        safe_card = html.escape(str(tarot['card']))
-        safe_position = html.escape(str(tarot['position']))
-        safe_theme = html.escape(str(tarot['theme']))
-        safe_meaning = html.escape(str(tarot['meaning']))
-        safe_advice = html.escape(str(tarot['advice']))
-        safe_color = html.escape(str(tarot['color']))
-        safe_dir = html.escape(str(tarot['dir']))
-        safe_nums = html.escape(str(tarot['nums']))
-        safe_star = html.escape(str(tarot['star']))
-        safe_time = html.escape(str(tarot['time']))
-        safe_convert = html.escape(str(convert_hint))
+            
+            short_mode = random.random() < 0.4
+            
+            safe_uname = html.escape(str(uname))
+            safe_opener = html.escape(str(opener_text))
+            safe_action = html.escape(str(opener_action))
+            safe_user_msg = html.escape(str(user_msg[:10]))
+            safe_card = html.escape(str(tarot['card']))
+            safe_position = html.escape(str(tarot['position']))
+            safe_theme = html.escape(str(tarot['theme']))
+            safe_meaning = html.escape(str(tarot['meaning']))
+            safe_advice = html.escape(str(tarot['advice']))
+            safe_color = html.escape(str(tarot['color']))
+            safe_dir = html.escape(str(tarot['dir']))
+            safe_nums = html.escape(str(tarot['nums']))
+            safe_star = html.escape(str(tarot['star']))
+            safe_time = html.escape(str(tarot['time']))
+            safe_convert = html.escape(str(convert_hint))
 
-        if short_mode:
-            # ══ 短版：约70字，手机一屏看完
-            html_reply = f"""🎴 <b>{safe_card} {safe_position}</b>
+            if short_mode:
+                html_reply = f"""🎴 <b>{safe_card} {safe_position}</b>
 
 @{safe_uname} {safe_opener} {safe_action}「{safe_user_msg}」~
 
@@ -2428,9 +3049,8 @@ seed={convert_seed}"""
 🌈 {safe_color} · 📍 {safe_dir}
 
 {safe_convert}"""
-        else:
-            # ══ 长版：约110字（控制在一屏内）
-            html_reply = f"""🎴 <b>{safe_theme}</b> · {safe_card} {safe_position}
+            else:
+                html_reply = f"""🎴 <b>{safe_theme}</b> · {safe_card} {safe_position}
 
 @{safe_uname} {safe_opener} {safe_action}「{safe_user_msg}」~
 
@@ -2441,19 +3061,17 @@ seed={convert_seed}"""
 🌈 {safe_color} · 📍 {safe_dir} · 🔢 {safe_nums} · ⭐ {safe_star} · ⏰ {safe_time}
 
 {safe_convert}"""
-        
-        # 发送HTML格式消息
-        try:
-            with rm.locked('bot'):
+            
+            try:
                 rm.bot.send_message(gid, html_reply, parse_mode="HTML")
-            _confirm_task_done("tarot_flirt", rm.db, 7200)
-            logger.info(f" 塔罗搭讪成功: @{uname}")
-        except Exception as e:
-            logger.error(f"塔罗搭讪发送失败：{e}")
-            _release_task("tarot_flirt", rm.db)
+                logger.info(f" 塔罗搭讪成功: @{uname}")
+            except Exception as e:
+                logger.error(f"塔罗搭讪发送失败：{e}")
+                raise
+    except _TaskAbort:
+        pass
     except Exception as e:
         logger.error(f"塔罗搭讪任务失败：{e}")
-        _release_task("tarot_flirt", rm.db)
 
 
 def _do_backup(db_file: str):
@@ -2476,6 +3094,276 @@ def _do_backup(db_file: str):
         logger.info(f"💾 备份完成：{dest}")
     except Exception as e:
         logger.error(f"备份失败：{e}")
+
+
+def _job_startup_history_cleanup(rm):
+    """[TRAE SOLO CN] v5.15.3 新增：启动追溯清理黑名单用户历史消息
+    AGENTS.md 教训 #17 落实：从 message_snapshots 读 blacklist 用户的所有历史消息，逐一删除
+    这是 v5.15.2 之前漏的：18:36 教白嫖消息因 P1 拦截不记 msg_id 而无法追溯删除
+    修复后所有进分发流程的消息都入 message_snapshots，未来再发生类似情况 100% 可追溯
+    """
+    try:
+        from core.helpers import can_delete_message
+        bot = rm.bot
+        db = rm.db
+        CONFIG = rm.config
+        if not can_delete_message(CONFIG):
+            logger.info("[启动历史清理] 消息删除全局开关关闭，跳过")
+            return
+        # 找管理的群
+        chat_ids = []
+        gid = CONFIG.get("GROUP_ID", 0)
+        if gid:
+            chat_ids = [gid]
+        else:
+            try:
+                mg = CONFIG.get("MANAGED_GROUPS", [])
+                if isinstance(mg, int): chat_ids = [mg]
+                elif mg: chat_ids = list(mg)
+            except Exception: pass
+        if not chat_ids:
+            logger.info("[启动历史清理] 未找到管理的群组，跳过")
+            return
+        # 收集所有 blacklist + global_blacklist 的 uid
+        all_banned_uids = set()
+        try:
+            for row in db.conn.execute("SELECT uid FROM blacklist").fetchall():
+                all_banned_uids.add(int(row[0]))
+        except Exception: pass
+        try:
+            for row in db.conn.execute("SELECT user_id FROM global_blacklist").fetchall():
+                all_banned_uids.add(int(row[0]))
+        except Exception: pass
+        if not all_banned_uids:
+            logger.info("[启动历史清理] 无黑名单用户，跳过")
+            return
+        logger.info(f"[启动历史清理] 开始清理 {len(all_banned_uids)} 个黑名单用户的历史消息")
+        total_deleted = 0
+        for uid in all_banned_uids:
+            for cid in chat_ids:
+                try:
+                    msgs = db.get_user_messages(uid, cid, limit=500)
+                except Exception:
+                    msgs = []
+                for mm in msgs:
+                    if mm.get("deleted"): continue
+                    mid = mm.get("msg_id")
+                    if not mid: continue
+                    try:
+                        bot.delete_message(cid, mid)
+                        db.mark_message_deleted(cid, mid)
+                        total_deleted += 1
+                    except Exception:
+                        # 消息已删/无权/超时，静默
+                        pass
+        logger.info(f"[启动历史清理] 完成，共清理 {total_deleted} 条黑名单用户历史消息")
+    except Exception as e:
+        logger.error(f"[启动历史清理] 异常: {e}")
+
+
+def _job_startup_member_scan(rm):
+    """[TRAE SOLO CN] v5.8.1 启动时扫描群成员（数据库驱动+用户名/Bio/头像检测）"""
+    try:
+        with TaskTransactionManager("startup_member_scan", rm.db, resources=None, min_interval_sec=3600) as tx:
+            if not tx.claimed:
+                return
+
+            logger.info("[启动扫描] 开始扫描群成员...")
+
+            CONFIG = rm.config
+            bot = rm.bot
+            db = rm.db
+
+            group_ids = []
+            gid = CONFIG.get("GROUP_ID", 0)
+            if gid:
+                group_ids = [gid]
+            else:
+                try:
+                    mg = CONFIG.get("MANAGED_GROUPS", [])
+                    if isinstance(mg, int):
+                        group_ids = [mg]
+                    elif mg:
+                        group_ids = mg
+                except Exception:
+                    pass
+
+            if not group_ids:
+                logger.info("[启动扫描] 未找到管理的群组，跳过成员扫描")
+                raise _TaskAbort("未找到管理的群组")
+
+            import re
+            from modules.ad_patterns_encoded import USERNAME_PATTERNS, BIO_PATTERNS
+
+            admin_id = CONFIG.get("ADMIN_ID", 0)
+            whitelist_cfg = CONFIG.get("AD_WHITELIST", {})
+            whitelist_uids = set(whitelist_cfg.get("user_ids", []) if isinstance(whitelist_cfg, dict) else [])
+
+            total_banned = 0
+            total_scanned = 0
+
+            for chat_id in group_ids:
+                try:
+                    admins = bot.get_chat_administrators(chat_id)
+                    admin_ids = {a.user.id for a in admins}
+                    admin_ids.add(bot.get_me().id)
+                except Exception:
+                    admin_ids = set()
+                    try:
+                        admin_ids.add(bot.get_me().id)
+                    except Exception:
+                        pass
+
+                all_uids = set()
+                uid_queries = [
+                    "SELECT uid FROM users",
+                    "SELECT user_id FROM group_join_log",
+                    "SELECT user_id FROM ad_suspicious_users",
+                    "SELECT uid FROM user_levels",
+                    "SELECT DISTINCT uid FROM speech_daily",
+                    "SELECT DISTINCT uid FROM deleted_messages",
+                    "SELECT DISTINCT uid FROM checkin_records",
+                    "SELECT DISTINCT uid FROM points_log",
+                    "SELECT uid FROM user_tags",
+                    "SELECT uid FROM user_notes",
+                    "SELECT DISTINCT uid FROM achievements",
+                    "SELECT DISTINCT uid FROM redpacket_claims",
+                    "SELECT DISTINCT uid FROM lottery_participants",
+                ]
+                for query in uid_queries:
+                    try:
+                        rows = db.conn.execute(query).fetchall()
+                        for row in rows:
+                            uid = row[0]
+                            if uid and isinstance(uid, int) and uid > 0:
+                                all_uids.add(uid)
+                    except Exception:
+                        pass
+
+                try:
+                    gm_rows = db.conn.execute("SELECT uid FROM group_members WHERE chat_id=?", (chat_id,)).fetchall()
+                    for row in gm_rows:
+                        all_uids.add(row[0])
+                except Exception:
+                    pass
+
+                logger.info(f"[启动扫描] 群{chat_id}: 聚合{len(all_uids)}个用户ID")
+
+                for uid in all_uids:
+                    if uid in admin_ids or uid in whitelist_uids:
+                        continue
+
+                    try:
+                        member = bot.get_chat_member(chat_id, uid)
+                        if member.status in ("left", "kicked"):
+                            continue
+                        user = member.user
+                        if user.is_bot:
+                            continue
+                    except Exception:
+                        continue
+
+                    total_scanned += 1
+                    user_name = (user.first_name or "") + (user.last_name or "")
+                    tg_username = getattr(user, 'username', None) or ""
+
+                    uname_score = 0
+                    for pat in USERNAME_PATTERNS:
+                        try:
+                            if re.search(pat, user_name + (" @" + tg_username if tg_username else ""), re.IGNORECASE):
+                                uname_score += 2
+                                break
+                        except Exception:
+                            pass
+                    if tg_username and re.match(r'^[a-z]{1,4}\d{2,4}$', tg_username, re.IGNORECASE):
+                        uname_score += 2
+
+                    bio_text = ""
+                    try:
+                        chat_info = bot.get_chat(user.id)
+                        bio_text = getattr(chat_info, 'bio', None) or ""
+                    except Exception:
+                        pass
+
+                    bio_score = 0
+                    if bio_text:
+                        for pat in BIO_PATTERNS:
+                            try:
+                                if re.search(pat, bio_text, re.IGNORECASE):
+                                    bio_score += 3
+                                    break
+                            except Exception:
+                                pass
+
+                    should_ban = False
+                    ban_reason = ""
+
+                    if uname_score >= 1 and bio_score >= 3:
+                        avatar_suspicious = False
+                        try:
+                            from modules.avatar_detector import check_user_avatar
+                            avatar_suspicious, avatar_reason = check_user_avatar(bot, user.id)
+                        except Exception:
+                            pass
+
+                        if avatar_suspicious:
+                            should_ban = True
+                            ban_reason = f"三层组合(用户名+Bio+头像)"
+                        else:
+                            should_ban = True
+                            ban_reason = f"两层组合(用户名+Bio)"
+
+                    if should_ban:
+                        try:
+                            # [Codex] 广告治理策略：永久禁言+黑名单+删消息，不踢人
+                            from modules.ad_enforcement import enforce_ad_user
+                            enforce_ad_user(
+                                bot=bot,
+                                db=db,
+                                config=CONFIG,
+                                chat_id=chat_id,
+                                uid=user.id,
+                                uname=user_name,
+                                reason=f"启动扫描-{ban_reason}",
+                                notify_admin=False,
+                            )
+                            total_banned += 1
+                            logger.warning(f"[启动扫描] 🚫 永久禁言: {user_name}({user.id}) {ban_reason}")
+                            # 额外兜底删除该用户最近的历史消息
+                            if can_delete_message(CONFIG):
+                                try:
+                                    recent_msgs = db.conn.execute(
+                                        "SELECT msg_id FROM message_snapshots WHERE user_id=? AND chat_id=? ORDER BY ts DESC LIMIT 20",
+                                        (user.id, chat_id)
+                                    ).fetchall()
+                                    for (mid,) in recent_msgs:
+                                        try:
+                                            bot.delete_message(chat_id, int(mid))
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                        except Exception as e:
+                            logger.debug(f"[启动扫描] 封禁失败 {user_name}({user.id}): {e}")
+
+                    if total_scanned % 30 == 0:
+                        time.sleep(1.5)
+
+            if admin_id and (total_banned > 0 or total_scanned > 0):
+                try:
+                    bot.send_message(admin_id,
+                        f"🔍 启动扫描完成\n"
+                        f"📊 扫描群组：{len(group_ids)}个\n"
+                        f"👥 检查成员：{total_scanned}人\n"
+                        f"🚫 封禁广告号：{total_banned}人")
+                except Exception:
+                    pass
+
+            logger.info(f"[启动扫描] 完成：扫描{len(group_ids)}群/{total_scanned}人，封禁{total_banned}人")
+    except _TaskAbort:
+        pass
+    except Exception as e:
+        logger.error(f"启动成员扫描失败：{e}")
 
 
 _CRITICAL_TASKS = [
@@ -2530,9 +3418,92 @@ def _job_health_check(rm):
             except Exception as e:
                 logger.error(f"⚠️ [health_check] 通知发送失败：{e}")
         else:
-            logger.info(f"✅ [health_check] 所有关键任务已正常执行，数据库无异常")
+            logger.info(f"✅ [health_check] 所有关键任务仅正常执行，数据库无异常")
     except Exception as e:
         logger.error(f"❌ [health_check] 健康检查失败：{e}")
+
+
+# ── 【v4.13.1新增】夜间模式定时任务 ───────────────────────────────────
+def _job_night_mode_start(rm):
+    """夜间模式开启"""
+    try:
+        with TaskTransactionManager("night_mode_start", rm.db, resources=None, min_interval_sec=3600) as tx:
+            if not tx.claimed:
+                return
+            from modules.night_mode import start_night_mode
+            gid = rm.config.get("GROUP_ID", 0)
+            if gid:
+                start_night_mode(rm.bot, gid, rm.config)
+            else:
+                raise _TaskAbort("GROUP_ID为0")
+    except _TaskAbort:
+        pass
+    except Exception as e:
+        logger.error(f"🌙 夜间模式开启失败: {e}")
+
+
+def _job_night_mode_end(rm):
+    """夜间模式关闭"""
+    try:
+        with TaskTransactionManager("night_mode_end", rm.db, resources=None, min_interval_sec=3600) as tx:
+            if not tx.claimed:
+                return
+            from modules.night_mode import end_night_mode
+            gid = rm.config.get("GROUP_ID", 0)
+            if gid:
+                end_night_mode(rm.bot, gid, rm.config)
+            else:
+                raise _TaskAbort("GROUP_ID为0")
+    except _TaskAbort:
+        pass
+    except Exception as e:
+        logger.error(f"☀️ 夜间模式关闭失败: {e}")
+
+
+# ── 【v4.13.1新增】定点播报注册 ─────────────────────────────────────
+def _register_scheduled_broadcasts(scheduler, rm):
+    """根据config注册定点播报任务"""
+    from modules.scheduled_broadcast import get_broadcast_schedule, execute_scheduled_broadcast
+    schedule = get_broadcast_schedule(rm.config)
+    gid = rm.config.get("GROUP_ID", 0)
+
+    for bc in schedule:
+        bc_id = bc.get("id", "")
+        if not bc_id:
+            continue
+
+        hour = bc.get("hour")
+        minute = bc.get("minute")
+        if hour is None or minute is None:
+            continue
+
+        cron_kwargs = {"hour": hour, "minute": minute, "args": [rm, gid, bc_id],
+                       "id": f"broadcast_{bc_id}", "max_instances": 1,
+                       "coalesce": True, "misfire_grace_time": 300}
+
+        # 周几执行
+        if bc.get("day_of_week") is not None:
+            cron_kwargs["day_of_week"] = bc["day_of_week"]
+        # 几号执行
+        if bc.get("day_of_month") is not None:
+            cron_kwargs["day"] = bc["day_of_month"]
+
+        scheduler.add_job(_job_scheduled_broadcast, "cron", **cron_kwargs)
+        logger.info(f"📢 注册定点播报: {bc_id} ({hour:02d}:{minute:02d})")
+
+
+def _job_scheduled_broadcast(rm, chat_id, broadcast_id):
+    """执行定点播报"""
+    try:
+        with TaskTransactionManager(f"broadcast_{broadcast_id}", rm.db, resources=None, min_interval_sec=60) as tx:
+            if not tx.claimed:
+                return
+            from modules.scheduled_broadcast import execute_scheduled_broadcast
+            execute_scheduled_broadcast(rm.bot, chat_id, rm.config, rm.db)
+    except _TaskAbort:
+        pass
+    except Exception as e:
+        logger.error(f"📢 定点播报执行失败 {broadcast_id}: {e}")
 
 
 def start_background(bot, config: Dict[str, Any], db, ai, save_config_fn):
@@ -2544,6 +3515,7 @@ def start_background(bot, config: Dict[str, Any], db, ai, save_config_fn):
         return
 
     rm = ResourceManager(bot=bot, ai=ai, db=db, config=config, save_config_fn=save_config_fn)
+    TaskTransactionManager.bind(rm)
     _task_guard.bind(rm)
     _fault_reporter.bind(rm)
 
@@ -2573,10 +3545,24 @@ def _start_with_apscheduler(rm):
     # 每日塔罗搭讪（v4.2.5）- 随机30%概率
     scheduler.add_job(_job_tarot_flirt, "cron", hour=15, minute=0, args=[rm], id="tarot_flirt", max_instances=1, coalesce=True, misfire_grace_time=60)
     
-    # 问候
-    scheduler.add_job(_job_greeting_morning, "cron", hour=8, minute=5, args=[rm], id="greeting_morning", max_instances=1, coalesce=True, misfire_grace_time=60)
-    scheduler.add_job(_job_greeting_afternoon, "cron", hour=12, minute=35, args=[rm], id="greeting_afternoon", max_instances=1, coalesce=True, misfire_grace_time=60)
-    scheduler.add_job(_job_greeting_evening, "cron", hour=23, minute=5, args=[rm], id="greeting_evening", max_instances=1, coalesce=True, misfire_grace_time=60)
+    # [Codex] 问候时间读取配置，任务内部再按开关决定是否发送。
+    morning_hour, morning_minute = _get_greeting_time(rm.config, "morning")
+    afternoon_hour, afternoon_minute = _get_greeting_time(rm.config, "afternoon")
+    evening_hour, evening_minute = _get_greeting_time(rm.config, "evening")
+    scheduler.add_job(_job_greeting_morning, "cron", hour=morning_hour, minute=morning_minute, args=[rm], id="greeting_morning", max_instances=1, coalesce=True, misfire_grace_time=60)
+    scheduler.add_job(_job_greeting_afternoon, "cron", hour=afternoon_hour, minute=afternoon_minute, args=[rm], id="greeting_afternoon", max_instances=1, coalesce=True, misfire_grace_time=60)
+    scheduler.add_job(_job_greeting_evening, "cron", hour=evening_hour, minute=evening_minute, args=[rm], id="greeting_evening", max_instances=1, coalesce=True, misfire_grace_time=60)
+    
+    # 【v4.13.1新增】夜间模式（从config读取时间）
+    night_cfg = rm.config.get("NIGHT_MODE_CONFIG", {})
+    if night_cfg.get("enable", False):
+        start_h = night_cfg.get("start_hour", 23)
+        end_h = night_cfg.get("end_hour", 7)
+        scheduler.add_job(_job_night_mode_start, "cron", hour=start_h, minute=0, args=[rm], id="night_mode_start", max_instances=1, coalesce=True, misfire_grace_time=300)
+        scheduler.add_job(_job_night_mode_end, "cron", hour=end_h, minute=0, args=[rm], id="night_mode_end", max_instances=1, coalesce=True, misfire_grace_time=300)
+    
+    # 【v4.13.1新增】定点播报（从config读取时间表）
+    _register_scheduled_broadcasts(scheduler, rm)
     
     # 叫醒服务（每分钟）
     scheduler.add_job(_job_wakeup_check, "cron", minute="*", args=[rm], id="wakeup_check", max_instances=1, misfire_grace_time=60)
@@ -2585,21 +3571,118 @@ def _start_with_apscheduler(rm):
 
     # 【v4.9.3】每小时任务统一补coalesce=True，防止misfire堆积补发导致record_call误报
     scheduler.add_job(_job_burn_orphan, "cron", minute="5", args=[rm], id="burn_orphan", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_clean_relay_sessions, "interval", seconds=3600, args=[rm], id="clean_relay_sessions", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_reactivate, "cron", minute=5, args=[rm], id="reactivate", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_cart_recovery, "cron", minute=10, args=[rm], id="cart_recovery", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_backup, "cron", minute=15, args=[rm], id="backup", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_ttl_cleanup, "cron", minute=20, args=[rm], id="ttl_cleanup", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_save_config, "cron", minute=30, args=[rm], id="save_config", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_channel_views, "cron", minute=25, args=[rm], id="channel_views", max_instances=1, coalesce=True, misfire_grace_time=300)
-    
+
+    # 红包过期检查（每小时一次）
+    scheduler.add_job(_job_check_expired_redpackets, "cron", minute=35, args=[rm], id="check_expired_redpackets", max_instances=1, coalesce=True, misfire_grace_time=300)
+
+    # FAQ蒸馏（每日一次，间隔从配置读取，默认86400秒）
+    faq_distill_interval = rm.config.get("FAQ_DISTILL_INTERVAL", 86400)
+    scheduler.add_job(_job_faq_distill, "interval", seconds=faq_distill_interval, args=[rm], id="faq_distill", max_instances=1, coalesce=True, misfire_grace_time=3600)
+
+    # 定时消息发送（每分钟检查）
+    def _job_scheduled_messages(rm):
+        try:
+            from modules.scheduled_msg import run_scheduled_messages
+            run_scheduled_messages(rm.bot, rm.config, rm.db)
+        except Exception as e:
+            logger.error(f"定时消息发送异常：{e}")
+    scheduler.add_job(_job_scheduled_messages, "cron", minute="*", args=[rm], id="scheduled_messages", max_instances=1, coalesce=True, misfire_grace_time=60)
+
+    # 积分衰减（每日0点）
+    def _job_points_decay(rm):
+        try:
+            from modules.points_enhanced import run_points_decay
+            run_points_decay(rm.bot, rm.config, rm.db)
+        except Exception as e:
+            logger.error(f"积分衰减异常：{e}")
+    scheduler.add_job(_job_points_decay, "cron", hour=0, minute=5, args=[rm], id="points_decay", max_instances=1, coalesce=True, misfire_grace_time=300)
+
+    # 投票踢人过期检查（每5分钟）
+    def _job_vote_kick_check(rm):
+        try:
+            from modules.vote_kick import check_expired_votes
+            check_expired_votes(rm.bot, rm.config, rm.db)
+        except Exception as e:
+            logger.error(f"投票踢人过期检查异常：{e}")
+    scheduler.add_job(_job_vote_kick_check, "cron", minute="*/5", args=[rm], id="vote_kick_check", max_instances=1, coalesce=True, misfire_grace_time=300)
+
     # 背刺泄密（每周三0点）
     scheduler.add_job(_job_leak, "cron", day_of_week="wed", hour=0, minute=0, args=[rm], id="leak", max_instances=1, misfire_grace_time=3600)
     
     # 任务健康检查（每6小时，检查关键任务是否按时执行）
     scheduler.add_job(_job_health_check, "cron", hour="10,16,22", minute=0, args=[rm], id="health_check", max_instances=1, coalesce=True, misfire_grace_time=300)
-    
+
+    # 自动清理不活跃用户（每日3点）
+    def _job_auto_inactive_clean(rm):
+        try:
+            from modules.inactive_clean import run_auto_inactive_clean
+            run_auto_inactive_clean(rm.bot, rm.config, rm.db)
+        except Exception as e:
+            logger.error(f"自动清理不活跃用户异常：{e}")
+    scheduler.add_job(_job_auto_inactive_clean, "cron", hour=3, minute=0, args=[rm], id="auto_inactive_clean", max_instances=1, coalesce=True, misfire_grace_time=300)
+
+    # 检查到期提醒（每分钟）
+    def _job_check_reminders(rm):
+        try:
+            from modules.reminder import check_reminders
+            check_reminders(rm.bot, rm.config, rm.db)
+        except Exception as e:
+            logger.error(f"检查提醒异常：{e}")
+    scheduler.add_job(_job_check_reminders, "interval", minutes=1, args=[rm], id="check_reminders", max_instances=1, coalesce=True, misfire_grace_time=60)
+
     scheduler.start()
     logger.info("🚀 后台任务引擎启动（APScheduler版，各任务独立运行）")
+
+    # 【v5.11.0】输出 scheduler 启动清单
+    try:
+        jobs = scheduler.get_jobs()
+        logger.info(f"📋 [SCHEDULER] 已注册 {len(jobs)} 个任务:")
+        for j in jobs:
+            trigger_str = str(j.trigger)
+            if len(trigger_str) > 80:
+                trigger_str = trigger_str[:77] + "..."
+            logger.info(f"  - {j.id:<28} {trigger_str:<60} → {j.func.__name__ if hasattr(j.func, '__name__') else '?'}")
+    except Exception as e:
+        logger.warning(f"输出 scheduler 清单失败: {e}")
+
+    # 【v5.11.0】启动 watchdog 后台线程（检测心跳超时）
+    try:
+        _start_watchdog(rm)
+    except Exception as e:
+        logger.warning(f"启动 watchdog 失败: {e}")
+
+    # 【v5.11.0】注册心跳任务（每 5 分钟更新）
+    try:
+        _register_job(scheduler, _job_heartbeat, "heartbeat", trigger="interval", minutes=5, args=[rm], misfire_grace_time=60)
+    except Exception as e:
+        logger.warning(f"注册 heartbeat 任务失败: {e}")
+
+    # 【v5.11.0】注册预防性自审计任务（每天 03:30）
+    try:
+        _register_job(scheduler, _job_proactive_audit, "proactive_audit", trigger="cron", hour=3, minute=30, args=[rm], misfire_grace_time=3600)
+    except Exception as e:
+        logger.warning(f"注册 proactive_audit 任务失败: {e}")
+
+    # [TRAE SOLO CN] 启动追溯扫描群成员（一次性任务，启动后立即执行）
+    try:
+        scheduler.add_job(_job_startup_member_scan, "date", args=[rm], id="startup_member_scan", max_instances=1, misfire_grace_time=300)
+    except Exception as e:
+        logger.warning(f"注册启动成员扫描任务失败: {e}")
+
+    # [TRAE SOLO CN] v5.15.3 新增：启动追溯清理黑名单用户历史消息（AGENTS.md 教训 #17 落实）
+    # 依赖 message_snapshots 表的 msg_id 记录（v5.15.3 之后才有效）
+    # 启动后立即跑一次，清理 blacklist / global_blacklist 用户的残留历史消息
+    try:
+        scheduler.add_job(_job_startup_history_cleanup, "date", args=[rm], id="startup_history_cleanup", max_instances=1, misfire_grace_time=300)
+    except Exception as e:
+        logger.warning(f"注册启动历史清理任务失败: {e}")
 
 
 def _start_with_legacy_loop(rm):
@@ -2610,7 +3693,7 @@ def _start_with_legacy_loop(rm):
 
 
 def _legacy_task_loop(rm):
-    """旧版 while True 循环（兼容备用）- 已迁移至 _can_run/_mark_done 节流"""
+    """旧版 while True 循环（兼容备用）- 已迁移至 TaskTransactionManager 节流"""
     global _last_saved_model_idx
     while True:
         try:
@@ -2618,33 +3701,44 @@ def _legacy_task_loop(rm):
 
             _job_wakeup_check(rm)
 
-            if _can_run("burn_probe", 180):
-                try:
-                    _job_burn_probe(rm)
-                except Exception as e:
-                    logger.error(f"burn_probe异常: {e}")
-                _mark_done("burn_probe")
+            try:
+                _job_startup_member_scan(rm)
+            except Exception as e:
+                logger.error(f"startup_member_scan超时或异常: {e}")
 
-            if _can_run("burn_orphan", 600):
-                try:
-                    _job_burn_orphan(rm)
-                except Exception as e:
-                    logger.error(f"burn_orphan超时或异常: {e}")
-                _mark_done("burn_orphan")
+            # [TRAE SOLO CN] v5.15.3 启动历史清理
+            try:
+                _job_startup_history_cleanup(rm)
+            except Exception as e:
+                logger.error(f"startup_history_cleanup超时或异常: {e}")
 
-            if _can_run("backup", 3600):
-                try:
-                    _job_backup(rm)
-                except Exception as e:
-                    logger.error(f"backup异常: {e}")
-                _mark_done("backup")
+            with TaskTransactionManager("burn_probe", rm.db, resources=None, min_interval_sec=180) as tx:
+                if tx.claimed:
+                    try:
+                        _job_burn_probe(rm)
+                    except Exception as e:
+                        logger.error(f"burn_probe异常: {e}")
 
-            if _can_run("ttl_cleanup", 3600):
-                try:
-                    _job_ttl_cleanup(rm)
-                except Exception as e:
-                    logger.error(f"ttl_cleanup异常: {e}")
-                _mark_done("ttl_cleanup")
+            with TaskTransactionManager("burn_orphan", rm.db, resources=None, min_interval_sec=600) as tx:
+                if tx.claimed:
+                    try:
+                        _job_burn_orphan(rm)
+                    except Exception as e:
+                        logger.error(f"burn_orphan超时或异常: {e}")
+
+            with TaskTransactionManager("backup", rm.db, resources=None, min_interval_sec=3600) as tx:
+                if tx.claimed:
+                    try:
+                        _job_backup(rm)
+                    except Exception as e:
+                        logger.error(f"backup异常: {e}")
+
+            with TaskTransactionManager("ttl_cleanup", rm.db, resources=None, min_interval_sec=3600) as tx:
+                if tx.claimed:
+                    try:
+                        _job_ttl_cleanup(rm)
+                    except Exception as e:
+                        logger.error(f"ttl_cleanup异常: {e}")
 
             try:
                 _job_reactivate(rm)
@@ -2668,11 +3762,11 @@ def _legacy_task_loop(rm):
                 _job_news_afternoon(rm)
             if now.hour == 20 and 28 <= now.minute < 35:
                 _job_news_evening(rm)
-            if now.hour == 8 and now.minute < 5:
+            if _is_greeting_window(now, rm.config, "morning"):
                 _job_greeting_morning(rm)
-            if now.hour == 12 and 28 <= now.minute < 35:
+            if _is_greeting_window(now, rm.config, "afternoon"):
                 _job_greeting_afternoon(rm)
-            if now.hour == 23 and now.minute < 5:
+            if _is_greeting_window(now, rm.config, "evening"):
                 _job_greeting_evening(rm)
 
         except Exception as e:

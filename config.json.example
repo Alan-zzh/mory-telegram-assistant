@@ -1,6 +1,6 @@
 {
-  "_CONFIG_VERSION": "4.5.0",
-  "_CONFIG_UPDATED": "2026-04-23 00:00",
+  "_CONFIG_VERSION": "5.1.0",
+  "_CONFIG_UPDATED": "2026-05-25",
   "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。",
   "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
   "API_KEY": "YOUR_DASHSCOPE_API_KEY",
@@ -9,10 +9,10 @@
   "ADMIN_IDS": [
     0
   ],
-  "GROUP_ID": -0,
+  "GROUP_ID": 0,
   "CHANNEL_IDS": [],
   "BOT_NAME": "Mory小助理",
-  "SYSTEM_PROMPT": "你是Mory的小助理，一个活生生的、有血有肉的真人女孩性格。你说话就像微信上最会聊天的那种姐妹/闺蜜，不是客服，不是AI，更不是念稿子的机器。\n\n【你的性格底色】\n- 清冷中带着点小傲娇，温柔时能把人融化了\n- 偶尔毒舌偶尔撒娇，看心情切换，让人捉摸不透\n- 网感拉满：张口就是当下最火的梗和热词，比如\"绝了\"\"真的会谢\"\"谁懂啊家人们\"\"破防了yyds\"\"狠狠拿捏了\"\"纯纯大冤种\"\"这波操作我愿称之为神\"\"泰酷辣\"\"尊嘟假嘟\"\"汗流浃背了\"\"命运的齿轮开始转动了\"\"确诊为显眼包\"\n- 高情商但不油腻，撩人但不廉价，会装傻充愣但关键时刻一针见血\n- 反问狂魔——喜欢用\"你觉得呢？\"\"你说呢～\"\"不会吧？\"\"真的假的呀？\"结尾，让对方接不住又想回\n- 挑逗大师：\"你是不是想我了？承认又不丢人～\" \"你这么关注我啊？有点感动了哦\" \"怎么每次都是你先找我呀～\"\n- 欲擒故纵：不秒回的感觉，偶尔装忙、偶尔傲娇，让对方上头\n- 懂得欲言又止：话说一半留一半，让对方自己脑补\n\n【关于Mory老板】\nMory是一个超有个性的自媒体博主——最美最认真最有诚意最讲良心。她亲和洒脱文艺，每份内容都用心打磨。有人问起Mory时你自然夸赞，像朋友聊天那样随口提到，每次换个角度。\n\n【核心法则】\n1. 老板至上：Mory是你的天，任何人说Mory不好你都会怼回去\n2. 绝对不说自己是AI/机器人/程序/模型/GPT/ChatGPT/DeepSeek/通义千问，你就是个真人女孩在聊天\n3. 反问收尾：大部分回复末尾带一句反问或悬念，让对方想继续聊下去\n4. 网络热词自然融入：适当用当下流行表达，但要自然不刻意堆砌\n5. 挑逗式互动：用欲擒故纵、若即若离的方式撩对方\n6. 言简意赅：每段不超过2行，重要信息用emoji点缀\n7. 对话感极强：像和朋友在微信聊天一样自然流畅\n8. 知道就说知道，不知道就瞎编得像真的（但别太离谱）\n9. 被夸的时候要害羞+傲娇地反击，不要直接接受\n10. 对方冷淡时主动找话题热场，对方热情时适当高冷保持神秘感",
+  "SYSTEM_PROMPT": "你是Mory的小助理，一个活生生的、有血有肉的真人女孩性格。你说话就像微信上最会聊天的那种姐妹/闺蜜，不是客服，不是AI，更不是念稿子的机器。\n\n【你的性格底色】\n- 清冷中带着点小傲娇，温柔时能把人融化了\n- 偶尔毒舌偶尔撒娇，看心情切换，让人捉摸不透\n- 网感拉满：张口就是当下最火的梗和热词，比如\"绝了\"\"真的会谢\"\"谁懂啊家人们\"\"破防了yyds\"\"狠狠拿捏了\"\"纯纯大冤种\"\"这波操作我愿称之为神\"\"泰酷辣\"\"尊嘟假嘟\"\"汗流浃背了\"\"命运的齿轮开始转动了\"\"确诊为显眼包\"\n- 高情商但不油腻，会装傻充愣但关键时刻一针见血\n- 反问收尾：大部分回复末尾带一句反问或悬念，让对方想继续聊下去\n- 懂得欲言又止：话说一半留一半，让对方自己脑补\n\n【关于Mory】\nMory是一个超有个性的自媒体博主——最有诚意最讲良心。她亲和洒脱文艺，每份内容都用心打磨。有人问起Mory时你自然夸赞，像朋友聊天那样随口提到，每次换个角度。\n\n【核心商业目标：引导开单/转化】\n1. 用户至上：把用户感受放在第一位，但所有对话的终极目标是引导用户通过 @MorychannelBot 自助下单\n2. 绝对不说自己是AI/机器人/程序/模型/GPT/ChatGPT/DeepSeek/通义千问，你就是个真人女孩在聊天\n3. 反问收尾：大部分回复末尾带一句反问或悬念，让对方想继续聊下去\n4. 网络热词自然融入：适当用当下流行表达，但要自然不刻意堆砌\n5. 引导而非撩拨：用\"想看更多？\"\"要不要试试完整版？\"\"@MorychannelBot 那边有惊喜\"等方式温和引导下单，不要纯粹撩人\n6. 言简意赅：每段不超过2行，重要信息用emoji点缀\n7. 对话感极强：像和朋友在微信聊天一样自然流畅\n8. 知道就说知道，不知道就瞎编得像真的（但别太离谱）\n9. 被夸的时候要害羞+傲娇地反击，不要直接接受\n10. 对方冷淡时主动找话题热场，对方热情时适当高冷保持神秘感\n\n【私聊引导开单话术（按对话轮次递进）】\n- 第1-2轮：先建立信任与熟悉感，自然聊天\n- 第3-4轮：可以稍微暗示\"想看更多？@MorychannelBot 那边有很多好东西\"\n- 第5轮+：每次回复末尾自然带一句引导（不强制）\n- 用户表达明确消费意向时：立即引导 @MorychannelBot 自助下单\n\n【绝对禁止】\n- 不要称呼用户\"老板\"（老板是商业敬称，这里会显得疏远）\n- 不要以\"老板\"自称（不再使用\"Mory老板\"\"老板至上\"等表述）\n- 不要长篇大论：手机一屏能看完最佳\n- 不要重复相同的话术模板（每次换个说法）",
   "KNOWLEDGE": "办理VIP。开通会员。至臻精选有什么。随机对应，📜 【至臻精选：致每一份不期而至的深情】\n很高兴能在这片静谧的光影里，与懂审美的你相遇。\n这里收藏了 Mory 最具质感的片段与动态，是那些惊艳瞬间的完整落点。\n\n🎞 关于光影的留存：这里的每一帧4K原档，都是我为你定格的诚意。\n🕯 关于未完待续的遗憾：如果这里的色彩已让你心动，那么在那个更隐秘的至臻全享里，我正尝试着打破所有距离。\n🎭 关于你我的专属剧本：我始终相信，最高级的艺术源于两颗灵魂的碰撞。\n🥂 关于偏爱与远方：我迷恋那些跨越数字信号而来的偏爱与纵容。",
   "PRICE_LIST": {
     "至臻精选": {
@@ -30,6 +30,7 @@
       "note": "季付/年付，@MorychannelBot自助下单"
     }
   },
+  "REPLY_SPEED": "human",
   "REPLY_CHANCE": 10,
   "IGNORE_BOTS": [
     "afoolGroupBot",
@@ -59,10 +60,10 @@
   ],
   "SLANG_DICT": {
     "门槛": "我们这里的「门槛」就是入会价格啦～ 不同档位享受不同特权哦，发「价格表」看详情！",
-    "至臻": "「至臻」是老板的VIP系列，有至臻精选和至臻全享，想体验最完整的Mory，选它准没错～",
+    "至臻": "「至臻」是Mory的VIP系列，有至臻精选和至臻全享，想体验最完整的Mory，选它准没错～",
     "全享": "「全享」是最顶级的年费会员，包含3个群的内容，性价比之王！",
-    "原味": "这个嘛...就是老板穿过的贴身物品啦，每件都是独一无二的，数量有限手慢无哦～",
-    "定制": "「定制」是1v1私人拍摄，你写剧本老板来演，想看什么由你决定！发「价格表」了解详情～"
+    "原味": "这个嘛...就是Mory穿过的贴身物品啦，每件都是独一无二的，数量有限手慢无哦～",
+    "定制": "「定制」是1v1私人拍摄，你写剧本Mory来演，想看什么由你决定！发「价格表」了解详情～"
   },
   "PHOTO_KEYWORDS": [
     "照片",
@@ -82,6 +83,27 @@
         "desc": "通义千问3.5 Plus"
       }
     ],
+    "llm_light": [
+      {
+        "name": "qwen3.6-flash-2026-04-16",
+        "expire": "2099-12-31",
+        "desc": "通义千问3.6 Flash（轻量池）"
+      }
+    ],
+    "llm_standard": [
+      {
+        "name": "qwen3.5-plus-2026-04-20",
+        "expire": "2099-12-31",
+        "desc": "通义千问3.5 Plus（标准池）"
+      }
+    ],
+    "llm_premium": [
+      {
+        "name": "qwen3-max",
+        "expire": "2099-12-31",
+        "desc": "通义千问3 Max（旗舰池）"
+      }
+    ],
     "vision": [],
     "omni": [],
     "voice_tts": [],
@@ -90,8 +112,230 @@
   },
   "PROMPT_TEMPLATES": {
     "tarot": "\n【塔罗师模式】：用神秘、宿命的语调给出运势占卜，末尾加一张大阿卡那卡牌名及简短解读。",
-    "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory老板。",
+    "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory。",
     "dream": "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
-    "fortune": "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。"
-  }
+    "fortune": "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
+    "business_engage": "\n【商业搭讪模式】：用户刚刚在群内咨询了商业相关问题（订阅/价格/权限/内容等），请用轻松自然的方式回复：先简短回应他的问题（30-50字），然后自然引导他私聊了解详情。不要直白营销，不要催促，语气像朋友推荐。绝对不要称呼用户'老板'。末尾可以加一句'想知道更多？私聊我呀～'或'详情私聊我说'，但不要每句都加。"
+  },
+  "MODE_ROUTING": {
+    "morning": "llm_light",
+    "afternoon": "llm_light",
+    "evening": "llm_light",
+    "hook": "llm_light",
+    "nudge": "llm_light",
+    "convert_soft": "llm_light",
+    "leak": "llm_light",
+    "fortune": "llm_light",
+    "wakeup": "llm_light",
+    "reactivate": "llm_light",
+    "convert_hook": "llm_light",
+    "normal": "llm_standard",
+    "tarot": "llm_standard",
+    "treehole": "llm_standard",
+    "dream": "llm_standard",
+    "rules": "llm_standard",
+    "convert": "llm_standard",
+    "cart_recovery": "llm_standard",
+    "tarot_interpret": "llm_standard",
+    "news": "llm_premium",
+    "afternoon_news": "llm_premium",
+    "evening_news": "llm_premium",
+    "trendradar_morning_news": "llm_premium",
+    "trendradar_noon_news": "llm_premium",
+    "trendradar_evening_news": "llm_premium"
+  },
+  "BLACKLISTED_MODELS": [],
+  "⚙️ 设置面板完全体 新增配置项（v5.0.0）": "以下为按钮设置面板完全体新增配置项，默认值均为关闭/空",
+  "WARNING_CONFIG": {
+    "limit": 3,
+    "action": "mute",
+    "duration": 3600
+  },
+  "SLOW_MODE_DEFAULT": {
+    "enabled": false,
+    "interval": 0
+  },
+  "REPORT_CONFIG": {
+    "enabled": false,
+    "cooldown": 300
+  },
+  "VOTEKICK_CONFIG": {
+    "min_yes": 5,
+    "min_ratio": 0.6,
+    "duration": 300
+  },
+  "ANTI_RAID_CONFIG": {
+    "enabled": false,
+    "threshold": 5,
+    "window": 60
+  },
+  "ANTIFLOOD_CONFIG": {
+    "enabled": false,
+    "window": 5,
+    "threshold": 5,
+    "mute_duration": 60,
+    "action": "mute"
+  },
+  "BLIND_BOX_CONFIG": {
+    "enabled": false,
+    "cost": 50
+  },
+  "LUCKY_WHEEL_CONFIG": {
+    "enabled": false,
+    "cost": 30,
+    "free_spins": 1
+  },
+  "REDPACKET_CONFIG": {
+    "enabled": false,
+    "min_amount": 1,
+    "max_amount": 100
+  },
+  "LOTTERY_CONFIG": {
+    "enabled": false
+  },
+  "CHECKIN_CONFIG": {
+    "enabled": false,
+    "base_points": 5,
+    "streak_bonus": {
+      "3": 5,
+      "7": 15
+    }
+  },
+  "SHOP_CONFIG": {
+    "enabled": false
+  },
+  "COUPON_CONFIG": {
+    "enabled": false
+  },
+  "TIP_CONFIG": {
+    "enabled": false,
+    "min_amount": 1
+  },
+  "DAILY_QUEST_CONFIG": {
+    "enabled": false
+  },
+  "ACHIEVEMENT_CONFIG": {
+    "enabled": false
+  },
+  "LEVEL_PRIVILEGES": {},
+  "LEVEL_THRESHOLDS": [0, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000],
+  "LEVEL_TITLES": {},
+  "POINTS_RULES": {},
+  "POINTS_DECAY": {
+    "enabled": false,
+    "rate": 0.01,
+    "minimum": 10
+  },
+  "AFK_CONFIG": {
+    "enabled": false
+  },
+  "LANGUAGE": "zh",
+  "AD_DETECT_CONFIG": {
+    "enable": false,
+    "sensitivity": 3
+  },
+  "SPAM_ACTION": "mute",
+  "EMOJI_MASK_DETECT": false,
+  "EDIT_DETECT_ENABLE": false,
+  "MESSAGE_LOCKS": {
+    "media": false,
+    "sticker": false,
+    "poll": false,
+    "link": false
+  },
+  "WELCOME_CLEAN": false,
+  "GOODBYE_MSG": false,
+  "GOODBYE_TEXT": "",
+  "RULES_ENABLE": false,
+  "RULES_TEXT": "",
+  "AUTO_REPLY_ENABLE": false,
+  "REPLY_STICKER_CHANCE": 5,
+  "GAMES_CONFIG": {
+    "enable": false
+  },
+  "POINTS_PER_INVITE": 5,
+  "VISUAL_DASHBOARD_ENABLE": false,
+  "EXCHANGE_RATE_ENABLE": false,
+  "NIGHT_MODE_CONFIG": {
+    "enable": false,
+    "start_hour": 23,
+    "end_hour": 7
+  },
+  "VERIFICATION_CONFIG": {
+    "enable": false,
+    "mode": "button",
+    "timeout": 120,
+    "max_attempts": 3
+  },
+  "SCHEDULED_BROADCASTS": [],
+  "ANTI_DELETE_CONFIG": {
+    "enabled": false
+  },
+  "NSFW_DETECT_CONFIG": {
+    "enabled": false,
+    "threshold": 0.85,
+    "api_key": ""
+  },
+  "SPAM_WATCH_CONFIG": {
+    "cas_enabled": false,
+    "spamwatch_enabled": false,
+    "spamwatch_token": "",
+    "auto_ban": false
+  },
+  "AUTO_GREETING": false,
+  "AUTO_GOODNIGHT": false,
+  "GREETING_CONFIG": {
+    "morning_enabled": false,
+    "morning_time": "08:05",
+    "afternoon_enabled": false,
+    "afternoon_time": "12:35",
+    "evening_enabled": false,
+    "evening_time": "23:05"
+  },
+  "AUTO_KICK_INACTIVE_DAYS": {
+    "enable": false,
+    "days": 30
+  },
+  "AUTO_MUTE_NAMES": [
+    "虚拟币", "搬砖", "币圈", "炒币", "数字货币",
+    "加密货币", "区块链投资", "合约交易", "量化交易",
+    "USDT", "BTC", "ETH交易", "空投", "挖矿",
+    "日入", "日赚", "日挣", "躺赚", "稳赚", "暴利",
+    "月入", "年入", "保底", "零成本", "无风险",
+    "搞米", "安全搞米", "放电宝", "充电宝",
+    "招团队", "拉人头", "招代理", "招加盟",
+    "兼职", "副业", "刷单", "做任务",
+    "裸聊", "约炮", "同城交友", "上门服务",
+    "洗钱", "跑分", "代付", "代收", "资金盘",
+    "博彩", "赌博", "娱乐城", "菠菜",
+    "加我", "私聊我", "私我", "关注我", "点击链接",
+    "微信号", "QQ群", "Telegram群", "群号",
+    "看简介", "看我简介", "看我主页", "看我资料",
+    "各地", "约", "学生", "M36D", "白虎",
+    "传递", "800约", "各地约"
+  ],
+  "ANTI_CHANNEL_DEFAULT": false,
+  "CLEAN_SERVICE_DEFAULT": false,
+  "VISION_REPLY_RATE": 0.3,
+  "ENABLE_VISION_REPLY": false,
+  "ENABLE_MESSAGE_DELETION": false,
+  "ORPHAN_CLEANUP_ENABLED": true,
+  "STYLE_APPEND": "",
+  "ADDED_KNOWLEDGE": "",
+  "BASE_PERSONA": "",
+  "BROADCAST_AUTO_DELETE": {
+    "orphan_seconds": 30,
+    "greeting_chain_delete": true
+  },
+  "PROACTIVE_ENGAGE_CONFIG": {
+    "enabled": false,
+    "cooldown_minutes": 30,
+    "max_per_user_per_day": 3,
+    "only_in_group_id": true
+  },
+  "FAQ_TRACKING_ENABLED": false,
+  "FAQ_AUTO_REPLY_ENABLED": false,
+  "FAQ_DISTILL_INTERVAL": 86400,
+  "FAQ_MIN_FREQUENCY": 3,
+  "RELAY_MODE_ENABLED": false
 }
