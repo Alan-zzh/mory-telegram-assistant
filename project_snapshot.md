@@ -105,20 +105,16 @@ mory_assistant/
 │       ├── config_repo.py  # 系统配置/关键词/定时消息
 │       ├── social_repo.py  # AFK/邀请/验证/联邦
 │       └── question_repo.py # 【v5.15.0新增】问题追踪/FAQ匹配/蒸馏/候选审核
-├── modules/
+├── modules/                # 88 个模块 .py + triggers/ 4 个（详见 README.md §1.8 模块能力矩阵）
 │   ├── __init__.py
-│   ├── admin_cmds.py       # 管理员指令
-│   ├── ad_detector.py      # 广告检测引擎（五级检测L0-L4+延迟封禁）
-│   ├── ad_profile_signals.py # 用户资料广告信号：名称/BIO/Premium emoji状态元数据+贴纸缩略图OCR
-│   ├── ad_patterns_encoded.py  # 编码后的广告关键词（Unicode转义防拦截）
-│   ├── auto_tasks.py       # 定时任务（52个_job_*函数，TaskTransactionManager统一事务+原子抢占防重复+数据库持久化+失败重试+每日自动备份+日志自动清理）
-│   ├── avatar_detector.py  # 色情头像检测
-│   ├── emoji_mask_detector.py # Emoji面具检测
-│   ├── content.py          # 内容处理（图片打码+频道转发+勋章）
-│   ├── group_mgr.py        # 群管理（入群欢迎/敏感词/刷屏/黑名单/广告拦截）
-│   ├── keyword_trigger.py  # 关键词触发（静态/AI/动作三种回复模式）
-│   ├── natural_cmd.py      # 自然语言指令（塔罗/解梦/树洞/配置修改）
-│   └── optimizer_admin.py  # 运营管理指令（数据看板/转化统计）
+│   ├── auto_tasks.py       # 定时任务（52个_job_*函数）
+│   ├── ... 86 个模块文件（完整列表见 README.md §1.8）
+│   └── triggers/           # 场景触发器子目录
+│       ├── __init__.py
+│       ├── base.py         # 触发器基类
+│       ├── cold_group.py   # 冷群唤醒
+│       ├── flood_mediate.py # 刷屏调解
+│       └── night_hint.py   # 深夜暗示
 ├── dashboard/
 │   ├── app.py              # 精简入口（57行：create_app+Blueprint注册）
 │   ├── wsgi.py             # gunicorn WSGI入口（生产环境用）
@@ -141,10 +137,12 @@ mory_assistant/
 │   │   ├── monitor_api.py   # 【v5.26.0】DB迁移监控API（1端点：db-migration/status）
 │   │   ├── bot_routing_api.py # 【v5.26.0】多Bot路由管理API（4端点：list/assign/remove/check）
 │   │   ├── rbac_approval_api.py # 【v5.26.0】RBAC权限审批流API（6端点：request/approve/reject/cancel/list/detail）
+│   │   ├── health_api.py   # 【v5.27.0-RC1】健康检查API（5端点：health/version/uptime/routes/db）
 │   │   ├── user_lifecycle_api.py # 【v5.27.0-RC1】用户生命周期分布API
 │   │   ├── funnel_api.py   # 【v5.27.0-RC1】转化漏斗可视化API
 │   │   ├── metrics_api.py  # 【v5.27.0-RC1】Prometheus 指标端点
 │   │   └── quality_api.py  # 【v5.27.0-RC1】内容质量评分API
+│   │   # 共 22 个 API 文件 / 156 条路由（实测 grep @.*.route(），见 README.md §1.9
 │   ├── audit.py            # 【v5.23.0】RBAC权限+审计日志（三角色admin/operator/viewer+permission_required装饰器）
 │   ├── rbac_approval.py    # 【v5.26.0】RBAC权限变更审批流（permission_change_requests表+6核心函数）
 │   └── templates/
@@ -187,7 +185,7 @@ mory_assistant/
 │   ├── env.py              # Alembic 环境配置（SQLite batch 模式）
 │   ├── script.py.mako      # 迁移脚本模板
 │   └── versions/           # 版本脚本
-│       └── 0001_initial_schema.py # 107 张表基线版本
+│       └── 0001_initial_schema.py # 108 张表基线版本
 ├── i18n/                   # 【v5.27.0-RC1】多语言包目录
 │   ├── zh-CN.json          # 中文语言包示例
 │   └── en-US.json          # 英文语言包示例

@@ -127,9 +127,9 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | `voice_asr` | ⚪ 占位 | `[]` | 语音识别（未启用） |
 | `embedding` | ⚪ 占位 | `[]` | 向量化模型（未启用） |
 
-### 1.8 88 个 modules 8 大类（`ls modules/` 实测）
+### 1.8 95+35 个模块 9 大类（`ls modules/` + `ls core/` 实测）
 
-**实测 88 个**业务模块（v5.26.0 更新，不含 `__init__.py` 和 `triggers/` 子目录）。**8 大类分组**：
+**实测 95 个业务模块 + 35 个核心框架文件**（v5.28.0 更新，不含 `__init__.py`）。**9 大类分组**（A-H 为业务模块，I 为系统基建）：
 
 #### A 核心群管（17 个）
 
@@ -250,8 +250,55 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | [speech_stats.py](modules/speech_stats.py) | 发言统计（`speech_daily`） |
 | [visual_dashboard.py](modules/visual_dashboard.py) | 可视化数据看板 |
 | [vote_kick.py](modules/vote_kick.py) | 投票踢人（`VOTEKICK_CONFIG={min_yes:5, min_ratio:0.6}`） |
+| [ab_guardian.py](modules/ab_guardian.py) | A/B 测试守护模块 |
+| [ab_insights.py](modules/ab_insights.py) | A/B 测试洞察 |
+| [ad_profile_signals.py](modules/ad_profile_signals.py) | 广告用户画像信号 |
+| [triggers/base.py](modules/triggers/base.py) | 场景触发器基类 |
+| [triggers/cold_group.py](modules/triggers/cold_group.py) | 冷场破冰触发器 |
+| [triggers/flood_mediate.py](modules/triggers/flood_mediate.py) | 刷屏介入触发器 |
+| [triggers/night_hint.py](modules/triggers/night_hint.py) | 夜间高意向暗示触发器 |
 
-> **实际统计**：A=18 + B=7 + C=5 + D=12 + E=6 + F=13 + G=3 + H=16 = **80**（含 `pin_manage.py` / `welcome_customization.py` 归类微调，**实测 88 个** 业务模块文件，差异来自部分模块跨类归类）
+#### I 系统基建（35 个核心框架文件）
+
+| 模块 | 功能 |
+|------|------|
+| [ab_test_router.py](core/ab_test_router.py) | A/B 测试分流（uid%10 路由 + llm_group 标签） |
+| [ab_testing.py](core/ab_testing.py) | A/B 测试统计分析 |
+| [alert_bot.py](core/alert_bot.py) | 独立告警 Bot（MD5 去重 + 5min 窗口 + deque 限流 10/min） |
+| [alert_rules.py](core/alert_rules.py) | 告警规则定义 |
+| [anomaly_detector.py](core/anomaly_detector.py) | Z-Score 异常检测 |
+| [bot_routing.py](core/bot_routing.py) | 多 Bot 任务分工（静态路由表 + Webhook 查询） |
+| [broadcast_formatter.py](core/broadcast_formatter.py) | 播报富文本格式化 |
+| [cache_manager.py](core/cache_manager.py) | 磁盘缓存层（diskcache） |
+| [config_compat.py](core/config_compat.py) | 配置向后兼容 |
+| [db_connection_proxy.py](core/db_connection_proxy.py) | SQLite 连接代理（全量化，零侵入拦截 execute） |
+| [db_migration_monitor.py](core/db_migration_monitor.py) | DB 迁移指标监控 |
+| [funnel_state_machine.py](core/funnel_state_machine.py) | 转化漏斗状态机（末次触达 48h 回溯） |
+| [growth_optimizer.py](core/growth_optimizer.py) | 10 项增长优化引擎 |
+| [http_client.py](core/http_client.py) | 统一 HTTP 客户端（超时 + 重试 + 异常分类） |
+| [i18n.py](core/i18n.py) | 国际化核心 |
+| [intent_router.py](core/intent_router.py) | 动态意图识别（规则引擎零 TOKEN 兜底 + LLM 精分类） |
+| [llm_cost_guard.py](core/llm_cost_guard.py) | LLM 成本熔断器（滑动窗口 deque + 三档阈值） |
+| [memory_summarizer.py](core/memory_summarizer.py) | 混合记忆（异步 LLM 摘要 + 1h 冷却） |
+| [metrics.py](core/metrics.py) | Prometheus 指标（Gauge/set 防重复累加） |
+| [model_router.py](core/model_router.py) | 三层模型池路由（task_type 路由 + 故障转移降级链） |
+| [persona_adapter.py](core/persona_adapter.py) | 人设跨模型一致性（按模型家族定制 Prompt） |
+| [pinyin_util.py](core/pinyin_util.py) | 拼音工具（无声调检测） |
+| [profile_learner.py](core/profile_learner.py) | 用户画像自动学习（6 维 + 等级计算） |
+| [quality_evaluator.py](core/quality_evaluator.py) | LLM 内容质量评估 |
+| [rate_limiter.py](core/rate_limiter.py) | 速率限制器 |
+| [scheduler_monitor.py](core/scheduler_monitor.py) | 调度监控（APScheduler Event Listener + 内存指标） |
+| [settings.py](core/settings.py) | 统一配置（pydantic-settings + normalize_runtime_config） |
+| [shared_db.py](core/shared_db.py) | 多 Bot 共享数据库（ATTACH DATABASE） |
+| [structured_logger.py](core/structured_logger.py) | 结构化日志（structlog JSON） |
+| [telebot_compat.py](core/telebot_compat.py) | Telegram Bot API 兼容层 |
+| [telemetry.py](core/telemetry.py) | 遥测数据采集 |
+| [theme_engine.py](core/theme_engine.py) | 播报多样性引擎 |
+| [tracing.py](core/tracing.py) | OpenTelemetry 分布式追踪 |
+| [user_lifecycle.py](core/user_lifecycle.py) | 用户生命周期管理 |
+| [write_queue.py](core/write_queue.py) | SQLite 单线程写入队列（queue.Queue + daemon Worker） |
+
+> **实际统计**：A=18 + B=7 + C=5 + D=12 + E=6 + F=13 + G=3 + H=23 + I=35 = **122**（含跨类归类微调，**实测 95+35 = 130 个** 文件，差异来自部分文件未在分类中逐行列全）
 
 ### 1.9 Dashboard 156 API 端点 + 8 类设置面板
 
@@ -259,17 +306,27 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 
 | 文件 | 端点数 | 职责 |
 |------|--------|------|
-| [config_api.py](dashboard/api/config_api.py) | 7 | 读取/写入 config.json（保护密钥）+ 播报格式/按钮样式/Custom Emoji/用户画像 |
+| [ab_test_api.py](dashboard/api/ab_test_api.py) | 8 | A/B 测试 / 按钮统计 / 用户画像 |
+| [attribution_api.py](dashboard/api/attribution_api.py) | 8 | 归因报表 / 转化漏斗 / 增长优化 |
+| [audit_api.py](dashboard/api/audit_api.py) | 3 | 审计日志 / 操作记录 |
+| [bot_routing_api.py](dashboard/api/bot_routing_api.py) | 4 | 多 Bot 路由 / 分组管理 |
+| [config_api.py](dashboard/api/config_api.py) | 8 | 读取/写入 config.json（保护密钥）+ 播报格式/按钮样式/Custom Emoji/用户画像 |
+| [engage_api.py](dashboard/api/engage_api.py) | 4 | 主动搭讪配置 |
+| [faq_api.py](dashboard/api/faq_api.py) | 10 | FAQ 统计 / 候选 / 知识库 |
 | [features_api.py](dashboard/api/features_api.py) | 9 | 功能开关 / 启用 / 关闭 |
+| [funnel_api.py](dashboard/api/funnel_api.py) | 2 | 转化漏斗可视化 |
 | [group_api.py](dashboard/api/group_api.py) | 2 | 群组信息 / 列表 |
 | [health_api.py](dashboard/api/health_api.py) | 5 | 健康检查 / 进程状态 / 评分 / 任务 / 审计 |
+| [metrics_api.py](dashboard/api/metrics_api.py) | 1 | Prometheus 指标暴露 |
 | [models_api.py](dashboard/api/models_api.py) | 3 | 模型池 / 路由配置 |
+| [monitor_api.py](dashboard/api/monitor_api.py) | 1 | 调度监控 / 任务状态 |
 | [orphan_api.py](dashboard/api/orphan_api.py) | 3 | 孤儿清理统计 / 强制清理 / 历史 |
+| [quality_api.py](dashboard/api/quality_api.py) | 2 | 对话质量评估 / 评分 |
+| [rbac_approval_api.py](dashboard/api/rbac_approval_api.py) | 6 | RBAC 权限审批流 |
+| [scheduler_api.py](dashboard/api/scheduler_api.py) | 2 | 调度器指标 / 任务状态 |
 | [settings_api.py](dashboard/api/settings_api.py) | 64 | **最大头**：所有设置面板（8 类 ~80 按钮） |
 | [stats_api.py](dashboard/api/stats_api.py) | 10 | 数据统计 / 转化率 / 用户活跃度 |
-| [ab_test_api.py](dashboard/api/ab_test_api.py) | 7 | A/B 测试 / 按钮统计 / 用户画像 |
-| [faq_api.py](dashboard/api/faq_api.py) | 10 | FAQ 统计 / 候选 / 知识库 |
-| [engage_api.py](dashboard/api/engage_api.py) | 4 | 主动搭讪配置 |
+| [user_lifecycle_api.py](dashboard/api/user_lifecycle_api.py) | 1 | 用户生命周期分布 |
 
 **8 类设置面板（115 按钮）**：
 1. **群管**：入群验证 / 慢模式 / 反刷屏 / 警告 / 黑名单 / 强制订阅 / 联邦封禁
@@ -336,42 +393,58 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 
 | 任务 | 行号 | 职责 |
 |------|------|------|
-| `_job_heartbeat` | 227 | 心跳保活 |
-| `_job_proactive_audit` | 232 | 主动审计（自检异常） |
-| `_job_news_morning` | 1007 | 早间新闻播报（真实源优先） |
-| `_job_news_afternoon` | 1012 | 午间新闻播报（真实源优先） |
-| `_job_news_evening` | 1017 | 晚间新闻播报（真实源优先） |
-| `_job_trendradar_morning` | 1022 | 兼容占位，已并入统一新闻主流程，仅作降级备用 |
-| `_job_trendradar_noon` | 1027 | 兼容占位，已并入统一新闻主流程 |
-| `_job_trendradar_evening` | 1032 | 兼容占位，已并入统一新闻主流程 |
-| `_job_greeting_morning` | 1166 | 早安问候链 |
-| `_job_greeting_afternoon` | 1194 | 午安问候链 |
-| `_job_greeting_evening` | 1222 | 晚安问候链 |
-| `_job_wakeup_check` | 1280 | 唤醒检查（`modes/wakeup` 路由） |
-| `_job_burn_probe` | 1299 | 烧号探测（账号质量评分） |
-| `_job_burn_orphan` | 1304 | 烧号孤儿回收（已删除用户清理） |
-| `_job_reactivate` | 1468 | 沉睡用户激活（`modes/reactivate`） |
-| `_job_cart_recovery` | **1535** | ⭐ **购物车挽回**（每小时 AI 个性化挽回私信） |
-| `_job_leak` | 1564 | 留资打捞（`modes/leak`） |
-| `_job_backup` | 1619 | 数据库备份 |
-| `_job_ttl_cleanup` | 1633 | TTL 过期数据清理 |
-| `_job_save_config` | 1652 | 配置保存（防丢失） |
-| `_job_channel_views` | 1666 | 频道浏览量统计 |
-| `_job_check_expired_redpackets` | 1692 | 过期红包退款 |
-| `_job_daily_report` | 1763 | 每日数据报告（当前为管理员私聊日报） |
-| `_job_weekly_report` | 2143 | 每周运营报告 |
-| `_job_monthly_report` | 2345 | 每月运营报告 |
-| `_job_tarot_flirt` | 2822 | 塔罗每日一撩（`modes/tarot_interpret`） |
-| `_job_startup_member_scan` | 2981 | 启动时成员扫描（Pyrogram） |
-| `_job_health_check` | 3178 | 健康检查 |
-| `_job_night_mode_start` | 3225 | 夜间模式开启 |
-| `_job_night_mode_end` | 3243 | 夜间模式关闭 |
-| `_job_scheduled_broadcast` | 3293 | 定时群播报 |
-| `_job_scheduled_messages` | 3380 | 定时消息 |
-| `_job_points_decay` | 3389 | 积分衰减（`rate=0.01`, `minimum=10`） |
-| `_job_vote_kick_check` | 3398 | 投票踢人检查 |
-| `_job_auto_inactive_clean` | 3413 | 自动不活跃清理（`AUTO_KICK_INACTIVE_DAYS`） |
-| `_job_check_reminders` | 3422 | 提醒检查 |
+| `_job_heartbeat` | 318 | 心跳保活 |
+| `_job_proactive_audit` | 323 | 主动审计（自检异常） |
+| `_job_news_morning` | 1187 | 早间新闻播报（真实源优先） |
+| `_job_news_afternoon` | 1192 | 午间新闻播报（真实源优先） |
+| `_job_news_evening` | 1197 | 晚间新闻播报（真实源优先） |
+| `_job_trendradar_morning` | 1202 | 兼容占位，已并入统一新闻主流程，仅作降级备用 |
+| `_job_trendradar_noon` | 1207 | 兼容占位，已并入统一新闻主流程 |
+| `_job_trendradar_evening` | 1212 | 兼容占位，已并入统一新闻主流程 |
+| `_job_greeting_morning` | 1430 | 早安问候链 |
+| `_job_greeting_afternoon` | 1465 | 午安问候链 |
+| `_job_greeting_evening` | 1500 | 晚安问候链 |
+| `_job_wakeup_check` | 1565 | 唤醒检查（`modes/wakeup` 路由） |
+| `_job_burn_probe` | 1584 | 烧号探测（账号质量评分） |
+| `_job_burn_orphan` | 1603 | 烧号孤儿回收（已删除用户清理） |
+| `_job_reactivate` | 1773 | 沉睡用户激活（`modes/reactivate`） |
+| `_job_cart_recovery` | **1882** | ⭐ **购物车挽回**（每小时 AI 个性化挽回私信） |
+| `_job_leak` | 1952 | 留资打捞（`modes/leak`） |
+| `_job_backup` | 2007 | 数据库备份 |
+| `_job_ttl_cleanup` | 2021 | TTL 过期数据清理 |
+| `_job_save_config` | 2040 | 配置保存（防丢失） |
+| `_job_channel_views` | 2054 | 频道浏览量统计 |
+| `_job_check_expired_redpackets` | 2080 | 过期红包退款 |
+| `_job_daily_report` | 2188 | 每日数据报告（当前为管理员私聊日报） |
+| `_job_weekly_report` | 2542 | 每周运营报告 |
+| `_job_monthly_report` | 2765 | 每月运营报告 |
+| `_job_tarot_flirt` | 3261 | 塔罗每日一撩（`modes/tarot_interpret`） |
+| `_job_startup_member_scan` | 3625 | 启动时成员扫描（Pyrogram） |
+| `_job_health_check` | 3833 | 健康检查 |
+| `_job_night_mode_start` | 3880 | 夜间模式开启 |
+| `_job_night_mode_end` | 3898 | 夜间模式关闭 |
+| `_job_scheduled_broadcast` | 3948 | 定时群播报 |
+| `_job_scheduled_messages` | 4286 | 定时消息 |
+| `_job_points_decay` | 4295 | 积分衰减（`rate=0.01`, `minimum=10`） |
+| `_job_vote_kick_check` | 4307 | 投票踢人检查 |
+| `_job_auto_inactive_clean` | 4322 | 自动不活跃清理（`AUTO_KICK_INACTIVE_DAYS`） |
+| `_job_check_reminders` | 4331 | 提醒检查 |
+| `_job_evaluate_conversation_quality` | 420 | 对话质量评估（LLM-as-a-Judge 采样评分） |
+| `_job_clean_relay_sessions` | 1589 | 中继会话清理（过期会话回收） |
+| `_job_faq_distill` | 2088 | FAQ 蒸馏（高频问答自动提取） |
+| `_job_daily_backup` | 3448 | 每日备份（数据库 + 配置） |
+| `_job_log_cleanup` | 3504 | 日志清理（过期日志自动删除） |
+| `_job_startup_history_cleanup` | 3554 | 启动历史清理（旧启动记录归档） |
+| `_job_rbac_audit` | 3962 | RBAC 权限审计（每月 1 日定期审计） |
+| `_job_sync_user_lifecycle_buckets` | 4167 | 用户生命周期桶同步 |
+| `_job_ab_guardian` | 4340 | A/B 测试守护（异常检测 + 自动停止） |
+| `_job_ab_weekly` | 4349 | A/B 周报生成 |
+| `_job_update_prometheus_metrics` | 4358 | Prometheus 指标更新 |
+| `_job_alert_health_check` | 4384 | 告警健康检查（2min 巡检） |
+| `_job_memory_idle_scan` | 4397 | 记忆空闲扫描（静默 30min + 15 轮触发） |
+| `_job_sync_scheduler_metrics` | 4412 | 调度器指标同步（5min 批量刷盘） |
+| `_job_flush_alert_summary` | 4427 | 告警摘要刷新（5min 定时汇总） |
+| `_job_check_db_migration` | 4443 | 数据库迁移检查（新迁移版本检测） |
 
 ### 1.12 108 张数据库表（`core/database.py`）
 
@@ -527,9 +600,9 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 [4] converted  → 已下单
 ```
 
-### 3.4 🛡 群管 88 模块（详尽 8 大类）
+### 3.4 🛡 群管 95+35 模块（详尽 9 大类）
 
-详见 §1.8（**88 个 modules 8 大类**），**不只列名，含功能+数据表**。
+详见 §1.8（**95+35 个 modules 9 大类**），**不只列名，含功能+数据表**。
 
 ### 3.5 📊 运营观察
 
@@ -818,7 +891,7 @@ python main.py
 1. **不混搭不同维度概念**：
    - `PROMPT_TEMPLATES`（4 个）≠ `MODE_ROUTING`（25 个）≠ 对话轮次递进（3 段）
    - `MODEL_POOLS`（9 池）≠ 3 层路由（**9 池 ≠ 3 层**；3 层是 MODE_ROUTING 的视角）
-   - 群管 80+ 不一定准确（实测 88 个文件）
+    - 群管文件总数：实测 95 个 modules + 35 个 core
 2. **引用配置前必须 grep 实测**：
    - 价格：先 `grep -A 3 "PRICE_LIST" config.json.example`
    - 话术：先 `grep -B 1 -A 1 "SLANG_DICT" config.json.example`
