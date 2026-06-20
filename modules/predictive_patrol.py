@@ -88,9 +88,8 @@ def detect_ai_quota(config: dict) -> dict:
                     days_left = (expire_dt - now).days
                     if days_left < 30:
                         expiring.append((m.get("name", "?"), days_left))
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         if expiring:
             return {
                 "status": "warning" if any(d < 7 for _, d in expiring) else "ok",

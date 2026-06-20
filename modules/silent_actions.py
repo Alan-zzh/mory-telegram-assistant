@@ -60,8 +60,8 @@ def handle_sban(bot, m, config, db):
         if config.get("ENABLE_MESSAGE_DELETION", False):
             try:
                 bot.delete_message(chat_id, m.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         # 记录管理日志
         _log_action(db, chat_id, m.from_user.id, target_uid, "sban")
         logger.info(f"静默封禁: chat={chat_id} target={target_uid} by={m.from_user.id}")
@@ -101,8 +101,8 @@ def handle_smute(bot, m, config, db):
         if config.get("ENABLE_MESSAGE_DELETION", False):
             try:
                 bot.delete_message(chat_id, m.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         _log_action(db, chat_id, m.from_user.id, target_uid, "smute")
         logger.info(f"静默禁言: chat={chat_id} target={target_uid} duration={duration}s")
     except Exception as e:
@@ -127,8 +127,8 @@ def handle_skick(bot, m, config, db):
         if config.get("ENABLE_MESSAGE_DELETION", False):
             try:
                 bot.delete_message(chat_id, m.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         _log_action(db, chat_id, m.from_user.id, target_uid, "skick")
         logger.info(f"静默踢出: chat={chat_id} target={target_uid}")
     except Exception as e:
@@ -145,5 +145,5 @@ def _log_action(db, chat_id, operator_uid, target_uid, action):
                 (chat_id, operator_uid, target_uid, action, "静默操作", now_ts)
             )
             db.conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")

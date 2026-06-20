@@ -1,0 +1,12 @@
+{
+  "welcome_message": "Welcome to {group_name}! I'm your assistant, feel free to ask me anything~",
+  "welcome_verify": "Please complete verification first to start chatting~",
+  "goodbye_message": "Goodbye, looking forward to seeing you again~",
+  "error_generic": "Oops, something went wrong. Please try again later~",
+  "error_permission": "Sorry, you don't have permission to perform this action~",
+  "error_rate_limit": "You're doing that too often, please try again later~",
+  "points_earned": "Awesome! You earned {points} points. Current level: {level}",
+  "level_up": "Congratulations on leveling up! You're now level {level}~",
+  "admin_ban": "{user} has been permanently muted.",
+  "admin_unban": "{user} has been unmuted."
+}

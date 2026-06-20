@@ -117,9 +117,9 @@ class TaskTransactionManager:
             self._claimed = True
             return True
         except Exception as e:
-            logger.warning(f"⚠️ [{self.task_name}] claim_task异常，放行执行: {e}")
-            self._claimed = True
-            return True
+            # 【TRAE SOLO CN v5.18.3审计修复】异常时 abort，绝不放行，防止重复播发
+            logger.error(f"❌ [{self.task_name}] claim_task异常，abort任务: {e}")
+            return False
 
     def _acquire_resource_locks(self) -> bool:
         if not self.resources:
@@ -154,8 +154,8 @@ class TaskTransactionManager:
         for lock in reversed(self._acquired_locks):
             try:
                 lock.release()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         if self._acquired_locks:
             logger.debug(f"🔓 [{self.task_name}] 已释放资源锁")
         self._acquired_locks.clear()

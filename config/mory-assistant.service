@@ -8,6 +8,7 @@ User=ubuntu
 WorkingDirectory=/home/ubuntu/mory_assistant
 # 加 EnvironmentFile 确保凭据（TG_TOKEN、DASHSCOPE_KEY等）注入到进程
 EnvironmentFile=/home/ubuntu/mory_assistant/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/usr/bin/python3 main.py
 Restart=always
 RestartSec=5

@@ -1,7 +1,7 @@
-# Mory小助理 项目快照 v5.16.3
+# Mory小助理 项目快照 v5.28.0
 
 > 新AI会话必读：本文件 + `AGENTS.md`（项目规则+老坑铁律） + `AI_DEBUG_HISTORY.md`
-> 最后更新：2026-06-12（v5.16.3 [Codex] 工作区脏改动收敛）
+> 最后更新：2026-06-20（v5.28.0 [Trae CN] 文档全面复核修正：数量失真校准、目录列表补全）
 
 ---
 
@@ -10,12 +10,17 @@
 | 项目 | 值 |
 |------|-----|
 | 名称 | Mory小助理 - 运营型商业 AI 转化机器人 |
-| 版本 | v5.16.3 |
-| 技术栈 | Python3 + pyTelegramBotAPI + SQLite(WAL) + Flask + gunicorn+gevent |
-| 部署 | VPS（systemd作为唯一进程管理） |
-| 存储 | `mory.db`(SQLite) + `config.json`(配置) |
+| 版本 | v5.28.0 |
+| 技术栈 | Python3 + pyTelegramBotAPI + SQLite(WAL+busy_timeout=30s+单线程写入队列+连接代理全量化+背压Fail-Fast+Alembic迁移) + Flask + gunicorn+gevent + structlog + diskcache |
+| 部署 | VPS（systemd作为唯一进程管理）+ GitHub Actions CI/CD（待启用Secrets） |
+| 存储 | `mory.db`(SQLite) + `config.json`(业务配置) + `.env`(敏感凭据) + `requirements.lock`(锁定依赖) |
 | 红线 | 绝对不能因报错导致程序卡死崩溃 |
-| 广告治理 | [Codex] 不踢人：永久禁言 + 删除消息 + 双黑名单 + 历史消息追踪清理 |
+| 广告治理 | [Codex] 不踢人：永久禁言 + 删除消息 + 双黑名单 + 历史消息追踪清理 + Premium emoji 状态 OCR + 新版反应/付费媒体权限禁用 |
+| 人设引擎 | [Trae Solo CN] v5.21.0 4桶反模板(cold/savage/soft/common)+动态LLM参数矩阵(亲密度×场景×时段21组) + 12条去AI痕迹铁律（默认开启 `PERSONA_ENGINE_ENABLED=true`） |
+| 安全加固 | [TRAE SOLO CN] v5.22.0 全量审计修复 + v5.24.0 RBAC before_request默认拒绝守卫 + 自动化渗透测试6用例 + v5.25.0 RBAC DB驱动动态权限 + v5.26.0 RBAC权限变更审批流 |
+| 架构优化 | [TRAE SOLO CN] v5.26.0 10大优化：①LLM成本熔断器 ②Locust三档梯度压测 ③级联告警故障注入测试 ④人设跨模型一致性 ⑤多模型A/B测试分流 ⑥记忆摘要转化率归因 ⑦DB迁移指标监控 ⑧多Bot任务分工 ⑨归因模型离线回放 ⑩RBAC动态权限审批流 |
+| v5.27.0-RC1 稳定化候选 | 20项优化方向已进入可验证候选态：requirements.lock 已真实生成；VPS 端锁文件安装与 pip check 通过；Dashboard create_app smoke 166 routes；Alembic history smoke 通过；RBAC 安全测试 6/6 通过；Prometheus 派生指标改为 Gauge/set 防重复虚高；腾讯云硅谷二区 VPS 双服务 active + health 200 |
+| v5.28.0 增长优化 | [Codex] 10项增长优化进入主链路：`growth_optimizer` 串联意图路由、A/B、归因、质量评估；回复前注入增长 stage_hint，回复后写入 conversion_events / telemetry_events / conversation_telemetry；Dashboard 归因页新增增长优化汇总；质量评估低采样启用 |
 
 ---
 
@@ -23,28 +28,31 @@
 
 ```
 mory_assistant/
-├── main.py                 # 精简入口（133行：初始化→注册→启动）
+├── main.py                 # 精简入口（219行：初始化→注册→启动）
 ├── config.json             # 运行时配置（Token/管理员/模型池/人设）
 ├── config.json.example     # 配置模板（无密钥，可提交Git）
 ├── .env                    # 环境变量（不提交Git）
 ├── .env.example            # 环境变量模板
 ├── .gitignore              # Git忽略规则
-├── requirements.txt        # Python 依赖
+├── requirements.txt        # Python 直接依赖
+├── requirements.in         # pip-compile 输入
+├── requirements.lock       # pip-compile 锁定依赖版本（生产部署优先来源）
+├── alembic.ini             # Alembic 数据库迁移主配置
+├── mypy.ini                # mypy 类型检查配置
+├── pytest.ini              # pytest + coverage 配置
 ├── version.py              # 版本号统一管理
 ├── deploy_vps.py           # VPS一键部署脚本（systemd管理+安全配置合并）
-├── sync_vps.py             # VPS同步代理脚本
-├── windows_helper.py       # Windows辅助工具
 ├── start_dashboard.py      # Dashboard启动脚本
-├── deploy.bat              # Windows部署入口
-├── start_dashboard.bat     # Windows启动Dashboard
-├── Dockerfile              # Docker镜像定义
-├── docker-compose.yml      # Docker编排配置
+├── Dockerfile              # Docker镜像定义（deploy_vps.py 显式上传，供可选 Docker 交付使用）
+├── docker-compose.yml      # Docker编排配置（deploy_vps.py 显式上传）
 ├── core/
 │   ├── __init__.py         # 核心模块导出
 │   ├── bot_initializer.py  # Bot初始化工厂（BotContext+22步初始化流程）
-│   ├── message_dispatcher.py # 消息分发核心（P0-P10优先级+DispatchContext，1627行）
+│   ├── telebot_compat.py   # pyTelegramBotAPI兼容补丁：保留新字段+新发送参数+Business update分发钩子
+│   ├── http_client.py      # 统一HTTP客户端（超时管理+自动重试+异常分类+日志记录+拦截器）
+│   ├── message_dispatcher.py # 消息分发核心（P0-P10优先级+DispatchContext）
 │   ├── ai_engine.py        # AI引擎（三层路由+多模型轮换+TTS语音）
-│   ├── trendradar_news.py  # 新闻获取（TrendRadar+fetch_real_news）
+│   ├── trendradar_news.py  # 新闻获取（真实源优先 + TrendRadar兜底）
 │   ├── database.py         # DB基类（连接管理+表初始化+7个Repo实例+__getattr__委托）
 │   ├── logging_util.py     # 日志工具（按大小轮转+错误分级）
 │   ├── mory_bot.py         # Bot封装类（阅后即焚追踪）
@@ -55,13 +63,30 @@ mory_assistant/
 │   ├── router_database.py  # 路由使用统计数据库（从universal_ai_router内联）
 │   ├── router_statistics.py # 路由统计逻辑（从universal_ai_router内联）
 │   ├── task_transaction.py # TaskTransactionManager统一事务管理上下文
+│   ├── theme_engine.py     # 播报多样性引擎（主题轮换+语气轮换+黑话软植入+图片暗示+转化引导）
 │   ├── migrate.py          # 数据库迁移工具
 │   ├── vps_config.py       # VPS连接配置
+│   ├── llm_cost_guard.py   # 【v5.26.0】LLM成本熔断器（滑动窗口deque+单用户/全局降级）
+│   ├── persona_adapter.py  # 【v5.26.0】人设跨模型适配（按模型家族定制Prompt）
+│   ├── ab_test_router.py   # 【v5.26.0】多模型A/B测试分流（uid%10分组+指标埋点）【v5.27.0-RC1】新增统计显著性检验
+│   ├── db_migration_monitor.py # 【v5.26.0】DB迁移指标监控（5项指标每小时检查）
+│   ├── bot_routing.py      # 【v5.26.0】多Bot任务分工（bot_group_routing静态路由表）
+│   ├── settings.py         # 【v5.27.0-RC1】Pydantic Settings 统一配置（.env + config.json）
+│   ├── structured_logger.py # 【v5.27.0-RC1】structlog JSON 结构化日志 + request_id 绑定
+│   ├── cache_manager.py    # 【v5.27.0-RC1】diskcache 磁盘缓存（命名空间+TTL+@cached装饰器）
+│   ├── user_lifecycle.py   # 【v5.27.0-RC1】用户生命周期五阶段管理
+│   ├── tracing.py          # 【v5.27.0-RC1】OpenTelemetry 分布式追踪（默认关闭）
+│   ├── metrics.py          # 【v5.27.0-RC1】Prometheus 业务指标导出
+│   ├── anomaly_detector.py # 【v5.27.0-RC1】Z-Score 滑动窗口异常检测
+│   ├── quality_evaluator.py # 【v5.27.0-RC1】LLM-as-a-Judge 内容质量评估（默认关闭）
+│   ├── i18n.py             # 【v5.27.0-RC1】JSON 语言包多语言支持
+│   ├── growth_optimizer.py # 【v5.28.0】10项增长优化编排（意图/A-B/归因/质量评估闭环）
 │   ├── handlers/           # 消息处理器（按优先级组织）
 │   │   ├── __init__.py
 │   │   ├── member_handlers.py    # P0入群/退群
 │   │   ├── callback_handlers.py  # 回调查询+/settings
 │   │   ├── media_handlers.py     # 图片/语音/频道帖子
+│   │   ├── business_handlers.py  # Business连接观测+deleted_business_messages本地删除标记同步
 │   │   ├── security_handlers.py  # P1黑名单/P3敏感词/P3.5广告
 │   │   ├── points_handlers.py    # P2积分/签到/等级
 │   │   ├── flood_handlers.py     # P4反刷屏
@@ -84,8 +109,9 @@ mory_assistant/
 │   ├── __init__.py
 │   ├── admin_cmds.py       # 管理员指令
 │   ├── ad_detector.py      # 广告检测引擎（五级检测L0-L4+延迟封禁）
+│   ├── ad_profile_signals.py # 用户资料广告信号：名称/BIO/Premium emoji状态元数据+贴纸缩略图OCR
 │   ├── ad_patterns_encoded.py  # 编码后的广告关键词（Unicode转义防拦截）
-│   ├── auto_tasks.py       # 定时任务（TaskTransactionManager统一事务+原子抢占防重复+数据库持久化+失败重试）
+│   ├── auto_tasks.py       # 定时任务（52个_job_*函数，TaskTransactionManager统一事务+原子抢占防重复+数据库持久化+失败重试+每日自动备份+日志自动清理）
 │   ├── avatar_detector.py  # 色情头像检测
 │   ├── emoji_mask_detector.py # Emoji面具检测
 │   ├── content.py          # 内容处理（图片打码+频道转发+勋章）
@@ -104,8 +130,23 @@ mory_assistant/
 │   │   ├── group_api.py    # 群组设置API
 │   │   ├── features_api.py # 功能配置API
 │   │   ├── models_api.py   # 模型/任务状态API
-│   │   ├── settings_api.py # 设置面板API
-│   │   └── faq_api.py      # 【v5.15.0新增】FAQ统计与管理API（10端点）
+│   │   ├── settings_api.py # 设置面板API（最大头，~80按钮回调）
+│   │   ├── orphan_api.py   # 孤儿清理API
+│   │   ├── ab_test_api.py  # A/B测试API
+│   │   ├── engage_api.py   # 主动搭讪配置API
+│   │   ├── faq_api.py      # 【v5.15.0新增】FAQ统计与管理API（10端点）
+│   │   ├── audit_api.py    # 【v5.23.0】RBAC审计日志API（3端点：logs/stats/cleanup）
+│   │   ├── attribution_api.py # 【v5.23.0】转化漏斗归因API（2端点：report/user）+【v5.26.0】A/B测试报告+记忆归因端点
+│   │   ├── scheduler_api.py # 【v5.23.0】任务调度监控API（2端点：stats/jobs）
+│   │   ├── monitor_api.py   # 【v5.26.0】DB迁移监控API（1端点：db-migration/status）
+│   │   ├── bot_routing_api.py # 【v5.26.0】多Bot路由管理API（4端点：list/assign/remove/check）
+│   │   ├── rbac_approval_api.py # 【v5.26.0】RBAC权限审批流API（6端点：request/approve/reject/cancel/list/detail）
+│   │   ├── user_lifecycle_api.py # 【v5.27.0-RC1】用户生命周期分布API
+│   │   ├── funnel_api.py   # 【v5.27.0-RC1】转化漏斗可视化API
+│   │   ├── metrics_api.py  # 【v5.27.0-RC1】Prometheus 指标端点
+│   │   └── quality_api.py  # 【v5.27.0-RC1】内容质量评分API
+│   ├── audit.py            # 【v5.23.0】RBAC权限+审计日志（三角色admin/operator/viewer+permission_required装饰器）
+│   ├── rbac_approval.py    # 【v5.26.0】RBAC权限变更审批流（permission_change_requests表+6核心函数）
 │   └── templates/
 │       └── html_page.py    # 前端HTML模板
 ├── config/                 # 服务配置
@@ -113,32 +154,76 @@ mory_assistant/
 │   ├── mory-dashboard.service       # Dashboard systemd服务（gunicorn+gevent）
 │   ├── mory-media-assistant.service # 媒体Bot systemd服务
 │   └── mory-media-dashboard.service # 媒体Bot Dashboard（端口6617，独立数据库）
-├── scripts/                # 调试/诊断/扫描工具
-│   ├── debug_db.py         # VPS数据库查询诊断
-│   ├── debug_vps.py        # VPS全面诊断脚本
-│   ├── deep_check.py       # 深度关键词触发诊断
-│   ├── find_bug.py         # 历史日志错误排查
-│   ├── full_diagnosis.py   # VPS全功能诊断报告
-│   ├── get_keyword_module.py  # 关键词模块获取
+├── scripts/                # 运维/验证/扫描工具
+│   ├── cleanup_vps.py      # VPS 残留脚本清理（基础版）
+│   ├── cleanup_vps_full.py # VPS 完整清理（垃圾文件+__pycache__+logrotate+journal，v5.22.0）
 │   ├── restart_bot.py      # Bot重启工具
 │   ├── restore_after_reinstall.py  # 重装后恢复
-│   ├── test_connection.py  # 通义千问API连接测试
-│   ├── test_vps_ai.py      # VPS AI功能数据检查
+│   ├── ssh_helper.py       # SSH 辅助
+│   ├── db_migrate.py       # 【v5.27.0-RC1】Alembic 迁移命令封装
+│   ├── health_check.py     # 【v5.27.0-RC1】部署后健康检查
+│   ├── auto_rollback.py    # 【v5.27.0-RC1】不健康时自动回滚
+│   ├── rollback_config.json # 【v5.27.0-RC1】回滚策略配置
+│   ├── code_quality_scan.py # 【v5.27.0-RC1】vulture+radon 代码扫描
 │   └── README.md           # 工具说明
 ├── backups/                # 自动备份（保留最近2个server_pull备份）
-├── BOT_投喂与自然语言配置说明.md  # Bot投喂与配置说明
+├── tests/                  # 测试目录
+│   ├── unit/               # 单元测试【v5.27.0-RC1】新增广告检测/RBAC/Settings核心用例
+│   ├── security/           # 安全测试
+│   ├── perf/               # 【v5.23.0 阶段3-E】性能压测（Locust，模拟高并发 Webhook）
+│   │   ├── locustfile.py   # Locust 压测脚本（独立运行，不依赖项目内部模块）
+│   │   └── README.md       # 压测使用说明
+│   ├── alert/              # 【v5.26.0】级联告警故障注入测试
+│   │   └── test_cascade_suppression.py # 5用例（DB锁级联抑制/根因解除/5min汇总/限流/非级联正常）
+│   ├── persona/            # 【v5.26.0】人设跨模型一致性测试
+│   │   └── test_persona_consistency.py # 50用例+LLM-as-a-Judge 4维盲评
+│   ├── attribution/        # 【v5.26.0】归因模型离线回放
+│   │   └── test_offline_replay.py # 时间衰减vs末次触达对比+CLI参数
+│   ├── load/               # 【v5.26.0】三档梯度压测
+│   │   ├── locustfile.py   # Locust压测脚本（20/100/300 QPS三档+WriteQueueFullError记录）
+│   │   └── analyze_results.py # 黄金指标提取+阈值调优建议
+│   └── README.md           # 测试目录说明
+├── migrations/             # 【v5.27.0-RC1】Alembic 迁移脚本目录
+│   ├── env.py              # Alembic 环境配置（SQLite batch 模式）
+│   ├── script.py.mako      # 迁移脚本模板
+│   └── versions/           # 版本脚本
+│       └── 0001_initial_schema.py # 107 张表基线版本
+├── i18n/                   # 【v5.27.0-RC1】多语言包目录
+│   ├── zh-CN.json          # 中文语言包示例
+│   └── en-US.json          # 英文语言包示例
+├── .github/workflows/      # 【v5.27.0-RC1】GitHub Actions CI/CD
+│   └── ci.yml              # pytest + flake8 + mypy + compileall + 部署模板
+├── docs/reference/BOT_投喂与自然语言配置说明.md  # Bot投喂与配置说明
 ├── project_snapshot.md     # 本文件
 ├── AI_DEBUG_HISTORY.md     # 调试病历本
 ├── CHANGELOG.md            # 变更日志
 ├── VERSION.md              # 版本号
 └── README.md               # 项目入口文档
-```
 
 ---
 
-## 3. 数据库表（mory.db · 88张表）
+## 9. v5.28.0 增长优化状态
 
-> 实际数量：core/database.py 中 85 个 `CREATE TABLE IF NOT EXISTS` 语句（v5.13.0 实测，含 `conversions` 新表 + `orphan_cleanup_log` 和 `broadcast_tracking`）
+**当前阶段**：10项增长优化代码已接入主链路；`GROWTH_OPTIMIZER_ENABLED` / `INTENT_ROUTING_ENABLED` / `AB_TEST_ENABLED` / `ATTRIBUTION_REPORT_ENABLED` / `QUALITY_EVAL_ENABLED` 已配置为开启，质量评估低采样护栏启用，`INTENT_LLM_ENABLED=false` 控制成本。
+
+| 阵列 | 状态 | 说明 |
+|------|------|------|
+| P0 基建骨干 | verified_local | Alembic / Settings / requirements.lock / CI 已能本地 smoke；生产仍需 stamp baseline |
+| P1 并发加速与业务闭环 | partially_integrated | pytest / lifecycle / Prometheus / anomaly_detector 已接入；diskcache 暂未挂强实时安全路径 |
+| P2 看板与类型保障 | verified_local | Swagger 可降级、Dashboard smoke 通过、mypy/interrogate 通过；追踪默认关闭 |
+| P3 锦上添花 | guarded_on | LLM质量评估已低采样开启；自动回滚 / i18n 等仍按风险启用 |
+
+**下一步关键动作**：
+1. 生产环境执行 `python scripts/db_migrate.py stamp_baseline` 标记 Alembic 基线
+2. 配置 GitHub Secrets 后启用 `.github/workflows/ci.yml` 部署段
+3. 逐步将业务代码从 `config['KEY']` 迁移到 `settings.KEY`
+4. 观察增长优化样本量与质量评分，确认是否提高 `QUALITY_EVAL_SAMPLE_RATE` 或开启 `INTENT_LLM_ENABLED`
+
+---
+
+## 3. 数据库表（mory.db · 108张表）
+
+> 实际数量：core/database.py 中 108 个 `CREATE TABLE IF NOT EXISTS` 语句（v5.28.0 实测）
 
 | 表名 | 用途 |
 |------|------|
@@ -165,6 +250,7 @@ mory_assistant/
 | mute_records | 禁言记录（uid, chat_id, muted_by, reason, ts） |
 | ad_suspicious_users | 广告可疑用户追踪（uid, chat_id, score, msg_ids, ts） |
 | group_members | 群成员追踪（uid, chat_id, username, display_name, first_seen, last_active） |
+| **interaction_quality_scores** | 【v5.27.0-RC1】内容质量评分(id, conversation_id, naturalness_score, relevance_score, persona_score, evaluated_at) |
 | **broadcast_tracking** | 【v5.11.0新增】孤儿播报追踪(chat_id, category, msg_id, ts)，复合主键(chat_id,category)同群同类型只保留最新一条，用于孤儿播报30S删和早安/午安/晚安链式互删 |
 | **user_questions** | 【v5.15.0新增】用户问题记录(id, uid, chat_id, question_text, mode, intent, keyword_tag, question_category, is_convert, ai_reply_summary, faq_hit_id, ts)，P10 AI回复前自动写入 |
 | **faq_knowledge** | 【v5.15.0新增】FAQ知识库(id, question_pattern, question_category, answer_template, ai_polish, match_mode, priority, hit_count, status, created_by, created_at, updated_at)，审核通过的话术模板 |
@@ -184,7 +270,7 @@ mory_assistant/
 | 层级 | 检测内容 | 信号来源 | 评分 | 说明 |
 |------|---------|---------|------|------|
 | L0 | CAS/SPB 外部数据库 | 外部 API | +1~+2（辅助） | 仅辅助评分，不直接 ban |
-| L1 | 用户名+Bio+头像 | 用户资料 | 三层命中=直接ban | 高置信度组合信号 |
+| L1 | 用户名+Bio+头像+Premium emoji状态 | 用户资料 | 高置信命中=直接处置 | 高置信度组合信号；广告账号不踢人，统一永久禁言 |
 | L2 | 消息内容关键词 | 消息文本 | 1~4/维度 | 9个维度权重各异 |
 | L3 | 零宽字符+元数据 | 消息结构 | +1~+2 | 零宽占比>20%额外+2 |
 | L4 | 追溯扫描 | 历史消息/数据库 | — | Bot启动时自动扫描+手动/scan_ads |
@@ -194,6 +280,8 @@ mory_assistant/
 **L1 用户资料检测**：
 - 用户名检测（USERNAME_PATTERNS）："看简介"变体→直接ban；短随机用户名→score+2
 - Bio检测（BIO_PATTERNS）：赚钱承诺/引流话术/t.me链接/刷礼物/私信/滴滴/1000U→score+3
+- Premium emoji状态检测（v5.16.4）：通过 `emoji_status_custom_emoji_id` + `getCustomEmojiStickers` 读取状态贴纸；元数据无文字时下载缩略图走 OCR，识别截图类"看我简介"
+- Telegram Bot API 10.x 兼容（v5.16.5）：富文本卡片播报、Rich Message/Poll/Checklist 原始直通、反应治理、Business 消息映射、Business 删除事件同步本地 `message_snapshots`
 - **v5.14.1 新增**：`_normalize_ad_evasion()` 反规避规范化（全角数字/形近字/繁体→简体，18个变体映射）
 - 头像检测：用户名异常/Bio可疑/短随机用户名时触发
 - 两层组合（用户名+Bio）→直接ban；三层组合（用户名+Bio+头像）→直接ban
@@ -245,13 +333,15 @@ mory_assistant/
 - VPS信息通过环境变量读取，无硬编码
 - 所有SQL参数化查询，禁止f-string拼接
 - 密码校验用`hmac.compare_digest()`
-- Dashboard权限分级：admin（读写）/ viewer（只读）
+- Dashboard权限分级：admin（读写）/ operator（有限写）/ viewer（只读）
+- **v5.27.0-RC1**：新增 `core/settings.py` 兼容配置门面；CI 当前对稳定化关键文件运行 flake8/mypy，并执行 pytest/interrogate/compileall
 
 ### 4.4 进程红线（务必遵守）
 - **生产环境只允许 systemd 管理本项目进程**：只用 `sudo systemctl restart mory-assistant` / `systemctl status mory-assistant`。
 - **Dashboard 也由 systemd 管理**：`sudo systemctl restart mory-dashboard` / `systemctl status mory-dashboard`（服务文件：config/mory-dashboard.service）。
 - **绝对禁止**：`pm2`、手动 `python main.py`、`nohup python start_dashboard.py` 去启动/重启生产服务，否则极易多开导致 Telegram `409 Conflict`（同 token 多个 getUpdates）或端口冲突。
 - `start.sh` 已在v5.1.0中删除，统一使用systemd管理。
+- **v5.27.0-RC1**：部署后建议调用 `scripts/health_check.py` 验证；不健康时 `scripts/auto_rollback.py` 可回滚到上一版本目录。
 
 ---
 
@@ -262,14 +352,43 @@ mory_assistant/
 | 早安问候 | 8:05 | _try_claim_and_lock原子抢占+task_log持久化 |
 | 早间新闻 | 9:05 | 同上 |
 | 每日报告 | 9:10 | 同上 |
+| **morning_nudge** | **10:00** | **同上** |
 | 午安问候 | 12:35 | 同上 |
 | 午间新闻 | 13:05 | 同上 |
+| **afternoon_tease** | **14:30** | **同上** |
 | 塔罗搭讪 | 15:00 | 同上 |
-| TrendRadar播报 | 18:00 | 同上 |
+| **evening_warm** | **19:00** | **同上** |
 | 晚间新闻 | 20:35 | 同上 |
+| **night_hook** | **22:30** | **同上** |
 | 晚安问候 | 23:05 | 同上 |
 | 频道浏览量 | 每小时 | — |
 | 阅后即焚清理 | 每10分钟 | — |
+| **sync_user_lifecycle_buckets** | **每日 02:00** | **v5.27.0-RC1** |
+| **sync_scheduler_metrics / update_prometheus_metrics** | **每5分钟** | **v5.27.0-RC1** |
+| **evaluate_conversation_quality** | **每日 03:00** | **v5.28.0（低采样开启）** |
+
+### 5.1 定点播报（SCHEDULED_BROADCASTS）
+
+4 组富文本卡片播报（v5.18.2 无缝升级版），当前全部 `enabled: true`：
+
+| ID | 时间 | 时段 | 定位 | 标题 | 角标 | 正文 | 折叠补充 | 按钮 |
+|---|---|---|---|---|---|---|---|---|
+| `morning_nudge` | 10:00 | morning | 早间轻撩 | ☀️ 早上好呀 | ✨ Mory来报到啦 | 上午场景化问候+隐晦牵引 | 💬 想聊的随时来找我～ | 💌 找Mory聊聊 → @MorychannelBot |
+| `afternoon_tea` | 14:30 | afternoon | 午后小确幸 | 🍵 下午茶时间到 | 🍵 Mory的小确幸 | 午后松弛场景+生活小确幸 | ☕ 累了就来找我聊聊天～ | ☕ 和Mory喝杯茶 → @MorychannelBot |
+| `evening_wind` | 19:00 | evening | 傍晚陪伴 | 🌆 傍晚的风刚好 | 🌆 Mory陪你吹风 | 傍晚陪伴感+放松引导 | 🌆 一天的疲惫就让它随风去吧～ | 🌙 陪Mory看日落 → @MorychannelBot |
+| `night_whisper` | 22:30 | night | 深夜悄悄话 | 🌙 夜深了 | 🌙 Mory的悄悄话 | 深夜走心+悄悄话引导 | 🌙 夜深了，有些话只适合在夜里说～ | 💌 和Mory说悄悄话 → @MorychannelBot |
+
+**播报特性（v5.18.2 无缝升级版）**：
+- HTML 卡片排版：`<b><i>emoji 标题</i></b>` + `<i>斜体角标</i>` + 正文 + `<blockquote expandable><i>折叠补充</i></blockquote>`
+- Rich Message：`RICH_MESSAGE_ENABLED=true` 且 `BROADCAST_FORMAT_VERSION=rich/auto` 时优先尝试 `sendRichMessage`，失败自动回退 HTML
+- 时段样式映射：`period` 字段自动选择 emoji（morning=☀️ / afternoon=🍃 / evening=🌆 / night=🌙）
+- 单按钮引导：`button_text` + `button_url` 指向 @MorychannelBot
+- 彩色按钮：`BUTTON_STYLE_ENABLED=true` 时读取 `button_style` / `button_emoji_id`
+- 用户画像：私聊定点播报可根据 `user_profile` 做 VIP/高等级/兴趣个性化
+- 模板轻变化：`BROADCAST_TEMPLATE_VARIATION_ENABLED=true` 时保留旧模板正文和按钮，只在折叠补充里每日追加轻变化句
+- 静默发送：`night_whisper` 配置 `silent: true`，深夜不打扰
+- 防重复：TaskTransactionManager 原子抢占，每日每播报只执行一次
+- 问候话术池兜底：AI 生成失败时从 `_GREETING_FALLBACK_POOL` 随机选择，避免重复
 
 **防重复机制**：_try_claim_and_lock原子抢占+task_log持久化
 **失败重试**：关键任务失败5分钟后重试1次，仍失败私聊通知管理员
@@ -285,7 +404,8 @@ mory_assistant/
 | DASHBOARD_VIEWER_PASSWORD | Dashboard只读查看者密码 | 否 |
 | DASHBOARD_PORT | Dashboard端口 | 否(默认6616) |
 | VPS_HOST | VPS IP | 是 |
-| VPS_SSH_PASS | VPS密码 | 是 |
+| VPS_SSH_PASS | VPS密码（未配置 SSH key 时需要） | 条件必填 |
+| VPS_SSH_KEY | VPS SSH 私钥路径（可选；未填时尝试本机默认 key） | 否 |
 | VPS_PORT | SSH端口 | 否(默认22) |
 | VPS_PATH | 项目路径 | 否(默认/home/ubuntu/mory_assistant) |
 | BOT_ROLE | Bot角色（避免后台任务冲突；默认 MAIN） | 否 |
@@ -301,41 +421,29 @@ mory_assistant/
 
 ## 8. 修复历史摘要
 
-| 版本 | 修复数 | 关键内容 |
-|------|--------|---------|
-| v5.15.0 | 新增 | 用户问题追踪与FAQ蒸馏系统：user_questions/faq_knowledge/faq_candidates三表+QuestionRepo 17方法+P10问题记录钩子+FAQ匹配回复(ai_polish润色)+_job_faq_distill自动蒸馏+Dashboard /api/faq/* 10端点+双开关(FAQ_TRACKING_ENABLED/FAQ_AUTO_REPLY_ENABLED) |
-| v5.14.2 | 1项 | 入群即检测三重广告信号：member_handlers步骤2.5+50个历史可疑用户清理 |
-| v5.14.0 | 新增 | 商业问题主动搭讪引导：convert关键词6→50+/P7.5主动搭讪层/30分钟冷却/4端点Dashboard API |
-| v5.13.0 | 19项 | 全面健康诊断与暗病修复：6个VPS运行时（开机自启+speech_stats Cursor+不活跃清理类型+fault_reporter缺失+conversions表+last_active不更新）+8个代码严重（网络超时+沉默失败11处+循环依赖确认+TOKEN泄露+无锁全局状态+N+1查询+漏注册确认+12配置键缺失）+5个中等（Dashboard /api/health+API信息泄露22处+API Key脱敏+积分转账原子性+孤儿清理修复） |
-| v5.12.1 | 5项 | 项目规则归一化（.agents→AGENTS.md 大写显式+业务核心目标/历史文档优先原则/技术边界/5条核心教训/8条跨AI一致性铁律F1-F8）+ 47 个根目录 _*.py 归档 tests/_archive/ + 5 个 docs 迁到 docs/technical/（kebab-case）+ 6 个技术文档全部 ≤200 行 + 活跃引用清理 |
-| v5.12.0 | 10项 | 孤儿消息实际清理（orphan_cleanup_log + /api/orphan/stats 3 端点 + verify_orphan_cleanup.py 脚本 + ENABLE_MESSAGE_DELETION 关闭告警）+ 8 大类老坑规则化（.agents 新增铁律章节 + docs/ 技术细节文档索引）+ project_rules.md 合并删除 |
-| v5.11.0 | 5项 | 群播报自动删除：孤儿 30S 删 + 早安/午安/晚安链式互删 + broadcast_tracking 表 + 顺手修 track_bot_message 漏注册 |
-| v5.10.4 | 1项 | AI 认知纠正文档：Bot API 限制已有解决方案写入项目规则 |
-| v5.10.3 | 2项 | VPS 用户统一 ubuntu + .agents 项目规则整合 |
-| v5.10.2 | 5项 | 配置热重载 + VPS 配置自动补齐 + 3 项 Bug 修复（ANTI_CHANNEL_DEFAULT / ANTIFLOOD_CONFIG / SESSION_COOKIE_SECURE） |
-| v5.10.1 | 6项 | 强制订阅 + 全局黑名单 + 35+ 开关默认关闭 + P9-P12 完成 + threading 崩溃修复 |
-| v5.9.0 | 10项 | 项目深度清理(19垃圾文件+5脚本迁移+ai_engine_standalone删除+telegram_stats删除)+安全修复(anti_raid私聊+monitoring数据库读取+deploy_utils重叠消除)+Dashboard权限分级(admin/viewer) |
-| v5.8.4 | 4项 | Pyrogram全量扫描5811人(95.7%覆盖)+封禁2广告号+HIGH_NAME级封禁规则 |
-| v5.8.3 | 7项 | 广告检测5规则漏洞修复+2误报修正+全量扫描封禁11人 |
-| v5.8.2 | 4项 | 消息发送者追踪+显示名广告检测+UNAME_ONLY级别+消息历史扫描 |
-| v5.8.1 | 5项 | 两层组合直接封禁+全量扫描+group_members表+chat_member handler |
-| v5.8.0 | 6项 | CAS/SPB集成+白名单+三层组合封禁+消息元数据检测+L0-L4规范 |
-| v5.7.5 | 5项 | Bio检测(BIO_PATTERNS)+短随机用户名+头像检测触发扩展 |
-| v5.7.4 | 4项 | 零宽字符绕过修复+零宽占比可疑信号+谐音变体补全 |
-| v5.7.3 | 4项 | 阅后即焚三层保障+track_bot_message+启动补清理 |
-| v5.7.2 | 4项 | L4追溯广告扫描+双模式+/scan_ads命令+RETROACTIVE_SCAN配置 |
-| v5.7.1 | 3项 | 409 Conflict死循环修复+分发顺序修复 |
-| v5.7.0 | 9项 | AI引擎全量修复：user_profile/seed+news_content+模型遍历+线程安全+VPS空TOKEN |
-| v5.6.2 | 6项 | 广告检测彻底修复：L3兜底+连续消息独立化+强制删除+评分权重+2字符词 |
-| v5.6.1 | 3项 | 连续消息模式检测+色情引流词扩充+uname_clean修复 |
-| v5.6.0 | 4项 | 广告检测全面升级：头像检测+名称检测+头像相似度+启动追溯 |
-| v5.5.0 | 3项 | 广告检测去重(130行→1行)+密钥环境变量优先+Dashboard缓存 |
-| v5.4.0 | 8项 | SSH密钥验证+CSRF Token+死锁修复+DB锁优化+签到N+1+校准逻辑 |
-| v5.3.0 | 6项 | 意图分类+亲密度5级系统+4级挑逗话术+7场景模拟+转化引导+去AI化 |
-| v5.2.0 | 4项 | 动态人格随机化系统：碎片池+情绪状态机+Few-shot+反模板 |
-| v5.0.0 | 15项 | 深度架构重构：main.py/database.py/dashboard三大巨石文件拆分 |
+> 仅列近期关键版本。完整修复记录见 `AI_DEBUG_HISTORY.md`，版本演进见 `CHANGELOG.md`。
 
-详细修复记录见 `AI_DEBUG_HISTORY.md`。
+| 版本 | 关键内容 |
+|------|---------|
+| v5.28.0 | 10项增长优化上线：意图路由/A-B/归因/质量评估串入AI回复链路；Dashboard增长优化汇总；质量评估低采样开启；LLM意图精分保持关闭 |
+| v5.27.0-RC1 | 稳定化候选：requirements.lock 真实生成；VPS 端锁文件安装和 pip check 通过；远端缓存/pyc/reload_flag 清零；Dashboard/迁移 smoke 通过；RBAC 安全测试 6/6；metrics 改 Gauge/set 防重复虚高；双服务 active + health 200；高风险能力默认关闭 |
+| v5.26.0 | 10大优化：LLM成本熔断器+Locust压测+级联告警测试+人设跨模型一致性+多模型A/B测试+记忆归因+DB迁移监控+多Bot路由+归因回放+RBAC审批流 |
+| v5.25.0 | 10大优化：Dashboard API压测+WriteQueue背压+SQL乐观锁+告警风暴控制+ModelRouter多模型协同+记忆摘要+DB迁移蓝图+funnel归因+audit DB驱动权限+Locust压测 |
+| v5.24.1 | 深度系统集成：WriteQueue全量化+独立告警Bot+RBAC守卫+混合记忆+归因报表+调度指标落盘+RBAC角色迁移 |
+| v5.23.0 | 8大架构优化：SQLite写入队列+AI输出质量+RBAC审计+转化漏斗归因+广告拼音增强+调度可观测+混合记忆+多Bot共享表 |
+| v5.22.0 | 全量审计修复：5致命+11高危+13中危暗病（SQLite高并发+CSRF+安全响应头+AI输出过滤+广告误伤修复等） |
+| v5.21.0 | 人设引擎大改：4桶反模板(cold/savage/soft/common)+动态LLM参数矩阵(亲密度×场景×时段21组)+12条去AI铁律 |
+| v5.20.0 | 动态意图识别与场景触发引擎：intent_router+profile_learner 6维画像+modules/triggers/ 4个场景化触发器 |
+| v5.18.3 | 全量审计+代码质量修复：164处空except+每日自动备份+日志清理+文档数量修正 |
+| v5.16.5 | Telegram Bot API 10.x 兼容：HTML卡片+Rich Message/Poll/Checklist+Business消息映射+广告反应治理 |
+| v5.15.0 | 用户问题追踪与FAQ蒸馏系统：三表+17方法+P10钩子+FAQ匹配+自动蒸馏+10端点API |
+| v5.13.0 | 全面健康诊断与暗病修复：6个VPS运行时+8个代码严重+5个中等 |
+| v5.12.0 | 孤儿消息实际清理+8大类老坑规则化+项目规则归一化 |
+| v5.10.3 | VPS用户统一ubuntu+项目规则整合 |
+| v5.10.2 | 配置热重载+VPS配置自动补齐 |
+| v5.9.0 | 项目深度清理+安全修复+Dashboard权限分级 |
+| v5.7.1 | 409 Conflict死循环修复+禁用 start.sh/nohup/pm2 |
+| v5.0.0 | 深度架构重构：main.py/database.py/dashboard三大巨石文件拆分 |
 
 ---
 

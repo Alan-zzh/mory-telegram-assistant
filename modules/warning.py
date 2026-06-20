@@ -102,8 +102,8 @@ def handle_warn(bot, m, config: dict, db, target_uid: int, reason: str):
         if auto_msg:
             pm_text += f"\n{auto_msg}"
         bot.send_message(target_uid, pm_text)
-    except Exception:
-        pass  # 私聊失败（用户屏蔽了私聊）属正常情况，静默忽略
+    except Exception as e:
+        logger.debug(f"私聊通知失败: {e}")  # 私聊失败（用户屏蔽了私聊）属正常情况，静默忽略
 
 
 def handle_warn_list(bot, m, config: dict, db, target_uid: int):

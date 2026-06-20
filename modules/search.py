@@ -6,9 +6,8 @@
   /wiki 关键词 → handle_wiki
 """
 import json
-import urllib.request
-import urllib.parse
 from core.logging_util import get_logger
+from core.http_client import get_http_client, HTTPRequestError
 
 logger = get_logger("search")
 
@@ -24,12 +23,17 @@ def handle_google(bot, m, config, db):
     query = parts[1].strip()
 
     try:
+        # 使用统一HTTP客户端
+        client = get_http_client()
+
         # 使用DuckDuckGo Instant Answer API
-        encoded = urllib.parse.quote(query)
-        url = f"https://api.duckduckgo.com/?q={encoded}&format=json&no_html=1"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        url = "https://api.duckduckgo.com/"
+        params = {
+            "q": query,
+            "format": "json",
+            "no_html": "1"
+        }
+        data = client.get(url, params=params, timeout=10)
 
         results = []
         # Abstract
@@ -47,12 +51,15 @@ def handle_google(bot, m, config, db):
 
         if not results:
             # 回退：使用HTML搜索链接
-            search_url = f"https://www.google.com/search?q={encoded}"
+            search_url = f"https://www.google.com/search?q={query}"
             results.append(f"🔍 未找到即时结果，点击搜索：\n🔗 {search_url}")
 
         reply = f"🔍 搜索：{query}\n━━━━━━━━━━━━━\n" + "\n".join(results)
         bot.reply_to(m, reply[:4000])
 
+    except HTTPRequestError as e:
+        logger.error(f"搜索请求失败: {e}")
+        bot.reply_to(m, "❌ 搜索失败，请稍后再试")
     except Exception as e:
         logger.error(f"搜索异常: {e}")
         bot.reply_to(m, "❌ 搜索失败，请稍后再试")
@@ -69,11 +76,11 @@ def handle_wiki(bot, m, config, db):
     query = parts[1].strip()
 
     try:
-        encoded = urllib.parse.quote(query)
-        url = f"https://zh.wikipedia.org/api/rest_v1/page/summary/{encoded}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        # 使用统一HTTP客户端
+        client = get_http_client()
+
+        url = f"https://zh.wikipedia.org/api/rest_v1/page/summary/{query}"
+        data = client.get(url, timeout=10)
 
         if data.get("type") == "disambiguation":
             bot.reply_to(m, f"📚 该词条有多个含义，请更精确搜索\n🔗 {data.get('content_urls', {}).get('desktop', {}).get('page', '')}")
@@ -89,6 +96,9 @@ def handle_wiki(bot, m, config, db):
 
         bot.reply_to(m, reply[:4000])
 
+    except HTTPRequestError as e:
+        logger.error(f"Wiki搜索请求失败: {e}")
+        bot.reply_to(m, "❌ Wikipedia搜索失败，请稍后再试")
     except Exception as e:
         logger.error(f"Wiki搜索异常: {e}")
         bot.reply_to(m, "❌ Wikipedia搜索失败，请稍后再试")

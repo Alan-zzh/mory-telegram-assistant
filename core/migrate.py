@@ -16,6 +16,7 @@ import os
 import sys
 import sqlite3
 import logging
+from core.config_compat import normalize_runtime_config, compact_runtime_config
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("migrate")
@@ -201,6 +202,8 @@ def run_migrations(check_only=False):
     else:
         conn = sqlite3.connect(DB_FILE)
         conn.execute("PRAGMA journal_mode=WAL")
+        # 【TRAE SOLO CN v5.18.3审计修复】迁移连接加 busy_timeout，防止与 Bot 进程互锁
+        conn.execute("PRAGMA busy_timeout=30000")
         logger.info(f"{'[检查模式]' if check_only else '[执行模式]'} 数据库迁移开始")
         for m in MIGRATIONS:
             try:
@@ -216,14 +219,14 @@ def run_migrations(check_only=False):
     else:
         logger.info(f"{'[检查模式]' if check_only else '[执行模式]'} 配置兼容性检查")
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
+            config = normalize_runtime_config(json.load(f))
         results = check_config_compat(config, check_only=check_only)
         if results:
             for r in results:
                 logger.info(f"  {'🔍' if check_only else '✅'} {r}")
             if not check_only:
                 with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                    json.dump(config, f, ensure_ascii=False, indent=2)
+                    json.dump(compact_runtime_config(config), f, ensure_ascii=False, indent=2)
                 logger.info("  配置文件已保存")
         else:
             logger.info("  配置完整，无需补齐")

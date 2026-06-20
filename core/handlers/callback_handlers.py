@@ -58,8 +58,8 @@ def register_callback_handlers(bot, ctx):
                     from telebot.types import InlineKeyboardMarkup
                     bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id,
                                                   reply_markup=InlineKeyboardMarkup(new_keyboard))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         except Exception as e:
             logger.error(f"反馈回调异常：{e}")
 
@@ -99,7 +99,7 @@ def register_callback_handlers(bot, ctx):
         except Exception as e:
             logger.error(f"抽奖回调异常：{e}")
 
-    # ── 投票踢人回调 ──────────────────────────────────────────────
+    # ── 投票踢人回调（vk_） ──────────────────────────────────────────────
     @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("vk_"))
     def on_vote_kick_callback(call):
         try:
@@ -107,6 +107,39 @@ def register_callback_handlers(bot, ctx):
             handle_vote_kick_callback(bot, call, ctx.config, ctx.db)
         except Exception as e:
             logger.error(f"投票踢人回调异常：{e}")
+
+    # ── 通用按钮点击追踪（v5.18.0 - 按钮点击统计） ─────────────────────────
+    # 放在最后作为兜底，确保所有 callback_query 都被记录
+    @bot.callback_query_handler(func=lambda call: True)
+    def on_any_callback(call):
+        """通用按钮点击追踪 - 记录所有按钮点击到 button_click_stats 表。"""
+        try:
+            if not call.data:
+                return
+            # 提取按钮 ID 和样式（约定：btn_{style}_{id} 或 callback_data 前缀作为按钮 ID）
+            data = str(call.data)
+            # 尝试从 callback_data 中解析按钮 ID 和样式
+            # 格式约定：btn_<style>_<id>  或 直接 <id>
+            if data.startswith("btn_"):
+                parts = data.split("_", 2)
+                if len(parts) >= 3:
+                    style = parts[1]
+                    button_id = parts[2]
+                else:
+                    style = "default"
+                    button_id = data
+            else:
+                # 从 callback_data 提取主前缀作为按钮 ID
+                button_id = data.split("_")[0] if "_" in data else data
+                style = "default"
+            # 异步记录（不阻塞主流程）
+            try:
+                if hasattr(ctx, 'db') and ctx.db and hasattr(ctx.db, 'record_button_click'):
+                    ctx.db.record_button_click(button_id, style)
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
+        except Exception as e:
+            logger.debug(f"按钮点击追踪异常（已忽略）: {e}")
 
     # ── 僵尸清理回调 ──────────────────────────────────────────────
     @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("zc_"))

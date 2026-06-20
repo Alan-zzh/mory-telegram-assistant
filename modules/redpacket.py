@@ -217,18 +217,16 @@ def handle_claim_redpacket(bot, call, config, db):
                     f"🧧 红包已抢完！\n💰 总额：{total}积分 | {count}份\n\n{detail}",
                     chat_id, call.message.message_id
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         logger.info(f"抢红包: uid={uid} rp_id={rp_id} amount={amount}")
 
     except Exception as e:
         logger.error(f"抢红包异常: {e}")
         try:
             bot.answer_callback_query(call.id, text="❌ 抢红包失败")
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     return True
 
 
@@ -282,9 +280,8 @@ def check_expired_redpackets(bot, config, db):
                         f"🧧 红包已过期\n💰 总额：{total_points}积分\n⏰ 未抢完的{remaining}积分已退回",
                         chat_id, msg_id
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
             logger.info(f"红包过期退回: rp_id={rp_id} sender={sender_id} 退回={remaining}积分")
 
     except Exception as e:

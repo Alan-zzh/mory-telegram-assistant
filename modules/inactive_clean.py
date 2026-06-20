@@ -187,8 +187,8 @@ def handle_ghost_confirm(bot, call, config, db):
     if data == "ghost_cancel":
         try:
             bot.edit_message_text("❌ 已取消踢出操作", chat_id, call.message.message_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id, "已取消")
         return
 
@@ -208,8 +208,8 @@ def handle_ghost_confirm(bot, call, config, db):
         if not inactive_users:
             try:
                 bot.edit_message_text("🎉 没有需要踢出的不活跃用户", chat_id, call.message.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             bot.answer_callback_query(call.id, "无需踢出")
             return
 
@@ -230,9 +230,8 @@ def handle_ghost_confirm(bot, call, config, db):
 
         try:
             bot.edit_message_text(result_text, chat_id, call.message.message_id)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id, f"已踢出{kicked}人")
         logger.info(f"👻 不活跃用户清理完成: chat={chat_id} kicked={kicked} failed={failed}")
 
@@ -240,8 +239,8 @@ def handle_ghost_confirm(bot, call, config, db):
         logger.error(f"不活跃用户踢出失败: {e}")
         try:
             bot.edit_message_text("❌ 踢出操作失败，请稍后再试", chat_id, call.message.message_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id, "操作失败")
 
 

@@ -105,9 +105,8 @@ def handle_zombies(bot, m, config: dict, db):
         try:
             if uid == bot.get_me().id:
                 continue
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         checked += 1
         try:
             # 使用 get_chat_member 安全检测，不会踢出真实用户
@@ -135,9 +134,8 @@ def handle_zombies(bot, m, config: dict, db):
     if config.get("ENABLE_MESSAGE_DELETION", False):
         try:
             bot.delete_message(chat_id, scanning_msg.message_id)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     if not zombie_uids:
         bot.reply_to(m, f"✅ 扫描完成！检查了 {checked} 个用户，未发现僵尸号。")
         logger.info("僵尸号扫描无结果: chat=%s checked=%s", chat_id, checked)
@@ -249,8 +247,8 @@ def handle_zombies_confirm(bot, call, config: dict, db):
                 chat_id, msg_id,
                 parse_mode="HTML",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id, "已取消清理")
         logger.info("僵尸号清理取消: scan_id=%s chat=%s", scan_id, chat_id)
         return
@@ -286,8 +284,7 @@ def handle_zombies_confirm(bot, call, config: dict, db):
 
     try:
         bot.edit_message_text(result_text, chat_id, msg_id, parse_mode="HTML")
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     bot.answer_callback_query(call.id, f"清理完成！踢出{kicked}个僵尸号")
     logger.info("僵尸号清理完成: scan_id=%s kicked=%s failed=%s", scan_id, kicked, failed)

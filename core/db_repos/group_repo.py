@@ -275,6 +275,15 @@ class GroupRepo:
         except Exception:
             return []
 
+    def get_user_undeleted_messages(self, user_id: int, chat_id: int = None, limit: int = 2000) -> list:
+        """
+        [Codex] 查询广告处置要重试清理的用户消息。
+
+        注意：这里故意不按 deleted=0 过滤。历史版本曾在 Telegram 删除失败时也标记
+        deleted=1，导致群里实际残留的广告消息后续被跳过；广告处置时必须按快照重试。
+        """
+        return self.get_user_messages(user_id, chat_id=chat_id, limit=limit)
+
     def is_blacklisted(self, uid: int) -> bool:
         with self.lock:
             c = self.conn.cursor()
@@ -287,8 +296,8 @@ class GroupRepo:
                 c.execute("SELECT 1 FROM global_blacklist WHERE user_id=?", (uid,))
                 if c.fetchone() is not None:
                     return True
-            except Exception:
-                pass  # global_blacklist 表不存在时静默跳过
+            except Exception as e:
+                logger.debug(f"global_blacklist查询异常: {e}")  # global_blacklist 表不存在时静默跳过
             return False
 
     # ─────────────────────────────── 反刷 ────────────────────────────────

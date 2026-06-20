@@ -44,7 +44,7 @@ def main() -> int:
     os.environ.setdefault("DASHBOARD_PORT", "6616")
     print(f"Dashboard启动中：http://127.0.0.1:{os.environ['DASHBOARD_PORT']}")
 
-    return subprocess.call([sys.executable, str(ROOT / "dashboard" / "app.py")])
+    return subprocess.call([sys.executable, "-m", "dashboard.app"], cwd=str(ROOT))
 
 
 if __name__ == "__main__":

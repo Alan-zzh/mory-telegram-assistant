@@ -34,3 +34,20 @@ def test_greeting_window_uses_config_time():
     assert _is_greeting_window(datetime(2026, 6, 12, 14, 22), cfg, "afternoon") is True
     assert _is_greeting_window(datetime(2026, 6, 12, 12, 30), cfg, "afternoon") is False
 
+
+def test_news_time_reads_new_config():
+    from modules.auto_tasks import _get_news_time
+
+    cfg = {"NEWS_BROADCAST_CONFIG": {"morning_time": "09:15", "evening_time": "20:45"}}
+
+    assert _get_news_time(cfg, "morning") == (9, 15)
+    assert _get_news_time(cfg, "afternoon") == (13, 5)
+    assert _get_news_time(cfg, "evening") == (20, 45)
+
+
+def test_news_source_strategy_defaults_to_real_first():
+    from modules.auto_tasks import _get_news_source_strategy
+
+    assert _get_news_source_strategy({}) == "real_first"
+    assert _get_news_source_strategy({"NEWS_BROADCAST_CONFIG": {"preferred_source": "trendradar_first"}}) == "trendradar_first"
+    assert _get_news_source_strategy({"NEWS_BROADCAST_CONFIG": {"preferred_source": "weird"}}) == "real_first"

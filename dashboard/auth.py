@@ -90,7 +90,8 @@ def _security_check():
         if not _check_rate_limit(request.remote_addr):
             return jsonify({"ok": False, "msg": "请求过于频繁，请稍后再试"}), 429
         return None
-    if request.method == 'POST':
+    # 【TRAE SOLO CN v5.18.3审计修复】所有写操作（POST/PUT/DELETE/PATCH）统一校验 CSRF + 速率限制
+    if request.method in ('POST', 'PUT', 'DELETE', 'PATCH'):
         if not _check_rate_limit(request.remote_addr, max_requests=30):
             return jsonify({"ok": False, "msg": "请求过于频繁，请稍后再试"}), 429
         if request.path == '/api/login':
@@ -111,12 +112,48 @@ def close_db(exception):
 
 
 # ============ 认证路由注册 ============
+# 【TRAE SOLO CN v5.18.3审计修复】删除 auth.py 中失效的 admin_required（检查 is_admin 但登录时设置的是 role），
+# 统一使用 dashboard.helpers.admin_required（检查 role）。需要 admin 校验的接口请从 helpers 导入。
+
+
+def _sync_role_from_db(data: dict):
+    """[阶段3-F] 若请求携带 user_id，从 user_roles 表同步角色到 session。
+
+    - 无 user_id → 保留密码默认角色（不破坏现有登录逻辑）
+    - user_id 存在但 user_roles 无记录 → 默认 viewer（最小权限原则）
+    - user_id 存在且有记录 → 使用 DB 角色
+    """
+    user_id = data.get("user_id")
+    if not user_id:
+        return
+    try:
+        from dashboard.audit import get_user_role_from_db
+        db = get_db()
+        session["role"] = get_user_role_from_db(db, int(user_id))
+    except (ValueError, TypeError):
+        pass  # user_id 无效，保留密码默认角色
+
+
 def init_auth(app):
     """注册认证和安全中间件到Flask应用"""
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     app.config['SESSION_COOKIE_SECURE'] = os.environ.get('DASHBOARD_HTTPS', '').lower() == 'true'
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
+
+    # 【TRAE SOLO CN v5.18.3审计修复】ProxyFix：反向代理场景下正确获取客户端真实 IP
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+    # 【TRAE SOLO CN v5.18.3审计修复】安全响应头，防御 clickjacking / MIME 嗅探 / XSS
+    @app.after_request
+    def _set_security_headers(resp):
+        resp.headers['X-Frame-Options'] = 'DENY'
+        resp.headers['X-Content-Type-Options'] = 'nosniff'
+        resp.headers['X-XSS-Protection'] = '1; mode=block'
+        if os.environ.get('DASHBOARD_HTTPS', '').lower() == 'true':
+            resp.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        return resp
 
     # 注册中间件
     app.before_request(_security_check)
@@ -146,16 +183,20 @@ def init_auth(app):
             session["logged_in"] = True
             session["login_time"] = datetime.now().isoformat()
             session["role"] = "admin"
+            # [阶段3-F] RBAC 角色同步：若请求携带 user_id，从 DB 读取角色覆盖默认角色
+            _sync_role_from_db(data)
             _generate_csrf_token()
             _clear_login_fails(login_key)
-            return jsonify({"ok": True, "csrf_token": session.get("_csrf_token", ""), "role": "admin"})
+            return jsonify({"ok": True, "csrf_token": session.get("_csrf_token", ""), "role": session.get("role", "admin")})
         if viewer_pw and len(viewer_pw) >= 6 and hmac.compare_digest(pw, viewer_pw):
             session["logged_in"] = True
             session["login_time"] = datetime.now().isoformat()
             session["role"] = "viewer"
+            # [阶段3-F] RBAC 角色同步：若请求携带 user_id，从 DB 读取角色覆盖默认角色
+            _sync_role_from_db(data)
             _generate_csrf_token()
             _clear_login_fails(login_key)
-            return jsonify({"ok": True, "csrf_token": session.get("_csrf_token", ""), "role": "viewer"})
+            return jsonify({"ok": True, "csrf_token": session.get("_csrf_token", ""), "role": session.get("role", "viewer")})
         if fail_info["count"] == 0:
             fail_info["first_fail_at"] = time.time()
         fail_info["count"] += 1

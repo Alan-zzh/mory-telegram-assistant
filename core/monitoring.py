@@ -221,9 +221,8 @@ class SystemMonitor:
         try:
             from modules.auto_tasks import report_fault
             report_fault(f"系统资源告警: {title}", message, "⚠️")
-        except Exception:
-            pass
-    
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     def _record_metrics(self):
         """记录监控数据"""
         metrics_data = {

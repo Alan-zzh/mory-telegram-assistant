@@ -1,6 +1,6 @@
 # Mory小助理 · 运营型商业 AI 转化机器人
 
-> **当前版本**：v5.16.3（2026-06-12）[Codex]
+> **当前版本**：v5.28.0（2026-06-19，10项增长优化上线）
 > **项目核心**：**不是普通群管机器人**——是带人设的**运营型商业 AI 转化机器人**
 > **业务目标**：通过人设对话 + 商业引导，引导用户通过 `@MorychannelBot` 自助下单
 > **业务红线**（六条不可触碰）：
@@ -21,7 +21,7 @@
 4. [🚀 快速开始](#4--快速开始)
 5. [⚙️ 配置管理](#5-️-配置管理)
 6. [📊 Dashboard 功能](#6--dashboard-功能)
-7. [🗄️ 数据库（84 张表）](#7-️-数据库84-张表)
+7. [🗄️ 数据库（108 张表）](#7-️-数据库108-张表)
 8. [🔌 VPS 部署（systemd）](#8--vps-部署systemd)
 9. [📚 文档索引](#9--文档索引)
 10. [🤝 接手 AI 必读](#10--接手-ai-必读)
@@ -42,7 +42,7 @@
 - **商业定位**：引导用户通过 `@MorychannelBot` 自助下单（**Bot 内不收款**）
 - **产品矩阵**：3 档产品，详见 §1.4
 - **核心能力**：人设对话 + 商业引导 + 商业闭环 + 群管 + 运营观察 + 消息分发
-- **广告治理**：[Codex] 广告账号不踢人，统一永久禁言 + 删除消息 + 双黑名单 + 历史消息追踪清理
+- **广告治理**：[Codex] 广告账号不踢人，统一永久禁言 + 删除消息 + 双黑名单 + 历史消息追踪清理 + Premium emoji 状态 OCR
 
 ### 1.2 SYSTEM_PROMPT（`config.json.example:L15`）— 10 维商业目标
 
@@ -109,7 +109,7 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 |--------|-----------|-----------|
 | **llm_light**（轻量池·日常） | 11 | `morning` / `afternoon` / `evening` / `hook` / `nudge` / `convert_soft` / `leak` / `fortune` / `wakeup` / `reactivate` / `convert_hook` |
 | **llm_standard**（标准池·对话） | 8 | `normal` / `tarot` / `treehole` / `dream` / `rules` / `convert` / `cart_recovery` / `tarot_interpret` |
-| **llm_premium**（旗舰池·资讯） | 6 | `news` / `afternoon_news` / `evening_news` / `trendradar_morning_news` / `trendradar_noon_news` / `trendradar_evening_news` |
+| **llm_premium**（旗舰池·资讯） | 6 | `news` / `afternoon_news` / `evening_news` / `trendradar_morning_news` / `trendradar_noon_news` / `trendradar_evening_news`（后 3 个仅兼容旧调用，已并入统一新闻主流程） |
 
 ### 1.7 9 个模型池键名（`config.json.example:L77-L111`）
 
@@ -120,16 +120,16 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | `llm` | ✅ 有模型 | `qwen3.5-plus` | 通义千问 3.5 Plus（默认对话） |
 | `llm_light` | ✅ 有模型 | `qwen3.6-flash-2026-04-16` | 轻量池·日常（morning/hook/nudge） |
 | `llm_standard` | ✅ 有模型 | `qwen3.5-plus-2026-04-20` | 标准池·对话（normal/tarot/treehole） |
-| `llm_premium` | ✅ 有模型 | `qwen3-max` | 旗舰池·资讯（news/trendradar_*） |
+| `llm_premium` | ✅ 有模型 | `qwen3-max` | 旗舰池·资讯（真实源优先新闻主流程 + TrendRadar 兼容兜底） |
 | `vision` | ⚪ 占位 | `[]` | 视觉模型（未启用） |
 | `omni` | ⚪ 占位 | `[]` | 全模态模型（未启用） |
 | `voice_tts` | ⚪ 占位 | `[]` | 语音合成（未启用） |
 | `voice_asr` | ⚪ 占位 | `[]` | 语音识别（未启用） |
 | `embedding` | ⚪ 占位 | `[]` | 向量化模型（未启用） |
 
-### 1.8 81 个 modules 8 大类（`ls modules/` 实测）
+### 1.8 88 个 modules 8 大类（`ls modules/` 实测）
 
-**实测 81 个**（非任务方声明的 83）。**8 大类分组**：
+**实测 88 个**业务模块（v5.26.0 更新，不含 `__init__.py` 和 `triggers/` 子目录）。**8 大类分组**：
 
 #### A 核心群管（17 个）
 
@@ -226,7 +226,7 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 
 | 模块 | 功能 |
 |------|------|
-| [auto_tasks.py](modules/auto_tasks.py) | 自动任务（**36 个** `_job_*` 函数） |
+| [auto_tasks.py](modules/auto_tasks.py) | 自动任务（**52 个** `_job_*` 函数） |
 | [scheduled_broadcast.py](modules/scheduled_broadcast.py) | 定时群播报（`SCHEDULED_BROADCASTS`） |
 | [scheduled_msg.py](modules/scheduled_msg.py) | 定时消息（个人 / 群） |
 
@@ -246,27 +246,30 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | [predictive_patrol.py](modules/predictive_patrol.py) | 预测性巡逻（异常行为预测） |
 | [remote_connect.py](modules/remote_connect.py) | 远程连接（私聊管理群） |
 | [report.py](modules/report.py) | 用户举报（`REPORT_CONFIG`） |
-| [settings_panel.py](modules/settings_panel.py) | 设置面板（Dashboard 数值修改） |
+| [settings_panel.py](modules/settings_panel.py) | 设置面板（Bot 内联按钮 + Dashboard 共用配置收口） |
 | [speech_stats.py](modules/speech_stats.py) | 发言统计（`speech_daily`） |
 | [visual_dashboard.py](modules/visual_dashboard.py) | 可视化数据看板 |
 | [vote_kick.py](modules/vote_kick.py) | 投票踢人（`VOTEKICK_CONFIG={min_yes:5, min_ratio:0.6}`） |
 
-> **实际统计**：A=18 + B=7 + C=5 + D=12 + E=6 + F=13 + G=3 + H=16 = **80**（含 `pin_manage.py` / `welcome_customization.py` 归类微调，**实测 81 个** 文件）
+> **实际统计**：A=18 + B=7 + C=5 + D=12 + E=6 + F=13 + G=3 + H=16 = **80**（含 `pin_manage.py` / `welcome_customization.py` 归类微调，**实测 88 个** 业务模块文件，差异来自部分模块跨类归类）
 
-### 1.9 Dashboard 96 API 端点 + 8 类设置面板
+### 1.9 Dashboard 156 API 端点 + 8 类设置面板
 
-`dashboard/api/` 8 个文件，**共 96 个路由**（实测 grep `@.*route|@.*\.route\(|@app\.|@bp\.|app\.add_url_rule|add_url_rule`）：
+`dashboard/api/` 22 个文件，**共 156 个路由**（实测 grep `@.*\.route\(`）：
 
 | 文件 | 端点数 | 职责 |
 |------|--------|------|
-| [config_api.py](dashboard/api/config_api.py) | 3 | 读取/写入 config.json（保护密钥） |
+| [config_api.py](dashboard/api/config_api.py) | 7 | 读取/写入 config.json（保护密钥）+ 播报格式/按钮样式/Custom Emoji/用户画像 |
 | [features_api.py](dashboard/api/features_api.py) | 9 | 功能开关 / 启用 / 关闭 |
 | [group_api.py](dashboard/api/group_api.py) | 2 | 群组信息 / 列表 |
-| [health_api.py](dashboard/api/health_api.py) | 4 | 健康检查 / 进程状态 |
+| [health_api.py](dashboard/api/health_api.py) | 5 | 健康检查 / 进程状态 / 评分 / 任务 / 审计 |
 | [models_api.py](dashboard/api/models_api.py) | 3 | 模型池 / 路由配置 |
 | [orphan_api.py](dashboard/api/orphan_api.py) | 3 | 孤儿清理统计 / 强制清理 / 历史 |
-| [settings_api.py](dashboard/api/settings_api.py) | 62 | **最大头**：所有设置面板（8 类 115 按钮） |
+| [settings_api.py](dashboard/api/settings_api.py) | 64 | **最大头**：所有设置面板（8 类 ~80 按钮） |
 | [stats_api.py](dashboard/api/stats_api.py) | 10 | 数据统计 / 转化率 / 用户活跃度 |
+| [ab_test_api.py](dashboard/api/ab_test_api.py) | 7 | A/B 测试 / 按钮统计 / 用户画像 |
+| [faq_api.py](dashboard/api/faq_api.py) | 10 | FAQ 统计 / 候选 / 知识库 |
+| [engage_api.py](dashboard/api/engage_api.py) | 4 | 主动搭讪配置 |
 
 **8 类设置面板（115 按钮）**：
 1. **群管**：入群验证 / 慢模式 / 反刷屏 / 警告 / 黑名单 / 强制订阅 / 联邦封禁
@@ -327,20 +330,20 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | P9.5 | 黑话/行话自动科普（5% 概率） | `modules/group_mgr` |
 | P9.7 | 用户反馈/找Mory（安抚 + 通知管理员） | `core/message_dispatcher._handle_feedback` |
 
-### 1.11 36 个 _job_* 自动任务（`modules/auto_tasks.py`）
+### 1.11 52 个 _job_* 自动任务（`modules/auto_tasks.py`）
 
-> 实测 `def _job_*` 共 **36 个**（非任务方声明的 40 个）。完整列表：
+> 实测 `def _job_*` 共 **52 个**（v5.28.0 实测）。完整列表：
 
 | 任务 | 行号 | 职责 |
 |------|------|------|
 | `_job_heartbeat` | 227 | 心跳保活 |
 | `_job_proactive_audit` | 232 | 主动审计（自检异常） |
-| `_job_news_morning` | 1007 | 早间新闻播报 |
-| `_job_news_afternoon` | 1012 | 午间新闻播报 |
-| `_job_news_evening` | 1017 | 晚间新闻播报 |
-| `_job_trendradar_morning` | 1022 | TrendRadar 早报 |
-| `_job_trendradar_noon` | 1027 | TrendRadar 午报 |
-| `_job_trendradar_evening` | 1032 | TrendRadar 晚报 |
+| `_job_news_morning` | 1007 | 早间新闻播报（真实源优先） |
+| `_job_news_afternoon` | 1012 | 午间新闻播报（真实源优先） |
+| `_job_news_evening` | 1017 | 晚间新闻播报（真实源优先） |
+| `_job_trendradar_morning` | 1022 | 兼容占位，已并入统一新闻主流程，仅作降级备用 |
+| `_job_trendradar_noon` | 1027 | 兼容占位，已并入统一新闻主流程 |
+| `_job_trendradar_evening` | 1032 | 兼容占位，已并入统一新闻主流程 |
 | `_job_greeting_morning` | 1166 | 早安问候链 |
 | `_job_greeting_afternoon` | 1194 | 午安问候链 |
 | `_job_greeting_evening` | 1222 | 晚安问候链 |
@@ -355,7 +358,7 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | `_job_save_config` | 1652 | 配置保存（防丢失） |
 | `_job_channel_views` | 1666 | 频道浏览量统计 |
 | `_job_check_expired_redpackets` | 1692 | 过期红包退款 |
-| `_job_daily_report` | 1763 | 每日运营报告 |
+| `_job_daily_report` | 1763 | 每日数据报告（当前为管理员私聊日报） |
 | `_job_weekly_report` | 2143 | 每周运营报告 |
 | `_job_monthly_report` | 2345 | 每月运营报告 |
 | `_job_tarot_flirt` | 2822 | 塔罗每日一撩（`modes/tarot_interpret`） |
@@ -370,9 +373,9 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | `_job_auto_inactive_clean` | 3413 | 自动不活跃清理（`AUTO_KICK_INACTIVE_DAYS`） |
 | `_job_check_reminders` | 3422 | 提醒检查 |
 
-### 1.12 84 张数据库表（`core/database.py:L127-L927`）
+### 1.12 108 张数据库表（`core/database.py`）
 
-> 84 张 `CREATE TABLE IF NOT EXISTS` 语句。**7 大类分组**：
+> 108 个 `CREATE TABLE IF NOT EXISTS` 语句（v5.28.0 实测）。**7 大类分组**（按主要业务域归类，部分表跨域）：
 
 #### A 用户相关（14 张）
 
@@ -402,7 +405,7 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 
 `wake_up` / `cart_recovery` / `reply_tracking` / `mute_records` / `conversion_events` / `spam_track` / `channel_posts` / `channel_member_snapshot` / `federation_bans` / `welcome_configs` / `keyword_triggers` / `verification_records` / `puzzle_scores` / `puzzle_daily` / `ad_suspicious_users`
 
-> **总计**：A 14 + B 8 + C 12 + D 8 + E 27 + F 1 + 其他 14 = **84 张表**
+> **总计**：实测 108 张 `CREATE TABLE IF NOT EXISTS`（分类列表为按业务域归类的示例，非穷举；以 `core/database.py` 实测为准）
 
 ### 1.13 业务红线 6 条
 
@@ -463,7 +466,7 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 ### 2.2 管理员运营观察
 
 ```
-[1] Dashboard 96 API 看数据（/api/stats/conversions, /api/orphan/stats）
+[1] Dashboard 156 API 看数据（/api/stats/conversions, /api/orphan/stats）
     ↓
 [2] 8 类 115 按钮配置（群管/反垃圾/积分/商业/娱乐/调度/系统/AI）
     ↓
@@ -524,13 +527,13 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 [4] converted  → 已下单
 ```
 
-### 3.4 🛡 群管 81 模块（详尽 8 大类）
+### 3.4 🛡 群管 88 模块（详尽 8 大类）
 
-详见 §1.8（81 个 modules 8 大类），**不只列名，含功能+数据表**。
+详见 §1.8（**88 个 modules 8 大类**），**不只列名，含功能+数据表**。
 
 ### 3.5 📊 运营观察
 
-- **Dashboard 96 API 端点**（实测，见 §1.9）
+- **Dashboard 156 API 端点**（实测，见 §1.9）
 - **8 类设置面板 115 按钮**：群管 / 反垃圾 / 积分 / 商业 / 娱乐 / 调度 / 系统 / AI
 - **认证分级**：
   - `admin`（读写 / 配置修改 / 重启 / 日志查看）→ `DASHBOARD_PASSWORD`
@@ -602,7 +605,8 @@ python main.py
 | `DASHBOARD_VIEWER_PASSWORD` | Dashboard 只读查看者密码 | ❌ |
 | `DASHBOARD_HTTPS` | 是否 HTTPS 模式（决定 `SESSION_COOKIE_SECURE`） | ❌ |
 | `VPS_HOST` | VPS IP 地址 | 部署时需要 |
-| `VPS_SSH_PASS` | VPS SSH 密码 | 部署时需要 |
+| `VPS_SSH_PASS` | VPS SSH 密码（未配置 `VPS_SSH_KEY` 时需要） | 部署时需要 |
+| `VPS_SSH_KEY` | VPS SSH 私钥路径（可选；未填时尝试本机默认 key） | ❌ |
 | `VPS_PORT` | SSH 端口（默认 22） | ❌ |
 | `VPS_PATH` | VPS 项目路径（默认 `/home/ubuntu/mory_assistant`） | ❌ |
 
@@ -686,9 +690,9 @@ python main.py
   - `viewer`（只读）：`DASHBOARD_VIEWER_PASSWORD`（未配置则无 viewer）
 - **密钥**：`DASHBOARD_SECRET`（**至少 16 位**）
 
-### 6.2 96 API 端点（详 §1.9）
+### 6.2 156 API 端点（详 §1.9）
 
-8 个文件 / 96 路由。
+22 个文件 / 156 路由。
 
 ### 6.3 8 类设置面板 115 按钮
 
@@ -704,26 +708,28 @@ python main.py
 
 ---
 
-## 7. 🗄️ 数据库（84 张表）
+## 7. 🗄️ 数据库（108 张表）
 
 ### 7.1 数据库概览
 
 - **类型**：SQLite（WAL 模式）
-- **总表数**：**84 张**（实测 `core/database.py` L127-L927）
+- **总表数**：**108 张**（实测 `core/database.py` `CREATE TABLE IF NOT EXISTS`）
 - **初始化**：`core/database.py` 自动建表
 - **迁移**：见 `core/migrations/`（v5.x 系列逐步迁移）
 
 ### 7.2 表分类（详 §1.12）
 
-| 分类 | 表数 | 关键表 |
-|------|------|--------|
-| **A 用户相关** | 14 | `users` / `user_levels` / `user_badges` / `mute_records` / `blacklist` / `conversion_events` |
-| **B 群组相关** | 8 | `group_stats` / `channel_tracking` / `federation_bans` / `welcome_configs` |
-| **C 商业相关** | 12 | `shop_items` / `redpackets` / `lotteries` / `points_log` / `achievements` |
-| **D 追踪相关** | 8 | `broadcast_tracking` / `orphan_cleanup_log` / `task_log` / `ad_suspicious_users` |
-| **E 系统配置** | 27 | `disabled_commands` / `admin_logs` / `antiflood_settings` / 22+ 其他 |
-| **F 消息锁** | 1 | `message_locks` |
-| **G 其他业务** | 14 | `cart_recovery` / `keyword_triggers` / `verification_records` / `puzzle_scores` |
+> 分类为按业务域归类的示例，完整列表以 `core/database.py` 实测 108 张为准。
+
+| 分类 | 关键表 |
+|------|--------|
+| **A 用户相关** | `users` / `user_levels` / `user_badges` / `mute_records` / `blacklist` / `conversion_events` |
+| **B 群组相关** | `group_stats` / `channel_tracking` / `federation_bans` / `welcome_configs` |
+| **C 商业相关** | `shop_items` / `redpackets` / `lotteries` / `points_log` / `achievements` |
+| **D 追踪相关** | `broadcast_tracking` / `orphan_cleanup_log` / `task_log` / `ad_suspicious_users` |
+| **E 系统配置** | `disabled_commands` / `admin_logs` / `antiflood_settings` / 22+ 其他 |
+| **F 消息锁** | `message_locks` |
+| **G 其他业务** | `cart_recovery` / `keyword_triggers` / `verification_records` / `puzzle_scores` |
 
 ### 7.3 备份
 
@@ -784,8 +790,8 @@ python main.py
 | **AI_DEBUG_HISTORY.md** | [项目根目录](AI_DEBUG_HISTORY.md) | 病历本（Bug 修复记录/失败方案避让） |
 | **CHANGELOG.md** | [项目根目录](CHANGELOG.md) | 变更日志（用户可感知变更） |
 | **VERSION.md** | [项目根目录](VERSION.md) | 版本号锚点 |
-| **MEMBER_SCAN_METHOD.md** | [项目根目录](MEMBER_SCAN_METHOD.md) | 群成员扫描方案（Pyrogram） |
-| **BOT 投喂与自然语言配置说明** | [项目根目录](BOT_投喂与自然语言配置说明.md) | Telegram/网页端投喂 |
+| **MEMBER_SCAN_METHOD.md** | [docs/reference/](docs/reference/MEMBER_SCAN_METHOD.md) | 群成员扫描方案（Pyrogram） |
+| **BOT 投喂与自然语言配置说明** | [docs/reference/](docs/reference/BOT_投喂与自然语言配置说明.md) | Telegram/网页端投喂 |
 | **scripts/README.md** | [scripts/](scripts/README.md) | 调试工具说明 |
 | **capability-matrix.md** | [docs/technical/](docs/technical/capability-matrix.md) | **详尽能力矩阵**（v5.12.2 新建） |
 | **vps-deploy-trap.md** | [docs/technical/](docs/technical/vps-deploy-trap.md) | VPS 部署陷阱 |
@@ -812,7 +818,7 @@ python main.py
 1. **不混搭不同维度概念**：
    - `PROMPT_TEMPLATES`（4 个）≠ `MODE_ROUTING`（25 个）≠ 对话轮次递进（3 段）
    - `MODEL_POOLS`（9 池）≠ 3 层路由（**9 池 ≠ 3 层**；3 层是 MODE_ROUTING 的视角）
-   - 群管 80+ 不一定准确（实测 81 个文件）
+   - 群管 80+ 不一定准确（实测 88 个文件）
 2. **引用配置前必须 grep 实测**：
    - 价格：先 `grep -A 3 "PRICE_LIST" config.json.example`
    - 话术：先 `grep -B 1 -A 1 "SLANG_DICT" config.json.example`
@@ -898,18 +904,35 @@ python main.py
 
 ### 12.1 当前版本
 
-**v5.16.3**（2026-06-12）[Codex] — 工作区脏改动收敛：模块化合并 + 运行配置退出 Git 跟踪 + 旧脚本/旧目录清理
+**v5.28.0**（2026-06-19）— 10项增长优化上线：意图路由、A/B、归因报表、质量评估串入 AI 回复链路；Dashboard 新增增长优化汇总；质量评估低采样开启，LLM 意图精分保持关闭。
 
 ### 12.2 版本演进
 
+> 完整历史见 `VERSION.md` 与 `CHANGELOG.md`。近 10 个版本：
+
 | 版本 | 日期 | 摘要 |
 |------|------|------|
-| v5.16.3 | 2026-06-12 | [Codex] 工作区脏改动收敛 + 目录分层清理 + config.json 退出 Git 跟踪 |
-| v5.16.2 | 2026-06-12 | [Codex] 广告治理不踢人策略纠正 + emoji/头像/播报/搭讪暗病修复 |
-| v5.16.1 | 2026-06-11 | 看我简介变体 + bio 核心骗术模式补充 |
-| v5.12.3 | 2026-06-02 | README 大重写（详尽展开 12 节，事实源对齐） |
-| v5.12.2 | 2026-06-02 | 业务核心目标重写（运营型商业 AI 转化机器人定位） |
-| v5.12.1 | 2026-06-02 | AGENTS.md v5.12.1 重构（合并 + 简化） |
+| v5.28.0 | 2026-06-19 | 10项增长优化上线：增长优化编排层、AI回复前stage_hint、回复后归因/遥测、Dashboard增长汇总、低采样质量评估 |
+| v5.27.0-RC1 | 2026-06-18 | 稳定化候选：requirements.lock 真实生成，Dashboard/迁移可启动，RBAC 安全测试不再跳过，metrics 防重复虚高，CI targeted flake8/mypy/pytest/interrogate 通过 |
+| v5.26.0 | 2026-06-17 | 10大优化方向全量执行（LLM成本熔断+压测+级联告警+人设一致性+A/B测试+记忆归因+DB迁移监控+多Bot路由+归因回放+RBAC审批流） |
+| v5.25.0 | 2026-06-17 | 10大优化（Dashboard API压测+WriteQueue背压+SQL乐观锁+告警风暴控制+ModelRouter多模型协同+记忆摘要+DB迁移蓝图+funnel归因+audit DB驱动权限+Locust压测） |
+| v5.24.1 | 2026-06-17 | 深度系统集成三阶段（WriteQueue全量化+独立告警Bot+RBAC守卫+混合记忆+归因报表+调度指标落盘+RBAC角色迁移） |
+| v5.23.0 | 2026-06-17 | 8大架构优化（SQLite写入队列+AI输出质量+RBAC审计+转化漏斗归因+广告拼音增强+调度可观测+混合记忆+多Bot共享表） |
+| v5.22.0 | 2026-06-17 | 全量审计修复（5致命+11高危+13中危暗病） |
+| v5.21.0 | 2026-06-17 | 人设引擎大改（4桶反模板+动态LLM参数矩阵） |
+| v5.20.0 | 2026-06-17 | 动态意图识别与场景触发引擎 |
+| v5.19.0 | 2026-06-17 | 播报多样性引擎 + 人设引擎大改 |
+| v5.18.5 | 2026-06-17 | Telegram Bot API 10.1 完整实装 |
+| v5.18.4 | 2026-06-16 | 每日播报系统全面优化（话术+画像+提示词重构） |
+| v5.18.3 | 2026-06-16 | 全量审计+代码质量修复（164处空except+自动备份+日志清理） |
+| v5.18.2 | 2026-06-15 | 富文本播报上线核查补强 |
+| v5.18.1 | 2026-06-15 | Dashboard 6新页面+用户画像自动学习+A/B测试+按钮统计 |
+| v5.18.0 | 2026-06-15 | Telegram API 2026 适配（富文本+彩色按钮+人物画像） |
+| v5.17.0 | 2026-06-15 | 网络请求异常处理重构（统一HTTP客户端） |
+| v5.16.5 | 2026-06-14 | Telegram Bot API 10.x 富文本与群能力兼容 |
+| v5.16.4 | 2026-06-13 | Premium emoji状态识别 + 历史消息删除边界修复 |
+| v5.16.3 | 2026-06-12 | 工作区脏改动收敛 + 目录分层清理 |
+| v5.16.2 | 2026-06-12 | 广告治理不踢人策略纠正 + emoji/头像/播报/搭讪暗病修复 |
 | v5.12.0 | 2026-05-30 | 配置热重载 + 群播报自动删除 + 孤儿清理可视化 |
 | v5.11.0 | 2026-05-25 | 禁 root SSH 部署（统一 ubuntu 用户） |
 | v5.10.3 | 2026-05-20 | 配置上传 `safe_upload_config`（自动合并 + 保护密钥） |
@@ -918,8 +941,6 @@ python main.py
 | v5.7.1 | 2026-04-25 | 禁 `start.sh` / `nohup` / `pm2` 启动（统一 systemd） |
 | v5.0.0 | 2026-01-01 | 设置面板完全体（115 按钮） |
 | v4.8.0 | 2025-08-15 | SYSTEM_PROMPT 精细化（10 维商业目标） |
-| v4.5.12 | 2025-05-20 | 话术池强制每次换说法 |
-| v0.1.0 | 2024-09-01 | 项目初始化 |
 
 > 详细变更见 [CHANGELOG.md](CHANGELOG.md)
 
@@ -944,6 +965,5 @@ python main.py
 
 ---
 
-> **文档维护者**：[Trae CN] · 2026-06-02
-> **下次核验**：每次 CHANGELOG 更新时同步 README
+> **文档维护**：每次 `CHANGELOG.md` 更新时同步 `README.md` 与 `VERSION.md`
 > **核心原则**：**事实优先** — 所有数据均来自 `config.json.example` / `ls modules/` / `core/database.py` / `core/message_dispatcher.py` 实测

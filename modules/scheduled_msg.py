@@ -16,8 +16,10 @@
 import re
 import time
 from datetime import datetime, timezone, timedelta
+from core.broadcast_formatter import build_broadcast_html, looks_like_html
 from core.database import _db_lock
 from core.logging_util import get_logger
+from core.telebot_compat import send_message_compat
 
 logger = get_logger("scheduled_msg")
 
@@ -110,7 +112,19 @@ def run_scheduled_messages(bot, config, db):
         for row in rows:
             msg_id, chat_id, content = row
             try:
-                bot.send_message(chat_id, content)
+                parse_mode = None
+                text = content
+                if looks_like_html(content):
+                    parse_mode = "HTML"
+                else:
+                    text = build_broadcast_html("定时提醒", content, "这条提醒由系统定时送达。", "Mory提醒")
+                    parse_mode = "HTML"
+                send_message_compat(
+                    bot,
+                    chat_id,
+                    text,
+                    parse_mode=parse_mode,
+                )
                 success += 1
                 logger.info(f"⏰ 定时消息发送: id={msg_id} chat={chat_id}")
             except Exception as e:

@@ -17,8 +17,8 @@ import time
 from pathlib import Path
 
 # Windows 终端默认 GBK，强制用 UTF-8 输出，防止 emoji 等 Unicode 字符炸裂
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", write_through=True)
 
 import paramiko
 
@@ -28,10 +28,16 @@ ROOT = Path(__file__).resolve().parent
 # 导入部署工具
 sys.path.insert(0, str(ROOT))
 from core.deploy_utils import safe_upload_config, upload_files, verify_deployment, sync_runtime_fields_from_vps, sync_env_api_key, ensure_remote_dir
-from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH, ssh_connect
+from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_KEY_FILES, VPS_PATH, ssh_connect
 
-# 绝不上传的文件名
-EXCLUDE_NAMES = {"config.json", ".env", "mory.db", "deploy_vps.py", "__pycache__", ".pyc"}
+# 绝不上传的文件名（含垃圾/临时/凭据/旧备份，v5.16.5 补）
+EXCLUDE_NAMES = {
+    "config.json", ".env", "mory.db", "deploy_vps.py", "__pycache__", ".pyc",
+    # 垃圾/临时/凭据备份
+    ".env.bak", "_ssh_known_hosts", "dashboard.log", "fault_alerts.log",
+    # 旧部署脚本残留（v5.16.5 删除本地后防御）
+    "start.sh", "deploy.bat", "start_dashboard.bat", "docker_deploy.sh",
+}
 
 # 需要动态扫描的目录（递归收集所有 .py 文件）
 SCAN_DIRS = ["core", "modules", "dashboard", "scripts"]  # [v5.12.4] 修复：scripts/ 不在 SCAN_DIRS 导致 force_orphan_cleanup.py 未自动部署
@@ -96,9 +102,9 @@ def main():
     print("=" * 60)
 
     # 1. 前置检查
-    if not VPS_HOST or not VPS_PASS:
-        print("❌ 错误：VPS_HOST 或 VPS_SSH_PASS 未设置！")
-        print("   请在 .env 文件中配置 VPS_HOST 和 VPS_SSH_PASS")
+    if not VPS_HOST or (not VPS_PASS and not VPS_KEY_FILES):
+        print("❌ 错误：VPS_HOST 或 SSH 凭据未设置！")
+        print("   请在 .env 文件中配置 VPS_HOST，并配置 VPS_SSH_PASS 或 VPS_SSH_KEY")
         sys.exit(1)
 
     local_config_path = ROOT / "config.json"
@@ -121,6 +127,10 @@ def main():
     print("  ✅ 连接成功")
 
     sftp = client.open_sftp()
+    try:
+        sftp.get_channel().settimeout(60)
+    except Exception as e:
+        print(f"  ⚠️ SFTP超时设置失败（非致命）：{e}")
 
     # 记录是否已停止服务（finally 块需要知道要不要重启）
     services_stopped = False
@@ -178,8 +188,8 @@ def main():
         ensure_remote_dir(sftp, f"{VPS_PATH}/logs")
         ensure_remote_dir(sftp, f"{VPS_PATH}/config")
 
-        # 上传其他非Python文件
-        for extra in ["requirements.txt", "Dockerfile", "docker-compose.yml"]:
+        # 上传其他非Python文件。requirements.lock 存在时一并上传，生产环境优先使用锁定依赖。
+        for extra in ["requirements.lock", "requirements.txt", "requirements.in", "Dockerfile", "docker-compose.yml"]:
             local_extra = ROOT / extra
             if local_extra.exists():
                 try:
@@ -187,6 +197,41 @@ def main():
                     print(f"  ✅ {extra}")
                 except Exception as e:
                     print(f"  ⚠️ {extra} 上传失败：{e}")
+
+        print("\n  安装/同步 Python 依赖 ...")
+        install_cmd = (
+            f"cd {VPS_PATH} && "
+            "(python3 -m pip install --user -r requirements.lock --break-system-packages "
+            "|| python3 -m pip install --user -r requirements.lock) "
+            "&& python3 -m pip check"
+        )
+        stdin, stdout, stderr = client.exec_command(install_cmd, timeout=300)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        exit_code = stdout.channel.recv_exit_status()
+        if exit_code == 0:
+            print("  ✅ requirements.lock 已安装，pip check 通过")
+        else:
+            print(f"  ❌ requirements.lock 安装/校验失败（返回码 {exit_code}）")
+            tail = "\n".join((out + "\n" + err).splitlines()[-40:])
+            print(tail)
+            raise RuntimeError("VPS Python 依赖同步失败")
+
+        print("\n  清理远端运行态缓存 ...")
+        cleanup_cmd = (
+            f"cd {VPS_PATH} && "
+            "find . -type d \\( -name __pycache__ -o -name .pytest_cache -o -name .mypy_cache -o -name .ruff_cache \\) "
+            "-prune -exec rm -rf {} + && "
+            "find . -type f -name '*.pyc' -delete && "
+            "rm -f reload_flag"
+        )
+        stdin, stdout, stderr = client.exec_command(cleanup_cmd, timeout=60)
+        exit_code = stdout.channel.recv_exit_status()
+        if exit_code == 0:
+            print("  ✅ 远端缓存与 reload_flag 已清理")
+        else:
+            err = stderr.read().decode("utf-8", errors="replace").strip()
+            print(f"  ⚠️ 远端缓存清理返回码 {exit_code}：{err}")
 
         # 上传systemd服务文件到 /etc/systemd/system/
         print("\n  上传systemd服务文件 ...")
@@ -313,9 +358,8 @@ def main():
         # 关闭 SSH
         try:
             client.close()
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # ── 输出最终结果 ──
     if deploy_ok:
         print("\n" + "=" * 60)

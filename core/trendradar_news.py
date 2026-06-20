@@ -33,8 +33,8 @@ def _get_shared_cache():
         import modules.auto_tasks as at
         if hasattr(at, '_news_pushed_today'):
             return at._news_pushed_today
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     global _local_pushed_today
     if not hasattr(_get_shared_cache, "_local_pushed_today"):
         _get_shared_cache._local_pushed_today = set()

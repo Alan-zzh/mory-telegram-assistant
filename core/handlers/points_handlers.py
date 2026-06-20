@@ -75,9 +75,8 @@ def cache_message_for_antidelete(dctx) -> bool:
         if m.text or m.caption:
             content = m.text or m.caption or ""
             cache_message(chat_id, m.message_id, uid, m.from_user.first_name or "", content[:500], m.content_type)
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -100,9 +99,8 @@ def handle_afk_status(dctx) -> bool:
     # P2.5：AFK自动解除（用户发言时自动取消AFK状态）
     try:
         check_afk_on_message(bot, m, CONFIG, db)
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # P2.6：检查@提及/回复的用户是否AFK
     try:
         entities = m.entities or []
@@ -116,18 +114,16 @@ def handle_afk_status(dctx) -> bool:
                     chat_member = bot.get_chat_member(chat_id, username)
                     if chat_member and chat_member.user:
                         check_afk_mention(bot, m, CONFIG, db, chat_member.user.id)
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # 检查回复的用户是否AFK
     if m.reply_to_message and m.reply_to_message.from_user and not m.reply_to_message.from_user.is_bot:
         try:
             check_afk_mention(bot, m, CONFIG, db, m.reply_to_message.from_user.id)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -159,9 +155,8 @@ def update_speech_stats(dctx) -> bool:
             progress = get_quest_progress(db, uid, "speech10", CONFIG)
             if progress >= 10:
                 check_quest_completion(db, uid, "speech10", CONFIG, bot, chat_id, uname)
-        except Exception:
-            pass
-    except Exception:
-        pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False

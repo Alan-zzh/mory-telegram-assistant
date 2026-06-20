@@ -65,9 +65,8 @@ def check_command_disabled(dctx) -> bool:
         if is_command_disabled(db, chat_id, cmd_parts):
             clear_logging_context()
             return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -392,14 +391,13 @@ def handle_admin_feature_commands(dctx) -> bool:
                         report += f"\n  ⚠️ msg_id={item['msg_id']}: {item.get('error', '未知')}"
                 try:
                     bot.send_message(group_id, report)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
             except Exception as e:
                 try:
                     bot.send_message(group_id, f"❌ 追溯扫描失败: {e}")
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         t = threading.Thread(target=_do_scan, daemon=True, name="scan_ads")
         t.start()
         clear_logging_context()
@@ -607,8 +605,8 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
         handle_checkin(bot, m, CONFIG, db)
         try:
             check_quest_completion(db, uid, "checkin", CONFIG, bot, chat_id, uname)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         clear_logging_context()
         return True
     if msg in ("签到排行", "签到排名"):
@@ -639,8 +637,8 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
         handle_exchange(bot, m, CONFIG, db, msg[3:].strip())
         try:
             check_quest_completion(db, uid, "shop", CONFIG, bot, chat_id, uname)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         clear_logging_context()
         return True
     if msg.startswith("上架 "):
@@ -759,8 +757,8 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
         handle_tip(bot, m, CONFIG, db, msg[3:].strip() if len(msg) > 3 else "")
         try:
             check_quest_completion(db, uid, "tip", CONFIG, bot, chat_id, uname)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         clear_logging_context()
         return True
     if msg in ("打赏排行", "打赏排名"):

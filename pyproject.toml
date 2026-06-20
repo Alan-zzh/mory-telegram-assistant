@@ -1,0 +1,49 @@
+[tool.interrogate]
+# interrogate 配置 - docstring 覆盖率检查
+# 文档：https://interrogate.readthedocs.io/
+
+# 覆盖率阈值（80%）
+fail-under = 80
+
+# 排除目录和文件
+exclude = [
+    "tests",
+    "test_*.py",
+    ".git",
+    "__pycache__",
+    ".cache",
+    "venv",
+    ".venv",
+    "node_modules",
+    "__init__.py",  # 忽略 __init__.py（通常只有导入语句）
+]
+
+# 检查的文件扩展名
+extensions = ["py"]
+
+# 忽略模块级 docstring（只检查函数/类/方法）
+ignore-module = true
+
+# 忽略私有函数/方法（以 _ 开头）
+ignore-private = false
+
+# 忽略魔法方法（__init__, __str__ 等）
+ignore-magic = true
+
+# 忽略嵌套函数
+ignore-nested-functions = true
+
+# 忽略嵌套类
+ignore-nested-classes = true
+
+# 忽略 TODO/FIXME 注释（不视为缺失 docstring）
+omit-tags = ["TODO", "FIXME"]
+
+# 输出格式
+verbose = 1
+
+# 颜色输出
+color = true
+
+# 静默模式（与 verbose 互斥，设为 false）
+quiet = false

@@ -252,33 +252,6 @@ ALL_CONFIGS = {
         "examples": ["开启挽回", "关闭挽回"]
     },
     
-    "AUTO_MORNING_NEWS": {
-        "category": "功能开关",
-        "name": "早间新闻",
-        "type": "boolean",
-        "default": True,
-        "desc": "早上发送新闻",
-        "examples": ["开启早间新闻", "关闭早间新闻"]
-    },
-    
-    "AUTO_AFTERNOON_NEWS": {
-        "category": "功能开关",
-        "name": "午间新闻",
-        "type": "boolean",
-        "default": True,
-        "desc": "中午发送新闻",
-        "examples": ["开启午间新闻", "关闭午间新闻"]
-    },
-    
-    "AUTO_EVENING_NEWS": {
-        "category": "功能开关",
-        "name": "晚间新闻",
-        "type": "boolean",
-        "default": True,
-        "desc": "晚上发送新闻",
-        "examples": ["开启晚间新闻", "关闭晚间新闻"]
-    },
-    
     # ═══════════════════════════════════════════════════════════════════════
     # 【C】时间调度配置
     # ═══════════════════════════════════════════════════════════════════════
@@ -1084,9 +1057,10 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None
         "即焚": "BURN_AFTER",
         "阅后即焚": "BURN_AFTER",
         "挽回": "RECOVER_ENABLED",
-        "早间新闻": "AUTO_MORNING_NEWS",
-        "午间新闻": "AUTO_AFTERNOON_NEWS",
-        "晚间新闻": "AUTO_EVENING_NEWS",
+        "早间新闻": "AUTO_NEWS",
+        "午间新闻": "AUTO_NEWS",
+        "晚间新闻": "AUTO_NEWS",
+        "新闻播报": "AUTO_NEWS",
     }
     
     for alias, key in toggle_aliases.items():
@@ -1611,9 +1585,9 @@ def _handle_task_control(msg: str, config: dict, bot, m, save_config_fn, mory_bo
         "午安问候": "AUTO_GREETING",
         "晚安问候": "AUTO_GOODNIGHT",
         "晚安": "AUTO_GOODNIGHT",
-        "早间新闻": "AUTO_MORNING_NEWS",
-        "午间新闻": "AUTO_AFTERNOON_NEWS",
-        "晚间新闻": "AUTO_EVENING_NEWS",
+        "早间新闻": "AUTO_NEWS",
+        "午间新闻": "AUTO_NEWS",
+        "晚间新闻": "AUTO_NEWS",
         "新闻播报": "AUTO_NEWS",
         "签到": "SIGNUP_ENABLED",
         "碎片寻宝": "PUZZLE_ENABLED",

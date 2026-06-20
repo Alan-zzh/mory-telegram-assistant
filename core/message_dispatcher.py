@@ -22,7 +22,9 @@ from typing import Any
 
 from core.helpers import can_delete_message, format_user_mention
 from core.bot_initializer import BotContext
+from core.i18n import set_user_language, _
 from core.logging_util import get_logger, set_logging_context, clear_logging_context
+from core.tracing import start_span, add_span_event, is_tracing_enabled
 from core.handlers.command_handlers import (
     _handle_welcome_fed_commands, _handle_admin_feature_commands,
     _handle_feature_keywords, _handle_group_admin_commands,
@@ -174,8 +176,8 @@ def _delayed_reply(bot, chat_id, reply_to_msg, text, delay_seconds, mory_bot, is
                         InlineKeyboardButton("👎", callback_data=f"fb_dislike_{sent.message_id}"),
                     )
                     bot.edit_message_reply_markup(chat_id=sent.chat.id, message_id=sent.message_id, reply_markup=fb_markup)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         except Exception as e:
             logger.warning(f"延迟发送失败: {e}")
 
@@ -466,7 +468,11 @@ class DispatchContext:
     is_group: bool = False # 是否群聊
     text: str = ""        # 消息文本
     proactive_eligible: bool = False  # 是否符合主动消息条件
+    intent: dict = field(default_factory=lambda: {"intent": "chat", "source": "disabled"})  # [TRAE SOLO CN] v5.19.0 意图路由结果
     _analysis: dict = field(default_factory=dict)  # 中间分析结果
+    # [TRAE SOLO CN v5.24.0 阶段2-D] 多 Bot 共享上下文（跨 Bot 画像 + 漏斗状态）
+    shared_profile: dict = field(default_factory=dict)        # 跨 Bot 用户画像（来自 shared_db）
+    shared_funnel_state: str = ""                             # 跨 Bot 漏斗状态（touched/interested/carted/converted/unknown）
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -483,29 +489,71 @@ def master_handler(m, ctx: BotContext):
         try:
             from modules.auto_tasks import _notify_admin_system_failure
             _notify_admin_system_failure(ctx.resource_manager, "主分发器未捕获异常", f"{e}\n{traceback.format_exc()[:200]}", "🚨")
-        except Exception:
-            pass
-
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
 def dispatch(m, ctx: BotContext):
     """消息分发核心逻辑（优先级严格控制）"""
     try:
         do_dispatch(m, ctx)
     except Exception as e:
+        # [v5.25.0 阶段1-B] WriteQueue 背压降级：核心写入队列满时返回友好文案
+        if "WriteQueueFullError" in type(e).__name__:
+            clear_logging_context()
+            logger.warning(f"⚠️ WriteQueue 背压降级：{e}")
+            try:
+                uid = getattr(m, "from_user", None)
+                uid = uid.id if uid else 0
+                chat_id = getattr(m, "chat", None)
+                chat_id = chat_id.id if chat_id else 0
+                if uid and chat_id:
+                    # 人设内降级文案（傲娇风格）
+                    ctx.bot.send_message(
+                        chat_id,
+                        "Mory 脑子现在有点乱，等本姑娘三秒钟再试嘛~ 💭",
+                        reply_to_message_id=getattr(m, "message_id", None),
+                    )
+            except Exception as send_err:
+                logger.debug(f"降级文案发送失败: {send_err}")
+            return
         clear_logging_context()
         logger.error(f"❌ 分发器内部异常：{e}\n{traceback.format_exc()}")
         try:
             from modules.auto_tasks import _notify_admin_system_failure
             _notify_admin_system_failure(ctx.resource_manager, "分发器内部异常", f"{e}\n{traceback.format_exc()[:200]}", "🚨")
-        except Exception:
-            pass
-
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
 def do_dispatch(m, ctx: BotContext):
     """消息分发核心逻辑（优先级严格控制）
 
     依次调用各优先级子函数，任一子函数返回True表示消息已处理完毕
     """
+    # ── 分布式追踪：消息分发全链路 Span ──
+    _tracing_enabled = is_tracing_enabled()
+    if _tracing_enabled:
+        from core.tracing import get_tracer
+        _tracer = get_tracer("message_dispatcher")
+        _dispatch_span = _tracer.start_span(
+            "message.dispatch",
+            attributes={
+                "messaging.chat.type": m.chat.type or "unknown",
+                "messaging.chat.id": m.chat.id,
+                "messaging.user.id": m.from_user.id,
+                "messaging.user.name": (m.from_user.first_name or "?")[:50],
+                "messaging.text.length": len(m.text or ""),
+            }
+        )
+    else:
+        _dispatch_span = None
+
+    try:
+        _do_dispatch_inner(m, ctx, _dispatch_span)
+    finally:
+        if _dispatch_span:
+            _dispatch_span.end()
+
+
+def _do_dispatch_inner(m, ctx: BotContext, span=None):
+    """消息分发内部逻辑（与 do_dispatch 分离以支持追踪）"""
     # ── 配置热重载检查 ──
     from core.bot_initializer import _check_config_hot_reload
     _check_config_hot_reload(ctx.config)
@@ -526,8 +574,29 @@ def do_dispatch(m, ctx: BotContext):
     is_priv   = m.chat.type == "private"
     is_group  = m.chat.type in ("group", "supergroup")
 
+    # ── i18n: 根据用户 language_code 设置当前会话语言 ──
+    # Telegram 用户的 language_code 属性（如 "zh-hans", "en"）会被自动规范化
+    # 后续调用 _("key") 时会使用用户偏好的语言返回翻译
+    try:
+        set_user_language(m.from_user)
+    except Exception as e:
+        logger.debug(f"设置用户语言失败: {e}")
+
     # 设置日志上下文
     set_logging_context(uid=uid, chat_id=chat_id, msg_id=m.message_id, uname=uname)
+
+    # [v5.24.0 阶段3-C] 多 Bot 路由检查：群组消息按 bot_group_routing 表决定是否响应
+    # 默认关闭（BOT_ROUTING_ENABLED=False 时 should_handle 直接返回 True，向后兼容）
+    # 仅对群组消息生效，私聊不受路由控制
+    if is_group:
+        try:
+            from core.bot_routing import should_handle
+            if not should_handle(ctx.bot_id, chat_id, "group_chat"):
+                logger.debug(f"[ROUTING] bot={ctx.bot_id} 不处理 chat={chat_id} 的 group_chat 模块，静默退出")
+                clear_logging_context()
+                return
+        except Exception as e:
+            logger.debug(f"路由检查异常 bot={ctx.bot_id} chat={chat_id}: {e}")
 
     # 构建分发上下文
     dctx = DispatchContext(
@@ -541,7 +610,20 @@ def do_dispatch(m, ctx: BotContext):
         text=msg_text,
     )
 
-    # [TRAE SOLO CN] v5.12.3 修复：在所有优先级判断之前更新 last_active
+    # [TRAE SOLO CN v5.24.0 阶段2-D] 多 Bot 共享上下文读取
+    # 从 shared_db 读取跨 Bot 画像 + 漏斗状态，注入 dctx 供后续 P9/P10 使用
+    # 主 Bot 读取自身 DB（等价本地查询），media Bot 读取主 Bot DB（跨 Bot 感知）
+    # 失败静默降级，不影响主流程
+    try:
+        from core.shared_db import get_shared_profile, get_shared_conversion_state
+        dctx.shared_profile = get_shared_profile(uid)
+        dctx.shared_funnel_state = get_shared_conversion_state(uid)
+        if dctx.shared_profile or dctx.shared_funnel_state != "unknown":
+            logger.debug(f"[SHARED_CTX] uid={uid} profile_tags={dctx.shared_profile.get('tags', [])} funnel={dctx.shared_funnel_state}")
+    except Exception as e:
+        logger.debug(f"共享上下文读取失败 uid={uid}: {e}")
+
+    # [TRAE SOLO CN v5.12.3 修复：在所有优先级判断之前更新 last_active
     # 确保无论后续哪个优先级拦截终止分发，last_active 都会被更新
     # 这是 ACTIVE_USERS_7D=0 的根因修复：之前如果 P1 黑名单/P3 敏感词等拦截，
     # P2 积分处理不会执行，last_active 就不会被更新
@@ -550,6 +632,33 @@ def do_dispatch(m, ctx: BotContext):
         db.update_last_active(uid)
     except Exception as e:
         logger.debug(f"update_last_active 失败 uid={uid}: {e}")
+
+    # [TRAE SOLO CN v5.24.0 阶段3-A] 混合记忆：记录 user 消息 + 检查触发
+    # 每条 user 消息都入缓冲，达到 15 轮阈值则异步摘要
+    try:
+        from core.memory_summarizer import record_message, check_and_trigger
+        record_message(uid, "user", msg_text)
+        check_and_trigger(uid, db)
+    except Exception as e:
+        logger.debug(f"记忆触发检查失败 uid={uid}: {e}")
+
+    # [TRAE SOLO CN v5.24.0 阶段3-B] 新用户冷启动：首条消息生成种子画像摘要
+    # 零成本（不调 LLM，纯规则分析），幂等（已有 memory_summary 则跳过），失败静默降级
+    try:
+        from core.memory_summarizer import seed_initial_memory
+        seed_initial_memory(uid, msg_text, db)
+    except Exception as e:
+        logger.debug(f"种子画像冷启动失败 uid={uid}: {e}")
+
+    # [TRAE SOLO CN] v5.19.0 新增：非侵入式画像采集（默认关闭）
+    # 挂在 last_active 之后，所有 P 之前，确保每条消息都被采集
+    if ctx.config.get("USER_PROFILE_ENABLED", False):
+        try:
+            profile_learner = getattr(ctx, "profile_learner", None)
+            if profile_learner:
+                profile_learner.learn_from_message(uid, msg_text, chat_id, int(time.time()))
+        except Exception as e:
+            logger.debug(f"画像采集异常 uid={uid}: {e}")
 
     # [TRAE SOLO CN] v5.15.3 新增：消息追踪快照（AGENTS.md 教训 #17 落实）
     # 之前 P1 拦截只 return True 静默吞消息，导致 18:36 教白嫖消息 msg_id 不可知，历史消息无法追溯删除
@@ -578,6 +687,9 @@ def do_dispatch(m, ctx: BotContext):
     # ── P3.5：广告检测（必须在积分和反刷屏之前执行，避免广告用户被5分钟禁言而非永久封禁）──
     if _dispatch_p3_5_ad_detection(dctx):
         return
+
+    # ── P3.6：意图路由（v5.19.0 新增，分类后写入 dctx.intent 供 P10 使用）──
+    _dispatch_p3_6_intent_routing(dctx)
 
     # ── P2：积分处理（广告检测之后，避免广告消息获得积分）──
     if _dispatch_p2_points(dctx):
@@ -636,9 +748,8 @@ def _dispatch_p0_member(dctx: DispatchContext) -> bool:
                 handle_remote_message(bot, m, CONFIG, db)
                 clear_logging_context()
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # P0.75：中继模式 - 管理员回复中继消息 + 用户消息即时转发
     if CONFIG.get('RELAY_MODE_ENABLED', False) and dctx.is_priv:
         try:
@@ -667,9 +778,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
     try:
         from modules.anti_raid import check_raid
         check_raid(bot, m, config, db)
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     for user in m.new_chat_members:
         user_id = user.id
         user_display = (user.first_name or "") + (user.last_name or "")
@@ -705,9 +815,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
             from modules.invite import record_invite
             if hasattr(m, 'from_user') and m.from_user and m.from_user.id != user_id:
                 record_invite(db, m.from_user.id, user_id, chat_id, config, bot)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         # 步骤2：emoji面具检测
         from modules.emoji_mask_detector import check_emoji_mask_in_username
         emoji_hit, emoji_reason = check_emoji_mask_in_username(user_display, config)
@@ -726,6 +835,84 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
             )
             continue
 
+        # 步骤2.5：资料层广告检测（名字 + BIO + Premium emoji状态）
+        try:
+            user_bio = ""
+            try:
+                chat_info = bot.get_chat(user_id)
+                user_bio = (getattr(chat_info, "bio", "") or "")[:500]
+            except Exception as e:
+                logger.debug(f"入群拉取用户bio失败 uid={user_id}: {e}")
+
+            from modules.ad_profile_signals import detect_profile_ad_signal
+            profile_result = detect_profile_ad_signal(bot, user, user_bio, config)
+            if profile_result.get("is_ad"):
+                logger.warning(
+                    f"🚫 [入群资料检测] 拦截广告新人: {user_display}({user_id}) "
+                    f"原因={profile_result.get('reason', '')[:120]}"
+                )
+                from modules.ad_enforcement import enforce_ad_user
+                enforce_ad_user(
+                    bot=bot,
+                    db=db,
+                    config=config,
+                    chat_id=chat_id,
+                    uid=user_id,
+                    uname=user_display,
+                    reason=f"入群资料检测: {profile_result.get('reason', '')[:200]} BIO:{user_bio[:120]}",
+                    notify_admin=True,
+                )
+                continue
+
+            ad_detector = getattr(ctx, "ad_detector", None) if ctx else None
+            if ad_detector:
+                ad_result = ad_detector.detect(
+                    username=user_display,
+                    msg="",
+                    user_id=user_id,
+                    bot=bot,
+                    bio=user_bio,
+                    chat_id=chat_id,
+                )
+                score = ad_result.get("score", 0) + int(profile_result.get("score", 0) or 0)
+                is_ad = ad_result.get("is_ad", False)
+                action = ad_result.get("action", "none")
+                reason = ad_result.get("reason", "")
+                if is_ad and action == "ban":
+                    logger.warning(
+                        f"🚫 [入群即检测] 拦截广告新人: {user_display}({user_id}) "
+                        f"评分={score} 动作={action} 原因={reason[:100]}"
+                    )
+                    from modules.ad_enforcement import enforce_ad_user
+                    enforce_ad_user(
+                        bot=bot,
+                        db=db,
+                        config=config,
+                        chat_id=chat_id,
+                        uid=user_id,
+                        uname=user_display,
+                        reason=f"入群即检测: {reason[:200]} BIO:{user_bio[:120]}",
+                        notify_admin=True,
+                    )
+                    continue
+                if score >= 2:
+                    logger.info(
+                        f"⚠️ [入群即检测] 可疑新人: {user_display}({user_id}) "
+                        f"评分={score} 原因={(reason or profile_result.get('reason', ''))[:100]}"
+                    )
+                    try:
+                        ad_detector.track_suspicious_user(
+                            user_id,
+                            0,
+                            chat_id,
+                            f"[入群即检测] {(reason or profile_result.get('reason', ''))[:80]}",
+                            score,
+                        )
+                    except Exception as e:
+                        logger.debug(f"追踪可疑用户失败: {e}")
+        except Exception as e:
+            logger.error(f"入群广告资料检测异常 uid={user_id}: {e}")
+
         # 步骤3：启动验证码
         from modules.verification import start_verification, check_verification_answer
         from modules.welcome_customization import send_welcome_message
@@ -740,9 +927,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
                     chat_id, user_id,
                     permissions=ChatPermissions(can_send_messages=False),
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             question, keyboard = start_verification(bot, chat_id, user_id, user_display, config)
             try:
                 if keyboard:
@@ -761,8 +947,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
                             can_add_web_page_previews=True,
                         ),
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         else:
             keyword_manager = getattr(ctx, 'keyword_manager', None) if ctx else None
             handle_new_members(bot, m, config, db, keyword_manager)
@@ -776,10 +962,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
         # 强制订阅检查
         try:
             check_force_subscribe(bot, m, config, db)
-        except Exception:
-            pass
-
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
 # ═══════════════════════════════════════════════════════════════════════
 #  P1-P3：安全处理（黑名单/敏感词/广告检测）
 # ═══════════════════════════════════════════════════════════════════════
@@ -817,6 +1001,44 @@ def _dispatch_p1_p3_security(dctx: DispatchContext) -> bool:
         clear_logging_context()
         return True
 
+    return False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  P3.6：意图路由（v5.19.0 新增）
+# ═══════════════════════════════════════════════════════════════════════
+
+def _dispatch_p3_6_intent_routing(dctx: DispatchContext) -> bool:
+    """[TRAE SOLO CN] v5.19.0 P3.6 意图路由：分类后写入 dctx.intent，供 P10 stage_hint 使用。
+
+    默认关闭（INTENT_ROUTING_ENABLED=false），关闭时 dctx.intent 保持默认值。
+    高置信度投诉意图 → 直接通知管理员，不进 P10 AI。
+    """
+    ctx = dctx.ctx
+    if not ctx.config.get("INTENT_ROUTING_ENABLED", False):
+        return False
+    try:
+        intent_router = getattr(ctx, "intent_router", None)
+        if not intent_router:
+            return False
+        dctx.intent = intent_router.classify(dctx.text)
+        # 高置信度投诉 → 转人工通知
+        if (dctx.intent.get("intent") == "complaint"
+                and dctx.intent.get("confidence", 0.0) > 0.6
+                and dctx.intent.get("source") in ("rule", "llm")):
+            try:
+                from modules.auto_tasks import _notify_admin_system_failure
+                _notify_admin_system_failure(
+                    ctx.resource_manager, "用户投诉预警",
+                    f"uid={dctx.uid} name={dctx.uname} chat={dctx.chat_id}\n意图={dctx.intent}\n内容={dctx.text[:200]}",
+                    "⚠️"
+                )
+            except Exception as e:
+                logger.debug(f"投诉通知失败: {e}")
+            # 投诉不拦截，继续走 P10 AI 回复
+        logger.debug(f"意图路由 uid={dctx.uid} intent={dctx.intent}")
+    except Exception as e:
+        logger.debug(f"意图路由异常 uid={dctx.uid}: {e}")
     return False
 
 
@@ -863,17 +1085,15 @@ def _dispatch_p2_points(dctx: DispatchContext) -> bool:
         if m.text or m.caption:
             content = m.text or m.caption or ""
             cache_message(chat_id, m.message_id, uid, m.from_user.first_name or "", content[:500], m.content_type)
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # P2.5：AFK自动解除
     if is_group:
         try:
             from modules.afk import check_afk_on_message, check_afk_mention
             check_afk_on_message(bot, m, CONFIG, db)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         # P2.6：检查@提及/回复的用户是否AFK
         try:
             from modules.afk import check_afk_mention
@@ -888,18 +1108,17 @@ def _dispatch_p2_points(dctx: DispatchContext) -> bool:
                         chat_member = bot.get_chat_member(chat_id, username)
                         if chat_member and chat_member.user:
                             check_afk_mention(bot, m, CONFIG, db, chat_member.user.id)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         # 检查回复的用户是否AFK
         if m.reply_to_message and m.reply_to_message.from_user and not m.reply_to_message.from_user.is_bot:
             try:
                 from modules.afk import check_afk_mention
                 check_afk_mention(bot, m, CONFIG, db, m.reply_to_message.from_user.id)
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
     # P3：黑名单词过滤
     if is_group:
         from modules.group_mgr import check_banned_words
@@ -907,8 +1126,8 @@ def _dispatch_p2_points(dctx: DispatchContext) -> bool:
         if check_banned_words(bot, m, CONFIG, db):
             try:
                 apply_blocklist_action(bot, m, CONFIG, db, chat_id, uid)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             clear_logging_context()
             return True
 
@@ -919,8 +1138,8 @@ def _dispatch_p2_points(dctx: DispatchContext) -> bool:
             if can_delete_message(CONFIG):
                 try:
                     bot.delete_message(chat_id, m.message_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
             logger.info(f"🌙 夜间模式拦截: uid={uid} msg={msg[:30]}")
             clear_logging_context()
             return True
@@ -942,18 +1161,36 @@ def _dispatch_p3_5_ad_detection(dctx: DispatchContext) -> bool:
         return False
 
     msg = dctx.text
-    if not msg or len(msg) < 2:
+    if not msg:
         return False
 
     # 跳过 Bot 命令，避免误封 /start@Bot 等正常指令
     if msg.startswith("/"):
         return False
 
-    from core.handlers.security_handlers import check_ad_detection
-
-    if check_ad_detection(dctx):
-        clear_logging_context()
-        return True
+    # ── 分布式追踪：广告检测 Span ──
+    if is_tracing_enabled():
+        from core.tracing import get_tracer
+        _tracer = get_tracer("ad_detection")
+        with _tracer.start_as_current_span(
+            "ad_detection.check",
+            attributes={
+                "messaging.user.id": dctx.uid,
+                "messaging.chat.id": dctx.chat_id,
+                "messaging.text.length": len(msg),
+            }
+        ) as span:
+            from core.handlers.security_handlers import check_ad_detection
+            result = check_ad_detection(dctx)
+            span.set_attribute("ad_detection.result", "blocked" if result else "passed")
+            if result:
+                clear_logging_context()
+            return result
+    else:
+        from core.handlers.security_handlers import check_ad_detection
+        if check_ad_detection(dctx):
+            clear_logging_context()
+            return True
 
     return False
 
@@ -998,27 +1235,24 @@ def _dispatch_p4_flood(dctx: DispatchContext) -> bool:
                     handle_flood_user(bot, m, CONFIG, db)
                     clear_logging_context()
                     return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # 反频道转发检测
     if not is_priv:
         try:
             if check_anti_channel(bot, m, CONFIG, db):
                 clear_logging_context()
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # NSFW图片检测
     if not is_priv and (m.photo or (m.document and m.document.mime_type and m.document.mime_type.startswith("image/"))):
         try:
             if check_nsfw_image(bot, m, CONFIG, db):
                 clear_logging_context()
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # P4：反刷机制
     if check_spam(bot, m, CONFIG, db):
         clear_logging_context()
@@ -1035,15 +1269,14 @@ def _dispatch_p4_flood(dctx: DispatchContext) -> bool:
                 if can_delete_message(CONFIG):
                     try:
                         bot.delete_message(chat_id, m.message_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
                 else:
                     logger.info(f"[消息锁] 消息删除已禁用，跳过删除消息")
                 clear_logging_context()
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # P4.6：慢速模式检测
     if not is_priv:
         try:
@@ -1054,18 +1287,16 @@ def _dispatch_p4_flood(dctx: DispatchContext) -> bool:
             if uid not in admin_ids and check_slow_mode(bot, m, CONFIG, db):
                 clear_logging_context()
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # P4.7：服务消息自动清理
     if not is_priv:
         try:
             if check_clean_service(bot, m, CONFIG, db):
                 clear_logging_context()
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # P3.8：发言统计计数
     try:
         increment_speech_count(db, uid, chat_id)
@@ -1076,11 +1307,10 @@ def _dispatch_p4_flood(dctx: DispatchContext) -> bool:
             progress = get_quest_progress(db, uid, "speech10", CONFIG)
             if progress >= 10:
                 check_quest_completion(db, uid, "speech10", CONFIG, bot, chat_id, uname)
-        except Exception:
-            pass
-    except Exception:
-        pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -1117,9 +1347,8 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
             if is_command_disabled(db, chat_id, cmd_parts):
                 clear_logging_context()
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # P6：管理员专属指令
     from modules.admin_cmds import handle_admin
     from modules.natural_cmd import handle_natural_admin
@@ -1221,9 +1450,8 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
         try:
             from modules.achievement import check_achievements_for_user
             check_achievements_for_user(bot, chat_id, db, uid, CONFIG)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # P8.85：猜数字回复检测
     if is_group:
         try:
@@ -1231,9 +1459,8 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
             if handle_guess_reply(bot, m, CONFIG, db):
                 clear_logging_context()
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # P9：用户画像标签提取
     from modules.group_mgr import detect_keywords
     analysis = detect_keywords(msg, CONFIG, keyword_manager)
@@ -1352,8 +1579,8 @@ def _handle_feedback(dctx: DispatchContext, analysis: dict) -> bool:
                             f"👤 {uname}({uid})\n"
                             f"💬 消息：{msg[:150]}\n"
                             f"💡 请手动解封")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
         else:
             # 私聊普通反馈（非解封）
             feedback_reply = random.choice([

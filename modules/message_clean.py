@@ -45,9 +45,8 @@ def handle_purge(bot, m, config, db, count_str):
     # 删除 /purge 命令本身
     try:
         bot.delete_message(m.chat.id, m.message_id)
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # 回复删除结果，3秒后自动删除
     try:
         reply = bot.send_message(m.chat.id, f"已删除 {deleted} 条消息")
@@ -79,10 +78,8 @@ def handle_del(bot, m, config, db):
     # 删除 /del 命令本身
     try:
         bot.delete_message(m.chat.id, m.message_id)
-    except Exception:
-        pass
-
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
 def handle_purge_to(bot, m, config, db):
     """删除从回复消息到当前消息之间的所有消息"""
     if not m.reply_to_message:
@@ -119,5 +116,5 @@ def _safe_delete(bot, chat_id, message_id):
     """安全删除消息，忽略异常"""
     try:
         bot.delete_message(chat_id, message_id)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")

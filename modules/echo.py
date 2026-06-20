@@ -37,8 +37,8 @@ def handle_echo(bot, m, config, db):
         if config.get("ENABLE_MESSAGE_DELETION", False):
             try:
                 bot.delete_message(chat_id, m.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         logger.info(f"Echo: chat={chat_id} uid={uid} len={len(content)}")
     except Exception as e:
         logger.error(f"Echo异常: {e}")

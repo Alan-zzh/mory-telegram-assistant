@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from core.config_compat import normalize_runtime_config, compact_runtime_config
 
 # ── 项目根目录 ──
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,6 +23,7 @@ base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ── 配置文件路径 ──
 CONFIG_FILE = os.path.join(base_dir, "config.json")
 _config_lock = Lock()
+_loaded_config_mtime = 0.0
 
 # ── 日志（延迟获取，避免循环依赖）──
 def _get_logger():
@@ -109,19 +111,25 @@ def preflight_check(cfg: dict, db_instance=None, ai_instance=None) -> dict:
     elif not channel_ids:
         result["warnings"].append("⚠️ CHANNEL_IDS 为空，频道数据日报将无内容")
 
-    # 3. 数据库可读写
+    # 3. 数据库可读写（加 3 次重试，数据库锁是瞬态的）
     db_ok = False
     db_reason = "未提供 db_instance"
     if db_instance is not None:
-        try:
-            test_key = "_preflight_test"
-            db_instance.set_system_state(test_key, "ok")
-            val = db_instance.get_system_state(test_key)
-            db_instance.set_system_state(test_key, None)
-            db_ok = val == "ok"
-            db_reason = "" if db_ok else "数据库读写测试失败"
-        except Exception as e:
-            db_reason = f"数据库异常: {e}"
+        for attempt in range(3):
+            try:
+                test_key = "_preflight_test"
+                db_instance.set_system_state(test_key, "ok")
+                val = db_instance.get_system_state(test_key)
+                db_instance.set_system_state(test_key, None)
+                db_ok = val == "ok"
+                db_reason = "" if db_ok else "数据库读写测试失败"
+                break
+            except Exception as e:
+                db_reason = f"数据库异常: {e}"
+                if attempt < 2:
+                    time.sleep(1)  # 等待 1 秒后重试（数据库锁是瞬态的）
+                else:
+                    logger.warning(f"数据库重试 {attempt + 1}/3 仍失败: {db_reason}")
     result["checks"]["database"] = {
         "ok": db_ok,
         "reason": db_reason,
@@ -184,9 +192,8 @@ def preflight_check(cfg: dict, db_instance=None, ai_instance=None) -> dict:
                 "\n".join(result["fatal"]),
                 "🚨"
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     return result
 
 
@@ -252,7 +259,9 @@ def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
+                cfg = normalize_runtime_config(json.load(f))
+            global _loaded_config_mtime
+            _loaded_config_mtime = os.path.getmtime(CONFIG_FILE)
             ver = cfg.get("_CONFIG_VERSION", "未知")
             logger.info(f"📋 配置版本：v{ver}")
         except json.JSONDecodeError as e:
@@ -291,8 +300,15 @@ def save_config(cfg: dict, db_instance=None):
     logger = _get_logger()
     with _config_lock:
         try:
+            global _loaded_config_mtime
+            if os.path.exists(CONFIG_FILE):
+                current_mtime = os.path.getmtime(CONFIG_FILE)
+                if _loaded_config_mtime and current_mtime > _loaded_config_mtime:
+                    logger.warning("检测到磁盘配置比当前进程更新，跳过本次保存以避免旧内存覆盖新配置")
+                    return False
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=2)
+                json.dump(compact_runtime_config(cfg), f, ensure_ascii=False, indent=2)
+            _loaded_config_mtime = os.path.getmtime(CONFIG_FILE)
         except Exception as e:
             logger.error(f"配置保存失败：{e}")
             return False
@@ -407,8 +423,8 @@ def start_config_reload_watcher(cfg: dict, interval: int = 5):
                         if hasattr(_check_config_hot_reload, "_mtime"):
                             try:
                                 _check_config_hot_reload._mtime = os.path.getmtime(CONFIG_FILE)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"操作异常: {e}")
                         logger.info("[配置重载] Dashboard配置变更已同步到Bot内存")
                     except json.JSONDecodeError as e:
                         logger.error(f"[配置重载] config.json格式损坏，跳过本次重载: {e}")
@@ -417,11 +433,10 @@ def start_config_reload_watcher(cfg: dict, interval: int = 5):
                     finally:
                         try:
                             RELOAD_FLAG.unlink(missing_ok=True)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
+                        except Exception as e:
+                            logger.debug(f"操作异常: {e}")
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
     t = threading.Thread(target=_watcher_loop, daemon=True, name="config_reload_watcher")
     t.start()
     logger.info(f"[配置重载] reload_flag监听已启动（间隔{interval}秒）")
@@ -430,6 +445,16 @@ def start_config_reload_watcher(cfg: dict, interval: int = 5):
 # ═══════════════════════════════════════════════════════════════
 #  BotContext 数据类
 # ═══════════════════════════════════════════════════════════════
+
+# [TRAE SOLO CN] v5.19.0 全局 BotContext 引用（供 antiflood 等无 ctx 引用的模块访问）
+_GLOBAL_CTX: Optional["BotContext"] = None
+
+
+def _get_global_ctx() -> Optional["BotContext"]:
+    """获取全局 BotContext 引用。"""
+    return _GLOBAL_CTX
+
+
 @dataclass
 class BotContext:
     """Bot核心上下文，封装所有全局单例对象"""
@@ -443,6 +468,8 @@ class BotContext:
     keyword_manager: Any = None        # KeywordManager（统一关键词管理）
     ad_detector: Any = None            # AdDetector
     proactive_engage: Any = None       # [v5.14.0] ProactiveEngage 商业搭讪
+    intent_router: Any = None          # [v5.19.0] IntentRouter 意图路由
+    profile_learner: Any = None        # [v5.19.0] ProfileLearner 画像学习器
     bot_id: int = 0                    # BOT_ID
     bot_username: str = ""             # BOT_USERNAME
     save_config: Callable = None       # 保存配置函数
@@ -504,6 +531,8 @@ def initialize_bot() -> BotContext:
 
     # 10. 创建TeleBot
     import telebot
+    from core.telebot_compat import preserve_telegram_extra_fields
+    preserve_telegram_extra_fields()
     bot = telebot.TeleBot(cfg["TOKEN"], threaded=True, num_threads=50, use_class_middlewares=True)
 
     # 11. 广告检测引擎
@@ -552,6 +581,14 @@ def initialize_bot() -> BotContext:
     from modules.proactive_engage import ProactiveEngage
     proactive_engage = ProactiveEngage(db, mory_bot, ai, cfg, keyword_manager)
 
+    # 19.6 [TRAE SOLO CN] v5.19.0 创建 IntentRouter 意图路由器
+    from core.intent_router import IntentRouter
+    intent_router = IntentRouter(ai, cfg)
+
+    # 19.7 [TRAE SOLO CN] v5.19.0 创建 ProfileLearner 画像学习器（默认关闭）
+    from core.profile_learner import ProfileLearner
+    profile_learner = ProfileLearner(db, cfg, ai)
+
     # 20. 注册中间件
     from telebot.handler_backends import BaseMiddleware
 
@@ -590,11 +627,17 @@ def initialize_bot() -> BotContext:
         keyword_manager=keyword_manager,
         ad_detector=ad_detector,
         proactive_engage=proactive_engage,  # [v5.14.0]
+        intent_router=intent_router,        # [v5.19.0]
+        profile_learner=profile_learner,    # [v5.19.0]
         bot_id=bot_id,
         bot_username=bot_username,
         save_config=_save_cfg,
         append_pool=append_pool,
     )
+
+    # [TRAE SOLO CN] v5.19.0 设置全局 BotContext 引用
+    global _GLOBAL_CTX
+    _GLOBAL_CTX = ctx
 
     # [TRAE SOLO CN] 启动追溯封禁：处理重启前未完成的广告封禁
     try:
@@ -603,6 +646,7 @@ def initialize_bot() -> BotContext:
         logger.warning(f"启动追溯封禁失败: {e}")
 
     # [TRAE SOLO CN] 启动追溯扫描：扫描群内历史消息删除漏网广告
+    # 优化：加冷却机制（24小时内只扫一次），且只在有实际删除时才通知管理员
     if cfg.get("RETROACTIVE_SCAN_ENABLED", False):
         def _run_retroactive_scan():
             try:
@@ -611,6 +655,19 @@ def initialize_bot() -> BotContext:
                 scan_range = cfg.get("RETROACTIVE_SCAN_RANGE", 200)
                 if not admin_id or not group_id:
                     return
+                # 冷却检查：24小时内只扫一次
+                try:
+                    last_scan = db.conn.execute(
+                        "SELECT ts FROM retroactive_scan_log ORDER BY ts DESC LIMIT 1"
+                    ).fetchone()
+                    if last_scan:
+                        import time as _time
+                        last_ts = float(last_scan[0]) if last_scan[0] else 0
+                        if _time.time() - last_ts < 86400:
+                            logger.info("[启动追溯扫描] 24小时内已扫描过，跳过")
+                            return
+                except Exception:
+                    pass
                 test_msg = bot.send_message(group_id, ".", disable_notification=True)
                 current_msg_id = test_msg.message_id
                 bot.delete_message(group_id, current_msg_id)
@@ -618,24 +675,35 @@ def initialize_bot() -> BotContext:
                 end_id = current_msg_id - 1
                 logger.info(f"[启动追溯扫描] 开始扫描 msg_id {start_id}~{end_id}")
                 scan_result = ad_detector.retroactive_scan(bot, group_id, start_id, end_id, admin_id, config=cfg)
-                if scan_result["ads_found"] > 0:
+                # 记录扫描日志
+                try:
+                    import time as _time
+                    db.conn.execute(
+                        "INSERT INTO retroactive_scan_log(ts, scanned, ads_found, deleted) VALUES (?,?,?,?)",
+                        (_time.time(), scan_result["scanned"], scan_result["ads_found"], scan_result["deleted"])
+                    )
+                    db.conn.commit()
+                except Exception:
+                    pass
+                # 只在有实际删除时才通知管理员
+                if scan_result["deleted"] > 0:
                     report = (
                         f"🔍 启动追溯扫描完成\n"
                         f"━━━━━━━━━━━━━━━\n"
                         f"📊 扫描范围: {start_id}~{end_id}\n"
                         f"📋 扫描消息: {scan_result['scanned']}条\n"
                         f"🚫 发现广告: {scan_result['ads_found']}条\n"
-                        f"🗑️ 删除成功: {scan_result['deleted']}条\n"
+                        f"️ 删除成功: {scan_result['deleted']}条\n"
                         f"⚠️ 删除失败: {scan_result['failed']}条\n"
                         f"⏭️ 正常跳过: {scan_result['skipped']}条\n"
                         f"📭 不存在: {scan_result['not_found']}条"
                     )
                     try:
                         bot.send_message(admin_id, report)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
                 else:
-                    logger.info("[启动追溯扫描] 未发现广告消息")
+                    logger.info(f"[启动追溯扫描] 扫描完成，删除={scan_result['deleted']}，无有效删除不通知")
             except Exception as e:
                 logger.warning(f"启动追溯扫描失败: {e}")
 
@@ -713,16 +781,16 @@ def _restore_db_from_backup(db, cfg):
                 try:
                     from modules.auto_tasks import report_fault
                     report_fault("数据库异常已自动恢复", f"从备份{_latest_backup}恢复成功", "⚠️")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
             except Exception as restore_err:
                 logger.critical(f"❌ 数据库恢复失败：{restore_err}")
                 logger.critical("   → 请手动从 backup/ 目录恢复")
                 try:
                     from modules.auto_tasks import report_fault
                     report_fault("数据库损坏且恢复失败", str(restore_err), "🚨")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         else:
             logger.error("   → 无可用备份，请手动检查数据库")
     else:

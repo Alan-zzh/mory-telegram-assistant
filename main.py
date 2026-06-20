@@ -10,6 +10,7 @@
 
 import os
 import sys
+import time
 import signal
 import logging
 import traceback
@@ -32,15 +33,79 @@ def main():
     DB = ctx.db if hasattr(ctx, 'db') else None
     AI = ctx.ai if hasattr(ctx, 'ai') else None
 
+    # 初始化结构化日志（JSON 格式，与现有 logging_util 共存）
+    from core.structured_logger import init_structlog
+    init_structlog(json_output=True)
+
     # 【v5.11.0】启动 preflight 健康检查：5 项关键检查，任何致命问题阻断启动
+    # 【v5.25.0】连续失败时指数退避，防止 systemd 重启轰炸
     preflight_result = preflight_check(CONFIG, db_instance=DB, ai_instance=AI)
     if not preflight_result["ok"]:
         # 致命问题：阻断启动（但先通知 admin 然后再退出）
         logger = __import__('logging').getLogger("main")
         logger.critical("🚨 preflight 启动检查失败，阻断启动")
+
+        # 指数退避：连续失败时等待更久再退出，防止 systemd 重启轰炸
+        _backoff_file = os.path.join(base_dir, ".preflight_fail_count")
+        try:
+            if os.path.exists(_backoff_file):
+                with open(_backoff_file, "r") as f:
+                    fail_count = int(f.read().strip())
+            else:
+                fail_count = 0
+            fail_count += 1
+            # 退避时间：5s, 15s, 30s, 60s, 120s... 上限 300s
+            backoff = min(5 * (2 ** min(fail_count - 1, 6)), 300)
+            with open(_backoff_file, "w") as f:
+                f.write(str(fail_count))
+            logger.warning(f"⏳ preflight 连续失败 {fail_count} 次，退避 {backoff}s 后退出")
+            time.sleep(backoff)
+        except Exception:
+            pass
+
         sys.exit(1)
 
+    # preflight 通过，清除失败计数
+    _backoff_file = os.path.join(base_dir, ".preflight_fail_count")
+    if os.path.exists(_backoff_file):
+        try:
+            os.remove(_backoff_file)
+        except Exception:
+            pass
+
     start_config_reload_watcher(CONFIG)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  1.2 启动 WriteQueue 单线程写入队列（v5.23.0 P0-1：消除 database is locked）
+    # ════════════════════════════════════════════════════════════════════
+    from core.write_queue import write_queue
+    write_queue.start()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  1.3 初始化 LLM 成本熔断器（v5.26.0 阶段1-A：防刷资金安全红线）
+    # ════════════════════════════════════════════════════════════════════
+    from core.llm_cost_guard import init_guard
+    init_guard(CONFIG)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  1.4 初始化多 Bot 路由器（v5.24.0 阶段3-C：多 Bot 任务分工编排）
+    #  默认关闭，开启后按 bot_group_routing 表决定 Bot 是否响应某群组某模块
+    # ════════════════════════════════════════════════════════════════════
+    from core.bot_routing import init_router
+    init_router(CONFIG)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  1.5 初始化统一HTTP客户端（网络请求异常处理重构）
+    # ════════════════════════════════════════════════════════════════════
+    from core.http_client import init_http_client
+    http_config = CONFIG.get("HTTP_CLIENT_CONFIG", {})
+    init_http_client(http_config)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  1.6 初始化分布式追踪（OpenTelemetry，默认关闭）
+    # ════════════════════════════════════════════════════════════════════
+    from core.tracing import init_tracing, shutdown_tracing
+    init_tracing(CONFIG)
 
     # ════════════════════════════════════════════════════════════════════
     #  2. 注册专用处理器（优先级高于主分发器）
@@ -57,6 +122,10 @@ def main():
     # 媒体处理器（图片/语音/退群/频道帖子）
     from core.handlers.media_handlers import register_media_handlers
     register_media_handlers(bot, ctx)
+
+    # Telegram Business/Guest 新事件（连接状态、删除同步等）
+    from core.handlers.business_handlers import register_business_handlers
+    register_business_handlers(bot, ctx)
 
     # ════════════════════════════════════════════════════════════════════
     #  3. 注册主分发器（兜底 handler，必须最后注册）
@@ -76,7 +145,7 @@ def main():
     _shutdown_done = False
 
     def _graceful_shutdown(signum=None, frame=None):
-        """优雅停机：保存配置 → 关闭数据库 → 退出"""
+        """优雅停机：保存配置 → 关闭数据库 → 关闭追踪 → 退出"""
         nonlocal _shutdown_done
         if _shutdown_done:
             return
@@ -90,6 +159,10 @@ def main():
             ctx.db.close()
         except Exception as e:
             logging.getLogger("main").warning(f"停机时关闭数据库失败：{e}")
+        try:
+            shutdown_tracing()
+        except Exception as e:
+            logging.getLogger("main").warning(f"停机时关闭追踪失败：{e}")
         logging.getLogger("main").info("✅ 优雅停机完成")
         if signum is not None:
             sys.exit(0)
@@ -127,8 +200,9 @@ def main():
     logger.info("=" * 60)
 
     try:
+        from core.telebot_compat import get_allowed_updates
         bot.infinity_polling(timeout=60, long_polling_timeout=30,
-                             allowed_updates=["message", "chat_member", "my_chat_member"])
+                             allowed_updates=get_allowed_updates(CONFIG))
     except KeyboardInterrupt:
         logger.info("⏹️ 机器人已停止")
     except Exception as e:
@@ -136,8 +210,8 @@ def main():
         try:
             from modules.auto_tasks import report_fault
             report_fault("Bot崩溃退出", f"{type(e).__name__}: {str(e)[:200]}", "🚨")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         sys.exit(1)
 
 

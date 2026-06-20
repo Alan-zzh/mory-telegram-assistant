@@ -33,9 +33,8 @@ def check_antiflood(bot, m, config, db):
         member = bot.get_chat_member(chat_id, uid)
         if member.status in ("administrator", "creator"):
             return False
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # 获取群设置
     settings = _get_settings(db, chat_id)
     if not settings or not settings.get("enabled"):
@@ -78,8 +77,8 @@ def handle_flood_user(bot, m, config, db):
         if config.get("ENABLE_MESSAGE_DELETION", False):
             try:
                 bot.delete_message(chat_id, m.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         else:
             logger.warning(f"[反刷屏] ENABLE_MESSAGE_DELETION 未开启，跳过删除消息")
         # 发送警告
@@ -92,6 +91,30 @@ def handle_flood_user(bot, m, config, db):
     except Exception as e:
         logger.error(f"刷屏处理异常: {e}")
 
+    # [TRAE SOLO CN] v5.19.0 群级刷屏介入：5 分钟内 ≥3 用户刷屏 → 高冷平息
+    try:
+        now = time.time()
+        window = 300  # 5 分钟
+        # 统计窗口内不同刷屏用户数
+        recent_users = set()
+        for _uid, timestamps in _flood_cache.get(chat_id, {}).items():
+            recent = [t for t in timestamps if now - t < window]
+            if len(recent) > 1:  # 该用户至少 2 条消息
+                recent_users.add(_uid)
+        if len(recent_users) >= 3:
+            # 触发刷屏介入
+            from modules.triggers.flood_mediate import trigger_flood_mediate
+            # ResourceManager 通过全局获取（antiflood 无 rm 引用，用 bot/db/config 临时构造）
+            try:
+                from core.bot_initializer import _get_global_ctx
+                _gctx = _get_global_ctx()
+                if _gctx and _gctx.resource_manager:
+                    trigger_flood_mediate(_gctx.resource_manager, chat_id, list(recent_users))
+            except ImportError:
+                pass  # _get_global_ctx 不存在时静默跳过
+    except Exception as e:
+        logger.debug(f"群级刷屏介入异常: {e}")
+
 
 def _get_settings(db, chat_id):
     """获取群刷屏设置"""
@@ -102,8 +125,8 @@ def _get_settings(db, chat_id):
         ).fetchone()
         if row:
             return {"window": row[0], "threshold": row[1], "mute_duration": row[2], "enabled": row[3]}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return None
 
 

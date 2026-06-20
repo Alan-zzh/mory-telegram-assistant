@@ -125,5 +125,5 @@ def handle_remote_message(bot, m, config, db):
         logger.warning(f"远程消息转发失败: uid={uid} chat={chat_id} err={e}")
         try:
             bot.send_message(uid, f"❌ 消息转发失败：{e}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")

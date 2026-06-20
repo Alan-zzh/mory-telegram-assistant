@@ -65,9 +65,8 @@ def _create_poll(bot, m, config, anonymous=True):
         if config.get("ENABLE_MESSAGE_DELETION", False):
             try:
                 bot.delete_message(m.chat.id, m.message_id)
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         poll_type = "匿名" if anonymous else "公开"
         logger.info(f"创建{poll_type}投票: question={question} options={len(options)}")
 

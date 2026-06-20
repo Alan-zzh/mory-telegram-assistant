@@ -10,6 +10,12 @@ from dashboard.helpers import (
 models_bp = Blueprint('models', __name__, url_prefix='/api')
 
 
+def _get_hhmm(cfg: dict, section: str, key: str, fallback: str) -> str:
+    section_data = cfg.get(section, {}) if isinstance(cfg, dict) else {}
+    value = section_data.get(key, fallback)
+    return value if isinstance(value, str) and ":" in value else fallback
+
+
 @models_bp.route("/bot/status")
 @login_required
 def api_bot_status():
@@ -52,8 +58,8 @@ def api_models_status():
                 from datetime import date as _date
                 exp_d = _date.fromisoformat(expire)
                 days_left = (exp_d - _date.today()).days
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             pool_info.append({
                 "name": m.get("name", "?"),
                 "desc": m.get("desc", ""),
@@ -74,18 +80,18 @@ def api_tasks_status():
     """定时任务状态"""
     conn = get_db()
     today = datetime.now(_CST).strftime("%Y-%m-%d")
+    cfg = read_config()
     task_defs = [
-        ("morning_greeting", "早安问候", "08:05"),
-        ("morning_news", "早间新闻", "09:05"),
+        ("greeting_morning", "早安问候", _get_hhmm(cfg, "GREETING_CONFIG", "morning_time", "08:05")),
+        ("news_morning", "早间新闻", _get_hhmm(cfg, "NEWS_BROADCAST_CONFIG", "morning_time", "09:05")),
         ("daily_report", "每日报告", "09:10"),
-        ("afternoon_greeting", "午安问候", "12:35"),
-        ("afternoon_news", "午间新闻", "13:05"),
+        ("greeting_afternoon", "午安问候", _get_hhmm(cfg, "GREETING_CONFIG", "afternoon_time", "12:35")),
+        ("news_afternoon", "午间新闻", _get_hhmm(cfg, "NEWS_BROADCAST_CONFIG", "afternoon_time", "13:05")),
         ("tarot_chatup", "塔罗搭讪", "15:00"),
-        ("trendradar_broadcast", "TrendRadar播报", "18:00"),
-        ("evening_news", "晚间新闻", "20:35"),
-        ("goodnight_greeting", "晚安问候", "23:05"),
+        ("news_evening", "晚间新闻", _get_hhmm(cfg, "NEWS_BROADCAST_CONFIG", "evening_time", "20:35")),
+        ("greeting_evening", "晚安问候", _get_hhmm(cfg, "GREETING_CONFIG", "evening_time", "23:05")),
         ("channel_views", "频道浏览量", "每小时"),
-        ("burn_cleanup", "阅后即焚清理", "每10分钟"),
+        ("burn_orphan", "孤儿清理", "每10分钟"),
     ]
     tasks = []
     for key, name, schedule in task_defs:
@@ -103,8 +109,8 @@ def api_tasks_status():
                         exec_time = datetime.fromtimestamp(row[1], _CST).strftime("%H:%M:%S")
                     except Exception:
                         exec_time = str(row[1])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         tasks.append({
             "key": key,
             "name": name,

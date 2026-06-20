@@ -6,11 +6,148 @@ from dashboard.helpers import login_required, admin_required, get_current_role, 
 settings_bp = Blueprint('settings', __name__, url_prefix='/api')
 
 
+def _normalize_hhmm(value, default_time: str) -> str:
+    """统一时间格式为 HH:MM，异常时回落默认值。"""
+    try:
+        if isinstance(value, int):
+            if 0 <= value <= 23:
+                return f"{value:02d}:00"
+        if isinstance(value, str) and ":" in value:
+            hour, minute = value.split(":", 1)
+            hour_i = int(hour)
+            minute_i = int(minute)
+            if 0 <= hour_i <= 23 and 0 <= minute_i <= 59:
+                return f"{hour_i:02d}:{minute_i:02d}"
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
+    return default_time
+
+
+def _get_greeting_config(cfg: dict) -> dict:
+    """读取问候配置，兼容旧键。"""
+    raw = dict(cfg.get("GREETING_CONFIG", {}) or {})
+    raw.setdefault("morning_enabled", bool(cfg.get("AUTO_GREETING", False)))
+    raw.setdefault("morning_time", _normalize_hhmm(cfg.get("GREETING_HOUR", "08:05"), "08:05"))
+    raw.setdefault("afternoon_enabled", bool(raw.get("afternoon_enabled", False)))
+    raw.setdefault("afternoon_time", _normalize_hhmm(cfg.get("AFTERNOON_GREETING_HOUR", "12:35"), "12:35"))
+    raw.setdefault("evening_enabled", bool(cfg.get("AUTO_GOODNIGHT", cfg.get("AUTO_GREETING", False))))
+    raw.setdefault("evening_time", _normalize_hhmm(cfg.get("GOODNIGHT_HOUR", "23:05"), "23:05"))
+    raw["morning_time"] = _normalize_hhmm(raw.get("morning_time"), "08:05")
+    raw["afternoon_time"] = _normalize_hhmm(raw.get("afternoon_time"), "12:35")
+    raw["evening_time"] = _normalize_hhmm(raw.get("evening_time"), "23:05")
+    return raw
+
+
+def _get_news_config(cfg: dict) -> dict:
+    """读取新闻播报配置，兼容旧键。"""
+    raw = dict(cfg.get("NEWS_BROADCAST_CONFIG", {}) or {})
+    raw.setdefault("enabled", bool(cfg.get("AUTO_NEWS", False)))
+    raw.setdefault("preferred_source", "real_first")
+    raw.setdefault("morning_time", _normalize_hhmm(cfg.get("NEWS_HOUR_MORNING", "09:05"), "09:05"))
+    raw.setdefault("afternoon_time", _normalize_hhmm(cfg.get("NEWS_HOUR_AFTERNOON", "13:05"), "13:05"))
+    raw.setdefault("evening_time", _normalize_hhmm(cfg.get("NEWS_HOUR_EVENING", "20:35"), "20:35"))
+    raw["morning_time"] = _normalize_hhmm(raw.get("morning_time"), "09:05")
+    raw["afternoon_time"] = _normalize_hhmm(raw.get("afternoon_time"), "13:05")
+    raw["evening_time"] = _normalize_hhmm(raw.get("evening_time"), "20:35")
+    if raw.get("preferred_source") not in {"real_first", "trendradar_first"}:
+        raw["preferred_source"] = "real_first"
+    return raw
+
+
+def _mask_secret(raw: str) -> str:
+    """脱敏显示密钥，只展示首尾。"""
+    if not raw:
+        return ""
+    if len(raw) <= 8:
+        return "****"
+    return raw[:4] + "****" + raw[-4:]
+
+
+def _as_dict(value, default=None) -> dict:
+    """把配置值安全转成 dict，避免 null/异常值导致保存时报错。"""
+    if isinstance(value, dict):
+        return dict(value)
+    return dict(default or {})
+
+
+def _get_antiflood_config(cfg: dict) -> dict:
+    """读取反刷屏配置，统一 SPAM_LIMIT 与 ANTIFLOOD_CONFIG。"""
+    rate_cfg = dict(cfg.get("SPAM_LIMIT", {}) or {})
+    flood_cfg = dict(cfg.get("ANTIFLOOD_CONFIG", {}) or {})
+    return {
+        "enabled": bool(flood_cfg.get("enabled", False)),
+        "messages_per_minute": int(rate_cfg.get("messages_per_minute", 10)),
+        "ban_minutes": int(rate_cfg.get("ban_minutes", 5)),
+        "window": int(flood_cfg.get("window", 5)),
+        "threshold": int(flood_cfg.get("threshold", 5)),
+        "mute_duration": int(flood_cfg.get("mute_duration", 60)),
+    }
+
+
 def _check_admin():
     """检查当前用户是否为管理员，非管理员返回403响应"""
     if get_current_role() != "admin":
         return jsonify({"ok": False, "msg": "需要管理员权限"}), 403
     return None
+
+
+def _save_simple_enabled_config(cfg_key: str, success_msg: str):
+    """保存仅包含 enabled 开关的配置。"""
+    _adm = _check_admin()
+    if _adm:
+        return _adm
+    data = request.get_json() or {}
+    cfg = read_config()
+    val = _as_dict(cfg.get(cfg_key), {"enabled": False})
+    val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
+    cfg[cfg_key] = val
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": success_msg})
+    return jsonify({"ok": False, "msg": "保存失败"}), 500
+
+
+def _get_simple_enabled_config(cfg_key: str):
+    """读取仅包含 enabled 开关的配置。"""
+    cfg = read_config()
+    return jsonify({"ok": True, "data": _as_dict(cfg.get(cfg_key), {"enabled": False})})
+
+
+def _get_visual_dashboard_config():
+    """读取群数据面板配置。"""
+    cfg = read_config()
+    return jsonify({"ok": True, "data": {"enabled": cfg.get("VISUAL_DASHBOARD_ENABLE", False)}})
+
+
+def _save_visual_dashboard_config():
+    """保存群数据面板配置。"""
+    _adm = _check_admin()
+    if _adm:
+        return _adm
+    data = request.get_json() or {}
+    cfg = read_config()
+    cfg["VISUAL_DASHBOARD_ENABLE"] = bool(data.get("enabled", cfg.get("VISUAL_DASHBOARD_ENABLE", False)))
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": "群数据面板配置已保存"})
+    return jsonify({"ok": False, "msg": "保存失败"}), 500
+
+
+def _get_clean_service_config():
+    """读取服务消息清理配置。"""
+    cfg = read_config()
+    return jsonify({"ok": True, "data": {"enabled": cfg.get("CLEAN_SERVICE_DEFAULT", False)}})
+
+
+def _save_clean_service_config():
+    """保存服务消息清理配置。"""
+    _adm = _check_admin()
+    if _adm:
+        return _adm
+    data = request.get_json() or {}
+    cfg = read_config()
+    cfg["CLEAN_SERVICE_DEFAULT"] = bool(data.get("enabled", cfg.get("CLEAN_SERVICE_DEFAULT", False)))
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": "服务消息清理配置已保存"})
+    return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
 @settings_bp.route("/settings/warning", methods=["GET", "POST"])
@@ -109,19 +246,28 @@ def api_settings_antiflood():
     """反刷屏配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("SPAM_LIMIT", {"messages_per_minute": 10, "ban_minutes": 5})
-        return jsonify({"ok": True, "data": d})
+        return jsonify({"ok": True, "data": _get_antiflood_config(cfg)})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("SPAM_LIMIT", {})
-    val["messages_per_minute"] = int(data.get("messages_per_minute", val.get("messages_per_minute", 10)))
-    val["ban_minutes"] = int(data.get("ban_minutes", val.get("ban_minutes", 5)))
-    cfg["SPAM_LIMIT"] = val
+    merged = _get_antiflood_config(cfg)
+    for key in ("enabled", "messages_per_minute", "ban_minutes", "window", "threshold", "mute_duration"):
+        if key in data:
+            merged[key] = int(data[key]) if key != "enabled" else bool(data[key])
+    cfg["SPAM_LIMIT"] = {
+        "messages_per_minute": int(merged["messages_per_minute"]),
+        "ban_minutes": int(merged["ban_minutes"]),
+    }
+    cfg["ANTIFLOOD_CONFIG"] = {
+        "enabled": bool(merged["enabled"]),
+        "window": int(merged["window"]),
+        "threshold": int(merged["threshold"]),
+        "mute_duration": int(merged["mute_duration"]),
+    }
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "配置已保存"})
+        return jsonify({"ok": True, "msg": "反刷屏配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
@@ -149,6 +295,7 @@ def api_settings_anti_raid():
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
+@settings_bp.route("/settings/blind-box", methods=["GET", "POST"])
 @settings_bp.route("/settings/blindbox", methods=["GET", "POST"])
 @login_required
 def api_settings_blindbox():
@@ -175,6 +322,7 @@ def api_settings_blindbox():
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
+@settings_bp.route("/settings/lucky-wheel", methods=["GET", "POST"])
 @settings_bp.route("/settings/luckywheel", methods=["GET", "POST"])
 @login_required
 def api_settings_luckywheel():
@@ -291,14 +439,14 @@ def api_settings_coupon():
     """优惠券配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("COUPON_CONFIG", {"enabled": False})
+        d = _as_dict(cfg.get("COUPON_CONFIG"), {"enabled": False})
         return jsonify({"ok": True, "data": d})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("COUPON_CONFIG", {})
+    val = _as_dict(cfg.get("COUPON_CONFIG"), {"enabled": False})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
     cfg["COUPON_CONFIG"] = val
     if write_config(cfg):
@@ -312,14 +460,14 @@ def api_settings_tip():
     """打赏配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("TIP_CONFIG", {"enabled": False, "min_amount": 1})
+        d = _as_dict(cfg.get("TIP_CONFIG"), {"enabled": False, "min_amount": 1})
         return jsonify({"ok": True, "data": d})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("TIP_CONFIG", {})
+    val = _as_dict(cfg.get("TIP_CONFIG"), {"enabled": False, "min_amount": 1})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
     val["min_amount"] = int(data.get("min_amount", val.get("min_amount", 1)))
     cfg["TIP_CONFIG"] = val
@@ -328,46 +476,24 @@ def api_settings_tip():
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
+@settings_bp.route("/settings/daily-quest", methods=["GET", "POST"])
 @settings_bp.route("/settings/dailyquest", methods=["GET", "POST"])
 @login_required
 def api_settings_dailyquest():
     """每日任务配置"""
     if request.method == "GET":
-        cfg = read_config()
-        d = cfg.get("DAILY_QUEST_CONFIG", {"enabled": False})
-        return jsonify({"ok": True, "data": d})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    val = cfg.get("DAILY_QUEST_CONFIG", {})
-    val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    cfg["DAILY_QUEST_CONFIG"] = val
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
+        return _get_simple_enabled_config("DAILY_QUEST_CONFIG")
+    return _save_simple_enabled_config("DAILY_QUEST_CONFIG", "每日任务配置已保存")
 
 
+@settings_bp.route("/settings/achievements", methods=["GET", "POST"])
 @settings_bp.route("/settings/achievement", methods=["GET", "POST"])
 @login_required
 def api_settings_achievement():
     """成就配置"""
     if request.method == "GET":
-        cfg = read_config()
-        d = cfg.get("ACHIEVEMENT_CONFIG", {"enabled": False})
-        return jsonify({"ok": True, "data": d})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    val = cfg.get("ACHIEVEMENT_CONFIG", {})
-    val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    cfg["ACHIEVEMENT_CONFIG"] = val
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
+        return _get_simple_enabled_config("ACHIEVEMENT_CONFIG")
+    return _save_simple_enabled_config("ACHIEVEMENT_CONFIG", "成就系统配置已保存")
 
 
 @settings_bp.route("/settings/pointsdecay", methods=["GET", "POST"])
@@ -376,14 +502,14 @@ def api_settings_pointsdecay():
     """积分衰减配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("POINTS_DECAY", {"enabled": False, "rate": 0.01, "minimum": 10})
+        d = _as_dict(cfg.get("POINTS_DECAY"), {"enabled": False, "rate": 0.01, "minimum": 10})
         return jsonify({"ok": True, "data": d})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("POINTS_DECAY", {})
+    val = _as_dict(cfg.get("POINTS_DECAY"), {"enabled": False, "rate": 0.01, "minimum": 10})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
     val["rate"] = float(data.get("rate", val.get("rate", 0.01)))
     val["minimum"] = int(data.get("minimum", val.get("minimum", 10)))
@@ -399,14 +525,14 @@ def api_settings_afk():
     """AFK配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("AFK_CONFIG", {"enabled": False, "auto_reply": ""})
+        d = _as_dict(cfg.get("AFK_CONFIG"), {"enabled": False, "auto_reply": ""})
         return jsonify({"ok": True, "data": d})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("AFK_CONFIG", {})
+    val = _as_dict(cfg.get("AFK_CONFIG"), {"enabled": False, "auto_reply": ""})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
     val["auto_reply"] = data.get("auto_reply", val.get("auto_reply", ""))
     cfg["AFK_CONFIG"] = val
@@ -486,7 +612,11 @@ def api_settings_cas():
     if request.method == "GET":
         cfg = read_config()
         sw = cfg.get("SPAM_WATCH_CONFIG", {})
-        return jsonify({"ok": True, "data": {"cas_enabled": sw.get("cas_enabled", False)}})
+        return jsonify({"ok": True, "data": {
+            "cas_enabled": sw.get("cas_enabled", False),
+            "spamwatch_enabled": sw.get("spamwatch_enabled", False),
+            "spamwatch_token": _mask_secret(sw.get("spamwatch_token", "")),
+        }})
     _adm = _check_admin()
     if _adm:
         return _adm
@@ -494,29 +624,23 @@ def api_settings_cas():
     cfg = read_config()
     sw = cfg.get("SPAM_WATCH_CONFIG", {})
     sw["cas_enabled"] = bool(data.get("cas_enabled", sw.get("cas_enabled", False)))
+    sw["spamwatch_enabled"] = bool(data.get("spamwatch_enabled", sw.get("spamwatch_enabled", False)))
+    if "spamwatch_token" in data:
+        sw["spamwatch_token"] = data.get("spamwatch_token", "")
     cfg["SPAM_WATCH_CONFIG"] = sw
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "配置已保存"})
+        return jsonify({"ok": True, "msg": "CAS/SpamWatch 配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
+@settings_bp.route("/settings/clean-service", methods=["GET", "POST"])
 @settings_bp.route("/settings/cleanservice", methods=["GET", "POST"])
 @login_required
 def api_settings_cleanservice():
     """服务消息清理配置"""
     if request.method == "GET":
-        cfg = read_config()
-        en = cfg.get("CLEAN_SERVICE_DEFAULT", False)
-        return jsonify({"ok": True, "data": {"enabled": en}})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    cfg["CLEAN_SERVICE_DEFAULT"] = bool(data.get("enabled", cfg.get("CLEAN_SERVICE_DEFAULT", False)))
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
+        return _get_clean_service_config()
+    return _save_clean_service_config()
 
 
 @settings_bp.route("/settings/autoreply", methods=["GET", "POST"])
@@ -614,28 +738,31 @@ def api_settings_greeting():
     """早安/晚安播报配置"""
     if request.method == "GET":
         cfg = read_config()
-        return jsonify({
-            "ok": True,
-            "data": {
-                "morning_enabled": cfg.get("AUTO_GREETING", False),
-                "morning_hour": cfg.get("GREETING_HOUR", 7),
-                "night_enabled": cfg.get("AUTO_GOODNIGHT", False),
-                "night_hour": cfg.get("GOODNIGHT_HOUR", 22),
-            }
-        })
+        return jsonify({"ok": True, "data": _get_greeting_config(cfg)})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
+    greeting_cfg = _get_greeting_config(cfg)
     if "morning_enabled" in data:
-        cfg["AUTO_GREETING"] = bool(data["morning_enabled"])
-    if "morning_hour" in data:
-        cfg["GREETING_HOUR"] = int(data["morning_hour"])
-    if "night_enabled" in data:
-        cfg["AUTO_GOODNIGHT"] = bool(data["night_enabled"])
-    if "night_hour" in data:
-        cfg["GOODNIGHT_HOUR"] = int(data["night_hour"])
+        greeting_cfg["morning_enabled"] = bool(data["morning_enabled"])
+    if "morning_time" in data:
+        greeting_cfg["morning_time"] = _normalize_hhmm(data["morning_time"], greeting_cfg["morning_time"])
+    if "afternoon_enabled" in data:
+        greeting_cfg["afternoon_enabled"] = bool(data["afternoon_enabled"])
+    if "afternoon_time" in data:
+        greeting_cfg["afternoon_time"] = _normalize_hhmm(data["afternoon_time"], greeting_cfg["afternoon_time"])
+    if "evening_enabled" in data:
+        greeting_cfg["evening_enabled"] = bool(data["evening_enabled"])
+    if "evening_time" in data:
+        greeting_cfg["evening_time"] = _normalize_hhmm(data["evening_time"], greeting_cfg["evening_time"])
+    cfg["GREETING_CONFIG"] = greeting_cfg
+    cfg["AUTO_GREETING"] = bool(greeting_cfg["morning_enabled"])
+    cfg["AUTO_GOODNIGHT"] = bool(greeting_cfg["evening_enabled"])
+    cfg["GREETING_HOUR"] = int(greeting_cfg["morning_time"].split(":", 1)[0])
+    cfg["AFTERNOON_GREETING_HOUR"] = int(greeting_cfg["afternoon_time"].split(":", 1)[0])
+    cfg["GOODNIGHT_HOUR"] = int(greeting_cfg["evening_time"].split(":", 1)[0])
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "播报配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
@@ -647,13 +774,30 @@ def api_settings_news():
     """新闻播报配置"""
     if request.method == "GET":
         cfg = read_config()
-        return jsonify({"ok": True, "data": {"enabled": cfg.get("AUTO_NEWS", False)}})
+        return jsonify({"ok": True, "data": _get_news_config(cfg)})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    cfg["AUTO_NEWS"] = bool(data.get("enabled", cfg.get("AUTO_NEWS", False)))
+    news_cfg = _get_news_config(cfg)
+    if "enabled" in data:
+        news_cfg["enabled"] = bool(data["enabled"])
+    if "preferred_source" in data:
+        news_cfg["preferred_source"] = str(data["preferred_source"]).strip().lower()
+    if "morning_time" in data:
+        news_cfg["morning_time"] = _normalize_hhmm(data["morning_time"], news_cfg["morning_time"])
+    if "afternoon_time" in data:
+        news_cfg["afternoon_time"] = _normalize_hhmm(data["afternoon_time"], news_cfg["afternoon_time"])
+    if "evening_time" in data:
+        news_cfg["evening_time"] = _normalize_hhmm(data["evening_time"], news_cfg["evening_time"])
+    if news_cfg["preferred_source"] not in {"real_first", "trendradar_first"}:
+        news_cfg["preferred_source"] = "real_first"
+    cfg["NEWS_BROADCAST_CONFIG"] = news_cfg
+    cfg["AUTO_NEWS"] = bool(news_cfg["enabled"])
+    cfg["NEWS_HOUR_MORNING"] = int(news_cfg["morning_time"].split(":", 1)[0])
+    cfg["NEWS_HOUR_AFTERNOON"] = int(news_cfg["afternoon_time"].split(":", 1)[0])
+    cfg["NEWS_HOUR_EVENING"] = int(news_cfg["evening_time"].split(":", 1)[0])
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "新闻播报配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
@@ -687,22 +831,14 @@ def api_settings_exchange_rate():
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
+@settings_bp.route("/settings/dashboard", methods=["GET", "POST"])
 @settings_bp.route("/settings/visual-dashboard", methods=["GET", "POST"])
 @login_required
 def api_settings_visual_dashboard():
     """群数据面板配置"""
     if request.method == "GET":
-        cfg = read_config()
-        return jsonify({"ok": True, "data": {"enabled": cfg.get("VISUAL_DASHBOARD_ENABLE", False)}})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    cfg["VISUAL_DASHBOARD_ENABLE"] = bool(data.get("enabled", cfg.get("VISUAL_DASHBOARD_ENABLE", False)))
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "群数据面板配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
+        return _get_visual_dashboard_config()
+    return _save_visual_dashboard_config()
 
 
 @settings_bp.route("/settings/language", methods=["GET", "POST"])
@@ -903,6 +1039,10 @@ def api_settings_persona():
             "base_persona": cfg.get("BASE_PERSONA", ""),
             "style_append": cfg.get("STYLE_APPEND", ""),
             "added_knowledge": cfg.get("ADDED_KNOWLEDGE", ""),
+            # [v5.19.0] 人设引擎
+            "persona_engine_enabled": cfg.get("PERSONA_ENGINE_ENABLED", True),
+            "emotion_buckets_keys": sorted(list((cfg.get("EMOTION_BUCKETS") or {}).keys()) or ["cold", "savage", "soft", "common"]),
+            "emotion_temp_map_size": len(cfg.get("EMOTION_TEMP_MAP") or {}),
         }})
     _adm = _check_admin()
     if _adm:
@@ -914,6 +1054,9 @@ def api_settings_persona():
     cfg["BASE_PERSONA"] = data.get("base_persona", cfg.get("BASE_PERSONA", ""))
     cfg["STYLE_APPEND"] = data.get("style_append", cfg.get("STYLE_APPEND", ""))
     cfg["ADDED_KNOWLEDGE"] = data.get("added_knowledge", cfg.get("ADDED_KNOWLEDGE", ""))
+    # [v5.19.0] 人设引擎开关
+    if "persona_engine_enabled" in data:
+        cfg["PERSONA_ENGINE_ENABLED"] = bool(data.get("persona_engine_enabled"))
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "人设配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
@@ -940,25 +1083,6 @@ def api_settings_approvals():
     cfg["VERIFICATION_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "进群审批配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
-
-
-@settings_bp.route("/settings/clean-service", methods=["GET", "POST"])
-@login_required
-def api_settings_clean_service():
-    """服务消息清理配置"""
-    if request.method == "GET":
-        cfg = read_config()
-        en = cfg.get("CLEAN_SERVICE_DEFAULT", False)
-        return jsonify({"ok": True, "data": {"enabled": en}})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    cfg["CLEAN_SERVICE_DEFAULT"] = bool(data.get("enabled", cfg.get("CLEAN_SERVICE_DEFAULT", False)))
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "服务消息清理配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
@@ -1048,54 +1172,6 @@ def api_settings_group_notes():
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
-@settings_bp.route("/settings/blind-box", methods=["GET", "POST"])
-@login_required
-def api_settings_blind_box():
-    """盲盒配置"""
-    if request.method == "GET":
-        cfg = read_config()
-        d = cfg.get("BLIND_BOX_CONFIG", {
-            "enabled": cfg.get("GAMES_CONFIG", {}).get("enable", False),
-            "cost": cfg.get("BLIND_BOX_COST", 30)
-        })
-        return jsonify({"ok": True, "data": d})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    val = cfg.get("BLIND_BOX_CONFIG", {})
-    val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["cost"] = int(data.get("cost", val.get("cost", 30)))
-    cfg["BLIND_BOX_CONFIG"] = val
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "盲盒配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
-
-
-@settings_bp.route("/settings/lucky-wheel", methods=["GET", "POST"])
-@login_required
-def api_settings_lucky_wheel():
-    """转盘配置"""
-    if request.method == "GET":
-        cfg = read_config()
-        d = cfg.get("LUCKY_WHEEL_CONFIG", {"enabled": False, "cost": 30, "free_spins": 1})
-        return jsonify({"ok": True, "data": d})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    val = cfg.get("LUCKY_WHEEL_CONFIG", {})
-    val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["cost"] = int(data.get("cost", val.get("cost", 30)))
-    val["free_spins"] = int(data.get("free_spins", val.get("free_spins", 1)))
-    cfg["LUCKY_WHEEL_CONFIG"] = val
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "转盘配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
-
-
 @settings_bp.route("/settings/points-rules", methods=["GET", "POST"])
 @login_required
 def api_settings_points_rules():
@@ -1151,14 +1227,14 @@ def api_settings_shop_items():
     """商城商品配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("SHOP_CONFIG", {"enabled": False})
+        d = _as_dict(cfg.get("SHOP_CONFIG"), {"enabled": False})
         return jsonify({"ok": True, "data": d})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("SHOP_CONFIG", {})
+    val = _as_dict(cfg.get("SHOP_CONFIG"), {"enabled": False})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
     cfg["SHOP_CONFIG"] = val
     if write_config(cfg):
@@ -1172,14 +1248,14 @@ def api_settings_coupons():
     """优惠券配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("COUPON_CONFIG", {"enabled": False})
+        d = _as_dict(cfg.get("COUPON_CONFIG"), {"enabled": False})
         return jsonify({"ok": True, "data": d})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("COUPON_CONFIG", {})
+    val = _as_dict(cfg.get("COUPON_CONFIG"), {"enabled": False})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
     cfg["COUPON_CONFIG"] = val
     if write_config(cfg):
@@ -1193,14 +1269,14 @@ def api_settings_points_decay():
     """积分衰减配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("POINTS_DECAY", {"enabled": False, "rate": 0.01, "minimum": 10})
+        d = _as_dict(cfg.get("POINTS_DECAY"), {"enabled": False, "rate": 0.01, "minimum": 10})
         return jsonify({"ok": True, "data": d})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("POINTS_DECAY", {})
+    val = _as_dict(cfg.get("POINTS_DECAY"), {"enabled": False, "rate": 0.01, "minimum": 10})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
     val["rate"] = float(data.get("rate", val.get("rate", 0.01)))
     val["minimum"] = int(data.get("minimum", val.get("minimum", 10)))
@@ -1210,65 +1286,28 @@ def api_settings_points_decay():
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
-@settings_bp.route("/settings/daily-quest", methods=["GET", "POST"])
-@login_required
-def api_settings_daily_quest():
-    """每日任务配置"""
-    if request.method == "GET":
-        cfg = read_config()
-        d = cfg.get("DAILY_QUEST_CONFIG", {"enabled": False})
-        return jsonify({"ok": True, "data": d})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    val = cfg.get("DAILY_QUEST_CONFIG", {})
-    val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    cfg["DAILY_QUEST_CONFIG"] = val
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "每日任务配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
-
-
-@settings_bp.route("/settings/achievements", methods=["GET", "POST"])
-@login_required
-def api_settings_achievements():
-    """成就系统配置"""
-    if request.method == "GET":
-        cfg = read_config()
-        d = cfg.get("ACHIEVEMENT_CONFIG", {"enabled": False})
-        return jsonify({"ok": True, "data": d})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    val = cfg.get("ACHIEVEMENT_CONFIG", {})
-    val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    cfg["ACHIEVEMENT_CONFIG"] = val
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "成就系统配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
-
-
 @settings_bp.route("/settings/morning", methods=["GET", "POST"])
 @login_required
 def api_settings_morning():
     """早安播报配置"""
     if request.method == "GET":
         cfg = read_config()
+        greeting_cfg = _get_greeting_config(cfg)
         return jsonify({"ok": True, "data": {
-            "enabled": cfg.get("AUTO_GREETING", False),
-            "hour": cfg.get("GREETING_HOUR", 7),
+            "enabled": greeting_cfg.get("morning_enabled", False),
+            "time": greeting_cfg.get("morning_time", "08:05"),
         }})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    cfg["AUTO_GREETING"] = bool(data.get("enabled", cfg.get("AUTO_GREETING", False)))
-    cfg["GREETING_HOUR"] = int(data.get("hour", cfg.get("GREETING_HOUR", 7)))
+    greeting_cfg = _get_greeting_config(cfg)
+    greeting_cfg["morning_enabled"] = bool(data.get("enabled", greeting_cfg.get("morning_enabled", False)))
+    greeting_cfg["morning_time"] = _normalize_hhmm(data.get("time", greeting_cfg.get("morning_time", "08:05")), "08:05")
+    cfg["GREETING_CONFIG"] = greeting_cfg
+    cfg["AUTO_GREETING"] = bool(greeting_cfg["morning_enabled"])
+    cfg["GREETING_HOUR"] = int(greeting_cfg["morning_time"].split(":", 1)[0])
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "早安播报配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
@@ -1280,37 +1319,24 @@ def api_settings_night():
     """晚安播报配置"""
     if request.method == "GET":
         cfg = read_config()
+        greeting_cfg = _get_greeting_config(cfg)
         return jsonify({"ok": True, "data": {
-            "enabled": cfg.get("AUTO_GOODNIGHT", False),
-            "hour": cfg.get("GOODNIGHT_HOUR", 22),
+            "enabled": greeting_cfg.get("evening_enabled", False),
+            "time": greeting_cfg.get("evening_time", "23:05"),
         }})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    cfg["AUTO_GOODNIGHT"] = bool(data.get("enabled", cfg.get("AUTO_GOODNIGHT", False)))
-    cfg["GOODNIGHT_HOUR"] = int(data.get("hour", cfg.get("GOODNIGHT_HOUR", 22)))
+    greeting_cfg = _get_greeting_config(cfg)
+    greeting_cfg["evening_enabled"] = bool(data.get("enabled", greeting_cfg.get("evening_enabled", False)))
+    greeting_cfg["evening_time"] = _normalize_hhmm(data.get("time", greeting_cfg.get("evening_time", "23:05")), "23:05")
+    cfg["GREETING_CONFIG"] = greeting_cfg
+    cfg["AUTO_GOODNIGHT"] = bool(greeting_cfg["evening_enabled"])
+    cfg["GOODNIGHT_HOUR"] = int(greeting_cfg["evening_time"].split(":", 1)[0])
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "晚安播报配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
-
-
-@settings_bp.route("/settings/dashboard", methods=["GET", "POST"])
-@login_required
-def api_settings_dashboard():
-    """群数据面板配置"""
-    if request.method == "GET":
-        cfg = read_config()
-        return jsonify({"ok": True, "data": {"enabled": cfg.get("VISUAL_DASHBOARD_ENABLE", False)}})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    cfg["VISUAL_DASHBOARD_ENABLE"] = bool(data.get("enabled", cfg.get("VISUAL_DASHBOARD_ENABLE", False)))
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "群数据面板配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 

@@ -131,8 +131,8 @@ def _verification_timeout(bot, chat_id, user_id):
         logger.warning(f"⏰ 验证码超时: uid={user_id} chat_id={chat_id}")
         try:
             bot.send_message(chat_id, f"⏰ {session['user_name']} 验证超时，已移出群组")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         try:
             bot.kick_chat_member(chat_id, user_id)
             bot.unban_chat_member(chat_id, user_id)  # 允许重新被邀请
@@ -174,9 +174,8 @@ def check_callback_query(bot, callback_query, config: dict):
             chat_id=chat_id,
             message_id=callback_query.message.message_id,
         )
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # 解禁用户
     try:
         from telebot.types import ChatPermissions

@@ -137,11 +137,34 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     elif mode == "normal":
         stage_hint, notify_admin_reason = _build_normal_hint(conv_count)
 
+    # [TRAE SOLO CN] v5.19.0 意图路由联动：根据 dctx.intent 增强 stage_hint
+    _intent = getattr(dctx, "intent", None) or {}
+    _intent_label = _intent.get("intent", "chat")
+    if _intent.get("source", "disabled") != "disabled":
+        if _intent_label == "flirt":
+            stage_hint += "\n【意图-调戏】：用户在调戏/撩你。保持清冷傲娇人设，可以适当回撩但不主动，留悬念。"
+        elif _intent_label == "purchase_intent":
+            stage_hint += "\n【意图-购买】：用户有明确购买意向。自然引导 @MorychannelBot 自助下单，别催。"
+        elif _intent_label == "complaint":
+            stage_hint += "\n【意图-投诉】：用户在抱怨/投诉。先共情安抚，承诺转达 Mory，别辩解。"
+        elif _intent_label == "consult":
+            stage_hint += "\n【意图-咨询】：用户在咨询问题。简洁回答，别长篇大论，必要时引导自助。"
+
     user_profile = None
     try:
         user_profile = db.users.get_user_profile(uid)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
+
+    growth_ctx = None
+    if CONFIG.get("GROWTH_OPTIMIZER_ENABLED", True):
+        try:
+            from core.growth_optimizer import build_growth_context
+            growth_ctx = build_growth_context(dctx, mode, conv_count, user_profile=user_profile)
+            if growth_ctx and growth_ctx.stage_hint:
+                stage_hint += growth_ctx.stage_hint
+        except Exception as e:
+            logger.debug(f"增长优化上下文构建失败 uid={uid}: {e}")
 
     # [v5.15.0] FAQ自动回复匹配（AI调用前拦截，节省API费用）
     resp = None
@@ -180,6 +203,13 @@ def _dispatch_p10_ai(dctx: DispatchContext):
                 resp = draw_tarot(uname) + "\n\n" + resp
             if fortune_bonus:
                 resp += f"\n\n🎴 今日签：{get_fortune()}"
+
+            # [TRAE SOLO CN v5.24.0 阶段3-A] 记录 assistant 回复到记忆缓冲
+            try:
+                from core.memory_summarizer import record_message
+                record_message(uid, "assistant", resp)
+            except Exception:
+                pass
 
         if is_group and mode == "normal" and conv_count >= 2:
             append_text = _append_conv_response(dctx, conv_count)
@@ -241,6 +271,13 @@ def _dispatch_p10_ai(dctx: DispatchContext):
 
         if mode == "convert":
             db.log_conversion_event(uid, "consulted")
+
+        if growth_ctx:
+            try:
+                from core.growth_optimizer import record_growth_reply
+                record_growth_reply(db, dctx, growth_ctx, mode, msg, resp, round_num=conv_count)
+            except Exception as e:
+                logger.debug(f"增长优化埋点失败 uid={uid}: {e}")
 
         if notify_admin_reason:
             _notify_admin_for_deep_conversation(dctx, mode, conv_count, notify_admin_reason)

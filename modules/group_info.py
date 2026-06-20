@@ -100,8 +100,8 @@ def handle_setgpic(bot, m, config, db):
         import os
         try:
             os.unlink(tmp_path)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         _log_admin_action(db, chat_id, uid, "setgpic", "")
         bot.reply_to(m, "✅ 群头像已修改")
         logger.info(f"群头像修改: chat={chat_id} by={uid}")

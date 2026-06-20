@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from core.helpers import can_delete_message
 from core.logging_util import get_logger
 from core.database import _db_lock
+from core.http_client import get_http_client, HTTPRequestError
 
 # 导入编码后的关键词模式
 from modules.ad_patterns_encoded import (
@@ -274,16 +275,19 @@ class AdDetector:
             if now - cached_time < 3600:
                 return cached_result
         try:
+            # 使用统一HTTP客户端
+            client = get_http_client()
             url = f"https://api.cas.chat/check?user_id={user_id}"
-            req = urllib.request.Request(url, headers={"User-Agent": "MoryAssistant/1.0"})
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            data = client.get(url, timeout=3)
             if data.get("ok"):
                 messages = data.get("result", {}).get("messages", [])
                 reason = messages[0] if messages else "CAS黑名单"
                 result = (True, reason)
             else:
                 result = (False, "")
+        except HTTPRequestError:
+            # 查询失败，返回默认值
+            result = (False, "")
         except Exception:
             result = (False, "")
         self._cas_cache[user_id] = (result, now)
@@ -297,14 +301,17 @@ class AdDetector:
             if now - cached_time < 3600:
                 return cached_result
         try:
+            # 使用统一HTTP客户端
+            client = get_http_client()
             url = f"https://api.intellivoid.net/spamprotection/v1/lookup?query={user_id}"
-            req = urllib.request.Request(url, headers={"User-Agent": "MoryAssistant/1.0"})
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            data = client.get(url, timeout=3)
             spam_prediction = data.get("spam_prediction", {})
             spam_probability = float(spam_prediction.get("spam_probability", 0.0))
             is_spam = bool(spam_prediction.get("is_spam", False))
             result = (spam_probability, is_spam)
+        except HTTPRequestError:
+            # 查询失败，返回默认值
+            result = (0.0, False)
         except Exception:
             result = (0.0, False)
         self._spb_cache[user_id] = (result, now)
@@ -495,14 +502,20 @@ class AdDetector:
 
         # 2. 检测可能使用Custom Emoji的账户特征（启发式）
         # 特征：中文姓名 + 数字/特殊字符，或非常简单的常见姓名
-        if len(username) <= 10 and re.match(r'^[\u4e00-\u9fa5]{2,4}[\d_]*$', username):
-            # 简单中文名（如"钻石王老五"）可能是Custom Emoji用户
+        # 【TRAE SOLO CN v5.18.3审计修复】仅当纯中文名+长数字(≥4位)时才加分，排除正常中文名
+        if len(username) <= 10 and re.match(r'^[\u4e00-\u9fa5]{2,4}\d{4,}$', username):
+            # 中文名+长数字（如"张三1234"）可能是Custom Emoji广告用户
             score += 1
-            reasons.append("简单中文名模式")
+            reasons.append("中文名+长数字模式")
 
         # [TRAE SOLO CN] v5.7.5 新增：短随机用户名检测（广告小号特征，如 gc8181、ab12）
+        # 【TRAE SOLO CN v5.18.3审计修复】增加常见英文单词白名单，避免误伤 tom12/jay01 等正常用户名
+        _common_en_names = {"tom", "jay", "amy", "bob", "lee", "kim", "sam", "ben", "joe",
+                            "max", "tim", "rob", "dan", "ken", "jim", "ron", "lex", "zed",
+                            "sky", "ice", "fox", "owl", "cat", "dog", "sun", "ray", "roy"}
         username_only = re.sub(r'[@\s]', '', username)
-        if re.match(r'^[a-z]{1,4}\d{2,4}$', username_only, re.IGNORECASE):
+        if (re.match(r'^[a-z]{1,4}\d{2,4}$', username_only, re.IGNORECASE)
+                and username_only.lower() not in _common_en_names):
             return True, "短随机用户名（广告小号特征）", 2
 
         is_suspicious = score >= 2  # 降低阈值以捕获组合特征
@@ -544,6 +557,65 @@ class AdDetector:
             logger.info(f"[AD] 内容评分结果: 总分={total}, 命中维度={hit_dimensions}, 消息={msg[:80]}")
         return total, hit_dimensions
 
+    def _check_pinyin_ad(self, msg: str) -> int:
+        """【v5.23.0 P2-5】拼音级广告检测
+
+        将消息转为无声调拼音，检测谐音广告词。
+        防止广告发送者用谐音字绕过中文关键词检测，如：
+        - "shua dan" (刷单) → 原文可能是"唰箪"/"耍丹"等谐音
+        - "zhuan qian" (赚钱) → 原文可能是"赚浅"/"砖前"等
+        - "si xin" (私信) → 原文可能是"思心"/"丝信"等
+
+        Returns:
+            int: 加分（0=未命中，2=命中一个，4=命中多个）
+        """
+        if not msg or len(msg) < 2:
+            return 0
+        try:
+            from core.pinyin_util import text_to_pinyin_silent
+            pinyin_text = text_to_pinyin_silent(msg).lower()
+            if not pinyin_text:
+                return 0
+
+            # 谐音广告词拼音模式（无声调）
+            pinyin_ad_patterns = [
+                # 刷单/刷量类
+                'shua dan', 'shua liang', 'shua ping',
+                # 赚钱/日赚类
+                'zhuan qian', 'ri zhuan', 'ri zhuan',
+                # 私信/联系类
+                'si xin', 'si liao', 'lian xi wo',
+                # 加微信/加QQ类
+                'jia wei xin', 'jia v xin', 'jia qq',
+                # 兼职/代理类
+                'jian zhi', 'dai li',
+                # 约炮/色情类
+                'yue pao', 'yue ma', 'bao yue',
+                # 赌博类
+                'du bo', 'du qian',
+                # 信用卡/贷款类
+                'xin yong ka', 'dai kuan', 'tao xian',
+            ]
+
+            hits = 0
+            for pat in pinyin_ad_patterns:
+                if pat in pinyin_text:
+                    hits += 1
+                    logger.info(f"[AD] 拼音命中: 模式={pat}, 原文={msg[:40]}")
+
+            # 命中1个加2分，命中2+个加4分
+            if hits >= 2:
+                return 4
+            elif hits == 1:
+                return 2
+            return 0
+        except ImportError:
+            # pinyin_util 未安装，跳过
+            return 0
+        except Exception as e:
+            logger.debug(f"[AD] 拼音检测异常: {e}")
+            return 0
+
     def detect(self, username: str, msg: str, user_id: int = None, bot=None, bio: str = None, message_meta: dict = None, chat_id=None) -> dict:
         """
         核心检测函数
@@ -578,6 +650,11 @@ class AdDetector:
         if bio_raw_norm != bio_raw:
             logger.info(f"[AD] Bio经规范化: 原={bio_raw[:60]} → 新={bio_raw_norm[:60]}")
 
+        # [v5.23.0 P2-5] 拼音级广告检测：将文本转拼音后检测谐音广告词
+        msg_pinyin_leak = self._check_pinyin_ad(msg_clean)
+        if msg_pinyin_leak > 0:
+            logger.info(f"[AD] 拼音检测命中: +{msg_pinyin_leak}分, 消息={msg_clean[:60]}")
+
         # [Trae] v5.3.1 优化：通过bot获取用户完整显示名称
         # [Trae CN] 修复：chat_id 为 None 时跳过 get_chat_member 调用，避免无效请求
         if bot and user_id and not uname_clean and chat_id is not None:
@@ -585,9 +662,8 @@ class AdDetector:
                 chat_member = bot.get_chat_member(chat_id=chat_id, user_id=user_id)
                 if chat_member and chat_member.user:
                     uname_clean = chat_member.user.full_name or ""
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         logger.info(f"[AD] 开始检测: 用户={uname_clean[:30]}, 消息={msg_clean[:80]}")
 
         uname_matches = self._check_username(uname_clean)
@@ -595,6 +671,8 @@ class AdDetector:
         # [Trae] v4.6.6 修复：用户显示名称本身也可能是广告（如"虚拟货币搬砖日挣1千U"）
         name_score, name_hit_dims = self._check_content_score(uname_clean)
         total_score = content_score + name_score
+        # [v5.23.0 P2-5] 拼音级广告检测加分
+        total_score += msg_pinyin_leak
         # [TRAE SOLO CN] 零宽字符占比高时额外加分（本身就是可疑行为）
         if zwc_ratio > 0.2:
             total_score += 2
@@ -1224,8 +1302,8 @@ class AdDetector:
                             _m = _re.search(r"retry after (\d+)", str(fwd_err), _re.IGNORECASE)
                             if _m:
                                 retry_after = int(_m.group(1))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"操作异常: {e}")
                         logger.warning(f"[AD] 追溯扫描: API限速, 等待{retry_after}秒后继续")
                         _time.sleep(retry_after)
                         continue
@@ -1266,9 +1344,8 @@ class AdDetector:
                 if fwd_msg_id:
                     try:
                         bot.delete_message(admin_id, fwd_msg_id)
-                    except Exception:
-                        pass
-
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
                 if result["scanned"] % 20 == 0:
                     _time.sleep(1)
 
@@ -1296,8 +1373,8 @@ class AdDetector:
                             if isinstance(m, dict) and "msg_id" in m and "chat_id" in m:
                                 if m["chat_id"] == chat_id and start_msg_id <= m["msg_id"] <= end_msg_id:
                                     tracked_messages.append(m)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
         except Exception as e:
             logger.debug(f"[AD] 追溯扫描: 读取追踪记录失败: {e}")
 

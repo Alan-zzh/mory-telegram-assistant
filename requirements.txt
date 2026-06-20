@@ -6,9 +6,12 @@ pyTelegramBotAPI>=4.14.0,<5.0.0
 requests>=2.31.0,<3.0.0
 apscheduler>=3.10.0,<4.0.0
 python-dotenv>=1.0.0,<2.0.0
+pydantic-settings>=2.0.0,<3.0.0
 
 # 数据库
 # SQLite为Python内置，无需额外安装
+alembic>=1.13.0,<2.0.0
+sqlalchemy>=2.0.0,<3.0.0
 
 # 图片处理
 Pillow>=10.0.0,<12.0.0
@@ -18,11 +21,41 @@ paramiko>=3.3.0,<4.0.0
 
 # Dashboard后台
 flask>=3.0.0,<3.1.0
+flasgger>=0.9.5
 gunicorn>=21.2.0,<22.0.0
 gevent>=24.2.0,<25.0.0
+
+# 结构化日志
+structlog>=23.0.0,<25.0.0
 
 # 系统监控
 psutil>=5.9.0,<7.0.0
 
+# 缓存层
+diskcache>=5.6.0,<6.0.0
+
+# 分布式追踪（OpenTelemetry）
+opentelemetry-sdk>=1.20.0,<2.0.0
+opentelemetry-instrumentation-flask>=0.41.0,<1.0.0
+opentelemetry-exporter-otlp>=1.20.0,<2.0.0
+
 # 可选：优化引擎
 # cachetools>=5.3.0  # 语义缓存（已有内置实现）
+
+# 指标监控（Prometheus）
+prometheus-client>=0.17.0,<1.0.0
+
+# 统计检验（A/B 测试显著性分析）
+scipy>=1.11.0,<2.0.0
+
+# 测试与覆盖率
+pytest>=7.0.0
+pytest-cov>=4.0.0
+interrogate>=1.5.0
+
+# 类型检查
+mypy>=1.5.0
+
+# 代码质量检测
+vulture>=2.0
+radon>=5.1.0

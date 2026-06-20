@@ -9,7 +9,7 @@ dashboard/api/engage_api.py  ·  商业搭讪事件 API（v5.14.0）
 - POST /api/engage/config           - 更新 PROACTIVE_ENGAGE_CONFIG（触发 reload_flag）
 """
 from flask import Blueprint, jsonify, request
-from dashboard.helpers import login_required, read_config, write_config, get_db
+from dashboard.helpers import login_required, admin_required, read_config, write_config, get_db
 
 bp = Blueprint("engage_api", __name__, url_prefix="/api/engage")
 
@@ -79,6 +79,7 @@ def get_config():
 
 @bp.route("/config", methods=["POST"])
 @login_required
+@admin_required  # 【TRAE SOLO CN v5.18.3审计修复】写操作需管理员权限
 def update_config():
     """更新 PROACTIVE_ENGAGE_CONFIG（自动触发 reload_flag）"""
     try:

@@ -64,8 +64,8 @@ def record_invite(db, inviter_uid: int, invitee_uid: int, chat_id: int, config=N
                     _row = c2.fetchone()
                     _inviter_name = _row[0] if _row else f"用户{inviter_uid}"
                     check_level_up(bot, chat_id, inviter_uid, _inviter_name, _lv_result, config)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         except Exception as e:
             logger.error(f"邀请积分发放失败: {e}")
 

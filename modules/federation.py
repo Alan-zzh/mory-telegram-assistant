@@ -116,9 +116,8 @@ def execute_fban_on_join(bot, m, config: dict, db, user, user_display: str):
                     f"⏰ 封禁时间：{ban_time}\n"
                     f" 操作：已踢出当前群组"
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         return True
 
     return False
@@ -152,10 +151,8 @@ def handle_fban_command(bot, m, args: list, config: dict, db):
     try:
         bot.kick_chat_member(chat_id, user_id)
         bot.unban_chat_member(chat_id, user_id)
-    except Exception:
-        pass
-
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
 def handle_unfban_command(bot, m, args: list, config: dict, db):
     """处理 /unfban 命令"""
     admin_id = config.get("ADMIN_ID", 0)

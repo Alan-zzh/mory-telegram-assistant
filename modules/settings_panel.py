@@ -28,6 +28,7 @@ import json
 import os
 import tempfile
 import logging
+from core.config_compat import normalize_runtime_config, compact_runtime_config
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 logger = logging.getLogger(__name__)
@@ -161,7 +162,7 @@ MESSAGES_KEYS = {
     # 置顶管理
     "pin_list":              {"path": "_list_pins",                        "type": "list", "label": "置顶管理"},
     # 举报系统
-    "report_enable":         {"path": "REPORT_CONFIG.enable",              "type": "toggle", "label": "举报系统", "default": False},
+    "report_enable":         {"path": "REPORT_CONFIG.enabled",             "type": "toggle", "label": "举报系统", "default": False},
     # 重发消息
     "echo_list":             {"path": "_list_echo",                        "type": "list", "label": "重发消息"},
     # 链接管理
@@ -187,20 +188,20 @@ INTERACT_KEYS = {
     # 小游戏
     "games_enable":          {"path": "GAMES_CONFIG.enable",               "type": "toggle", "label": "小游戏", "default": False},
     # 抽奖
-    "lottery_enable":        {"path": "LOTTERY_CONFIG.enable",             "type": "toggle", "label": "抽奖", "default": False},
+    "lottery_enable":        {"path": "LOTTERY_CONFIG.enabled",            "type": "toggle", "label": "抽奖", "default": False},
     # 盲盒
-    "blindbox_enable":       {"path": "BLIND_BOX_CONFIG.enable",           "type": "toggle", "label": "盲盒", "default": False},
+    "blindbox_enable":       {"path": "BLIND_BOX_CONFIG.enabled",          "type": "toggle", "label": "盲盒", "default": False},
     "blindbox_cost":         {"path": "BLIND_BOX_CONFIG.cost",             "type": "set", "label": "盲盒消耗", "unit": "分", "default": 50},
     # 转盘
-    "wheel_enable":          {"path": "LUCKY_WHEEL_CONFIG.enable",         "type": "toggle", "label": "转盘", "default": False},
+    "wheel_enable":          {"path": "LUCKY_WHEEL_CONFIG.enabled",        "type": "toggle", "label": "转盘", "default": False},
     "wheel_cost":            {"path": "LUCKY_WHEEL_CONFIG.cost",           "type": "set", "label": "转盘消耗", "unit": "分", "default": 30},
     # 签到
     "checkin_enable":        {"path": "CHECKIN_CONFIG.enable",             "type": "toggle", "label": "签到", "default": False},
     "checkin_base":          {"path": "CHECKIN_CONFIG.base_points",        "type": "set", "label": "签到积分", "unit": "分", "default": 5},
     # 红包
-    "redpacket_enable":      {"path": "REDPACKET_CONFIG.enable",           "type": "toggle", "label": "红包", "default": False},
+    "redpacket_enable":      {"path": "REDPACKET_CONFIG.enabled",          "type": "toggle", "label": "红包", "default": False},
     # AFK
-    "afk_enable":            {"path": "AFK_CONFIG.enable",                 "type": "toggle", "label": "AFK状态", "default": False},
+    "afk_enable":            {"path": "AFK_CONFIG.enabled",                "type": "toggle", "label": "AFK状态", "default": False},
 }
 
 # ── 经济系统 ──────────────────────────────────────────────────────────────
@@ -213,10 +214,10 @@ ECONOMY_KEYS = {
     # 等级体系
     "level_titles":          {"path": "_list_level_titles",                "type": "list", "label": "等级称号"},
     # 商城
-    "shop_enable":           {"path": "SHOP_CONFIG.enable",                "type": "toggle", "label": "商城", "default": False},
+    "shop_enable":           {"path": "SHOP_CONFIG.enabled",               "type": "toggle", "label": "商城", "default": False},
     "shop_list":             {"path": "_list_shop_items",                  "type": "list", "label": "商城商品"},
     # 优惠券
-    "coupon_enable":         {"path": "COUPON_CONFIG.enable",              "type": "toggle", "label": "优惠券", "default": False},
+    "coupon_enable":         {"path": "COUPON_CONFIG.enabled",             "type": "toggle", "label": "优惠券", "default": False},
     "coupon_list":           {"path": "_list_coupons",                     "type": "list", "label": "优惠券列表"},
     # 打赏
     "tip_min":               {"path": "TIP_CONFIG.min_amount",             "type": "set", "label": "最小打赏", "unit": "分", "default": 1},
@@ -232,16 +233,22 @@ ECONOMY_KEYS = {
 
 # ── 播报与统计 ───────────────────────────────────────────────────────────
 BROADCAST_KEYS = {
-    # 早安/晚安
-    "greeting":              {"path": "AUTO_GREETING",                     "type": "toggle", "label": "早安播报"},
-    "greeting_hour":         {"path": "GREETING_HOUR",                     "type": "set", "label": "早安时间", "unit": "点", "default": 7},
-    "goodnight":             {"path": "AUTO_GOODNIGHT",                    "type": "toggle", "label": "晚安播报"},
-    "goodnight_hour":        {"path": "GOODNIGHT_HOUR",                    "type": "set", "label": "晚安时间", "unit": "点", "default": 22},
+    # 早/午/晚问候
+    "greeting_morning":      {"path": "GREETING_CONFIG.morning_enabled",   "type": "toggle", "label": "早安问候", "default": False},
+    "greeting_morning_time": {"path": "GREETING_CONFIG.morning_time",      "type": "set", "label": "早安时间", "default": "08:05"},
+    "greeting_afternoon":    {"path": "GREETING_CONFIG.afternoon_enabled", "type": "toggle", "label": "午安问候", "default": False},
+    "greeting_afternoon_time": {"path": "GREETING_CONFIG.afternoon_time",  "type": "set", "label": "午安时间", "default": "12:35"},
+    "greeting_evening":      {"path": "GREETING_CONFIG.evening_enabled",   "type": "toggle", "label": "晚安问候", "default": False},
+    "greeting_evening_time": {"path": "GREETING_CONFIG.evening_time",      "type": "set", "label": "晚安时间", "default": "23:05"},
     # 新闻播报
-    "news":                  {"path": "AUTO_NEWS",                         "type": "toggle", "label": "新闻播报"},
-    "news_hour_morning":     {"path": "NEWS_HOUR_MORNING",                 "type": "set", "label": "早间新闻时间", "unit": "点", "default": 9},
-    "news_hour_afternoon":   {"path": "NEWS_HOUR_AFTERNOON",               "type": "set", "label": "午间新闻时间", "unit": "点", "default": 12},
-    "news_hour_evening":     {"path": "NEWS_HOUR_EVENING",                 "type": "set", "label": "晚间新闻时间", "unit": "点", "default": 18},
+    "news_enabled":          {"path": "NEWS_BROADCAST_CONFIG.enabled",     "type": "toggle", "label": "新闻播报", "default": False},
+    "news_source":           {"path": "NEWS_BROADCAST_CONFIG.preferred_source", "type": "cycle",
+                              "options": ["real_first", "trendradar_first"],
+                              "labels": {"real_first": "真实源优先", "trendradar_first": "热点源优先"},
+                              "label": "新闻来源"},
+    "news_morning_time":     {"path": "NEWS_BROADCAST_CONFIG.morning_time", "type": "set", "label": "早间新闻", "default": "09:05"},
+    "news_afternoon_time":   {"path": "NEWS_BROADCAST_CONFIG.afternoon_time", "type": "set", "label": "午间新闻", "default": "13:05"},
+    "news_evening_time":     {"path": "NEWS_BROADCAST_CONFIG.evening_time", "type": "set", "label": "晚间新闻", "default": "20:35"},
     # 定点播报
     "broadcasts":            {"path": "_list_broadcasts",                  "type": "list", "label": "定点播报列表"},
     # 定时消息
@@ -252,6 +259,8 @@ BROADCAST_KEYS = {
     "speech_stats":          {"path": "_list_speech_stats",                "type": "list", "label": "发言统计"},
     # 实时U价
     "exchange_rate":         {"path": "EXCHANGE_RATE_ENABLE",              "type": "toggle", "label": "实时U价", "default": False},
+    # 私聊接管
+    "relay_mode":            {"path": "RELAY_MODE_ENABLED",                "type": "toggle", "label": "私聊中继", "default": False},
 }
 
 # ── 高级设置 ──────────────────────────────────────────────────────────────
@@ -309,13 +318,14 @@ CATEGORY_META = {
 def _load_config():
     """读取config.json"""
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return normalize_runtime_config(json.load(f))
 
 
 def _save_config(cfg):
     """原子写入config.json（使用临时文件+os.replace防止写坏）"""
     fd, tmp_path = tempfile.mkstemp(suffix=".json", dir=os.path.dirname(CONFIG_PATH))
     try:
+        cfg = compact_runtime_config(cfg)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
             f.flush()
@@ -563,9 +573,8 @@ def _apply_module_toggle(path, new_val, config):
                             (chat_id, 1 if new_val else 0, now_ts)
                         )
                         db.conn.commit()
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
     except Exception as e:
         logger.warning(f"模块调用失败: {path} -> {e}")
 
@@ -675,7 +684,10 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
             lines = [f"📋 {label}（共{len(broadcasts)}个）：\n"]
             for i, bc in enumerate(broadcasts, 1):
                 status = "✅" if bc.get("enabled", False) else "❌"
-                lines.append(f"  {i}. {status} {bc.get('time', '?')} - {bc.get('content', '')[:30]}")
+                hh = int(bc.get("hour", 0))
+                mm = int(bc.get("minute", 0))
+                time_text = bc.get("time") or f"{hh:02d}:{mm:02d}"
+                lines.append(f"  {i}. {status} {time_text} - {bc.get('content', '')[:30]}")
             bot.send_message(chat_id, "\n".join(lines))
         else:
             bot.send_message(chat_id, f"📋 {label}：暂无定点播报")
@@ -1143,8 +1155,8 @@ def handle_settings_callback(bot, call, config, db=None):
         try:
             bot.edit_message_text(text, chat_id, call.message.message_id,
                                   reply_markup=keyboard, parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id)
         return True
 
@@ -1154,8 +1166,8 @@ def handle_settings_callback(bot, call, config, db=None):
         try:
             bot.edit_message_text(text, chat_id, call.message.message_id,
                                   reply_markup=keyboard, parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id)
         return True
 
@@ -1176,8 +1188,8 @@ def handle_settings_callback(bot, call, config, db=None):
         try:
             bot.edit_message_text(text, chat_id, call.message.message_id,
                                   reply_markup=keyboard, parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id)
         return True
 
@@ -1194,8 +1206,8 @@ def handle_settings_callback(bot, call, config, db=None):
                 try:
                     bot.edit_message_text(text, chat_id, call.message.message_id,
                                           reply_markup=keyboard, parse_mode="Markdown")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         else:
             bot.answer_callback_query(call.id, text="⚠️ 操作失败")
         return True
@@ -1211,8 +1223,8 @@ def handle_settings_callback(bot, call, config, db=None):
                     try:
                         bot.edit_message_text(text, chat_id, call.message.message_id,
                                               reply_markup=keyboard, parse_mode="Markdown")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
             else:
                 bot.answer_callback_query(call.id, text="️ 模型池为空")
         else:
@@ -1229,8 +1241,8 @@ def handle_settings_callback(bot, call, config, db=None):
                     try:
                         bot.edit_message_text(text, chat_id, call.message.message_id,
                                               reply_markup=keyboard, parse_mode="Markdown")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
             else:
                 bot.answer_callback_query(call.id, text="⚠️ 操作失败")
         return True

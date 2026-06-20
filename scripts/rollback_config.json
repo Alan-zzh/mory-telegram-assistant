@@ -1,0 +1,17 @@
+{
+  "current_version_path": "/home/ubuntu/mory_current",
+  "previous_version_path": "/home/ubuntu/mory_previous",
+  "health_check_url": "http://localhost:6616/api/health",
+  "retry_count": 3,
+  "retry_interval_seconds": 5,
+  "services": [
+    "mory-assistant",
+    "mory-dashboard"
+  ],
+  "alert": {
+    "enabled": true,
+    "telegram_bot_token_env": "TG_TOKEN",
+    "admin_chat_id_env": "ADMIN_ID",
+    "message_template": "⚠️ Mory小助理自动回滚触发\n时间: {timestamp}\n原因: {reason}"
+  }
+}

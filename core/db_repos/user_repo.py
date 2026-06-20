@@ -280,3 +280,225 @@ class UserRepo:
                 self.conn.commit()
             except Exception as e:
                 logger.warning(f"delete_user失败 uid={uid}: {e}")
+
+    # ─────────────────────────────── 用户画像（v5.18.0） ────────────────────────────────
+    def get_user_profile(self, user_id: int) -> dict | None:
+        """获取用户画像。"""
+        import json
+        with self.lock:
+            c = self.conn.cursor()
+            # [TRAE SOLO CN] v5.19.0 扩展查询：包含 6 个新画像列
+            # [TRAE SOLO CN v5.24.0 阶段3-B] 增加 memory_summary 列（带 fallback）
+            try:
+                c.execute("""SELECT user_id, tags, level, interests, last_interaction, conversation_rounds,
+                                    activity_score, flirt_affinity, spend_tendency, resistance_idx,
+                                    peak_hours, persona_tags, memory_summary
+                             FROM user_profiles WHERE user_id=?""", (user_id,))
+            except Exception:
+                # 旧表无 memory_summary 列，回退
+                c.execute("""SELECT user_id, tags, level, interests, last_interaction, conversation_rounds,
+                                    activity_score, flirt_affinity, spend_tendency, resistance_idx,
+                                    peak_hours, persona_tags
+                             FROM user_profiles WHERE user_id=?""", (user_id,))
+            r = c.fetchone()
+            if not r:
+                return None
+            try:
+                tags = json.loads(r[1]) if r[1] else []
+                interests = json.loads(r[3]) if r[3] else []
+                peak_hours = json.loads(r[10]) if r[10] else []
+                persona_tags = json.loads(r[11]) if r[11] else []
+            except Exception:
+                tags, interests, peak_hours, persona_tags = [], [], [], []
+            # [v5.24.0] memory_summary 可能不存在（旧表），安全获取
+            memory_summary = ""
+            try:
+                memory_summary = r[12] or ""
+            except IndexError:
+                pass
+            return {
+                "user_id": r[0],
+                "tags": tags,
+                "level": r[2] or 0,
+                "interests": interests,
+                "last_interaction": r[4],
+                "conversation_rounds": r[5] or 0,
+                "activity_score": r[6] or 0.0,
+                "flirt_affinity": r[7] or 0.0,
+                "spend_tendency": r[8] or 0.0,
+                "resistance_idx": r[9] if r[9] is not None else 0.5,
+                "peak_hours": peak_hours,
+                "persona_tags": persona_tags,
+                "memory_summary": memory_summary,
+            }
+
+    def upsert_user_profile(self, profile: dict) -> None:
+        """更新或插入用户画像。"""
+        import json
+        with self.lock:
+            c = self.conn.cursor()
+            tags_json = json.dumps(profile.get("tags", []), ensure_ascii=False)
+            interests_json = json.dumps(profile.get("interests", []), ensure_ascii=False)
+            peak_hours_json = json.dumps(profile.get("peak_hours", []), ensure_ascii=False)
+            persona_tags_json = json.dumps(profile.get("persona_tags", []), ensure_ascii=False)
+            # [TRAE SOLO CN v5.24.0 阶段3-B] memory_summary 字段支持
+            # 未传（None）时不覆盖已有值（COALESCE），传值时写入新摘要
+            memory_summary = profile.get("memory_summary")
+            # 防御旧表：幂等补列
+            try:
+                c.execute("ALTER TABLE user_profiles ADD COLUMN memory_summary TEXT DEFAULT ''")
+            except Exception:
+                pass  # 列已存在
+            # [TRAE SOLO CN] v5.19.0 扩展写入：6 个新画像列
+            # [TRAE SOLO CN v5.24.0 阶段3-B] 增加 memory_summary 列（COALESCE 保留已有值，幂等不覆盖）
+            c.execute("""INSERT INTO user_profiles
+                (user_id, tags, level, interests, last_interaction, conversation_rounds,
+                 activity_score, flirt_affinity, spend_tendency, resistance_idx,
+                 peak_hours, persona_tags, memory_summary, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    tags=excluded.tags,
+                    level=excluded.level,
+                    interests=excluded.interests,
+                    last_interaction=excluded.last_interaction,
+                    conversation_rounds=excluded.conversation_rounds,
+                    activity_score=excluded.activity_score,
+                    flirt_affinity=excluded.flirt_affinity,
+                    spend_tendency=excluded.spend_tendency,
+                    resistance_idx=excluded.resistance_idx,
+                    peak_hours=excluded.peak_hours,
+                    persona_tags=excluded.persona_tags,
+                    memory_summary=COALESCE(excluded.memory_summary, user_profiles.memory_summary),
+                    updated_at=CURRENT_TIMESTAMP
+            """, (
+                profile["user_id"],
+                tags_json,
+                profile.get("level", 0),
+                interests_json,
+                profile.get("last_interaction"),
+                profile.get("conversation_rounds", 0),
+                profile.get("activity_score", 0.0),
+                profile.get("flirt_affinity", 0.0),
+                profile.get("spend_tendency", 0.0),
+                profile.get("resistance_idx", 0.5),
+                peak_hours_json,
+                persona_tags_json,
+                memory_summary,
+            ))
+            self.conn.commit()
+
+    def list_user_profiles(self, min_level: int = 0, tag: str = "", limit: int = 100) -> list:
+        """列出用户画像（用于画像运营页面）。"""
+        import json
+        with self.lock:
+            c = self.conn.cursor()
+            if tag:
+                c.execute("SELECT user_id, tags, level, interests, last_interaction, conversation_rounds FROM user_profiles WHERE level >= ? AND tags LIKE ? ORDER BY level DESC, last_interaction DESC LIMIT ?",
+                          (min_level, f'%"{tag}"%', limit))
+            else:
+                c.execute("SELECT user_id, tags, level, interests, last_interaction, conversation_rounds FROM user_profiles WHERE level >= ? ORDER BY level DESC, last_interaction DESC LIMIT ?",
+                          (min_level, limit))
+            rows = c.fetchall()
+        results = []
+        for r in rows:
+            try:
+                tags = json.loads(r[1]) if r[1] else []
+                interests = json.loads(r[3]) if r[3] else []
+            except Exception:
+                tags, interests = [], []
+            results.append({
+                "user_id": r[0],
+                "tags": tags,
+                "level": r[2] or 0,
+                "interests": interests,
+                "last_interaction": r[4],
+                "conversation_rounds": r[5] or 0,
+            })
+        return results
+
+    # ─────────────────────────────── A/B 测试统计（v5.18.0） ────────────────────────────────
+    def record_ab_test_sent(self, group_name: str, format_version: str, count: int = 1) -> None:
+        """记录 A/B 测试发送数。"""
+        import time
+        ts = int(time.time())
+        with self.lock:
+            c = self.conn.cursor()
+            c.execute("""INSERT INTO ab_test_stats (group_name, format_version, sent_count, ts)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(group_name, format_version) DO UPDATE SET
+                    sent_count = sent_count + ?,
+                    ts = ?
+            """, (group_name, format_version, count, ts, count, ts))
+            self.conn.commit()
+
+    def record_ab_test_conversion(self, group_name: str, format_version: str, count: int = 1) -> None:
+        """记录 A/B 测试转化数。"""
+        import time
+        ts = int(time.time())
+        with self.lock:
+            c = self.conn.cursor()
+            c.execute("""INSERT INTO ab_test_stats (group_name, format_version, conversion_count, ts)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(group_name, format_version) DO UPDATE SET
+                    conversion_count = conversion_count + ?,
+                    ts = ?
+            """, (group_name, format_version, count, ts, count, ts))
+            self.conn.commit()
+
+    def get_ab_test_stats(self) -> dict:
+        """获取 A/B 测试统计汇总。"""
+        with self.lock:
+            c = self.conn.cursor()
+            c.execute("SELECT format_version, SUM(sent_count), SUM(conversion_count) FROM ab_test_stats GROUP BY format_version")
+            rows = c.fetchall()
+        result = {"html_sent": 0, "html_conversions": 0, "rich_sent": 0, "rich_conversions": 0}
+        for fmt, sent, conv in rows:
+            if fmt == "html":
+                result["html_sent"] = sent or 0
+                result["html_conversions"] = conv or 0
+            elif fmt == "rich":
+                result["rich_sent"] = sent or 0
+                result["rich_conversions"] = conv or 0
+        return result
+
+    # ─────────────────────────────── 按钮点击统计（v5.18.0） ────────────────────────────────
+    def record_button_impression(self, button_id: str, style: str = "default") -> None:
+        """记录按钮展示。"""
+        with self.lock:
+            c = self.conn.cursor()
+            c.execute("""INSERT INTO button_click_stats (button_id, style, impressions, clicks)
+                VALUES (?, ?, 1, 0)
+                ON CONFLICT(button_id, style) DO UPDATE SET
+                    impressions = impressions + 1,
+                    last_updated = CURRENT_TIMESTAMP
+            """, (button_id, style))
+            self.conn.commit()
+
+    def record_button_click(self, button_id: str, style: str = "default") -> None:
+        """记录按钮点击。"""
+        with self.lock:
+            c = self.conn.cursor()
+            c.execute("""INSERT INTO button_click_stats (button_id, style, impressions, clicks)
+                VALUES (?, ?, 0, 1)
+                ON CONFLICT(button_id, style) DO UPDATE SET
+                    clicks = clicks + 1,
+                    last_updated = CURRENT_TIMESTAMP
+            """, (button_id, style))
+            self.conn.commit()
+
+    def get_button_stats(self) -> list:
+        """获取按钮点击统计。"""
+        with self.lock:
+            c = self.conn.cursor()
+            c.execute("SELECT button_id, style, impressions, clicks FROM button_click_stats WHERE impressions > 0 OR clicks > 0 ORDER BY (clicks * 1.0 / MAX(impressions, 1)) DESC")
+            rows = c.fetchall()
+        return [
+            {
+                "button_id": r[0],
+                "style": r[1],
+                "impressions": r[2] or 0,
+                "clicks": r[3] or 0,
+                "ctr": (r[3] or 0) / max(1, r[2] or 0),
+            }
+            for r in rows
+        ]

@@ -195,8 +195,8 @@ def handle_vote_kick_callback(bot, call, config, db):
         )
         try:
             bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="HTML", reply_markup=None)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id, f"投票通过！赞成{yes_count}票，反对{no_count}票")
     else:
         # 投票未通过，更新消息中的票数
@@ -227,9 +227,8 @@ def handle_vote_kick_callback(bot, call, config, db):
 
         try:
             bot.edit_message_text(updated_text, chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         vote_label = "赞成" if vote_type == "yes" else "反对"
         bot.answer_callback_query(call.id, f"已投{vote_label}票（赞成{yes_count}/反对{no_count}）")
 
@@ -296,5 +295,5 @@ def check_expired_votes(bot, config, db):
         )
         try:
             bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="HTML", reply_markup=None)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")

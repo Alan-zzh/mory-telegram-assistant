@@ -18,6 +18,7 @@
 
 import time
 from core.logging_util import get_logger
+from core.http_client import get_http_client, HTTPRequestError
 
 logger = get_logger("spam_watch")
 
@@ -54,16 +55,20 @@ def check_cas(bot, user_id: int, config: dict) -> bool:
         return False
 
     try:
-        import requests
+        # 使用统一HTTP客户端，自动重试和异常处理
+        client = get_http_client()
         url = f"https://api.cas.chat/check?user_id={user_id}"
-        resp = requests.get(url, timeout=5)
-        data = resp.json()
+        data = client.get(url, timeout=5)
 
         if data.get("ok") and data.get("result", {}).get("spam", False):
             logger.warning(f"🚨 CAS黑名单命中: uid={user_id}")
             return True
 
+    except HTTPRequestError as e:
+        # HTTP客户端已记录详细日志，这里只需记录业务级别日志
+        logger.error(f"CAS查询失败: uid={user_id} err={e}")
     except Exception as e:
+        # 捕获其他未预期的异常
         logger.error(f"CAS查询异常: uid={user_id} err={e}")
 
     return False
@@ -86,17 +91,23 @@ def check_spamwatch(bot, user_id: int, config: dict) -> bool:
         return False
 
     try:
-        import requests
+        # 使用统一HTTP客户端，自动重试和异常处理
+        client = get_http_client()
         url = f"https://api.spamwat.ch/banlist/{user_id}"
         headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(url, headers=headers, timeout=5)
-
         # 200 = 在黑名单中，404 = 不在黑名单
-        if resp.status_code == 200:
-            logger.warning(f"🚨 SpamWatch黑名单命中: uid={user_id}")
-            return True
+        data = client.get(url, headers=headers, timeout=5)
+        # HTTP客户端成功返回200说明在黑名单中
+        logger.warning(f"🚨 SpamWatch黑名单命中: uid={user_id}")
+        return True
 
+    except HTTPRequestError as e:
+        # 404不在黑名单，属于正常情况，不记录错误
+        if "404" in str(e):
+            return False
+        logger.error(f"SpamWatch查询失败: uid={user_id} err={e}")
     except Exception as e:
+        # 捕获其他未预期的异常
         logger.error(f"SpamWatch查询异常: uid={user_id} err={e}")
 
     return False

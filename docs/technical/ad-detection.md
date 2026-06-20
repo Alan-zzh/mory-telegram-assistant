@@ -1,7 +1,7 @@
 # 广告检测系统完整规范
 
 > **被 [AGENTS.md](../../AGENTS.md) 索引引用 · 适用版本：v5.0.0+**
-> **最后更新**：2026-06-12（v5.16.2 [Codex] 广告治理不踢人策略纠正）
+> **最后更新**：2026-06-14（v5.16.5 [Codex] 反应清理 + Business 消息同步）
 
 ## 概述
 
@@ -20,7 +20,7 @@ Mory 小助理作为群管理 Bot，**反垃圾/广告检测**是核心功能之
 | 层级 | 检测内容 | 信号来源 | 评分 | 直接处置 | 说明 |
 |------|---------|---------|:----:|:-------:|------|
 | L0 | CAS/SPB 外部数据库 | 外部 API | +1~+2 | ❌ | 仅辅助评分 |
-| L1 | 用户名+Bio+头像 | 用户资料 | 三层命中=直接处置 | ✅ | 高置信度组合 |
+| L1 | 用户名+Bio+头像+Premium emoji 状态 | 用户资料 | 三层命中=直接处置 | ✅ | 高置信度组合；状态贴纸支持元数据+OCR |
 | L2 | 消息内容关键词 | 消息文本 | 1~4/维度 | ❌ | 9 个维度权重 |
 | L3 | 零宽字符+元数据 | 消息结构 | +1~+2 | ❌ | 零宽占比>20%额外+2 |
 | L4 | 新用户行为+转发+短链 | 用户行为 | +1 | ❌ | 入群<5分钟+链接 |
@@ -45,6 +45,24 @@ SCORE_THRESHOLD = 3
 6. 通知管理员
 
 投票踢人、验证码失败、僵尸清理、不活跃清理、管理员手动静默操作属于独立群管工具，不等同于广告处置。
+
+### 二点六、Premium emoji 状态识别（v5.16.4 [Codex]）
+
+截图中“名称旁边有看我简介”的情况，本质可能是 Telegram Premium emoji 状态贴纸。处理链路：
+
+1. `core/telebot_compat.py:preserve_user_extra_fields()` 保留 pyTelegramBotAPI 未显式支持的新字段，尤其是 `emoji_status_custom_emoji_id`。
+2. `modules/ad_profile_signals.py:detect_profile_ad_signal()` 合并检测：
+   - first_name / last_name / username
+   - BIO
+   - emoji 状态 Sticker 元数据：`emoji` / `set_name` / `custom_emoji_id`
+   - Sticker 缩略图 OCR 文本
+3. 文字或 OCR 命中 `USERNAME_PATTERNS + BIO_PATTERNS` 后，复用 `enforce_ad_user()`。
+4. 发言内容为 `1` 等 1 字符时，也必须先跑资料层检测；资料层未命中时才跳过内容评分。
+
+**重要边界**：
+- Telegram Bot API / Sticker 对象没有“图片中文字”的现成字段，不能只依赖元数据。
+- 贴纸图片文字必须下载 thumbnail/file 后用视觉模型 OCR。
+- 只有 `emoji_status_custom_emoji_id` 但元数据/OCR 未命中时，只作为低分可疑信号，不单独封禁，避免误封普通 Premium 用户。
 
 ### 三、9 维度关键词规则集
 
@@ -71,6 +89,8 @@ SCORE_THRESHOLD = 3
 | 检测入口 | [core/handlers/security_handlers.py](../../core/handlers/security_handlers.py) | 白名单 + 元数据提取 + 三层组合封禁 |
 | 头像检测 | [modules/avatar_detector.py](../../modules/avatar_detector.py) | 色情头像识别 |
 | Emoji 面具 | [modules/emoji_mask_detector.py](../../modules/emoji_mask_detector.py) | emoji 绕过检测 |
+| 资料状态检测 | [modules/ad_profile_signals.py](../../modules/ad_profile_signals.py) | 用户名/BIO/Premium emoji 状态元数据 + OCR |
+| SDK 兼容补丁 | [core/telebot_compat.py](../../core/telebot_compat.py) | 保存 `User` 未知字段，防止 `emoji_status_custom_emoji_id` 被丢弃 |
 
 ### 五、敏感词存储
 
@@ -109,6 +129,22 @@ def retroactive_scan(bot, chat_id, start_msg_id, end_msg_id, admin_id):
     return _scan_via_forward(bot, chat_id, start_msg_id, end_msg_id)
 ```
 
+### 六点五、历史消息删除边界
+
+广告处置会删除：
+
+1. 当前命中的消息；
+2. `message_snapshots` 中该用户在该群可追踪到的历史消息；
+3. 旧可疑追踪表中保存了 msg_id 的消息。
+
+不能自动删除：
+
+- 没有进入 `message_snapshots` 的旧消息；
+- Bot 已消费且未保存 msg_id 的历史消息；
+- 只知道 uid、昵称、截图但不知道 message_id 的群消息。
+
+**v5.16.4 实测案例**：`5751488320 / 云间藏诗意` 已 restricted + 双黑名单，但 VPS `message_snapshots` 总数为 0，Bot API 最近消息转发探测也无法读取来源，因此不能安全自动删除旧残留。后续同类消息会因短消息资料层检测和快照追踪被自动处理。
+
 ### 七、白名单
 
 ```json
@@ -143,14 +179,19 @@ def retroactive_scan(bot, chat_id, start_msg_id, end_msg_id, admin_id):
 | v5.7.5 | 短随机用户名漏检 | 格式 `^[a-z]{1,4}\d{2,4}$` 检测 |
 | v5.8.4 | 95.7% 覆盖扫描 | Pyrogram 全量扫描 5811 人 |
 | v5.10.0 | 误封修复 | 跳过 `/` 开头的 Bot 指令 + 403 错误优雅处理 |
+| v5.16.5 | 广告反应残留 | 默认尝试 deleteAllMessageReactions 清理广告用户反应 |
+| v5.16.4 | Premium emoji 状态漏检 | 保留 `emoji_status_custom_emoji_id` + 状态贴纸元数据/OCR + 短消息资料层检测 |
+| v5.16.4 | 日志假删但群里残留 | 删除失败不标记 deleted；无 msg_id 的旧残留明确不能承诺自动删 |
 
 ## 引用
 
 - `AGENTS.md` 类别7（AI 自我审计 4 条铁律）→ 根目录 `AGENTS.md` 搜 `类别7`
 - [orphan-cleanup.md](orphan-cleanup.md) — 孤儿清理机制
-- [MEMBER_SCAN_METHOD.md](../../MEMBER_SCAN_METHOD.md) — 群成员扫描完整方案
+- [MEMBER_SCAN_METHOD.md](../reference/MEMBER_SCAN_METHOD.md) — 群成员扫描完整方案
 
 ## 更新历史
 
 - 2026-06-12 (v5.16.2) — [Codex] 广告治理当前策略纠正为永久禁言+双黑名单+删消息，不踢人
+- 2026-06-14 (v5.16.5) — [Codex] 广告反应清理(deleteAllMessageReactions) + Business deleted_business_messages 同步 message_snapshots.deleted
+- 2026-06-13 (v5.16.4) — [Codex] Premium emoji 状态 OCR 识别与旧残留消息删除边界补充
 - 2026-06-02 (v5.12.0) — 首次创建，记录广告检测 5 层体系完整规范

@@ -285,6 +285,20 @@ def check_spam(bot, m, config: dict, db) -> bool:
     msg_limit = limit.get("messages_per_minute", 10)
     ban_min = limit.get("ban_minutes", 5)
     uid = m.from_user.id
+    # 【TRAE SOLO CN v5.18.3审计修复】管理员和白名单用户豁免，避免误伤
+    try:
+        member = bot.get_chat_member(m.chat.id, uid)
+        if member.status in ("administrator", "creator"):
+            return False
+    except Exception as e:
+        logger.debug(f"检查管理员状态失败 uid={uid}: {e}")
+    # 白名单用户豁免
+    try:
+        from modules.approvals import is_approved
+        if is_approved(db, m.chat.id, uid):
+            return False
+    except Exception as e:
+        logger.debug(f"检查白名单失败 uid={uid}: {e}")
     if db.check_spam(uid, msg_limit):
         db.mute_user(uid, m.chat.id, ban_min, "刷屏")
         try:
@@ -302,8 +316,8 @@ def check_spam(bot, m, config: dict, db) -> bool:
                         f"👤 用户：{m.from_user.first_name or '未知'}({uid})\n"
                         f"📋 操作：禁言 {ban_min} 分钟\n"
                         f"💡 如误封请手动解禁")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         except Exception as e:
             logger.warning(f"刷屏禁言操作失败 uid={uid}：{e}")
         logger.warning(f"🔇 刷屏禁言：uid={uid}")

@@ -362,6 +362,8 @@ const _pageTitles = {
   overview: '数据概览', users: '用户管理', groups: '群组数据',
   status: '运行状态', models: '模型中心', tasks: '定时任务',
   groupmgr: '群管设置', feedback: '用户反馈', userprofile: '用户画像',
+  attribution: '转化归因分析', funnel: '转化漏斗',
+  modelperf: '大模型效能对比',
   config: '系统配置', reports: '运营报表', logs: '日志查看', helpcenter: '帮助中心',
   verification: '验证码配置', welcome: '欢迎定制', nightmode: '夜间模式',
   broadcasts: '定点播报', federation: '联邦封禁', emojimask: 'emoji面具',
@@ -523,7 +525,7 @@ function renderPage() {
           <div class="stat-card orange">
             <div class="stat-icon">💬</div>
             <div class="stat-value" id="totalMsgs">-</div>
-            <div class="stat-label">消息总量</div>
+            <div class="stat-label">消息总量（群+私聊）</div>
           </div>
         </div>
         <div class="charts-grid">
@@ -735,6 +737,90 @@ function renderPage() {
         <div id="broadcastsContent" class="loading">加载中...</div>
       `;
       loadBroadcasts();
+      break;
+
+    case 'broadcast-format':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>📝 播报格式（Rich）</h2>
+            <p>v5.18.0 富文本升级 - Rich Messages / HTML / Auto 三种格式</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadBroadcastFormat()">刷新</button>
+        </div>
+        <div id="broadcastFormatContent" class="loading">加载中...</div>
+      `;
+      loadBroadcastFormat();
+      break;
+
+    case 'button-style':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>🎨 彩色按钮样式</h2>
+            <p>v5.18.0 - 4 种按钮样式（default/danger/success/primary）+ Custom Emoji 图标</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadButtonStyle()">刷新</button>
+        </div>
+        <div id="buttonStyleContent" class="loading">加载中...</div>
+      `;
+      loadButtonStyle();
+      break;
+
+    case 'custom-emoji':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>😀 Custom Emoji 池</h2>
+            <p>v5.18.0 - Premium Custom Emoji 配置（需 Bot 有 Custom Emoji 权限）</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadCustomEmojiPool()">刷新</button>
+        </div>
+        <div id="customEmojiContent" class="loading">加载中...</div>
+      `;
+      loadCustomEmojiPool();
+      break;
+
+    case 'user-profile':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>👤 用户画像</h2>
+            <p>v5.18.0 - 个性化播报（VIP 专属 emoji / 等级感谢 / 兴趣匹配）</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadUserProfile()">刷新</button>
+        </div>
+        <div id="userProfileContent" class="loading">加载中...</div>
+      `;
+      loadUserProfile();
+      break;
+
+    case 'ab-test':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>🧪 A/B 测试</h2>
+            <p>v5.18.0 - HTML vs Rich Message 转化率对比</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadABTest()">刷新</button>
+        </div>
+        <div id="abTestContent" class="loading">加载中...</div>
+      `;
+      loadABTest();
+      break;
+
+    case 'button-stats':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>📊 按钮点击统计</h2>
+            <p>v5.18.0 - 不同样式按钮点击率追踪</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadButtonStats()">刷新</button>
+        </div>
+        <div id="buttonStatsContent" class="loading">加载中...</div>
+      `;
+      loadButtonStats();
       break;
 
     case 'federation':
@@ -1091,6 +1177,71 @@ function renderPage() {
     case 'persona':
       content.innerHTML = `<div class="page-header"><div><h2>人设编辑</h2><p>系统提示词与知识库管理</p></div></div><div id="personaContent" class="loading">加载中...</div>`;
       loadPersonaConfig(); break;
+    case 'attribution':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>转化归因分析</h2>
+            <p>Campaign / 时段 / 人设桶三维度归因可视化</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadAttributionReport()">刷新</button>
+        </div>
+        <div id="attributionContent" class="loading">加载中...</div>
+      `;
+      loadAttributionReport();
+      break;
+
+    case 'modelperf':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>大模型效能对比</h2>
+            <p>阶段2-C 多模型路由 A/B 测试 - 转化率 / 延迟 / 成本对比</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadModelPerfReport()">刷新</button>
+        </div>
+        <div id="modelPerfContent" class="loading">加载中...</div>
+      `;
+      loadModelPerfReport();
+      break;
+
+    case 'funnel':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>转化漏斗</h2>
+            <p>接触 → 感兴趣 → 加购 → 转化 全链路分析</p>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <select id="funnelDays" class="btn btn-secondary" onchange="loadFunnelPage()" style="cursor:pointer;">
+              <option value="7">近 7 天</option>
+              <option value="30">近 30 天</option>
+            </select>
+            <button class="btn btn-secondary" onclick="loadFunnelPage()">刷新</button>
+          </div>
+        </div>
+        <div id="funnelStages" class="stats-grid"></div>
+        <div class="charts-grid">
+          <div class="chart-card">
+            <div class="chart-header">
+              <span class="chart-title">漏斗图</span>
+            </div>
+            <div class="chart-container" style="height:320px;">
+              <canvas id="funnelPageChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-header">
+              <span class="chart-title">转化趋势</span>
+            </div>
+            <div class="chart-container" style="height:320px;">
+              <canvas id="funnelTrendChart"></canvas>
+            </div>
+          </div>
+        </div>
+      `;
+      loadFunnelPage();
+      break;
 
     default:
       content.innerHTML = '<div class="empty-state"><h3>页面不存在</h3></div>';
@@ -1704,36 +1855,31 @@ async function loadConfig() {
     const cc = document.getElementById('configContent');
     if (!cc) return;
     const categories = {
-      '核心互动': ['REPLY_CHANCE', 'REPLY_DELAY_MIN', 'REPLY_DELAY_MAX', 'MAX_MSG_LENGTH'],
-      '功能开关': ['PUZZLE_ENABLED', 'PUZZLE_WORD', 'SIGNUP_ENABLED', 'AUTO_GREETING', 'AUTO_GOODNIGHT', 'AUTO_NEWS', 'WELCOME_MSG', 'ANTI_REVOKE', 'BURN_AFTER', 'RECOVER_ENABLED', 'AUTO_MORNING_NEWS', 'AUTO_AFTERNOON_NEWS', 'AUTO_EVENING_NEWS'],
-      '时间调度': ['GREETING_HOUR', 'GOODNIGHT_HOUR', 'NEWS_HOUR_MORNING', 'NEWS_HOUR_AFTERNOON', 'NEWS_HOUR_EVENING', 'SIGNUP_RESET_HOUR'],
-      '安全限制': ['SPAM_LIMIT', 'MAX_REQUESTS_PER_USER', 'BAN_DURATION_DEFAULT'],
-      'AI模型': ['TEMPERATURE', 'MAX_TOKENS', 'TOP_P', 'FREQUENCY_PENALTY', 'PRESENCE_PENALTY', 'CURRENT_MODEL_INDEX'],
-      '内容互动': ['WELCOME_TEXT', 'GREETING_TEMPLATE', 'GOODNIGHT_TEMPLATE', 'HATE_KEYWORDS', 'BANNED_WORDS', 'AUTO_REPLY_TRIGGERS'],
-      '业务配置': ['POINTS_PER_SIGNUP', 'POINTS_PER_INVITE', 'REPLY_STICKER_CHANCE', 'MAX_STICKERS_PER_DAY'],
-      '数据存储': ['LOG_LEVEL', 'BACKUP_INTERVAL'],
+      '核心互动': ['REPLY_CHANCE', 'REPLY_SPEED', 'REPLY_DELAY_MIN', 'REPLY_DELAY_MAX', 'MAX_MSG_LENGTH', 'RELAY_MODE_ENABLED'],
+      '播报调度': ['GREETING_CONFIG', 'NEWS_BROADCAST_CONFIG', 'RELAY_MODE_ENABLED', 'WELCOME_MSG'],
+      '安全治理': ['ENABLE_MESSAGE_DELETION', 'ORPHAN_CLEANUP_ENABLED', 'AD_CLEANUP_REACTIONS', 'RETROACTIVE_SCAN_ENABLED', 'EMOJI_MASK_DETECT', 'EDIT_DETECT_ENABLE', 'AD_DETECT_CONFIG', 'ANTIFLOOD_CONFIG', 'ANTI_DELETE_CONFIG', 'SPAM_LIMIT'],
+      '业务配置': ['PROACTIVE_ENGAGE_CONFIG', 'CHECKIN_CONFIG', 'POINTS_RULES', 'POINTS_PER_INVITE', 'PRICE_LIST', 'REPLY_STICKER_CHANCE'],
+      'AI模型': ['MODE_ROUTING', 'MODEL_POOLS', 'TEMPERATURE', 'MAX_TOKENS', 'TOP_P', 'FREQUENCY_PENALTY', 'PRESENCE_PENALTY', 'CURRENT_MODEL_INDEX'],
+      '内容互动': ['SYSTEM_PROMPT', 'PROMPT_TEMPLATES', 'HATE_KEYWORDS', 'BANNED_WORDS', 'SLANG_DICT', 'PHOTO_KEYWORDS'],
+      'Telegram接入': ['TELEGRAM_ALLOWED_UPDATES', 'TELEGRAM_BUSINESS_CONNECTION_ID'],
+      '数据存储': ['LOG_LEVEL', 'LANGUAGE'],
     };
     const friendlyNames = {
       'REPLY_CHANCE': '群聊回复概率(%)', 'REPLY_DELAY_MIN': '回复延迟下限(秒)', 'REPLY_DELAY_MAX': '回复延迟上限(秒)',
-      'MAX_MSG_LENGTH': '最大回复长度', 'PUZZLE_ENABLED': '碎片寻宝', 'PUZZLE_WORD': '碎片暗号',
-      'SIGNUP_ENABLED': '每日签到', 'AUTO_GREETING': '每日早安', 'AUTO_GOODNIGHT': '每日晚安',
-      'AUTO_NEWS': '新闻播报', 'WELCOME_MSG': '入群欢迎', 'ANTI_REVOKE': '撤回检测',
-      'BURN_AFTER': '阅后即焚', 'RECOVER_ENABLED': '挽回功能', 'AUTO_MORNING_NEWS': '早间新闻',
-      'AUTO_AFTERNOON_NEWS': '午间新闻', 'AUTO_EVENING_NEWS': '晚间新闻',
-      'GREETING_HOUR': '早安时间(点)', 'GOODNIGHT_HOUR': '晚安时间(点)',
-      'NEWS_HOUR_MORNING': '早间新闻时间(点)', 'NEWS_HOUR_AFTERNOON': '午间新闻时间(点)',
-      'NEWS_HOUR_EVENING': '晚间新闻时间(点)', 'SIGNUP_RESET_HOUR': '签到重置时间(点)',
-      'SPAM_LIMIT': '刷屏限制', 'MAX_REQUESTS_PER_USER': '用户请求限制(/时)',
-      'BAN_DURATION_DEFAULT': '默认封禁时长(分)', 'TEMPERATURE': '创意温度',
+      'REPLY_SPEED': '回复节奏', 'MAX_MSG_LENGTH': '最大回复长度', 'RELAY_MODE_ENABLED': '私聊中继',
+      'GREETING_CONFIG': '问候配置', 'NEWS_BROADCAST_CONFIG': '新闻配置', 'RELAY_MODE_ENABLED': '私聊中继', 'WELCOME_MSG': '入群欢迎',
+      'ENABLE_MESSAGE_DELETION': '消息删除', 'ORPHAN_CLEANUP_ENABLED': '孤儿清理', 'AD_CLEANUP_REACTIONS': '广告反应清理', 'RETROACTIVE_SCAN_ENABLED': '启动追溯',
+      'EMOJI_MASK_DETECT': 'Emoji面具检测', 'EDIT_DETECT_ENABLE': '编辑消息检测', 'AD_DETECT_CONFIG': '广告检测',
+      'ANTIFLOOD_CONFIG': '反刷屏', 'ANTI_DELETE_CONFIG': '反撤回', 'SPAM_LIMIT': '刷屏限制',
+      'PROACTIVE_ENGAGE_CONFIG': '主动搭讪', 'CHECKIN_CONFIG': '签到配置', 'POINTS_RULES': '积分规则',
+      'POINTS_PER_INVITE': '邀请积分', 'PRICE_LIST': '价格表', 'REPLY_STICKER_CHANCE': '贴纸概率(%)',
+      'MODE_ROUTING': '模式路由', 'MODEL_POOLS': '模型池', 'TEMPERATURE': '创意温度',
       'MAX_TOKENS': '最大Token数', 'TOP_P': 'Top-P采样',
       'FREQUENCY_PENALTY': '频率惩罚', 'PRESENCE_PENALTY': '存在惩罚',
-      'CURRENT_MODEL_INDEX': '当前模型索引', 'WELCOME_TEXT': '欢迎语内容',
-      'GREETING_TEMPLATE': '早安模板', 'GOODNIGHT_TEMPLATE': '晚安模板',
-      'HATE_KEYWORDS': '反感关键词', 'BANNED_WORDS': '违禁词',
-      'AUTO_REPLY_TRIGGERS': '自动回复触发词', 'POINTS_PER_SIGNUP': '签到积分',
-      'POINTS_PER_INVITE': '邀请积分', 'REPLY_STICKER_CHANCE': '贴纸概率(%)',
-      'MAX_STICKERS_PER_DAY': '每日贴纸上限', 'LOG_LEVEL': '日志级别',
-      'BACKUP_INTERVAL': '备份间隔(时)',
+      'CURRENT_MODEL_INDEX': '当前模型索引', 'SYSTEM_PROMPT': '系统人设',
+      'PROMPT_TEMPLATES': '提示词模板', 'HATE_KEYWORDS': '反感关键词', 'BANNED_WORDS': '违禁词',
+      'SLANG_DICT': '黑话词典', 'PHOTO_KEYWORDS': '内容关键词', 'LOG_LEVEL': '日志级别',
+      'LANGUAGE': '语言', 'TELEGRAM_ALLOWED_UPDATES': '更新事件', 'TELEGRAM_BUSINESS_CONNECTION_ID': '业务连接ID',
     };
     let html = '';
     for (const [cat, keys] of Object.entries(categories)) {
@@ -1791,7 +1937,7 @@ async function quickSaveConfig(key, value) {
       method: 'POST',
       body: JSON.stringify({key, value})
     });
-    showToast(r.ok ? `${key} 已更新（⚠️ 需重启Bot生效）` : (r.msg || '更新失败'), r.ok ? 'success' : 'error');
+    showToast(r.ok ? `${key} 已更新（5到8秒内自动生效）` : (r.msg || '更新失败'), r.ok ? 'success' : 'error');
   } catch(e) { showToast('更新失败', 'error'); }
 }
 
@@ -2283,6 +2429,280 @@ async function removeFederationBan(userId) {
   } catch(e) { showToast('解除失败', 'error'); }
 }
 
+// ---- v5.18.0 播报格式 / 按钮样式 / Custom Emoji / 用户画像 / A/B测试 / 按钮统计 ----
+
+async function loadBroadcastFormat() {
+  try {
+    const d = await api('/api/config/broadcast-format');
+    const data = d.data || {};
+    const el = document.getElementById('broadcastFormatContent');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">📝 播报格式开关</h3>
+        <div style="margin-bottom:16px;">
+          <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="richMsgEnabled" ${data.rich_message_enabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
+            <span>启用 Rich Messages（Bot API 10.1+） - 失败时自动回退 HTML</span>
+          </label>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="templateVariationEnabled" ${data.broadcast_template_variation_enabled !== false ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
+            <span>启用模板轻变化（保留旧模板骨架，每天微调折叠补充）</span>
+          </label>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">格式版本</label>
+          <select id="bcFmtVersion" style="width:100%; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px;">
+            <option value="html" ${data.broadcast_format_version==='html'?'selected':''}>HTML（当前默认）</option>
+            <option value="rich" ${data.broadcast_format_version==='rich'?'selected':''}>Rich Message（原生组件）</option>
+            <option value="auto" ${data.broadcast_format_version==='auto'?'selected':''}>Auto（智能选择）</option>
+          </select>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">排版样式</label>
+          <div style="display:flex; flex-wrap:wrap; gap:12px;">
+            <label style="display:flex; align-items:center; gap:6px; color:#94a3b8; font-size:13px;">
+              <input type="checkbox" id="styTitle" ${(data.rich_message_style||{}).title_bold?'checked':''}> 标题加粗
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; color:#94a3b8; font-size:13px;">
+              <input type="checkbox" id="styBadge" ${(data.rich_message_style||{}).badge_italic?'checked':''}> 角标斜体
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; color:#94a3b8; font-size:13px;">
+              <input type="checkbox" id="styFooter" ${(data.rich_message_style||{}).footer_expandable?'checked':''}> 补充可折叠
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; color:#94a3b8; font-size:13px;">
+              <input type="checkbox" id="styEmoji" ${(data.rich_message_style||{}).emoji_custom?'checked':''}> Custom Emoji
+            </label>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveBroadcastFormat()">保存（5-8秒内生效）</button>
+      </div>
+      <div class="card">
+        <h3 style="color:#fff; margin-bottom:12px;">📊 当前生效状态</h3>
+        <p style="color:#94a3b8; font-size:13px;">Rich Message: <span style="color:${data.rich_message_enabled?'#10b981':'#6b7280'};">${data.rich_message_enabled?'启用':'关闭'}</span></p>
+        <p style="color:#94a3b8; font-size:13px;">格式版本: <span style="color:#60a5fa;">${data.broadcast_format_version}</span></p>
+        <p style="color:#94a3b8; font-size:13px;">模板轻变化: <span style="color:${data.broadcast_template_variation_enabled!==false?'#10b981':'#6b7280'};">${data.broadcast_template_variation_enabled!==false?'启用':'关闭'}</span></p>
+        <p style="color:#94a3b8; font-size:13px;">说明：关闭 Rich Message 时所有播报使用 HTML 卡片（v3.1+）；开启时优先尝试 Rich Message 组件，失败自动回退 HTML。</p>
+      </div>
+    `;
+  } catch(e) { showToast('加载失败', 'error'); }
+}
+
+async function saveBroadcastFormat() {
+  try {
+    const body = {
+      rich_message_enabled: document.getElementById('richMsgEnabled').checked,
+      broadcast_format_version: document.getElementById('bcFmtVersion').value,
+      broadcast_template_variation_enabled: document.getElementById('templateVariationEnabled').checked,
+      rich_message_style: {
+        title_bold: document.getElementById('styTitle').checked,
+        badge_italic: document.getElementById('styBadge').checked,
+        footer_expandable: document.getElementById('styFooter').checked,
+        emoji_custom: document.getElementById('styEmoji').checked,
+      }
+    };
+    const r = await api('/api/config/broadcast-format', { method: 'POST', body: JSON.stringify(body) });
+    showToast(r.msg || '已保存', 'success');
+    loadBroadcastFormat();
+  } catch(e) { showToast('保存失败', 'error'); }
+}
+
+async function loadButtonStyle() {
+  try {
+    const d = await api('/api/config/button-style');
+    const data = d.data || {};
+    const cmap = data.button_color_map || {};
+    const el = document.getElementById('buttonStyleContent');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">🎨 彩色按钮开关</h3>
+        <div style="margin-bottom:16px;">
+          <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="btnStyleEnabled" ${data.button_style_enabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
+            <span>启用彩色按钮（Bot API 9.4+） - 失败时自动回退默认样式</span>
+          </label>
+        </div>
+        <h4 style="color:#e2e8f0; margin:16px 0 12px;">颜色映射（按钮ID → 样式）</h4>
+        <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:12px;">
+          ${['buy','cancel','info','settings'].map(k => `
+            <div>
+              <label style="color:#94a3b8; font-size:12px; display:block; margin-bottom:4px;">${k}</label>
+              <select id="cmap_${k}" style="width:100%; padding:8px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#e2e8f0; font-size:13px;">
+                ${['default','primary','success','danger'].map(s => `<option value="${s}" ${cmap[k]===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+            </div>
+          `).join('')}
+        </div>
+        <button class="btn btn-primary" style="margin-top:16px;" onclick="saveButtonStyle()">保存（5-8秒内生效）</button>
+      </div>
+      <div class="card">
+        <h3 style="color:#fff; margin-bottom:12px;">📊 预览</h3>
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          <span style="padding:8px 16px; background:#2481cc; border-radius:8px; color:#fff; font-size:13px;">default</span>
+          <span style="padding:8px 16px; background:#5e9eff; border-radius:8px; color:#fff; font-size:13px;">primary</span>
+          <span style="padding:8px 16px; background:#4dcb5d; border-radius:8px; color:#fff; font-size:13px;">success</span>
+          <span style="padding:8px 16px; background:#e53935; border-radius:8px; color:#fff; font-size:13px;">danger</span>
+        </div>
+        <p style="color:#94a3b8; font-size:12px; margin-top:12px;">说明：样式仅在支持 Bot API 9.4+ 的客户端显示；旧客户端显示为默认颜色。</p>
+      </div>
+    `;
+  } catch(e) { showToast('加载失败', 'error'); }
+}
+
+async function saveButtonStyle() {
+  try {
+    const cmap = {};
+    ['buy','cancel','info','settings'].forEach(k => { cmap[k] = document.getElementById('cmap_'+k).value; });
+    const r = await api('/api/config/button-style', { method: 'POST', body: JSON.stringify({ button_style_enabled: document.getElementById('btnStyleEnabled').checked, button_color_map: cmap }) });
+    showToast(r.msg || '已保存', 'success');
+    loadButtonStyle();
+  } catch(e) { showToast('保存失败', 'error'); }
+}
+
+async function loadCustomEmojiPool() {
+  try {
+    const d = await api('/api/config/custom-emoji');
+    const data = d.data || {};
+    const pool = data.custom_emoji_pool || {};
+    const el = document.getElementById('customEmojiContent');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">😀 Custom Emoji 池配置</h3>
+        <div style="margin-bottom:16px;">
+          <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="ceEnabled" ${data.custom_emoji_enabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
+            <span>启用 Custom Emoji（需 Bot 有 Custom Emoji 权限）</span>
+          </label>
+        </div>
+        <h4 style="color:#e2e8f0; margin:16px 0 12px;">Emoji 池（按钮ID → Emoji ID）</h4>
+        <p style="color:#94a3b8; font-size:12px; margin-bottom:8px;">一行一个：按钮ID,emoji_id  例如：buy,5368324170671202286</p>
+        <textarea id="cePool" rows="8" style="width:100%; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-family:monospace; font-size:13px;">${Object.entries(pool).map(([k,v])=>k+','+v).join('\\n')}</textarea>
+        <button class="btn btn-primary" style="margin-top:16px;" onclick="saveCustomEmojiPool()">保存（5-8秒内生效）</button>
+      </div>
+    `;
+  } catch(e) { showToast('加载失败', 'error'); }
+}
+
+async function saveCustomEmojiPool() {
+  try {
+    const pool = {};
+    const lines = document.getElementById('cePool').value.split('\\n');
+    lines.forEach(line => {
+      const [k, v] = line.split(',').map(s => s.trim());
+      if (k && v) pool[k] = v;
+    });
+    const r = await api('/api/config/custom-emoji', { method: 'POST', body: JSON.stringify({ custom_emoji_enabled: document.getElementById('ceEnabled').checked, custom_emoji_pool: pool }) });
+    showToast(r.msg || '已保存', 'success');
+    loadCustomEmojiPool();
+  } catch(e) { showToast('保存失败', 'error'); }
+}
+
+async function loadUserProfile() {
+  try {
+    const d = await api('/api/config/user-profile');
+    const data = d.data || {};
+    const el = document.getElementById('userProfileContent');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">👤 用户画像个性化</h3>
+        <div style="margin-bottom:16px;">
+          <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="upEnabled" ${data.user_profile_enabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
+            <span>启用用户画像个性化播报</span>
+          </label>
+        </div>
+        <h4 style="color:#e2e8f0; margin:16px 0 12px;">个性化规则</h4>
+        <div style="color:#94a3b8; font-size:13px; line-height:1.8;">
+          <p>🟢 <b style="color:#fff;">VIP 用户</b>（level ≥ 5 或 tags 包含 vip）：专属 emoji ✨ + 尊贵称呼</p>
+          <p>🟢 <b style="color:#fff;">高等级用户</b>（level ≥ 3）：感谢话术 💝 感谢您的陪伴与支持</p>
+          <p>🟢 <b style="color:#fff;">高价值用户</b>（high_value 标签）：标题追加"精选推荐"</p>
+          <p>🟢 <b style="color:#fff;">兴趣匹配</b>：tarot → 🔮（晚/夜时段）；treehole → 🌳</p>
+        </div>
+        <button class="btn btn-primary" style="margin-top:16px;" onclick="saveUserProfile()">保存（5-8秒内生效）</button>
+      </div>
+      <div class="card">
+        <h3 style="color:#fff; margin-bottom:12px;">📊 当前状态</h3>
+        <p style="color:#94a3b8; font-size:13px;">画像个性化: <span style="color:${data.user_profile_enabled?'#10b981':'#6b7280'};">${data.user_profile_enabled?'启用':'关闭'}</span></p>
+        <p style="color:#94a3b8; font-size:13px;">数据来源: <span style="color:#60a5fa;">user_profiles 表（自动学习 + 手动配置）</span></p>
+      </div>
+    `;
+  } catch(e) { showToast('加载失败', 'error'); }
+}
+
+async function saveUserProfile() {
+  try {
+    const r = await api('/api/config/user-profile', { method: 'POST', body: JSON.stringify({ user_profile_enabled: document.getElementById('upEnabled').checked }) });
+    showToast(r.msg || '已保存', 'success');
+    loadUserProfile();
+  } catch(e) { showToast('保存失败', 'error'); }
+}
+
+async function loadABTest() {
+  try {
+    const d = await api('/api/ab-test/stats');
+    const data = d.data || {};
+    const el = document.getElementById('abTestContent');
+    if (!el) return;
+    const htmlCtr = (data.html_conversions || 0) / Math.max(1, data.html_sent || 1) * 100;
+    const richCtr = (data.rich_conversions || 0) / Math.max(1, data.rich_sent || 1) * 100;
+    el.innerHTML = `
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">🧪 A/B 测试统计</h3>
+        <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:16px;">
+          <div style="background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.3); border-radius:12px; padding:16px;">
+            <h4 style="color:#60a5fa; margin:0 0 8px;">HTML 卡片（对照组）</h4>
+            <p style="color:#94a3b8; font-size:13px; margin:4px 0;">已发送: <span style="color:#fff; font-family:monospace;">${data.html_sent || 0}</span></p>
+            <p style="color:#94a3b8; font-size:13px; margin:4px 0;">已转化: <span style="color:#fff; font-family:monospace;">${data.html_conversions || 0}</span></p>
+            <p style="color:#94a3b8; font-size:13px; margin:4px 0;">转化率: <span style="color:#10b981; font-family:monospace; font-size:18px;">${htmlCtr.toFixed(2)}%</span></p>
+          </div>
+          <div style="background:rgba(167,139,250,0.1); border:1px solid rgba(167,139,250,0.3); border-radius:12px; padding:16px;">
+            <h4 style="color:#a78bfa; margin:0 0 8px;">Rich Message（实验组）</h4>
+            <p style="color:#94a3b8; font-size:13px; margin:4px 0;">已发送: <span style="color:#fff; font-family:monospace;">${data.rich_sent || 0}</span></p>
+            <p style="color:#94a3b8; font-size:13px; margin:4px 0;">已转化: <span style="color:#fff; font-family:monospace;">${data.rich_conversions || 0}</span></p>
+            <p style="color:#94a3b8; font-size:13px; margin:4px 0;">转化率: <span style="color:#10b981; font-family:monospace; font-size:18px;">${richCtr.toFixed(2)}%</span></p>
+          </div>
+        </div>
+        <p style="color:#94a3b8; font-size:12px; margin-top:16px;">说明：A/B 测试默认关闭（AB_TEST_ENABLED=false）。开启后将随机分配用户到两组，追踪 7 天转化率差异。</p>
+        <button class="btn btn-secondary" style="margin-top:12px;" onclick="showToast('A/B 测试配置请通过 /api/config/broadcast-format 切换格式版本', 'info')">配置开关</button>
+      </div>
+    `;
+  } catch(e) { showToast('加载失败：' + (e.message || e), 'error'); document.getElementById('abTestContent').innerHTML = '<p style="color:#6b7280;">暂无 A/B 测试数据</p>'; }
+}
+
+async function loadButtonStats() {
+  try {
+    const d = await api('/api/button-stats/stats');
+    const data = d.data || {};
+    const el = document.getElementById('buttonStatsContent');
+    if (!el) return;
+    const stats = data.stats || [];
+    el.innerHTML = `
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:16px;">📊 按钮点击统计</h3>
+        ${stats.length === 0 ? '<p style="color:#6b7280;">暂无按钮点击数据（按钮点击追踪已默认开启，但需要 bot 收到按钮回调后才会记录）</p>' : `
+          <table class="data-table">
+            <thead><tr><th>按钮ID</th><th>样式</th><th>展示次数</th><th>点击次数</th><th>点击率</th></tr></thead>
+            <tbody>
+              ${stats.map(s => `<tr>
+                <td>${s.button_id}</td>
+                <td><span class="badge badge-info">${s.style}</span></td>
+                <td style="font-family:monospace;">${s.impressions}</td>
+                <td style="font-family:monospace;">${s.clicks}</td>
+                <td style="font-family:monospace; color:#10b981;">${(s.ctr*100).toFixed(2)}%</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    `;
+  } catch(e) { showToast('加载失败：' + (e.message || e), 'error'); document.getElementById('buttonStatsContent').innerHTML = '<p style="color:#6b7280;">暂无按钮点击数据</p>'; }
+}
+
 // ---- emoji面具检测 ----
 let _emojiMaskKeywords = [];
 
@@ -2576,6 +2996,29 @@ function renderApp() {
               </svg>
               用户画像
             </div>
+            <div class="nav-item" onclick="switchTab('attribution')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M3 3v18h18"/>
+                <path d="M18 17V9"/>
+                <path d="M13 17V5"/>
+                <path d="M8 17v-3"/>
+              </svg>
+              转化归因分析
+            </div>
+            <div class="nav-item" onclick="switchTab('funnel')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>
+              </svg>
+              转化漏斗
+            </div>
+            <div class="nav-item" onclick="switchTab('modelperf')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+              大模型效能对比
+            </div>
           </div>
           <div class="nav-section">
             <div class="nav-section-title">功能配置</div>
@@ -2604,6 +3047,12 @@ function renderApp() {
               </svg>
               定点播报
             </div>
+            <div class="nav-item" onclick="switchTab('broadcast-format')">📝 播报格式（Rich）</div>
+            <div class="nav-item" onclick="switchTab('button-style')">🎨 彩色按钮样式</div>
+            <div class="nav-item" onclick="switchTab('custom-emoji')">😀 Custom Emoji 池</div>
+            <div class="nav-item" onclick="switchTab('user-profile')">👤 用户画像</div>
+            <div class="nav-item" onclick="switchTab('ab-test')">🧪 A/B 测试</div>
+            <div class="nav-item" onclick="switchTab('button-stats')">📊 按钮点击统计</div>
             <div class="nav-item" onclick="switchTab('federation')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <circle cx="12" cy="12" r="10"/>
@@ -2813,7 +3262,7 @@ async function loadSlowmodeConfig() {
 async function saveSlowmodeConfig() {
   try {
     const res = await api('/api/settings/slowmode', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('slowEnable').checked, interval: parseInt(document.getElementById('slowInterval').value) }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadSlowmodeConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadSlowmodeConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -2830,7 +3279,7 @@ async function loadReportConfig() {
 async function saveReportConfig() {
   try {
     const res = await api('/api/settings/report', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('rptEnable').checked, cooldown: parseInt(document.getElementById('rptCooldown').value) }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadReportConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadReportConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -2848,7 +3297,7 @@ async function loadVotekickConfig() {
 async function saveVotekickConfig() {
   try {
     const res = await api('/api/settings/votekick', { method: 'POST', body: JSON.stringify({ min_yes: parseInt(document.getElementById('vkMinYes').value), min_ratio: parseFloat(document.getElementById('vkMinRatio').value), duration: parseInt(document.getElementById('vkDuration').value) }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadVotekickConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadVotekickConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -2859,10 +3308,11 @@ async function loadAntifloodConfig() {
     el.innerHTML = `<div class="card"><h3>反刷屏</h3>
       <div class="toggle-row"><span>启用反刷屏</span><label class="toggle-switch"><input type="checkbox" id="afEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="form-group"><label>每分钟消息数上限</label><input type="number" id="afMsgs" value="${cfg.messages_per_minute}" min="1" class="input-field"></div>
-      <div class="form-group"><label>检测窗口（秒）</label><input type="number" id="afWindow" value="${cfg.window || 60}" min="10" class="input-field"></div>
+      <div class="form-group"><label>检测窗口（秒）</label><input type="number" id="afWindow" value="${cfg.window || 5}" min="1" class="input-field"></div>
       <div class="form-group"><label>触发阈值（条）</label><input type="number" id="afThreshold" value="${cfg.threshold || 5}" min="1" class="input-field"></div>
-      <div class="form-group"><label>禁言时长（分钟）</label><input type="number" id="afMuteDuration" value="${cfg.mute_duration || 10}" min="1" class="input-field"></div>
-      <div class="form-group"><label>封禁时长（分钟）</label><input type="number" id="afBan" value="${cfg.ban_minutes}" min="1" class="input-field"></div>
+      <div class="form-group"><label>禁言时长（秒）</label><input type="number" id="afMuteDuration" value="${cfg.mute_duration || 60}" min="1" class="input-field"></div>
+      <div class="form-group"><label>超限处罚时长（分钟）</label><input type="number" id="afBan" value="${cfg.ban_minutes}" min="1" class="input-field"></div>
+      <div class="form-group"><label>说明</label><div class="hint-text">这页现在会同时保存消息频率限制和反刷屏引擎参数，不再出现改了一个配置、另一个模块没跟上的情况。</div></div>
       <button class="btn btn-primary" onclick="saveAntifloodConfig()">保存设置</button></div>`;
   } catch (e) { document.getElementById('antifloodContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
 }
@@ -2929,7 +3379,7 @@ async function saveNsfwConfig() {
 
 async function loadBlindboxConfig() {
   try {
-    const d = await api('/api/settings/blindbox'); if (!d.ok) return;
+    const d = await api('/api/settings/blind-box'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('blindboxContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>盲盒设置</h3>
       <div class="toggle-row"><span>启用盲盒</span><label class="toggle-switch"><input type="checkbox" id="bbEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
@@ -2939,14 +3389,14 @@ async function loadBlindboxConfig() {
 }
 async function saveBlindboxConfig() {
   try {
-    const res = await api('/api/settings/blindbox', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('bbEnable').checked, cost: parseInt(document.getElementById('bbCost').value) }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadBlindboxConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    const res = await api('/api/settings/blind-box', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('bbEnable').checked, cost: parseInt(document.getElementById('bbCost').value) }) });
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadBlindboxConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
 async function loadLuckywheelConfig() {
   try {
-    const d = await api('/api/settings/luckywheel'); if (!d.ok) return;
+    const d = await api('/api/settings/lucky-wheel'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('luckywheelContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>转盘设置</h3>
       <div class="toggle-row"><span>启用转盘</span><label class="toggle-switch"><input type="checkbox" id="lwEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
@@ -2957,8 +3407,8 @@ async function loadLuckywheelConfig() {
 }
 async function saveLuckywheelConfig() {
   try {
-    const res = await api('/api/settings/luckywheel', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('lwEnable').checked, cost: parseInt(document.getElementById('lwCost').value), free_spins: parseInt(document.getElementById('lwFree').value) }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadLuckywheelConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    const res = await api('/api/settings/lucky-wheel', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('lwEnable').checked, cost: parseInt(document.getElementById('lwCost').value), free_spins: parseInt(document.getElementById('lwFree').value) }) });
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadLuckywheelConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -2976,7 +3426,7 @@ async function loadRedpacketConfig() {
 async function saveRedpacketConfig() {
   try {
     const res = await api('/api/settings/redpacket', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('rpEnable').checked, min_amount: parseInt(document.getElementById('rpMin').value), max_amount: parseInt(document.getElementById('rpMax').value) }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadRedpacketConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadRedpacketConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -3028,7 +3478,7 @@ async function loadShopConfig() {
 async function saveShopConfig() {
   try {
     const res = await api('/api/settings/shop', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('shopEnable').checked }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadShopConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadShopConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -3044,7 +3494,7 @@ async function loadCouponConfig() {
 async function saveCouponConfig() {
   try {
     const res = await api('/api/settings/coupon', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('cpnEnable').checked }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadCouponConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadCouponConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -3061,13 +3511,13 @@ async function loadTipConfig() {
 async function saveTipConfig() {
   try {
     const res = await api('/api/settings/tip', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('tipEnable').checked, min_amount: parseInt(document.getElementById('tipMin').value) }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadTipConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadTipConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
 async function loadDailyquestConfig() {
   try {
-    const d = await api('/api/settings/dailyquest'); if (!d.ok) return;
+    const d = await api('/api/settings/daily-quest'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('dailyquestContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>每日任务</h3>
       <div class="toggle-row"><span>启用每日任务</span><label class="toggle-switch"><input type="checkbox" id="dqEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
@@ -3076,14 +3526,14 @@ async function loadDailyquestConfig() {
 }
 async function saveDailyquestConfig() {
   try {
-    const res = await api('/api/settings/dailyquest', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('dqEnable').checked }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadDailyquestConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    const res = await api('/api/settings/daily-quest', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('dqEnable').checked }) });
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadDailyquestConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
 async function loadAchievementConfig() {
   try {
-    const d = await api('/api/settings/achievement'); if (!d.ok) return;
+    const d = await api('/api/settings/achievements'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('achievementContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>成就设置</h3>
       <div class="toggle-row"><span>启用成就系统</span><label class="toggle-switch"><input type="checkbox" id="achEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
@@ -3092,14 +3542,14 @@ async function loadAchievementConfig() {
 }
 async function saveAchievementConfig() {
   try {
-    const res = await api('/api/settings/achievement', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('achEnable').checked }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadAchievementConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    const res = await api('/api/settings/achievements', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('achEnable').checked }) });
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadAchievementConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
 async function loadPointsdecayConfig() {
   try {
-    const d = await api('/api/settings/pointsdecay'); if (!d.ok) return;
+    const d = await api('/api/settings/points-decay'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('pointsdecayContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>积分衰减</h3>
       <div class="toggle-row"><span>启用积分衰减</span><label class="toggle-switch"><input type="checkbox" id="pdEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
@@ -3110,8 +3560,8 @@ async function loadPointsdecayConfig() {
 }
 async function savePointsdecayConfig() {
   try {
-    const res = await api('/api/settings/pointsdecay', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('pdEnable').checked, rate: parseFloat(document.getElementById('pdRate').value), minimum: parseInt(document.getElementById('pdMin').value) }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadPointsdecayConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    const res = await api('/api/settings/points-decay', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('pdEnable').checked, rate: parseFloat(document.getElementById('pdRate').value), minimum: parseInt(document.getElementById('pdMin').value) }) });
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadPointsdecayConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -3144,7 +3594,7 @@ async function loadAntichannelConfig() {
 async function saveAntichannelConfig() {
   try {
     const res = await api('/api/settings/antichannel', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('acEnable').checked }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadAntichannelConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadAntichannelConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -3155,21 +3605,21 @@ async function loadCasConfig() {
     el.innerHTML = `<div class="card"><h3>CAS检查</h3>
       <div class="toggle-row"><span>启用CAS检查</span><label class="toggle-switch"><input type="checkbox" id="casEnable" ${cfg.cas_enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="toggle-row"><span>启用SpamWatch</span><label class="toggle-switch"><input type="checkbox" id="casSpamwatch" ${cfg.spamwatch_enabled?'checked':''}><span class="slider"></span></label></div>
-      <div class="toggle-row"><span>自动封禁</span><label class="toggle-switch"><input type="checkbox" id="casAutoBan" ${cfg.auto_ban?'checked':''}><span class="slider"></span></label></div>
-      <div class="form-group"><label>处理方式</label><select id="casBanAction" class="input-field"><option value="ban" ${cfg.ban_action==='ban'?'selected':''}>封禁</option><option value="kick" ${cfg.ban_action==='kick'?'selected':''}>踢出</option><option value="mute" ${cfg.ban_action==='mute'?'selected':''}>禁言</option></select></div>
+      <div class="form-group"><label>SpamWatch Token</label><input type="password" id="casSpamwatchToken" value="${cfg.spamwatch_token || ''}" class="input-field" placeholder="留空则保持关闭"></div>
+      <div class="form-group"><label>说明</label><div class="hint-text">这里保留当前真实接线的 CAS 与 SpamWatch 开关。未实际落地的“自动封禁/处理方式”旧字段已移除。</div></div>
       <button class="btn btn-primary" onclick="saveCasConfig()">保存设置</button></div>`;
   } catch (e) { document.getElementById('casContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
 }
 async function saveCasConfig() {
   try {
-    const res = await api('/api/settings/cas', { method: 'POST', body: JSON.stringify({ cas_enabled: document.getElementById('casEnable').checked, spamwatch_enabled: document.getElementById('casSpamwatch').checked, auto_ban: document.getElementById('casAutoBan').checked, ban_action: document.getElementById('casBanAction').value }) });
+    const res = await api('/api/settings/cas', { method: 'POST', body: JSON.stringify({ cas_enabled: document.getElementById('casEnable').checked, spamwatch_enabled: document.getElementById('casSpamwatch').checked, spamwatch_token: document.getElementById('casSpamwatchToken').value }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadCasConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
 async function loadCleanserviceConfig() {
   try {
-    const d = await api('/api/settings/cleanservice'); if (!d.ok) return;
+    const d = await api('/api/settings/clean-service'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('cleanserviceContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>服务消息清理</h3>
       <div class="toggle-row"><span>启用清理</span><label class="toggle-switch"><input type="checkbox" id="csEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
@@ -3178,8 +3628,8 @@ async function loadCleanserviceConfig() {
 }
 async function saveCleanserviceConfig() {
   try {
-    const res = await api('/api/settings/cleanservice', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('csEnable').checked }) });
-    if (res.ok) { alert('✅ 配置已保存'); loadCleanserviceConfig(); } else { alert('❌ ' + (res.msg || '保存失败')); }
+    const res = await api('/api/settings/clean-service', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('csEnable').checked }) });
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadCleanserviceConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
@@ -3203,18 +3653,17 @@ async function loadAdSpamConfig() {
   try {
     const d = await api('/api/settings/ad-spam'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('adspamContent'); if (!el) return;
-    const kwStr = (cfg.keywords || []).join(', ');
     el.innerHTML = `<div class="card"><h3>广告检测</h3>
       <div class="toggle-row"><span>启用广告检测</span><label class="toggle-switch"><input type="checkbox" id="adsEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="form-group"><label>检测灵敏度（1-5）</label><input type="range" id="adsSens" value="${cfg.sensitivity}" min="1" max="5" class="input-field"><span id="adsSensVal">${cfg.sensitivity}</span></div>
-      <div class="form-group"><label>自定义广告关键词（逗号分隔）</label><textarea id="adsKw" class="input-field" rows="3">${kwStr}</textarea></div>
+      <div class="form-group"><label>说明</label><div class="hint-text">广告词库已由系统规则和专门词库维护，这里只保留真正生效的总开关和灵敏度。</div></div>
       <button class="btn btn-primary" onclick="saveAdSpamConfig()">保存设置</button></div>`;
     document.getElementById('adsSens').addEventListener('input', function(){ document.getElementById('adsSensVal').textContent = this.value; });
   } catch (e) { document.getElementById('adspamContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
 }
 async function saveAdSpamConfig() {
   try {
-    const res = await api('/api/settings/ad-spam', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('adsEnable').checked, sensitivity: parseInt(document.getElementById('adsSens').value), keywords: document.getElementById('adsKw').value }) });
+    const res = await api('/api/settings/ad-spam', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('adsEnable').checked, sensitivity: parseInt(document.getElementById('adsSens').value) }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadAdSpamConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
@@ -3260,21 +3709,19 @@ async function loadGreetingConfig() {
     const d = await api('/api/settings/greeting'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('greetingContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>问候配置</h3>
+      <div class="form-group"><label>说明</label><div class="hint-text">这里只保留真实生效的开关和时间，不再展示未接线的自定义文案字段。</div></div>
       <div class="toggle-row"><span>早安播报</span><label class="toggle-switch"><input type="checkbox" id="grMorningEn" ${cfg.morning_enabled?'checked':''}><span class="slider"></span></label></div>
-      <div class="form-group"><label>早安时间（小时）</label><input type="number" id="grMorningHour" value="${cfg.morning_hour || 8}" min="0" max="23" class="input-field"></div>
-      <div class="form-group"><label>早安文本</label><textarea id="grMorningText" class="input-field" rows="2">${cfg.morning_text || ''}</textarea></div>
+      <div class="form-group"><label>早安时间</label><input type="time" id="grMorningTime" value="${cfg.morning_time || '08:05'}" class="input-field"></div>
       <div class="toggle-row"><span>午安播报</span><label class="toggle-switch"><input type="checkbox" id="grAfternoonEn" ${cfg.afternoon_enabled?'checked':''}><span class="slider"></span></label></div>
-      <div class="form-group"><label>午安时间（小时）</label><input type="number" id="grAfternoonHour" value="${cfg.afternoon_hour || 14}" min="0" max="23" class="input-field"></div>
-      <div class="form-group"><label>午安文本</label><textarea id="grAfternoonText" class="input-field" rows="2">${cfg.afternoon_text || ''}</textarea></div>
-      <div class="toggle-row"><span>晚安播报</span><label class="toggle-switch"><input type="checkbox" id="grNightEn" ${cfg.night_enabled?'checked':''}><span class="slider"></span></label></div>
-      <div class="form-group"><label>晚安时间（小时）</label><input type="number" id="grNightHour" value="${cfg.night_hour || 22}" min="0" max="23" class="input-field"></div>
-      <div class="form-group"><label>晚安文本</label><textarea id="grNightText" class="input-field" rows="2">${cfg.night_text || ''}</textarea></div>
+      <div class="form-group"><label>午安时间</label><input type="time" id="grAfternoonTime" value="${cfg.afternoon_time || '12:35'}" class="input-field"></div>
+      <div class="toggle-row"><span>晚安播报</span><label class="toggle-switch"><input type="checkbox" id="grNightEn" ${cfg.evening_enabled?'checked':''}><span class="slider"></span></label></div>
+      <div class="form-group"><label>晚安时间</label><input type="time" id="grNightTime" value="${cfg.evening_time || '23:05'}" class="input-field"></div>
       <button class="btn btn-primary" onclick="saveGreetingConfig()">保存设置</button></div>`;
   } catch (e) { document.getElementById('greetingContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
 }
 async function saveGreetingConfig() {
   try {
-    const res = await api('/api/settings/greeting', { method: 'POST', body: JSON.stringify({ morning_enabled: document.getElementById('grMorningEn').checked, morning_hour: parseInt(document.getElementById('grMorningHour').value), morning_text: document.getElementById('grMorningText').value, afternoon_enabled: document.getElementById('grAfternoonEn').checked, afternoon_hour: parseInt(document.getElementById('grAfternoonHour').value), afternoon_text: document.getElementById('grAfternoonText').value, night_enabled: document.getElementById('grNightEn').checked, night_hour: parseInt(document.getElementById('grNightHour').value), night_text: document.getElementById('grNightText').value }) });
+    const res = await api('/api/settings/greeting', { method: 'POST', body: JSON.stringify({ morning_enabled: document.getElementById('grMorningEn').checked, morning_time: document.getElementById('grMorningTime').value, afternoon_enabled: document.getElementById('grAfternoonEn').checked, afternoon_time: document.getElementById('grAfternoonTime').value, evening_enabled: document.getElementById('grNightEn').checked, evening_time: document.getElementById('grNightTime').value }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadGreetingConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
@@ -3283,16 +3730,19 @@ async function loadNewsConfig() {
   try {
     const d = await api('/api/settings/news'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('newsContent'); if (!el) return;
-    const srcStr = (cfg.sources || []).join(', ');
     el.innerHTML = `<div class="card"><h3>新闻配置</h3>
       <div class="toggle-row"><span>启用新闻推送</span><label class="toggle-switch"><input type="checkbox" id="newsEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
-      <div class="form-group"><label>新闻源（逗号分隔）</label><textarea id="newsSources" class="input-field" rows="3">${srcStr}</textarea></div>
+      <div class="form-group"><label>数据源策略</label><select id="newsSource" class="input-field"><option value="real_first" ${cfg.preferred_source==='real_first'?'selected':''}>真实源优先</option><option value="trendradar_first" ${cfg.preferred_source==='trendradar_first'?'selected':''}>热点源优先</option></select></div>
+      <div class="form-group"><label>早间新闻时间</label><input type="time" id="newsMorningTime" value="${cfg.morning_time || '09:05'}" class="input-field"></div>
+      <div class="form-group"><label>午间新闻时间</label><input type="time" id="newsAfternoonTime" value="${cfg.afternoon_time || '13:05'}" class="input-field"></div>
+      <div class="form-group"><label>晚间新闻时间</label><input type="time" id="newsEveningTime" value="${cfg.evening_time || '20:35'}" class="input-field"></div>
+      <div class="form-group"><label>说明</label><div class="hint-text">新闻播报现在固定走真实数据源优先的短摘要，不再展示未接线的“自定义新闻源列表”。</div></div>
       <button class="btn btn-primary" onclick="saveNewsConfig()">保存设置</button></div>`;
   } catch (e) { document.getElementById('newsContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
 }
 async function saveNewsConfig() {
   try {
-    const res = await api('/api/settings/news', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('newsEnable').checked, sources: document.getElementById('newsSources').value.split(',').map(s => s.trim()).filter(s => s) }) });
+    const res = await api('/api/settings/news', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('newsEnable').checked, preferred_source: document.getElementById('newsSource').value, morning_time: document.getElementById('newsMorningTime').value, afternoon_time: document.getElementById('newsAfternoonTime').value, evening_time: document.getElementById('newsEveningTime').value }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadNewsConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
@@ -3316,7 +3766,7 @@ async function saveExchangeRateConfig() {
 
 async function loadVisualDashboardConfig() {
   try {
-    const d = await api('/api/settings/visual-dashboard'); if (!d.ok) return;
+    const d = await api('/api/settings/dashboard'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('visualdashboardContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>可视化面板</h3>
       <div class="toggle-row"><span>启用可视化面板</span><label class="toggle-switch"><input type="checkbox" id="vdEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
@@ -3325,7 +3775,7 @@ async function loadVisualDashboardConfig() {
 }
 async function saveVisualDashboardConfig() {
   try {
-    const res = await api('/api/settings/visual-dashboard', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('vdEnable').checked }) });
+    const res = await api('/api/settings/dashboard', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('vdEnable').checked }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadVisualDashboardConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
@@ -3544,6 +3994,559 @@ async function savePersonaConfig() {
     }) });
     if (res.ok) { showToast('✅ 人设已保存', 'success'); loadPersonaConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
+}
+
+// ============ 转化漏斗可视化（v5.26.0）============
+let _funnelChart = null;
+let _funnelTrendChart = null;
+
+async function loadFunnelPage() {
+  const daysEl = document.getElementById('funnelDays');
+  const days = daysEl ? daysEl.value : '7';
+
+  try {
+    const [funnelData, trendData] = await Promise.all([
+      api(`/api/analytics/funnel?days=${days}`),
+      api(`/api/analytics/funnel/trend?days=${days}`)
+    ]);
+
+    renderFunnelStages(funnelData.data.stages);
+    renderFunnelChart(funnelData.data.stages);
+    renderFunnelTrendChart(trendData.data);
+  } catch (e) {
+    const el = document.getElementById('funnelStages');
+    if (el) el.innerHTML = `<div class="card" style="grid-column: 1/-1;"><p style="color:#ef4444;">加载失败: ${escHtml(e.message)}</p></div>`;
+  }
+}
+
+function renderFunnelStages(stages) {
+  const el = document.getElementById('funnelStages');
+  if (!el) return;
+
+  const colors = ['#60a5fa', '#a78bfa', '#f59e0b', '#10b981'];
+  const icons = ['👆', '💡', '🛒', '✅'];
+
+  el.innerHTML = stages.map((stage, i) => `
+    <div class="stat-card" style="border-left: 4px solid ${colors[i]};">
+      <div class="stat-icon" style="background: ${colors[i]}22; color: ${colors[i]};">${icons[i]}</div>
+      <div class="stat-value" style="color: ${colors[i]};">${stage.count}</div>
+      <div class="stat-label">${stage.label}</div>
+      <div style="margin-top: 8px; font-size: 13px; color: #94a3b8;">
+        转化率: <span style="color: ${colors[i]}; font-weight: 600;">${stage.rate}%</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderFunnelChart(stages) {
+  const ctx = document.getElementById('funnelPageChart');
+  if (!ctx) return;
+
+  if (_funnelChart) {
+    _funnelChart.destroy();
+  }
+
+  const colors = ['#60a5fa', '#a78bfa', '#f59e0b', '#10b981'];
+  const labels = stages.map(s => s.label);
+  const values = stages.map(s => s.count);
+
+  _funnelChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: '用户数',
+        data: values,
+        backgroundColor: colors.map(c => c + 'cc'),
+        borderColor: colors,
+        borderWidth: 2,
+        borderRadius: 8
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const stage = stages[context.dataIndex];
+              return `数量: ${stage.count}, 转化率: ${stage.rate}%`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#6b7280' },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        },
+        y: {
+          ticks: { color: '#e2e8f0', font: { size: 13, weight: '600' } },
+          grid: { display: false }
+        }
+      }
+    }
+  });
+}
+
+function renderFunnelTrendChart(data) {
+  const ctx = document.getElementById('funnelTrendChart');
+  if (!ctx) return;
+
+  if (_funnelTrendChart) {
+    _funnelTrendChart.destroy();
+  }
+
+  const colors = ['#60a5fa', '#a78bfa', '#f59e0b', '#10b981'];
+  const stageNames = ['接触', '感兴趣', '加购', '转化'];
+  const stageKeys = ['touched', 'interested', 'carted', 'converted'];
+
+  const datasets = stageKeys.map((key, i) => ({
+    label: stageNames[i],
+    data: data.series[key] || [],
+    borderColor: colors[i],
+    backgroundColor: colors[i] + '22',
+    tension: 0.4,
+    fill: false,
+    pointRadius: 4,
+    pointHoverRadius: 6
+  }));
+
+  _funnelTrendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.dates || [],
+      datasets: datasets
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: { color: '#e2e8f0' }
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#6b7280', maxTicksLimit: 10 },
+          grid: { display: false }
+        },
+        y: {
+          ticks: { color: '#6b7280' },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        }
+      }
+    }
+  });
+}
+
+// ============ 转化归因分析（v5.24.0 阶段3-C）============
+let _attrTab = 'campaign';
+function switchAttrTab(tab) {
+  _attrTab = tab;
+  document.querySelectorAll('.attr-tab-btn').forEach(b => {
+    const active = b.dataset.tab === tab;
+    b.style.background = active ? 'linear-gradient(135deg, #60a5fa, #3b82f6)' : 'rgba(255,255,255,0.05)';
+    b.style.color = active ? 'white' : '#e2e8f0';
+    b.style.border = active ? 'none' : '1px solid rgba(255,255,255,0.1)';
+  });
+  document.querySelectorAll('.attr-section').forEach(s => s.style.display = 'none');
+  const sec = document.getElementById('attrSection_' + tab);
+  if (sec) sec.style.display = 'block';
+}
+
+async function loadAttributionReport() {
+  const el = document.getElementById('attributionContent');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">加载中...</div>';
+  try {
+    const [camp, hour, pers, mem, growth] = await Promise.all([
+      api('/api/attribution/by-campaign?days=7'),
+      api('/api/attribution/by-hour?days=7'),
+      api('/api/attribution/by-persona?days=7'),
+      api('/api/attribution/memory-impact?days=7'),
+      api('/api/attribution/growth-summary?days=7')
+    ]);
+    const disabled = camp.disabled;
+    const notice = disabled ? `<div class="card" style="margin-bottom:16px; border-left:4px solid #f59e0b;"><p style="color:#f59e0b; margin:0;">⚠️ 归因报表功能未开启（ATTRIBUTION_REPORT_ENABLED=false），数据为空。请在 config.json 中开启后刷新。</p></div>` : '';
+    el.innerHTML = notice +
+      `<div style="display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap;">
+        <button class="btn btn-secondary attr-tab-btn" data-tab="campaign" onclick="switchAttrTab('campaign')">📊 Campaign 维度</button>
+        <button class="btn btn-secondary attr-tab-btn" data-tab="hour" onclick="switchAttrTab('hour')">🕐 时段维度</button>
+        <button class="btn btn-secondary attr-tab-btn" data-tab="persona" onclick="switchAttrTab('persona')">💬 人设桶维度</button>
+        <button class="btn btn-secondary attr-tab-btn" data-tab="memory" onclick="switchAttrTab('memory')">🧠 记忆系统贡献</button>
+        <button class="btn btn-secondary attr-tab-btn" data-tab="growth" onclick="switchAttrTab('growth')">增长优化</button>
+      </div>` +
+      `<div id="attrSection_campaign" class="attr-section">${renderAttrCampaign(camp.data)}</div>` +
+      `<div id="attrSection_hour" class="attr-section" style="display:none;">${renderAttrHour(hour.data)}</div>` +
+      `<div id="attrSection_persona" class="attr-section" style="display:none;">${renderAttrPersona(pers.data)}</div>` +
+      `<div id="attrSection_memory" class="attr-section" style="display:none;">${renderAttrMemory(mem.data)}</div>` +
+      `<div id="attrSection_growth" class="attr-section" style="display:none;">${renderAttrGrowth(growth.data)}</div>`;
+    switchAttrTab(_attrTab);
+  } catch (e) {
+    el.innerHTML = `<div class="error">加载失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderAttrGrowth(data) {
+  if (!data || data.length === 0) return '<div class="card"><p style="color:#6b7280;">暂无增长优化数据</p></div>';
+  const rows = data.map(d => {
+    const events = d.events || {};
+    const telemetry = d.telemetry || {};
+    return `<tr>
+      <td style="font-family:'JetBrains Mono',monospace; color:#60a5fa;">${escHtml(d.experiment_id)}</td>
+      <td>${escHtml(d.name)}</td>
+      <td>${events.touched || 0}</td>
+      <td>${events.interested || 0}</td>
+      <td>${events.consulted || 0}</td>
+      <td>${events.carted || 0}</td>
+      <td>${events.converted || events.paid || 0}</td>
+      <td>${telemetry.engage || 0}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="card">
+    <h3 style="color:#fff; margin-bottom:16px;">10 项增长优化汇总</h3>
+    <p style="color:#94a3b8; margin-bottom:16px; font-size:13px;">数据来自 conversion_events 和 telemetry_events。刚上线时样本少，先看是否有事件进入链路，后续再看转化率。</p>
+    <table class="data-table">
+      <thead><tr><th>实验ID</th><th>方向</th><th>触达</th><th>兴趣</th><th>咨询</th><th>加购</th><th>成交</th><th>互动</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderAttrCampaign(data) {
+  if (!data || data.length === 0) return '<div class="card"><p style="color:#6b7280;">暂无 Campaign 归因数据</p></div>';
+  const maxConv = Math.max(...data.map(d => d.conversions), 1);
+  const rows = data.map(d => {
+    const barW = (d.conversions / maxConv * 100).toFixed(1);
+    return `<tr>
+      <td style="font-family:'JetBrains Mono',monospace; color:#60a5fa;">${escHtml(d.campaign_id)}</td>
+      <td>${escHtml(d.campaign_name)}</td>
+      <td>${d.clicks}</td>
+      <td>${d.carts}</td>
+      <td><span style="color:#10b981; font-weight:600;">${d.conversions}</span></td>
+      <td style="min-width:160px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="flex:1; height:8px; background:rgba(255,255,255,0.05); border-radius:4px; overflow:hidden;">
+            <div style="width:${barW}%; height:100%; background:linear-gradient(90deg,#10b981,#34d399);"></div>
+          </div>
+          <span style="color:#10b981; font-size:12px; min-width:50px;">${d.cr}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div class="card">
+    <h3 style="color:#fff; margin-bottom:16px;">📊 Campaign 维度归因（按转化数排序）</h3>
+    <table class="data-table">
+      <thead><tr><th>Campaign ID</th><th>名称</th><th>点击</th><th>加购</th><th>转化</th><th>转化率 CR</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderAttrHour(data) {
+  // 补全 24 小时
+  const hourMap = {};
+  (data || []).forEach(d => { hourMap[d.hour] = d; });
+  const hours = [];
+  for (let h = 0; h < 24; h++) {
+    hours.push(hourMap[h] || { hour: h, conversions: 0, total_events: 0 });
+  }
+  const maxConv = Math.max(...hours.map(h => h.conversions), 1);
+  // 纯 CSS 柱状图模拟 24 小时折线趋势
+  const bars = hours.map(h => {
+    const barH = Math.max(h.conversions / maxConv * 100, 2);
+    return `<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; min-width:0;">
+      <span style="color:#e2e8f0; font-size:10px;">${h.conversions || ''}</span>
+      <div style="width:80%; height:${barH}px; background:linear-gradient(180deg,#60a5fa,#3b82f6); border-radius:3px 3px 0 0; min-height:2px;" title="${h.hour}时 转化${h.conversions} 事件${h.total_events}"></div>
+      <span style="color:#6b7280; font-size:10px;">${h.hour}</span>
+    </div>`;
+  }).join('');
+  const rows = hours.map(h => `<tr><td>${h.hour}:00 - ${h.hour}:59</td><td>${h.conversions}</td><td>${h.total_events}</td></tr>`).join('');
+  return `<div class="card">
+    <h3 style="color:#fff; margin-bottom:16px;">🕐 24 小时时段分布（转化数趋势）</h3>
+    <div style="display:flex; align-items:flex-end; gap:4px; height:140px; padding:0 8px; margin-bottom:20px;">
+      ${bars}
+    </div>
+    <table class="data-table">
+      <thead><tr><th>时段</th><th>转化数</th><th>总事件数</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderAttrPersona(data) {
+  if (!data || data.length === 0) return '<div class="card"><p style="color:#6b7280;">暂无人设桶归因数据</p></div>';
+  const bucketNames = { cold: '清冷', savage: '毒舌', soft: '撒娇', common: '通用' };
+  const bucketColors = { cold: '#60a5fa', savage: '#ef4444', soft: '#ec4899', common: '#a78bfa' };
+  const maxTotal = Math.max(...data.map(d => d.total_count), 1);
+  const rows = data.map(d => {
+    const barW = (d.total_count / maxTotal * 100).toFixed(1);
+    const color = bucketColors[d.persona_bucket] || '#94a3b8';
+    const name = bucketNames[d.persona_bucket] || d.persona_bucket;
+    return `<tr>
+      <td><span class="badge" style="background:${color}22; color:${color};">${escHtml(d.persona_bucket)}</span></td>
+      <td>${escHtml(name)}</td>
+      <td>${d.interested_count}</td>
+      <td>${d.total_count}</td>
+      <td style="min-width:160px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="flex:1; height:8px; background:rgba(255,255,255,0.05); border-radius:4px; overflow:hidden;">
+            <div style="width:${barW}%; height:100%; background:${color};"></div>
+          </div>
+          <span style="color:${color}; font-size:12px; min-width:50px;">${d.conversion_rate}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div class="card">
+    <h3 style="color:#fff; margin-bottom:16px;">💬 人设桶维度归因</h3>
+    <table class="data-table">
+      <thead><tr><th>人设桶</th><th>中文名</th><th>兴趣数</th><th>总数</th><th>转化率</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderAttrMemory(data) {
+  if (!data || !data.memory_assisted) return '<div class="card"><p style="color:#6b7280;">暂无记忆系统归因数据</p></div>';
+  const ma = data.memory_assisted;
+  const na = data.non_assisted;
+  const lift = data.lift_ratio;
+  const days = data.days || 7;
+  // 对比柱状图：有记忆 vs 无记忆的转化率（归一化到最大值）
+  const maxRate = Math.max(ma.carted_rate, ma.converted_rate, na.carted_rate, na.converted_rate, 1);
+  const barW = (rate) => (rate / maxRate * 100).toFixed(1);
+  // 提升比率颜色：>1 绿色（提升），<1 红色（下降），=1 灰色
+  const liftColor = (v) => v > 1 ? '#10b981' : (v < 1 && v > 0 ? '#ef4444' : '#94a3b8');
+  const liftLabel = (v) => v > 1 ? `↑ ${v}x 提升` : (v < 1 && v > 0 ? `↓ ${v}x 下降` : '— 无对比');
+  return `<div class="card">
+    <h3 style="color:#fff; margin-bottom:16px;">🧠 记忆系统转化贡献（最近 ${days} 天）</h3>
+    <p style="color:#94a3b8; margin-bottom:20px; font-size:13px;">对比有记忆辅助（memory_summary 注入）vs 无记忆辅助的会话转化率，量化记忆系统 ROI</p>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px;">
+      <div style="background:rgba(96,165,250,0.08); border:1px solid rgba(96,165,250,0.2); border-radius:12px; padding:16px;">
+        <h4 style="color:#60a5fa; margin:0 0 12px 0;">🧠 有记忆辅助</h4>
+        <p style="color:#94a3b8; font-size:12px; margin:0 0 8px 0;">会话数: ${ma.count} | interested: ${ma.interested} | carted: ${ma.carted} | converted: ${ma.converted}</p>
+        <div style="margin-bottom:8px;">
+          <span style="color:#e2e8f0; font-size:13px;">加购转化率（interested→carted）</span>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+            <div style="flex:1; height:10px; background:rgba(255,255,255,0.05); border-radius:5px; overflow:hidden;">
+              <div style="width:${barW(ma.carted_rate)}%; height:100%; background:linear-gradient(90deg,#60a5fa,#3b82f6);"></div>
+            </div>
+            <span style="color:#60a5fa; font-weight:600; min-width:60px; text-align:right;">${ma.carted_rate}%</span>
+          </div>
+        </div>
+        <div>
+          <span style="color:#e2e8f0; font-size:13px;">成交转化率（carted→converted）</span>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+            <div style="flex:1; height:10px; background:rgba(255,255,255,0.05); border-radius:5px; overflow:hidden;">
+              <div style="width:${barW(ma.converted_rate)}%; height:100%; background:linear-gradient(90deg,#10b981,#34d399);"></div>
+            </div>
+            <span style="color:#10b981; font-weight:600; min-width:60px; text-align:right;">${ma.converted_rate}%</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:rgba(148,163,184,0.08); border:1px solid rgba(148,163,184,0.2); border-radius:12px; padding:16px;">
+        <h4 style="color:#94a3b8; margin:0 0 12px 0;">⚪ 无记忆辅助</h4>
+        <p style="color:#94a3b8; font-size:12px; margin:0 0 8px 0;">会话数: ${na.count} | interested: ${na.interested} | carted: ${na.carted} | converted: ${na.converted}</p>
+        <div style="margin-bottom:8px;">
+          <span style="color:#e2e8f0; font-size:13px;">加购转化率（interested→carted）</span>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+            <div style="flex:1; height:10px; background:rgba(255,255,255,0.05); border-radius:5px; overflow:hidden;">
+              <div style="width:${barW(na.carted_rate)}%; height:100%; background:rgba(148,163,184,0.6);"></div>
+            </div>
+            <span style="color:#94a3b8; font-weight:600; min-width:60px; text-align:right;">${na.carted_rate}%</span>
+          </div>
+        </div>
+        <div>
+          <span style="color:#e2e8f0; font-size:13px;">成交转化率（carted→converted）</span>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+            <div style="flex:1; height:10px; background:rgba(255,255,255,0.05); border-radius:5px; overflow:hidden;">
+              <div style="width:${barW(na.converted_rate)}%; height:100%; background:rgba(148,163,184,0.6);"></div>
+            </div>
+            <span style="color:#94a3b8; font-weight:600; min-width:60px; text-align:right;">${na.converted_rate}%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:rgba(16,185,129,0.05); border:1px solid rgba(16,185,129,0.2); border-radius:12px; padding:16px;">
+      <h4 style="color:#fff; margin:0 0 12px 0;">📈 提升比率（lift ratio = 有记忆 / 无记忆）</h4>
+      <div style="display:flex; gap:24px; flex-wrap:wrap;">
+        <div>
+          <span style="color:#94a3b8; font-size:13px;">加购转化提升</span>
+          <div style="margin-top:4px;">
+            <span style="font-size:24px; font-weight:700; color:${liftColor(lift.carted)};">${lift.carted}x</span>
+            <span style="color:${liftColor(lift.carted)}; font-size:13px; margin-left:8px;">${liftLabel(lift.carted)}</span>
+          </div>
+        </div>
+        <div>
+          <span style="color:#94a3b8; font-size:13px;">成交转化提升</span>
+          <div style="margin-top:4px;">
+            <span style="font-size:24px; font-weight:700; color:${liftColor(lift.converted)};">${lift.converted}x</span>
+            <span style="color:${liftColor(lift.converted)}; font-size:13px; margin-left:8px;">${liftLabel(lift.converted)}</span>
+          </div>
+        </div>
+      </div>
+      <p style="color:#6b7280; font-size:11px; margin:12px 0 0 0;">注：lift > 1 表示记忆系统正向贡献，< 1 表示负向，= 0 表示无对比数据（分母为 0）</p>
+    </div>
+  </div>`;
+}
+
+// ============ 大模型效能对比（阶段2-C 多模型路由 A/B 测试）============
+let _modelPerfChart1 = null;  // 转化率柱状图
+let _modelPerfChart2 = null;  // 延迟折线图
+
+async function loadModelPerfReport() {
+  const el = document.getElementById('modelPerfContent');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">加载中...</div>';
+  try {
+    const res = await api('/api/ab-test/report?days=7');
+    const disabled = res.disabled;
+    const data = res.data || [];
+    const notice = disabled ? `<div class="card" style="margin-bottom:16px; border-left:4px solid #f59e0b;"><p style="color:#f59e0b; margin:0;">⚠️ A/B 测试未开启（AB_TEST_ENABLED=false），数据为空。请在 config.json 中开启后刷新。</p></div>` : '';
+    if (!disabled && data.length === 0) {
+      el.innerHTML = notice + '<div class="card"><p style="color:#6b7280;">暂无 A/B 测试数据，开启 AB_TEST_ENABLED 并产生对话后刷新。</p></div>';
+      return;
+    }
+    el.innerHTML = notice +
+      `<div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-header"><span class="chart-title">📊 各组转化率对比（柱状图）</span></div>
+          <div class="chart-container"><canvas id="modelPerfChart1"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header"><span class="chart-title">⚡ 各组平均延迟对比（折线图）</span></div>
+          <div class="chart-container"><canvas id="modelPerfChart2"></canvas></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h3 style="color:#fff; margin-bottom:16px;">💰 各组平均成本与详细指标</h3>
+        <div id="modelPerfTable">${renderModelPerfTable(data)}</div>
+      </div>`;
+    if (!disabled && data.length > 0) {
+      renderModelPerfCharts(data);
+    }
+  } catch (e) {
+    el.innerHTML = `<div class="error">加载失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderModelPerfTable(data) {
+  if (!data || data.length === 0) return '<p style="color:#6b7280;">暂无数据</p>';
+  const groupNames = { 'A': '对照组（A）', 'B': '实验组（B）', 'Base': '基线组（Base）' };
+  const groupColors = { 'A': '#60a5fa', 'B': '#a78bfa', 'Base': '#10b981' };
+  const rows = data.map(d => {
+    const color = groupColors[d.group] || '#94a3b8';
+    const name = groupNames[d.group] || d.group;
+    return `<tr>
+      <td><span class="badge" style="background:${color}22; color:${color};">${escHtml(d.group)}</span></td>
+      <td>${escHtml(name)}</td>
+      <td style="font-family:'JetBrains Mono',monospace; color:#60a5fa;">${escHtml(d.model)}</td>
+      <td>${d.sample_count}</td>
+      <td style="color:#60a5fa; font-weight:600;">${d.avg_latency} ms</td>
+      <td style="color:#f59e0b;">${d.p95_latency} ms</td>
+      <td style="color:#10b981; font-family:'JetBrains Mono',monospace;">¥${d.avg_cost.toFixed(6)}</td>
+      <td style="color:#10b981; font-weight:600;">${d.conversion_rate}%</td>
+    </tr>`;
+  }).join('');
+  return `<table class="data-table">
+    <thead><tr><th>组别</th><th>组名</th><th>模型</th><th>样本数</th><th>平均延迟</th><th>P95延迟</th><th>平均成本</th><th>转化率</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderModelPerfCharts(data) {
+  // 组别标签：组名（模型名）
+  const labels = data.map(d => {
+    const names = { 'A': '对照组', 'B': '实验组', 'Base': '基线组' };
+    return `${names[d.group] || d.group}\\n${d.model}`;
+  });
+  const groupColors = { 'A': '#60a5fa', 'B': '#a78bfa', 'Base': '#10b981' };
+  const barColors = data.map(d => groupColors[d.group] || '#94a3b8');
+
+  // 柱状图：转化率
+  const ctx1 = document.getElementById('modelPerfChart1');
+  if (ctx1) {
+    if (_modelPerfChart1) _modelPerfChart1.destroy();
+    _modelPerfChart1 = new Chart(ctx1, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: '转化率 (%)',
+          data: data.map(d => d.conversion_rate),
+          backgroundColor: barColors.map(c => c + '88'),
+          borderColor: barColors,
+          borderWidth: 2,
+          borderRadius: 6,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#e2e8f0' } },
+          tooltip: { callbacks: { label: (ctx) => `转化率: ${ctx.parsed.y}%` } }
+        },
+        scales: {
+          x: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          y: { ticks: { color: '#94a3b8', callback: (v) => v + '%' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+        }
+      }
+    });
+  }
+
+  // 折线图：平均延迟
+  const ctx2 = document.getElementById('modelPerfChart2');
+  if (ctx2) {
+    if (_modelPerfChart2) _modelPerfChart2.destroy();
+    _modelPerfChart2 = new Chart(ctx2, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: '平均延迟 (ms)',
+          data: data.map(d => d.avg_latency),
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245,158,11,0.15)',
+          borderWidth: 2,
+          tension: 0.3,
+          fill: true,
+          pointBackgroundColor: barColors,
+          pointBorderColor: '#fff',
+          pointRadius: 6,
+        }, {
+          label: 'P95延迟 (ms)',
+          data: data.map(d => d.p95_latency),
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.1)',
+          borderWidth: 2,
+          tension: 0.3,
+          fill: false,
+          pointBackgroundColor: '#ef4444',
+          pointRadius: 5,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#e2e8f0' } } },
+        scales: {
+          x: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          y: { ticks: { color: '#94a3b8', callback: (v) => v + 'ms' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+        }
+      }
+    });
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

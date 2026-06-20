@@ -49,8 +49,8 @@ def handle_pin(bot, m, config, db):
             if config.get("ENABLE_MESSAGE_DELETION", False):
                 try:
                     bot.delete_message(chat_id, m.message_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         logger.info(f"置顶消息: chat={chat_id} msg={m.reply_to_message.message_id} silent={silent}")
     except Exception as e:
         bot.reply_to(m, f"❌ 置顶失败：{e}")

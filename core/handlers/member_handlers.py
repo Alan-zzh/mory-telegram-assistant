@@ -55,9 +55,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
     try:
         from modules.anti_raid import check_raid
         check_raid(bot, m, config, db)
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     for user in m.new_chat_members:
         user_id = user.id
         user_display = (user.first_name or "") + (user.last_name or "")
@@ -94,9 +93,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
             # Telegram Bot API: 新成员入群时，如果有邀请链接，from_user就是邀请人
             if hasattr(m, 'from_user') and m.from_user and m.from_user.id != user_id:
                 record_invite(db, m.from_user.id, user_id, chat_id, config, bot)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         # 步骤2：emoji面具检测（用户名藏广告词）
         from modules.emoji_mask_detector import check_emoji_mask_in_username
         emoji_hit, emoji_reason = check_emoji_mask_in_username(user_display, config)
@@ -115,20 +113,43 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
             )
             continue
 
+        # 步骤2.4：资料层广告检测（名字 + BIO + Premium emoji状态）
+        user_bio = ""
+        try:
+            chat_info = bot.get_chat(user_id)
+            user_bio = (getattr(chat_info, 'bio', '') or '')[:500]
+        except Exception as e:
+            logger.debug(f"入群拉取用户bio失败 uid={user_id}: {e}")
+
+        try:
+            from modules.ad_profile_signals import detect_profile_ad_signal
+            profile_result = detect_profile_ad_signal(bot, user, user_bio, config)
+            if profile_result.get("is_ad"):
+                logger.warning(
+                    f"🚫 [入群资料检测] 拦截广告新人: {user_display}({user_id}) "
+                    f"原因={profile_result.get('reason', '')[:120]}"
+                )
+                from modules.ad_enforcement import enforce_ad_user
+                enforce_ad_user(
+                    bot=bot,
+                    db=db,
+                    config=config,
+                    chat_id=chat_id,
+                    uid=user_id,
+                    uname=user_display,
+                    reason=f"入群资料检测: {profile_result.get('reason', '')[:200]} BIO:{user_bio[:120]}",
+                    notify_admin=True,
+                )
+                continue
+        except Exception as e:
+            logger.error(f"入群资料广告检测异常 uid={user_id}: {e}")
+
         # [TRAE SOLO CN] v5.14.2 新增：步骤 2.5 - 入群即跑名字+BIO+头像三重广告检测
         # 背景：v5.14.1 修复了变体字规避后，发现入群处理链路没有调用 ad_detector.detect()
         # 导致名字变体字 + BIO 全文广告 的用户在第一条消息时才被检测（已晚一步）
         # 现在入群即检测，符合"绝对不能死"+ 商业项目早期封禁原则
         if ad_detector:
             try:
-                # 1) 拉取 BIO（Telegram Bot API: get_chat）
-                user_bio = ""
-                try:
-                    chat_info = bot.get_chat(user_id)
-                    user_bio = (getattr(chat_info, 'bio', '') or '')[:500]
-                except Exception as e:
-                    logger.debug(f"入群拉取用户bio失败 uid={user_id}: {e}")
-
                 # 2) 跑 ad_detector 三重检测（msg="" + username + bio）
                 ad_result = ad_detector.detect(
                     username=user_display,
@@ -225,9 +246,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
                     chat_id, user_id,
                     permissions=ChatPermissions(can_send_messages=False),
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             # 发送验证码
             from modules.verification import start_verification
             question, keyboard = start_verification(bot, chat_id, user_id, user_display, config)
@@ -250,8 +270,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
                             can_add_web_page_previews=True,
                         ),
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
         else:
             # 没启用验证，走原始欢迎流程
             from modules.group_mgr import handle_new_members
@@ -269,17 +289,14 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
         try:
             from modules.global_blacklist import check_global_blacklist
             check_global_blacklist(bot, m, config, db)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         # 强制订阅检查
         try:
             from modules.force_subscribe import check_force_subscribe
             check_force_subscribe(bot, m, config, db)
-        except Exception:
-            pass
-
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
 def _handle_chat_member_update(bot, update, config, db):
     """[TRAE SOLO CN] v5.8.1 处理 chat_member 更新事件，追踪成员变动"""
     try:
@@ -300,8 +317,8 @@ def _handle_chat_member_update(bot, update, config, db):
             try:
                 chat_info = bot.get_chat(uid)
                 bio = getattr(chat_info, 'bio', '') or ''
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             db.upsert_group_member(uid, chat_id, username, display_name, bio, new_status)
             logger.debug(f"[成员追踪] 入群/更新: uid={uid} chat={chat_id} status={new_status}")
         elif new_status in ('left', 'kicked'):

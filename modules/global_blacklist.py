@@ -92,9 +92,8 @@ def handle_gban(bot, m, config, db):
         chat_id = m.chat.id
         member = bot.get_chat_member(chat_id, target_uid)
         target_name = member.user.first_name or target_name
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     try:
         from telebot.types import ChatPermissions
         bot.restrict_chat_member(
@@ -105,9 +104,8 @@ def handle_gban(bot, m, config, db):
     except Exception:
         try:
             bot.restrict_chat_member(m.chat.id, target_uid, can_send_messages=False)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     bot.reply_to(m, f"✅ 已将 {target_name} 加入全局黑名单\n📝 原因：{reason}")
     logger.warning(f"全局黑名单添加: uid={target_uid} reason={reason} by={user_id}")
 
@@ -121,10 +119,8 @@ def handle_gban(bot, m, config, db):
                 f"📝 原因：{reason}\n"
                 f"👮 操作者：{m.from_user.first_name}（ID: {user_id}）"
             )
-        except Exception:
-            pass
-
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
 def handle_ungban(bot, m, config, db):
     """处理 /ungban 命令 - 移除全局黑名单"""
     user_id = m.from_user.id
@@ -151,9 +147,8 @@ def handle_ungban(bot, m, config, db):
         chat_id = m.chat.id
         member = bot.get_chat_member(chat_id, target_uid)
         target_name = member.user.first_name or target_name
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     bot.reply_to(m, f"✅ 已将 {target_name} 从全局黑名单移除")
     logger.info(f"全局黑名单移除: uid={target_uid} by={user_id}")
 
@@ -194,9 +189,8 @@ def check_global_blacklist(bot, m, config, db):
                 chat_id,
                 f"🚫 {user_display} 在全局黑名单中，已被永久禁言"
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         admin_id = config.get("ADMIN_ID", 0)
         if admin_id:
             try:
@@ -207,10 +201,8 @@ def check_global_blacklist(bot, m, config, db):
                     f"📍 群组：{chat_id}\n"
                     f"🔨 操作：已永久禁言"
                 )
-            except Exception:
-                pass
-
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
 def handle_gban_list(bot, m, config, db):
     """处理 /gbanlist 命令 - 查看全局黑名单"""
     user_id = m.from_user.id

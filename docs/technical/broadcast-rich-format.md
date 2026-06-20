@@ -1,0 +1,396 @@
+# 播报富文本与 Bot API 兼容说明
+
+最后更新：2026-06-15 [Trae Solo CN]
+
+## 目标
+
+- 让早安/午安/晚安、定点播报在 Telegram 里更像"卡片消息"，更美观、更有层次。
+- 保持当前 pyTelegramBotAPI 4.12.0 可运行，不因为官方新参数增加而直接报错。
+- 充分利用 Telegram Bot API HTML 模式的富文本格式化能力。
+- v4.0：支持用户画像个性化播报（VIP 专属 emoji、高等级感谢话术、兴趣匹配）
+
+## 当前已落地能力
+
+### 1. HTML 卡片排版（v4.0 - 人物画像个性化版）
+
+- 普通文本播报会自动包装为 HTML：
+  - 标题：`<b><i>emoji 标题</i></b>` — 加粗斜体，更有温度
+  - 角标：`<i>角标</i>` — 斜体，轻量标识
+  - 主体：`content` — 正文内容，支持关键词加粗
+  - 可折叠补充说明：`<blockquote expandable><i>footer</i></blockquote>` — 斜体 + 可折叠引用
+- 如果 `content` 本身已经写了 HTML 标签，则直接按原样发送，不重复包裹。
+- **v4.0 新增**：用户画像个性化支持
+  - VIP 用户（level >= 5 或 tags 包含 "vip"）：显示专属 emoji（✨）和尊贵称呼
+  - 高等级用户（level >= 3）：显示感谢话术（💝 感谢您的陪伴与支持）
+  - 兴趣匹配：tarot 用户显示 🔮，treehole 用户显示 🌳
+  - 高价值用户：标题追加"（精选推荐）"
+
+### 2. 时段样式映射
+
+根据 `period` 字段自动选择 emoji 和风格：
+
+```python
+PERIOD_STYLES = {
+    "morning": {"emoji": "☀️", "accent": "温暖", "greeting": "早安"},
+    "afternoon": {"emoji": "🍃", "accent": "轻松", "greeting": "午安"},
+    "evening": {"emoji": "🌆", "accent": "陪伴", "greeting": "晚安"},
+    "night": {"emoji": "🌙", "accent": "私密", "greeting": "晚安"},
+}
+```
+
+### 3. 图片播报增强
+
+- `caption` 也支持同样的 HTML 卡片风格。
+- 支持 `show_caption_above_media=true`，让图文播报标题先展示在图片上方。
+
+### 4. 链接按钮（v4.0 支持彩色按钮）
+
+- 可选：
+  - `button_text`
+  - `button_url`
+- 配了这两个字段后，会自动带一个单按钮，适合引导去 `@MorychannelBot` 或活动页。
+- **v4.0 新增**：彩色按钮支持
+  - `button_style`：按钮样式（default/danger/success/primary）
+  - `button_emoji_id`：Custom Emoji ID（可选）
+  - 通过 `BUTTON_STYLE_ENABLED` 配置启用
+
+### 5. 新参数兼容
+
+当前项目通过 `core/telebot_compat.py` 兼容以下 Telegram Bot API 新参数：
+
+- `show_caption_above_media`
+- `allow_paid_broadcast`
+- `message_effect_id`
+- `suggested_post_parameters`
+- `direct_messages_topic_id`
+- `deleteAllMessageReactions`（广告反应清理）
+- `sendPoll` 新参数（媒体投票、会员限定、追加选项、隐藏结果、随机选项等）
+- `sendChecklist`（Telegram Business 清单）
+
+另外已预留 `Rich Messages` 原始直通入口：
+
+- `send_rich_message_compat()`
+- 定点播报 `type = "rich_message"` 或直接带 `rich_message`
+- **v4.0 新增**：HTML → Rich Message 自动转换（`_html_to_rich_components()`）
+
+说明：
+
+- 若当前 SDK 已支持，优先走 SDK。
+- 若当前 SDK 还没暴露该参数，则退回原始 Bot API 请求。
+- 当前项目可以先稳用 HTML 卡片，也可以在需要时直接透传官方 `rich_message` JSON。
+- 定点文本播报在 `RICH_MESSAGE_ENABLED=true` 且 `BROADCAST_FORMAT_VERSION=rich/auto` 时会优先尝试 `sendRichMessage`，失败自动回退 HTML 卡片。
+- 广告处置默认启用 `AD_CLEANUP_REACTIONS=true`，用于尝试清理广告用户在群内留下的反应。
+
+## v4.1 播报配置项
+
+```json
+{
+  "RICH_MESSAGE_ENABLED": false,
+  "BROADCAST_FORMAT_VERSION": "html",
+  "BROADCAST_TEMPLATE_VARIATION_ENABLED": true,
+  "RICH_MESSAGE_STYLE": {
+    "title_bold": true,
+    "badge_italic": true,
+    "body_normal": true,
+    "footer_expandable": true,
+    "emoji_custom": false
+  },
+  "BUTTON_STYLE_ENABLED": false,
+  "BUTTON_COLOR_MAP": {
+    "buy": "success",
+    "cancel": "danger",
+    "info": "primary",
+    "settings": "default"
+  },
+  "CUSTOM_EMOJI_ENABLED": false,
+  "CUSTOM_EMOJI_POOL": {},
+  "USER_PROFILE_ENABLED": false
+}
+```
+
+`BROADCAST_TEMPLATE_VARIATION_ENABLED` 用于无缝升级旧模板：正文、标题、按钮保持旧配置不变，只在折叠补充里按日期和播报 ID 增加一句轻变化。这样每天看起来不会完全一模一样，又不会突然变成另一套话术。
+
+## v4.0 新增数据库表
+
+- `user_profiles`：用户画像表（user_id, tags, level, interests, last_interaction, conversation_rounds）
+- `button_styles`：按钮样式表（button_id, style, icon_custom_emoji_id）
+
+## v4.0 新增 Dashboard API
+
+- `/api/config/broadcast-format`：播报格式配置
+- `/api/config/button-style`：按钮样式配置
+- `/api/config/custom-emoji`：Custom Emoji 池配置
+- `/api/config/user-profile`：用户画像配置
+
+## Telegram Bot API HTML 模式支持的标签
+
+| 标签 | 效果 | 当前使用场景 |
+|------|------|-------------|
+| `<b>` / `<strong>` | **加粗** | 标题、关键词强调 |
+| `<i>` / `<em>` | *斜体* | 角标、正文、折叠补充 |
+| `<u>` / `<ins>` | <u>下划线</u> | 可选强调 |
+| `<s>` / `<strike>` / `<del>` | ~~删除线~~ | 未使用 |
+| `<tg-spoiler>` | 剧透（点击显示） | 私密提示 |
+| `<a href="URL">` | 超链接 | 按钮链接 |
+| `<blockquote>` | 引用块 | 未使用 |
+| `<blockquote expandable>` | 可展开引用块 | 折叠补充 |
+
+**嵌套规则**：
+- `<b><i>加粗斜体</i></b>` ✅
+- `<b><u>加粗下划线</u></b>` ✅
+- `<i><s>斜体删除线</s></i>` ✅
+- `<code>` 和 `<pre>` 内部不能嵌套其他格式
+- `<blockquote>` 不能嵌套 `<blockquote>`
+
+## SCHEDULED_BROADCASTS 可用字段
+
+最小写法：
+
+```json
+{
+  "id": "morning_card",
+  "hour": 9,
+  "minute": 30,
+  "content": "今天群里有新活动，晚点我再来细说～",
+  "type": "text",
+  "enabled": true
+}
+```
+
+增强写法（v3.1）：
+
+```json
+{
+  "id": "morning_nudge",
+  "hour": 10,
+  "minute": 0,
+  "type": "text",
+  "period": "morning",
+  "title": "早上好呀",
+  "badge": "✨ Mory来报到啦",
+  "content": "刚泡好一杯咖啡，窗边的光刚好照到桌上，突然想到你们了～\n\n今天上午也要顺顺利利的，有什么想聊的随时来找我，我都在。",
+  "footer": "💬 想聊的随时来找我～懂的人自然知道怎么出现。",
+  "button_text": "💌 找Mory聊聊",
+  "button_url": "https://t.me/MorychannelBot",
+  "silent": false,
+  "protect_content": false,
+  "enabled": true
+}
+```
+
+字段说明：
+
+- 时间：
+  - 推荐 `hour` + `minute`
+  - 兼容旧 `time: "HH:MM"`
+- 文本相关：
+  - `content` — 正文内容
+  - `title` — 标题（自动加 emoji 和格式化）
+  - `badge` — 角标（斜体显示）
+  - `footer` — 折叠补充（可展开引用块）
+  - `period` — 时段（morning/afternoon/evening/night，自动选择 emoji）
+  - `parse_mode`
+- 图片相关：
+  - `caption`
+  - `show_caption_above_media`
+- 交互相关：
+  - `button_text`
+  - `button_url`
+  - `button_style`
+  - `button_emoji_id`
+  - `rich_message`
+  - `suggested_post_parameters`
+- 投票相关：
+  - `question`
+  - `options`
+  - `members_only`
+  - `allow_adding_options`
+  - `hide_results_until_closes`
+  - `shuffle_options`
+  - `allows_revoting`
+  - `allows_changing_answer`
+  - `media`
+  - `description`
+- 清单相关：
+  - `business_connection_id`
+  - `checklist`
+  - `tasks`
+- 发送控制：
+  - `silent`
+  - `protect_content`
+  - `disable_preview`
+  - `allow_paid_broadcast`
+  - `message_effect_id`
+  - `direct_messages_topic_id`
+
+## 排版效果示例
+
+### 定点播报（morning_nudge）
+
+```
+<b><i>☀️ 早上好呀</i></b>
+
+<i>✨ Mory来报到啦</i>
+
+刚泡好一杯咖啡，窗边的光刚好照到桌上，突然想到你们了～
+
+今天上午也要顺顺利利的，有什么想聊的随时来找我，我都在。
+
+<blockquote expandable><i>💬 想聊的随时来找我～懂的人自然知道怎么出现。</i></blockquote>
+```
+
+**Telegram 渲染效果**：
+- 标题：**☀️ 早上好呀**（加粗斜体）
+- 角标：*✨ Mory来报到啦*（斜体）
+- 正文：普通文本
+- 折叠补充：可展开的引用块，斜体
+
+### 早安问候
+
+```
+<b><i>☀️ 早安呀</i></b>
+
+<i>✨ Mory来报到啦</i>
+
+<i>刚泡好一杯咖啡，窗边的光刚好照到桌上，突然想到你们了～</i>
+
+<blockquote expandable><i>💬 想聊的随时来找我～懂的人自然知道怎么出现。</i></blockquote>
+```
+
+**Telegram 渲染效果**：
+- 标题：**☀️ 早安呀**（加粗斜体）
+- 角标：*✨ Mory来报到啦*（斜体）
+- 正文：*斜体*（增加私密感）
+- 折叠补充：可展开的引用块，斜体
+
+## 已扩到的发送入口
+
+- 早安 / 午安 / 晚安自动问候
+- 定点播报 `SCHEDULED_BROADCASTS`
+- 群内时消息 `scheduled_messages`
+- 管理员代发私信 / 代发群 / 代发频道
+- 管理员的投票命令和定点投票
+- 管理员清单命令和定点清单
+
+## 新版投票
+
+定点投票示例：
+
+```json
+{
+  "id": "night_poll",
+  "hour": 22,
+  "minute": 10,
+  "type": "poll",
+  "question": "今晚想看哪种内容？",
+  "options": ["轻松聊天", "深夜故事"],
+  "members_only": true,
+  "allow_adding_options": true,
+  "hide_results_until_closes": true,
+  "enabled": true
+}
+```
+
+管理员命令也支持 JSON 投票：
+
+```text
+投票 {"question":"今晚想看哪种内容？","options":["轻松聊天","深夜故事"],"members_only":true,"allow_adding_options":true}
+```
+
+## Telegram Business 清单
+
+`sendChecklist` 属于 Telegram Business 能力，必须配置 `TELEGRAM_BUSINESS_CONNECTION_ID` 或在单条播报里提供 `business_connection_id`。
+
+定点清单示例：
+
+```json
+{
+  "id": "event_checklist",
+  "hour": 18,
+  "minute": 30,
+  "type": "checklist",
+  "title": "今晚活动清单",
+  "tasks": ["确认素材", "检查入口", "复盘转化"],
+  "enabled": true
+}
+```
+
+管理员命令：
+
+```text
+清单 {"title":"今晚活动清单","tasks":["确认素材","检查入口","复盘转化"]}
+```
+
+未配置业务连接 ID 时会跳过并提示，不会影响 Bot 主流程。
+
+## 更新入口修正
+
+`main.py` 旧的 `allowed_updates` 只允许 `message`、`chat_member`、`my_chat_member`，会导致项目里已经注册的编辑消息检测、频道帖子追踪和新版反应/业务消息事件收不到 Telegram 更新。
+
+现在默认打开：
+
+- `edited_message`
+- `channel_post`
+- `edited_channel_post`
+- `message_reaction`
+- `message_reaction_count`
+- `business_connection`
+- `business_message`
+- `edited_business_message`
+- `deleted_business_messages`
+- `guest_message`
+- `purchased_paid_media`
+- `managed_bot`
+
+可通过 `TELEGRAM_ALLOWED_UPDATES` 追加自定义更新类型；项目会自动合并默认必需事件，避免旧配置误删关键入口。设为 `"all"` 时不限制更新类型。
+
+注意：`allowed_updates` 只代表 Telegram 会推送这些事件，不代表当前 pyTelegramBotAPI 会自动分发。项目已在 `core/telebot_compat.py` 里补 `patch_telebot_business_update_dispatch()`，把 SDK 未分发的新事件交给 `core/handlers/business_handlers.py`。
+
+Business 事件处理策略：
+
+- `business_message`：映射进现有普通消息链路，保留 `_mory_update_type="business_message"`。
+- `edited_business_message`：映射进现有编辑消息链路，保留 `_mory_update_type="edited_business_message"`。
+- `business_connection`：只记录连接状态，不触发对话回复。
+- `deleted_business_messages`：同步调用 `mark_message_deleted()`，把本地 `message_snapshots` 标为已删除。
+- `guest_message` / `managed_bot`：先做轻量观测，避免误进普通对话。
+- `purchased_paid_media`：只记录观测；项目仍遵守 Bot 内不收款红线，不接入 Telegram 付费媒体作为下单闭环。
+
+`core/handlers/media_handlers.py` 已注册 `message_reaction_handler` 和 `message_reaction_count_handler`：
+
+- 黑名单用户新增反应时，尝试删除该条反应，失败时再尝试清理该用户全部反应。
+- 正常用户的反应计数只做轻量日志观测，不写库，避免高频事件压垮数据库。
+
+Business updates 兼容：
+
+- `business_message` 会映射进现有 `message` 处理链路。
+- `edited_business_message` 会映射进现有 `edited_message` 处理链路。
+- 原始字段仍保留在 `update.business_message` / `update.edited_business_message`，消息对象会带 `_mory_update_type` 标记。
+
+## 已修正的历史问题
+
+### 1. 定点播报串发
+
+- 旧逻辑：某个播报任务触发时会遍历所有启用播报，存在串发风险。
+- 新逻辑：只执行当前 `broadcast_id` 对应那一条。
+
+### 2. 时间配置不一致
+
+- 旧逻辑：注册任务读 `hour/minute`，执行模块主要读 `time`。
+- 新逻辑：同时兼容两种写法，统一解析。
+
+### 3. 排版过于复杂（v3.0 修正）
+
+- 旧逻辑：使用 Unicode 分隔线（━ 和 ─），移动端显示效果差。
+- 新逻辑：简洁排版，充分利用 Telegram 原生格式化能力（加粗、斜体、引用块）。
+
+### 4. 问候话术重复（v3.1 修正）
+
+- 旧逻辑：AI 生成失败时直接放弃发送。
+- 新逻辑：新增 `_GREETING_FALLBACK_POOL` 话术池，AI 失败时随机选择预设话术，保证播报不中断。
+
+## 风险边界
+
+- 这里做的是"安全可运行"的 Bot API 薄兼容，不代表已经完整接入 Telegram 官方全部最新消息体系。
+- 如果后续要直接上官方更重的 Rich Messages / Suggested Posts 全量能力，建议单独做一层结构化消息配置，而不是继续把所有能力塞进单个播报对象里。
+- HTML 模式不支持 `<br>` 标签，换行请使用 `\n`。
+- 不要过度嵌套格式化标签，保持简洁清晰。

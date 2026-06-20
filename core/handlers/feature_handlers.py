@@ -46,8 +46,8 @@ def handle_feature_keywords(dctx) -> bool:
         handle_checkin(bot, m, CONFIG, db)
         try:
             check_quest_completion(db, uid, "checkin", CONFIG, bot, chat_id, uname)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         clear_logging_context()
         return True
     if msg in ("签到排行", "签到排名"):
@@ -78,8 +78,8 @@ def handle_feature_keywords(dctx) -> bool:
         handle_exchange(bot, m, CONFIG, db, msg[3:].strip())
         try:
             check_quest_completion(db, uid, "shop", CONFIG, bot, chat_id, uname)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         clear_logging_context()
         return True
     if msg.startswith("上架 "):
@@ -198,8 +198,8 @@ def handle_feature_keywords(dctx) -> bool:
         handle_tip(bot, m, CONFIG, db, msg[3:].strip() if len(msg) > 3 else "")
         try:
             check_quest_completion(db, uid, "tip", CONFIG, bot, chat_id, uname)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         clear_logging_context()
         return True
     if msg in ("打赏排行", "打赏排名"):

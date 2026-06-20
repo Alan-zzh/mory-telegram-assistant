@@ -8,5 +8,6 @@ from .config_repo import ConfigRepo
 from .social_repo import SocialRepo
 from .question_repo import QuestionRepo
 from .relay_repo import RelayRepo
+from .ab_test_repo import ABTestRepo
 
-__all__ = ['UserRepo', 'GroupRepo', 'PointsRepo', 'TrackingRepo', 'ConfigRepo', 'SocialRepo', 'QuestionRepo', 'RelayRepo']
+__all__ = ['UserRepo', 'GroupRepo', 'PointsRepo', 'TrackingRepo', 'ConfigRepo', 'SocialRepo', 'QuestionRepo', 'RelayRepo', 'ABTestRepo']

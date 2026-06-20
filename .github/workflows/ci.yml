@@ -1,0 +1,149 @@
+# Mory小助理 CI/CD 流水线
+# 触发条件：push 到 main/develop 分支，PR 到 main 分支
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════
+  # 测试任务：代码质量检查 + 单元测试
+  # ══════════════════════════════════════════════════════════════════════
+  test:
+    name: 代码质量检查与测试
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 步骤 1：检出代码
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      # 步骤 2：设置 Python 3.12
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      
+      # 步骤 3：安装依赖
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          # 安装开发依赖（lint + 测试 + 类型检查）
+          pip install flake8 pytest pytest-cov mypy
+      
+      # 步骤 4：Lint 检查（flake8）
+      - name: Lint 检查（flake8）
+        run: |
+          # 忽略 E501（行长度）、W503（换行操作符）
+          # 当前仓库存在大量历史格式债务；先锁住 v5.27 稳定化关键文件。
+          flake8 \
+            core/settings.py \
+            core/cache_manager.py \
+            core/user_lifecycle.py \
+            core/metrics.py \
+            core/anomaly_detector.py \
+            dashboard/app.py \
+            dashboard/api/metrics_api.py \
+            --ignore=E501,W503,W504,E203,E402 \
+            --max-line-length=120 \
+            --statistics
+      
+      # 步骤 5：类型检查（mypy）
+      - name: 类型检查（mypy）
+        run: |
+          # 使用 mypy.ini 配置，检查核心模块
+          # 宽松模式，忽略缺失导入，不跟随导入
+          mypy core/settings.py core/cache_manager.py core/user_lifecycle.py --follow-imports=silent
+      
+      # 步骤 6：单元测试 + 覆盖率
+      - name: 单元测试 + 覆盖率
+        run: |
+          # 运行 tests/unit/ 目录下的所有测试
+          # 生成覆盖率报告
+          pytest tests/unit/ \
+            --cov=core \
+            --cov=modules \
+            --cov=dashboard \
+            --cov-report=term-missing \
+            --cov-report=html \
+            -v \
+            --tb=short
+      
+      # 步骤 6.5：Docstring 覆盖率检查
+      - name: Docstring 覆盖率检查（interrogate）
+        run: |
+          # 读取 pyproject.toml 配置，检查核心模块
+          # 阈值 80%，排除 tests/，忽略魔法方法和嵌套函数
+          interrogate -c pyproject.toml core/ modules/ dashboard/
+      
+      # 步骤 7：编译检查
+      - name: 编译检查
+        run: |
+          # 检查所有 Python 文件是否能正常编译
+          python -m compileall core/ modules/ dashboard/ -q
+      
+      # 步骤 8：上传覆盖率报告（可选）
+      - name: 上传覆盖率报告
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: htmlcov/
+          retention-days: 7
+
+  # ══════════════════════════════════════════════════════════════════════
+  # 部署任务：仅 main 分支触发（当前为注释状态，避免误操作）
+  # ══════════════════════════════════════════════════════════════════════
+  # deploy:
+  #   name: 部署到 VPS
+  #   needs: test
+  #   runs-on: ubuntu-latest
+  #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  #   
+  #   steps:
+  #     # 步骤 1：检出代码
+  #     - name: 检出代码
+  #       uses: actions/checkout@v4
+  #     
+  #     # 步骤 2：配置 SSH 密钥
+  #     - name: 配置 SSH 密钥
+  #       run: |
+  #         mkdir -p ~/.ssh
+  #         echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
+  #         chmod 600 ~/.ssh/id_rsa
+  #         ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+  #     
+  #     # 步骤 3：SSH 连接并部署
+  #     - name: SSH 连接并部署
+  #       run: |
+  #         ssh ubuntu@${{ secrets.VPS_HOST }} << 'EOF'
+  #           # 进入项目目录
+  #           cd /path/to/mory_assistant
+  #           
+  #           # 拉取最新代码
+  #           git pull origin main
+  #           
+  #           # 安装依赖
+  #           pip install -r requirements.lock
+  #           
+  #           # 重启服务
+  #           sudo systemctl restart mory-assistant
+  #           sudo systemctl restart mory-dashboard
+  #           
+  #           # 等待服务启动
+  #           sleep 5
+  #           
+  #           # 健康检查
+  #           curl -f http://localhost:6616/api/health || exit 1
+  #           
+  #           echo "✅ 部署成功"
+  #         EOF

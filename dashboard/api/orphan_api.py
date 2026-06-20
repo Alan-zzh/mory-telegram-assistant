@@ -9,7 +9,7 @@
 import time
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, jsonify, request, session
-from dashboard.helpers import login_required, get_db, read_config, _CST
+from dashboard.helpers import login_required, admin_required, get_db, read_config, _CST
 
 orphan_bp = Blueprint('orphan', __name__, url_prefix='/api/orphan')
 _CST_TZ = timezone(timedelta(hours=8))
@@ -104,6 +104,7 @@ def api_orphan_cleanup_history():
 
 @orphan_bp.route("/force-clean", methods=["POST"])
 @login_required
+@admin_required  # 【TRAE SOLO CN v5.18.3审计修复】批量删除消息需管理员权限
 def api_orphan_force_clean():
     """[v5.12.4] 管理员手动触发一次清理
 
@@ -165,8 +166,8 @@ def api_orphan_force_clean():
                 logger.debug(f"  force-clean 删除失败：bot_mid={bot_mid} err={del_err}")
             try:
                 db.delete_tracked(bot_mid, chat_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             # 防 429：每 10 条 sleep 1s
             if i % 10 == 0:
                 import time as _t
@@ -180,9 +181,8 @@ def api_orphan_force_clean():
                 skipped_count=fail,
                 trigger="force_api",
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         return jsonify({
             "ok": True,
             "data": {

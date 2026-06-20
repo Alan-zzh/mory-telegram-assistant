@@ -5,8 +5,8 @@ Telegraph贴图 - 创建Telegraph页面
   /telegraph 标题 → handle_telegraph
 """
 import json
-import urllib.request
 from core.logging_util import get_logger
+from core.http_client import get_http_client, HTTPRequestError
 
 logger = get_logger("telegraph")
 
@@ -33,12 +33,17 @@ def handle_telegraph(bot, m, config, db):
         return
 
     try:
-        # 创建Telegraph页面
-        # 先创建账户（匿名）
-        create_account_url = "https://telegra.ph/createAccount?short_name=MoryBot&author_name=Mory&author_url="
-        req = urllib.request.Request(create_account_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            account_data = json.loads(resp.read().decode("utf-8"))
+        # 使用统一HTTP客户端
+        client = get_http_client()
+
+        # 创建Telegraph账户（匿名）
+        create_account_url = "https://telegra.ph/createAccount"
+        params = {
+            "short_name": "MoryBot",
+            "author_name": "Mory",
+            "author_url": ""
+        }
+        account_data = client.get(create_account_url, params=params, timeout=10)
 
         if not account_data.get("ok"):
             bot.reply_to(m, "❌ 创建Telegraph账户失败")
@@ -50,20 +55,13 @@ def handle_telegraph(bot, m, config, db):
         html_content = f"<p>{content.replace(chr(10), '</p><p>')}</p>"
 
         # 创建页面
-        page_data = json.dumps({
+        page_data = {
             "access_token": access_token,
             "title": title,
             "author_name": "Mory Bot",
             "content": [html_content]
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            "https://telegra.ph/createPage",
-            data=page_data,
-            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            page_result = json.loads(resp.read().decode("utf-8"))
+        }
+        page_result = client.post("https://telegra.ph/createPage", json_data=page_data, timeout=10)
 
         if page_result.get("ok"):
             page_url = page_result["result"]["url"]
@@ -72,6 +70,9 @@ def handle_telegraph(bot, m, config, db):
         else:
             bot.reply_to(m, "❌ 创建页面失败")
 
+    except HTTPRequestError as e:
+        logger.error(f"Telegraph请求失败: {e}")
+        bot.reply_to(m, "❌ 创建失败，请稍后再试")
     except Exception as e:
         logger.error(f"Telegraph异常: {e}")
         bot.reply_to(m, "❌ 创建失败，请稍后再试")

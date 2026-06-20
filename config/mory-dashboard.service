@@ -14,6 +14,7 @@ Restart=always
 RestartSec=5
 EnvironmentFile=/home/ubuntu/mory_assistant/.env
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
 
 [Install]
 WantedBy=multi-user.target

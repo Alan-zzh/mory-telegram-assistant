@@ -157,9 +157,8 @@ def handle_join_lottery(bot, call, config, db):
         logger.error(f"参与抽奖异常: {e}")
         try:
             bot.answer_callback_query(call.id, text="❌ 参与失败")
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     return True
 
 
@@ -218,9 +217,8 @@ def _draw_lottery(bot, lottery_id, config, db):
         if admin_id:
             try:
                 bot.send_message(admin_id, f"🎉 抽奖已开奖\n奖品：{prize}\n中奖者UID：{winners}")
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         logger.info(f"开奖: id={lottery_id} winners={winners}")
 
     except Exception as e:

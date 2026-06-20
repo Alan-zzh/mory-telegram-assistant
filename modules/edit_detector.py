@@ -125,9 +125,8 @@ def check_edited_message(bot, m, config: dict, db, ai, ad_detector=None) -> bool
                     f"🎯 检测结果：广告（{result['score']}分）\n"
                     f"📋 操作：删除消息 + 加黑名单"
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         return True
 
     # 检测通过，更新快照

@@ -42,6 +42,7 @@ FILES_TO_DELETE = [
     "scripts/find_bug.py",
     "scripts/full_diagnosis.py",
     "scripts/get_keyword_module.py",
+    "scripts/test_connection.py",
     "scripts/test_vps_ai.py",
 ]
 
@@ -112,9 +113,8 @@ def main():
         try:
             sftp.stat(remote_path)
             remaining.append(rel_path)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     sftp.close()
     client.close()
 

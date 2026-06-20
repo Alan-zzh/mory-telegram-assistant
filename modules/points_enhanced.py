@@ -199,8 +199,8 @@ def handle_transfer(bot, m, config, db, args=None):
                     "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
                     (uid, -amount, db.get_user_points(uid), "transfer", ts)
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             db.conn.commit()
     except Exception as e:
         logger.error(f"转账扣款异常: {e}")

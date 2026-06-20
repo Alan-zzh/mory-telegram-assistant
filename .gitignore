@@ -7,7 +7,6 @@ config.json
 .env
 .env.*
 !.env.example
-core/vps_config.py.bak
 backups/
 backup/
 logs/
@@ -37,10 +36,14 @@ _archive*/
 _old*/
 _temp*/
 __pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.log
 *.tmp
 *.zip
 *.bak
+reload_flag
 data/
 💾 备份/
 
@@ -56,6 +59,9 @@ venv/
 *.swp
 .DS_Store
 Thumbs.db
+
+# ── 缓存目录 ──────────────────────────────────────────────────────────────
+.cache/
 
 # ── AI工作目录（不含业务代码）──────────────────────────────────────────────
 .trae/

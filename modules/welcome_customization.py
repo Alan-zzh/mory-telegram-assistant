@@ -148,8 +148,8 @@ def send_welcome_message(bot, m, config: dict, db):
                     try:
                         threading.Timer(60.0, bot.delete_message, args=[chat_id, sent_msg.message_id]).start()
                         logger.info(f"🗑 自动清理欢迎消息: mid={sent_msg.message_id}（60秒后删除）")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
                 else:
                     logger.warning(f"[欢迎消息清理] ENABLE_MESSAGE_DELETION 未开启，跳过自动清理")
 

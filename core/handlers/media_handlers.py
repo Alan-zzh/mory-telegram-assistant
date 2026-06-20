@@ -11,6 +11,7 @@
 
 from core.logging_util import get_logger
 from core.helpers import format_user_mention
+from core.telebot_compat import delete_all_message_reactions_compat, delete_message_reaction_compat
 
 logger = get_logger("media_handlers")
 
@@ -18,10 +19,24 @@ logger = get_logger("media_handlers")
 def register_media_handlers(bot, ctx):
     """注册媒体与频道处理器到bot实例"""
 
+    def _relay_private_media(m, note: str) -> bool:
+        """私聊媒体消息立即转给管理员，便于管理员直接回复。"""
+        if m.chat.type != "private" or not ctx.config.get("RELAY_MODE_ENABLED", False):
+            return False
+        try:
+            from core.handlers.relay_handler import relay_original_message_to_admin
+            return relay_original_message_to_admin(
+                bot, ctx.db, ctx.config, m, source_type="private", note=note
+            )
+        except Exception as relay_err:
+            logger.debug(f"媒体中继失败（静默）: {relay_err}")
+            return False
+
     # ── 图片处理（打码+识图）───────────────────────────────────────────
     @bot.message_handler(content_types=["photo"])
     def on_photo(m):
         try:
+            _relay_private_media(m, "🖼️ 私聊图片")
             from modules.content import handle_photo
             handle_photo(bot, m, ctx.config, ctx.mory_bot, ctx.ai)
         except Exception as e:
@@ -45,12 +60,15 @@ def register_media_handlers(bot, ctx):
             # 仅私聊语音转发给管理员
             if admin_id and is_priv:
                 try:
-                    bot.forward_message(admin_id, chat_id, m.message_id,
-                                        disable_notification=True)
-                    bot.send_message(admin_id,
-                        f"🎤 语音通知\n👤 {format_user_mention(uid, uname)} 发来一条语音"
-                        f"\n⏱ 时长: {duration}秒\n💬 来源: {'私聊' if is_priv else '群聊'}",
-                        parse_mode="HTML")
+                    if ctx.config.get("RELAY_MODE_ENABLED", False):
+                        _relay_private_media(m, f"🎤 私聊语音\n⏱ 时长: {duration}秒")
+                    else:
+                        bot.forward_message(admin_id, chat_id, m.message_id,
+                                            disable_notification=True)
+                        bot.send_message(admin_id,
+                            f"🎤 语音通知\n👤 {format_user_mention(uid, uname)} 发来一条语音"
+                            f"\n⏱ 时长: {duration}秒\n💬 来源: {'私聊' if is_priv else '群聊'}",
+                            parse_mode="HTML")
                     logger.info(f"🎤 语音转发: uid={uid} duration={duration}s")
                 except Exception as e:
                     logger.error(f"🎤 语音转发失败: {e}")
@@ -63,6 +81,20 @@ def register_media_handlers(bot, ctx):
 
         except Exception as e:
             logger.error(f"语音处理异常：{e}")
+
+    @bot.message_handler(content_types=["video", "document", "audio", "sticker"])
+    def on_private_media(m):
+        """私聊常见附件直接中继给管理员，保持双线对话完整。"""
+        try:
+            note_map = {
+                "video": "🎬 私聊视频",
+                "document": "📎 私聊文件",
+                "audio": "🎵 私聊音频",
+                "sticker": "🙂 私聊贴纸",
+            }
+            _relay_private_media(m, note_map.get(getattr(m, "content_type", ""), "📦 私聊附件"))
+        except Exception as e:
+            logger.error(f"私聊附件中继异常：{e}")
 
     # ── 流失打捞（退群）─────────────────────────────────────────────────
     @bot.message_handler(content_types=["left_chat_member"])
@@ -106,3 +138,69 @@ def register_media_handlers(bot, ctx):
         forwards = getattr(m, 'forward_count', 0) or 0
         ctx.db.update_channel_post_views(cid, m.message_id, views, forwards)
         logger.debug(f"📺 频道帖子浏览量更新: chat_id={cid} msg_id={m.message_id} views={views}")
+
+    try:
+        @bot.message_reaction_handler(func=lambda update: True)
+        def on_message_reaction(update):
+            """处理 Telegram 反应事件，清理黑名单用户留下的反应。"""
+            try:
+                _handle_message_reaction_update(bot, update, ctx.config, ctx.db)
+            except Exception as e:
+                logger.debug(f"消息反应处理异常: {e}")
+
+        @bot.message_reaction_count_handler(func=lambda update: True)
+        def on_message_reaction_count(update):
+            """反应计数事件目前只做轻量观测，避免高频写库。"""
+            try:
+                chat_id = getattr(getattr(update, "chat", None), "id", 0)
+                message_id = getattr(update, "message_id", 0)
+                reactions = getattr(update, "reactions", []) or []
+                total = sum(int(getattr(item, "total_count", 0) or 0) for item in reactions)
+                logger.debug(f"消息反应计数: chat={chat_id} msg={message_id} total={total}")
+            except Exception as e:
+                logger.debug(f"消息反应计数处理异常: {e}")
+    except (AttributeError, TypeError):
+        logger.info("message_reaction_handler 不可用，跳过反应治理")
+
+
+def _handle_message_reaction_update(bot, update, config: dict, db) -> bool:
+    """清理黑名单用户新增反应，返回 True 表示已尝试处理。"""
+    if not (config or {}).get("AD_CLEANUP_REACTIONS", True):
+        return False
+
+    user = getattr(update, "user", None)
+    if not user:
+        return False
+    uid = getattr(user, "id", 0) or 0
+    if not uid or not db or not hasattr(db, "is_blacklisted"):
+        return False
+
+    try:
+        if not db.is_blacklisted(uid):
+            return False
+    except Exception as e:
+        logger.debug(f"反应黑名单检查失败: uid={uid} err={e}")
+        return False
+
+    new_reaction = getattr(update, "new_reaction", []) or []
+    if not new_reaction:
+        return False
+
+    chat_id = getattr(getattr(update, "chat", None), "id", 0) or 0
+    message_id = getattr(update, "message_id", 0) or 0
+    if not chat_id or not message_id:
+        return False
+
+    ok = False
+    try:
+        ok = bool(delete_message_reaction_compat(bot, chat_id, message_id, user_id=uid))
+    except Exception as e:
+        logger.debug(f"删除黑名单用户单条反应失败: chat={chat_id} msg={message_id} uid={uid} err={e}")
+    if not ok:
+        try:
+            ok = bool(delete_all_message_reactions_compat(bot, chat_id, user_id=uid))
+        except Exception as e:
+            logger.debug(f"删除黑名单用户全部反应失败: chat={chat_id} uid={uid} err={e}")
+
+    logger.info(f"黑名单用户反应清理: chat={chat_id} msg={message_id} uid={uid} ok={ok}")
+    return True

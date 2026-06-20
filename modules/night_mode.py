@@ -65,8 +65,8 @@ def should_mute_for_night_mode(bot, m, config: dict) -> bool:
         admin_ids = [a.user.id for a in admins]
         if m.from_user.id in admin_ids:
             return False
-    except Exception:
-        pass  # 获取管理员列表失败时不拦截
+    except Exception as e:
+        logger.debug(f"获取管理员列表异常: {e}")  # 获取管理员列表失败时不拦截
 
     return True
 

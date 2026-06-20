@@ -37,7 +37,7 @@ def api_settings_verification():
     cfg = read_config()
     cfg["VERIFICATION_CONFIG"] = {"enable": enable, "mode": mode, "timeout": timeout, "max_attempts": max_attempts}
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "验证码配置已保存（需重启Bot生效）"})
+        return jsonify({"ok": True, "msg": "验证码配置已保存（通常5到8秒内自动生效）"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
@@ -84,7 +84,7 @@ def api_settings_welcome():
         conn.commit()
     except Exception as e:
         return jsonify({"ok": False, "msg": "数据库写入失败，请检查参数"}), 500
-    return jsonify({"ok": True, "msg": "欢迎配置已保存（需重启Bot生效）"})
+    return jsonify({"ok": True, "msg": "欢迎配置已保存（通常5到8秒内自动生效）"})
 
 
 @features_bp.route("/settings/nightmode", methods=["GET", "POST"])
@@ -107,7 +107,7 @@ def api_settings_nightmode():
     cfg = read_config()
     cfg["NIGHT_MODE_CONFIG"] = {"enable": enable, "start_hour": start_hour, "end_hour": end_hour}
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "夜间模式配置已保存（需重启Bot生效）"})
+        return jsonify({"ok": True, "msg": "夜间模式配置已保存（通常5到8秒内自动生效）"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
@@ -115,6 +115,23 @@ def api_settings_nightmode():
 @login_required
 def api_settings_broadcasts():
     """定点播报配置"""
+    extra_fields = (
+        "title", "footer", "badge", "caption", "parse_mode",
+        "button_text", "button_url", "show_caption_above_media",
+        "disable_preview", "silent", "protect_content", "time",
+        "allow_paid_broadcast", "message_effect_id",
+        "direct_messages_topic_id", "suggested_post_parameters",
+        "rich_message",
+        "question", "options", "poll_type", "poll_kind",
+        "is_anonymous", "allows_multiple_answers", "correct_option_id",
+        "correct_option_ids", "explanation", "explanation_parse_mode",
+        "open_period", "close_date", "is_closed", "media",
+        "description", "description_parse_mode", "allows_changing_answer",
+        "allows_revoting", "country_codes", "members_only",
+        "shuffle_options", "hide_results_until_closes",
+        "allow_adding_options",
+        "business_connection_id", "checklist", "tasks",
+    )
     if request.method == "GET":
         cfg = read_config()
         broadcasts = cfg.get("SCHEDULED_BROADCASTS", [])
@@ -146,10 +163,13 @@ def api_settings_broadcasts():
             new_item["day_of_week"] = day_of_week
         if day_of_month is not None:
             new_item["day_of_month"] = day_of_month
+        for field in extra_fields:
+            if field in data:
+                new_item[field] = data.get(field)
         broadcasts.append(new_item)
         cfg["SCHEDULED_BROADCASTS"] = broadcasts
         if write_config(cfg):
-            return jsonify({"ok": True, "msg": "播报项已添加（需重启Bot生效）"})
+            return jsonify({"ok": True, "msg": "播报项已添加（通常5到8秒内自动生效）"})
         return jsonify({"ok": False, "msg": "保存失败"}), 500
     else:  # DELETE
         _adm = _check_admin()
@@ -166,7 +186,7 @@ def api_settings_broadcasts():
             return jsonify({"ok": False, "msg": f"未找到播报项 '{bid}'"}), 404
         cfg["SCHEDULED_BROADCASTS"] = new_broadcasts
         if write_config(cfg):
-            return jsonify({"ok": True, "msg": "播报项已删除（需重启Bot生效）"})
+            return jsonify({"ok": True, "msg": "播报项已删除（通常5到8秒内自动生效）"})
         return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
@@ -195,13 +215,16 @@ def api_broadcast_update(bid):
                 b["day_of_week"] = data["day_of_week"]
             if "day_of_month" in data:
                 b["day_of_month"] = data["day_of_month"]
+            for field in extra_fields:
+                if field in data:
+                    b[field] = data.get(field)
             updated = True
             break
     if not updated:
         return jsonify({"ok": False, "msg": f"未找到播报项 '{bid}'"}), 404
     cfg["SCHEDULED_BROADCASTS"] = broadcasts
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "播报项已更新（需重启Bot生效）"})
+        return jsonify({"ok": True, "msg": "播报项已更新（通常5到8秒内自动生效）"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
@@ -363,5 +386,5 @@ def api_settings_emoji_mask():
     cfg["AUTO_MUTE_NAMES"] = keywords
     cfg["AUTO_MUTE_NAMES_ENABLED"] = enable
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "emoji面具检测配置已保存（需重启Bot生效）"})
+        return jsonify({"ok": True, "msg": "emoji面具检测配置已保存（通常5到8秒内自动生效）"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500

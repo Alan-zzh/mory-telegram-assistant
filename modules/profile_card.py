@@ -229,9 +229,8 @@ def _build_image_card(data: dict, config: dict, db=None) -> object:
                 (data.get("_uid", 0),)
             ).fetchall()
             unlocked_ids = {row[0] for row in rows}
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # 成就图标定义（与achievement模块保持一致）
     achievement_icons = [
         ("first_checkin", "🌱"), ("checkin_7d", "🔥"), ("checkin_15d", "💪"),

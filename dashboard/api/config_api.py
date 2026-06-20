@@ -13,14 +13,25 @@ config_bp = Blueprint('config', __name__, url_prefix='/api')
 ALLOWED_CONFIG_FIELDS = {
     # 模型与路由
     "MODEL_COSTS", "MODEL_POOLS", "MODE_ROUTING",
-    # 人设与提示词
+    # 人设与提示词（含人设引擎 v5.19.0）
     "SYSTEM_PROMPT", "BASE_PERSONA", "PROMPT_TEMPLATES",
+    "PERSONA_ENGINE_ENABLED", "EMOTION_BUCKETS", "EMOTION_TRIGGERS", "EMOTION_TEMP_MAP", "ANTI_TEMPLATES",
     # 业务配置
     "SPAM_LIMIT", "IMAGE_POOL", "LOG_LEVEL", "BOT_NAME",
     "REPLY_CHANCE", "COST_STRATEGY", "BANNED_WORDS", "HATE_KEYWORDS",
     "IGNORE_BOTS", "KNOWLEDGE", "PHOTO_KEYWORDS", "PRICE_LIST",
     "SPECIAL_AUTO_REPLIES", "PUZZLE_WORD", "SLANG_DICT", "AD_RULES",
     "CHECKIN_CONFIG", "ENABLE_MESSAGE_DELETION",
+    # Telegram API 2026 适配
+    "RICH_MESSAGE_ENABLED", "BROADCAST_FORMAT_VERSION", "BROADCAST_TEMPLATE_VARIATION_ENABLED", "RICH_MESSAGE_STYLE",
+    "BUTTON_STYLE_ENABLED", "BUTTON_COLOR_MAP",
+    "CUSTOM_EMOJI_ENABLED", "CUSTOM_EMOJI_POOL",
+    "USER_PROFILE_ENABLED",
+    # [TRAE SOLO CN] v5.19.0 场景触发引擎
+    "INTENT_ROUTING_ENABLED", "INTENT_LLM_ENABLED", "INTENT_RULE_THRESHOLD",
+    "COLD_GROUP_TRIGGER_ENABLED", "COLD_GROUP_THRESHOLD_MIN", "COLD_GROUP_COOLDOWN_MIN", "COLD_GROUP_MAX_PER_RUN",
+    "NIGHT_HINT_TRIGGER_ENABLED", "NIGHT_HINT_COOLDOWN_HOURS", "NIGHT_HINT_MAX_PER_RUN",
+    "FLOOD_MEDiate_TRIGGER_ENABLED",
     # 元信息
     "_CONFIG_VERSION", "_CONFIG_UPDATED", "_SAFETY_NOTE",
 }
@@ -32,7 +43,29 @@ ALLOWED_CONFIG_FIELDS.update(ALL_CONFIGS.keys())
 @config_bp.route("/config")
 @login_required
 def api_config():
-    """获取配置（过滤敏感项）"""
+    """获取配置（过滤敏感项）
+    ---
+    tags:
+      - 配置管理
+    summary: 获取系统配置
+    description: |
+      返回当前系统配置，自动过滤敏感信息（如 API Key、Token、密码等）。
+    responses:
+      200:
+        description: 成功返回配置数据
+        schema:
+          type: object
+          properties:
+            ok:
+              type: boolean
+              example: true
+            data:
+              type: object
+              properties:
+                config:
+                  type: object
+                  description: 配置字典（已过滤敏感项）
+    """
     cfg = read_config()
     safe_cfg = {k: v for k, v in cfg.items() if not any(s in k.lower() for s in ['key', 'token', 'password', 'secret'])}
     return jsonify({"ok": True, "data": {"config": safe_cfg}})
@@ -42,7 +75,50 @@ def api_config():
 @login_required
 @admin_required
 def api_config_update():
-    """更新单个配置项"""
+    """更新单个配置项
+    ---
+    tags:
+      - 配置管理
+    summary: 更新指定配置项
+    description: |
+      更新单个配置项并触发配置热重载（通常 5-8 秒内生效）。
+      仅允许更新白名单中的配置项，需要管理员权限。
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - key
+            - value
+          properties:
+            key:
+              type: string
+              description: 配置项名称（必须在白名单中）
+              example: "BOT_NAME"
+            value:
+              description: 配置项值（支持字符串、数字、布尔、数组、对象）
+              example: "Mory"
+    responses:
+      200:
+        description: 配置更新成功
+        schema:
+          type: object
+          properties:
+            ok:
+              type: boolean
+              example: true
+            msg:
+              type: string
+              example: "配置项 BOT_NAME 已更新（通常 5 到 8 秒内自动生效）"
+      400:
+        description: 请求参数错误
+      403:
+        description: 配置项不在允许修改的白名单中
+      500:
+        description: 保存配置失败
+    """
     data = request.get_json()
     if not data:
         return jsonify({"ok": False, "msg": "无效的请求数据"}), 400
@@ -58,7 +134,7 @@ def api_config_update():
     cfg = read_config()
     cfg[key] = value
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": f"配置项 {key} 已更新（⚠️ 需重启Bot或等待自动重载后生效）"})
+        return jsonify({"ok": True, "msg": f"配置项 {key} 已更新（通常 5 到 8 秒内自动生效）"})
     return jsonify({"ok": False, "msg": "保存配置失败"}), 500
 
 
@@ -97,6 +173,193 @@ def api_config_natural():
     safe_cfg = {k: v for k, v in cfg.items() if not any(s in k.lower() for s in _sensitive_keys)}
     return jsonify({
         "ok": True,
-        "msg": (proxy.messages[-1] if proxy.messages else "已处理") + "（⚠️ 需重启Bot生效）",
+        "msg": (proxy.messages[-1] if proxy.messages else "已处理") + "（通常 5 到 8 秒内自动生效）",
         "data": {"config": safe_cfg},
     })
+
+
+# ── Telegram API 2026 适配配置 API ─────────────────────────────────────────────
+
+@config_bp.route("/config/broadcast-format", methods=["GET", "POST"])
+@login_required
+@admin_required
+def api_broadcast_format_config():
+    """播报格式配置（HTML / Rich / Auto）"""
+    cfg = read_config()
+
+    if request.method == "GET":
+        return jsonify({
+            "ok": True,
+            "data": {
+                "rich_message_enabled": cfg.get("RICH_MESSAGE_ENABLED", False),
+                "broadcast_format_version": cfg.get("BROADCAST_FORMAT_VERSION", "html"),
+                "broadcast_template_variation_enabled": cfg.get("BROADCAST_TEMPLATE_VARIATION_ENABLED", True),
+                "rich_message_style": cfg.get("RICH_MESSAGE_STYLE", {
+                    "title_bold": True,
+                    "badge_italic": True,
+                    "body_normal": True,
+                    "footer_expandable": True,
+                    "emoji_custom": False
+                })
+            }
+        })
+
+    # POST
+    data = request.get_json() or {}
+    if "rich_message_enabled" in data:
+        cfg["RICH_MESSAGE_ENABLED"] = bool(data["rich_message_enabled"])
+    if "broadcast_format_version" in data:
+        version = str(data["broadcast_format_version"]).lower()
+        if version in ["html", "rich", "auto"]:
+            cfg["BROADCAST_FORMAT_VERSION"] = version
+    if "broadcast_template_variation_enabled" in data:
+        cfg["BROADCAST_TEMPLATE_VARIATION_ENABLED"] = bool(data["broadcast_template_variation_enabled"])
+    if "rich_message_style" in data and isinstance(data["rich_message_style"], dict):
+        cfg["RICH_MESSAGE_STYLE"] = data["rich_message_style"]
+
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": "播报格式配置已更新（5-8秒内生效）"})
+    return jsonify({"ok": False, "msg": "保存配置失败"}), 500
+
+
+@config_bp.route("/config/button-style", methods=["GET", "POST"])
+@login_required
+@admin_required
+def api_button_style_config():
+    """按钮样式配置（彩色开关/颜色映射）"""
+    cfg = read_config()
+
+    if request.method == "GET":
+        return jsonify({
+            "ok": True,
+            "data": {
+                "button_style_enabled": cfg.get("BUTTON_STYLE_ENABLED", False),
+                "button_color_map": cfg.get("BUTTON_COLOR_MAP", {
+                    "buy": "success",
+                    "cancel": "danger",
+                    "info": "primary",
+                    "settings": "default"
+                })
+            }
+        })
+
+    # POST
+    data = request.get_json() or {}
+    if "button_style_enabled" in data:
+        cfg["BUTTON_STYLE_ENABLED"] = bool(data["button_style_enabled"])
+    if "button_color_map" in data and isinstance(data["button_color_map"], dict):
+        cfg["BUTTON_COLOR_MAP"] = data["button_color_map"]
+
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": "按钮样式配置已更新（5-8秒内生效）"})
+    return jsonify({"ok": False, "msg": "保存配置失败"}), 500
+
+
+@config_bp.route("/config/custom-emoji", methods=["GET", "POST"])
+@login_required
+@admin_required
+def api_custom_emoji_config():
+    """Custom Emoji 池配置"""
+    cfg = read_config()
+
+    if request.method == "GET":
+        return jsonify({
+            "ok": True,
+            "data": {
+                "custom_emoji_enabled": cfg.get("CUSTOM_EMOJI_ENABLED", False),
+                "custom_emoji_pool": cfg.get("CUSTOM_EMOJI_POOL", {})
+            }
+        })
+
+    # POST
+    data = request.get_json() or {}
+    if "custom_emoji_enabled" in data:
+        cfg["CUSTOM_EMOJI_ENABLED"] = bool(data["custom_emoji_enabled"])
+    if "custom_emoji_pool" in data and isinstance(data["custom_emoji_pool"], dict):
+        cfg["CUSTOM_EMOJI_POOL"] = data["custom_emoji_pool"]
+
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": "Custom Emoji 配置已更新（5-8秒内生效）"})
+    return jsonify({"ok": False, "msg": "保存配置失败"}), 500
+
+
+@config_bp.route("/config/user-profile", methods=["GET", "POST"])
+@login_required
+@admin_required
+def api_user_profile_config():
+    """用户画像配置"""
+    cfg = read_config()
+
+    if request.method == "GET":
+        return jsonify({
+            "ok": True,
+            "data": {
+                "user_profile_enabled": cfg.get("USER_PROFILE_ENABLED", False)
+            }
+        })
+
+    # POST
+    data = request.get_json() or {}
+    if "user_profile_enabled" in data:
+        cfg["USER_PROFILE_ENABLED"] = bool(data["user_profile_enabled"])
+
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": "用户画像配置已更新（5-8秒内生效）"})
+    return jsonify({"ok": False, "msg": "保存配置失败"}), 500
+
+
+@config_bp.route("/config/scene-triggers", methods=["GET", "POST"])
+@login_required
+@admin_required
+def api_scene_triggers_config():
+    """[TRAE SOLO CN] v5.19.0 场景触发引擎配置"""
+    cfg = read_config()
+
+    if request.method == "GET":
+        return jsonify({
+            "ok": True,
+            "data": {
+                "intent_routing_enabled": cfg.get("INTENT_ROUTING_ENABLED", False),
+                "intent_llm_enabled": cfg.get("INTENT_LLM_ENABLED", False),
+                "intent_rule_threshold": cfg.get("INTENT_RULE_THRESHOLD", 2.0),
+                "cold_group_trigger_enabled": cfg.get("COLD_GROUP_TRIGGER_ENABLED", False),
+                "cold_group_threshold_min": cfg.get("COLD_GROUP_THRESHOLD_MIN", 30),
+                "cold_group_cooldown_min": cfg.get("COLD_GROUP_COOLDOWN_MIN", 120),
+                "cold_group_max_per_run": cfg.get("COLD_GROUP_MAX_PER_RUN", 3),
+                "night_hint_trigger_enabled": cfg.get("NIGHT_HINT_TRIGGER_ENABLED", False),
+                "night_hint_cooldown_hours": cfg.get("NIGHT_HINT_COOLDOWN_HOURS", 24),
+                "night_hint_max_per_run": cfg.get("NIGHT_HINT_MAX_PER_RUN", 2),
+                "flood_mediate_trigger_enabled": cfg.get("FLOOD_MEDiate_TRIGGER_ENABLED", False),
+            }
+        })
+
+    # POST
+    data = request.get_json() or {}
+    bool_fields = {
+        "intent_routing_enabled": "INTENT_ROUTING_ENABLED",
+        "intent_llm_enabled": "INTENT_LLM_ENABLED",
+        "cold_group_trigger_enabled": "COLD_GROUP_TRIGGER_ENABLED",
+        "night_hint_trigger_enabled": "NIGHT_HINT_TRIGGER_ENABLED",
+        "flood_mediate_trigger_enabled": "FLOOD_MEDiate_TRIGGER_ENABLED",
+    }
+    num_fields = {
+        "intent_rule_threshold": ("INTENT_RULE_THRESHOLD", float),
+        "cold_group_threshold_min": ("COLD_GROUP_THRESHOLD_MIN", int),
+        "cold_group_cooldown_min": ("COLD_GROUP_COOLDOWN_MIN", int),
+        "cold_group_max_per_run": ("COLD_GROUP_MAX_PER_RUN", int),
+        "night_hint_cooldown_hours": ("NIGHT_HINT_COOLDOWN_HOURS", int),
+        "night_hint_max_per_run": ("NIGHT_HINT_MAX_PER_RUN", int),
+    }
+    for k, cfg_key in bool_fields.items():
+        if k in data:
+            cfg[cfg_key] = bool(data[k])
+    for k, (cfg_key, caster) in num_fields.items():
+        if k in data:
+            try:
+                cfg[cfg_key] = caster(data[k])
+            except (ValueError, TypeError):
+                pass
+
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": "场景触发配置已更新（5-8秒内生效）"})
+    return jsonify({"ok": False, "msg": "保存配置失败"}), 500

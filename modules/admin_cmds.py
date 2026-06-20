@@ -48,11 +48,14 @@
 ║  返回值：True=已消费该消息，False=不是管理员指令，继续往下处理           ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
+from core.config_compat import normalize_runtime_config
 
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from core.broadcast_formatter import build_broadcast_html, looks_like_html
 from core.logging_util import get_logger
+from core.telebot_compat import send_checklist_compat, send_message_compat, send_poll_compat
 from modules.natural_cmd import handle_natural_admin
 
 logger = get_logger("admin_cmds")
@@ -278,7 +281,13 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             try:
                 target_id = int(parts[1].lstrip("@"))
                 content = parts[2]
-                bot.send_message(target_id, f"📢 {config['BOT_NAME']}说：\n\n{content}")
+                text = content if looks_like_html(content) else build_broadcast_html(
+                    f"{config['BOT_NAME']}捎话",
+                    content,
+                    "这条消息由管理员代发。",
+                    "私信送达",
+                )
+                send_message_compat(bot, target_id, text, parse_mode="HTML")
                 mory_bot.reply_and_track(m, f"✅ 已私信用户 @{parts[1].lstrip('@')}")
                 logger.info(f"📨 代发→{target_id}：{content[:50]}")
             except Exception as e:
@@ -291,7 +300,13 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
     if msg.startswith("代发群 "):
         content = msg[4:].strip()
         try:
-            bot.send_message(config["GROUP_ID"], content)
+            text = content if looks_like_html(content) else build_broadcast_html(
+                "群通知",
+                content,
+                "如需更多细节，Mory稍后会继续跟进。",
+                "管理员代发",
+            )
+            send_message_compat(bot, config["GROUP_ID"], text, parse_mode="HTML")
             mory_bot.reply_and_track(m, "✅ 已发到主群。")
             logger.info(f"📢 代发群：{content[:50]}")
         except Exception as e:
@@ -309,13 +324,13 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             for ch in channels:
                 cid = ch.get("id", 0) if isinstance(ch, dict) else ch
                 try:
-                    # 【v4.5.35修复】检测内容是否含HTML标签，自动启用HTML模式
-                    import html
-                    has_html = any(tag in content for tag in ['<b>', '<i>', '<u>', '<s>', '<code>', '<pre>', '<a href='])
-                    if has_html:
-                        sent = bot.send_message(cid, content, parse_mode="HTML")
-                    else:
-                        sent = bot.send_message(cid, content)
+                    text = content if looks_like_html(content) else build_broadcast_html(
+                        "频道播报",
+                        content,
+                        "想看详细入口的话，按频道内指引继续就好。",
+                        config.get("BOT_NAME", "Mory"),
+                    )
+                    sent = send_message_compat(bot, cid, text, parse_mode="HTML")
                     db.track_channel_message(cid, sent.message_id, "text")
                     ok += 1
                 except Exception as e:
@@ -327,19 +342,108 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
     # ── 投票 ─────────────────────────────────────────────────────────────
     if msg.startswith("投票 "):
         content = msg[3:].strip()
-        parts = content.split(" ", 1)
-        if len(parts) >= 2:
-            question = parts[0]
-            options = parts[1].split(" ")
-            if len(options) >= 2:
-                try:
-                    bot.send_poll(config["GROUP_ID"], question, options, is_anonymous=False)
-                    mory_bot.reply_and_track(m, "✅ 投票已在群里发起。")
-                    logger.info(f"🗳️ 投票：{question}")
-                except Exception as e:
-                    mory_bot.reply_and_track(m, f"⚠️ 投票失败：{e}")
-        else:
-            mory_bot.reply_and_track(m, "⚠️ 格式：投票 问题 选项1 选项2 选项3")
+        try:
+            if content.startswith("{"):
+                poll_cfg = json.loads(content)
+                question = str(poll_cfg.get("question", "")).strip()
+                options = poll_cfg.get("options", [])
+                if isinstance(options, str):
+                    options = [item.strip() for item in options.split("|") if item.strip()]
+                if not question or len(options) < 2:
+                    mory_bot.reply_and_track(m, "⚠️ JSON投票需要 question 和至少2个 options")
+                    return True
+                send_poll_compat(
+                    bot,
+                    config["GROUP_ID"],
+                    question,
+                    options,
+                    is_anonymous=poll_cfg.get("is_anonymous", False),
+                    type=poll_cfg.get("type"),
+                    allows_multiple_answers=poll_cfg.get("allows_multiple_answers"),
+                    correct_option_id=poll_cfg.get("correct_option_id"),
+                    correct_option_ids=poll_cfg.get("correct_option_ids"),
+                    explanation=poll_cfg.get("explanation"),
+                    explanation_parse_mode=poll_cfg.get("explanation_parse_mode"),
+                    open_period=poll_cfg.get("open_period"),
+                    close_date=poll_cfg.get("close_date"),
+                    media=poll_cfg.get("media"),
+                    description=poll_cfg.get("description"),
+                    description_parse_mode=poll_cfg.get("description_parse_mode"),
+                    allows_changing_answer=poll_cfg.get("allows_changing_answer"),
+                    allows_revoting=poll_cfg.get("allows_revoting"),
+                    country_codes=poll_cfg.get("country_codes"),
+                    members_only=poll_cfg.get("members_only"),
+                    shuffle_options=poll_cfg.get("shuffle_options"),
+                    hide_results_until_closes=poll_cfg.get("hide_results_until_closes"),
+                    allow_adding_options=poll_cfg.get("allow_adding_options"),
+                    allow_paid_broadcast=poll_cfg.get("allow_paid_broadcast"),
+                    message_effect_id=poll_cfg.get("message_effect_id"),
+                    direct_messages_topic_id=poll_cfg.get("direct_messages_topic_id"),
+                    suggested_post_parameters=poll_cfg.get("suggested_post_parameters"),
+                )
+                mory_bot.reply_and_track(m, "✅ 新版投票已在群里发起。")
+                logger.info(f"🗳️ 新版投票：{question}")
+            else:
+                parts = content.split(" ", 1)
+                if len(parts) < 2:
+                    mory_bot.reply_and_track(m, "⚠️ 格式：投票 问题 选项1 选项2，或 投票 {JSON配置}")
+                    return True
+                question = parts[0]
+                options = parts[1].split(" ")
+                if len(options) < 2:
+                    mory_bot.reply_and_track(m, "⚠️ 至少需要2个选项")
+                    return True
+                send_poll_compat(bot, config["GROUP_ID"], question, options, is_anonymous=False)
+                mory_bot.reply_and_track(m, "✅ 投票已在群里发起。")
+                logger.info(f"🗳️ 投票：{question}")
+        except Exception as e:
+            mory_bot.reply_and_track(m, f"⚠️ 投票失败：{e}")
+        return True
+
+    # ── 新版清单（Telegram Business Checklist）────────────────────────
+    if msg.startswith("清单 "):
+        content = msg[3:].strip()
+        try:
+            if not content.startswith("{"):
+                mory_bot.reply_and_track(m, "⚠️ 格式：清单 {JSON配置}")
+                return True
+            checklist_cfg = json.loads(content)
+            business_connection_id = (
+                checklist_cfg.get("business_connection_id")
+                or config.get("TELEGRAM_BUSINESS_CONNECTION_ID")
+                or ""
+            )
+            if not business_connection_id:
+                mory_bot.reply_and_track(m, "⚠️ 未配置 TELEGRAM_BUSINESS_CONNECTION_ID，无法发送 Telegram 清单")
+                return True
+            checklist = checklist_cfg.get("checklist")
+            if not checklist:
+                title = str(checklist_cfg.get("title") or "Mory清单").strip()
+                tasks = checklist_cfg.get("tasks", [])
+                if isinstance(tasks, str):
+                    tasks = [item.strip() for item in tasks.split("|") if item.strip()]
+                checklist = {
+                    "title": title,
+                    "tasks": [
+                        {"id": idx + 1, "text": task}
+                        for idx, task in enumerate(tasks)
+                    ],
+                }
+            if not checklist.get("tasks"):
+                mory_bot.reply_and_track(m, "⚠️ 清单至少需要1个任务")
+                return True
+            send_checklist_compat(
+                bot,
+                business_connection_id,
+                config["GROUP_ID"],
+                checklist,
+                message_effect_id=checklist_cfg.get("message_effect_id"),
+                direct_messages_topic_id=checklist_cfg.get("direct_messages_topic_id"),
+            )
+            mory_bot.reply_and_track(m, "✅ Telegram 清单已发送。")
+            logger.info(f"📋 新版清单：{checklist.get('title', '')}")
+        except Exception as e:
+            mory_bot.reply_and_track(m, f"⚠️ 清单发送失败：{e}")
         return True
 
     # ── 每日简报 / /report ───────────────────────────────────────────────
@@ -523,8 +627,8 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
         try:
             user_count = db.get_user_count() if hasattr(db, 'get_user_count') else '?'
             lines.append(f"👥 用户总数：{user_count}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         try:
             today = datetime.now(_CST).strftime("%Y-%m-%d")
             today_tasks = 0
@@ -532,11 +636,11 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
                 try:
                     row = db.conn.execute("SELECT COUNT(DISTINCT task_key) FROM task_log WHERE exec_date=?", (today,)).fetchone()
                     today_tasks = row[0] if row else 0
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
             lines.append(f"📋 今日任务：{today_tasks}项已完成")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         lines.append("━" * 20)
         issues = []
         if bl_count > 3:
@@ -552,8 +656,8 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
                 issues.append(f"🔴 当前模型{days_left}天后到期！")
             elif days_left <= 7:
                 issues.append(f"⚠️ 当前模型{days_left}天后到期")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         if reply_chance == 0:
             issues.append("⚠️ 回复概率为0，Bot不会主动回复")
         if not issues:
@@ -685,9 +789,8 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
                                         bot.delete_message(chat_id, mid)
                                         scan_deleted += 1
                                         logger.info(f"🧹 阶段二删除 bot_msg={mid} (offset={offset})")
-                                    except Exception:
-                                        pass
-
+                                    except Exception as e:
+                                        logger.debug(f"操作异常: {e}")
                         except Exception as fe:
                             err_str = str(fe).lower()
                             if any(k in err_str for k in ["not found", "message_id_invalid", "bad request"]):
@@ -1076,7 +1179,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             config_path = os.path.join(base_dir, "config.json")
             with open(config_path, "r", encoding="utf-8") as f:
-                new_config = json.load(f)
+                new_config = normalize_runtime_config(json.load(f))
             
             # 更新config（保留内存中已修改的动态字段）
             preserved_keys = ["CURRENT_MODEL_INDEX", "_LAST_LEAK_WEEK", "_POOL_INDICES"]

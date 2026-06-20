@@ -15,7 +15,7 @@ dashboard/api/faq_api.py  ·  FAQ 统计与管理 API
 - POST /api/faq/distill                      - 手动触发 FAQ 蒸馏
 """
 from flask import Blueprint, jsonify, request, session
-from dashboard.helpers import login_required, get_db
+from dashboard.helpers import login_required, admin_required, get_db
 
 faq_bp = Blueprint("faq_api", __name__, url_prefix="/api/faq")
 
@@ -116,6 +116,7 @@ def get_candidates():
 
 @faq_bp.route("/candidates/<int:cid>/approve", methods=["POST"])
 @login_required
+@admin_required  # 【TRAE SOLO CN v5.18.3审计修复】写操作需管理员权限
 def approve_candidate(cid):
     """批准 FAQ 候选"""
     try:
@@ -148,6 +149,7 @@ def approve_candidate(cid):
 
 @faq_bp.route("/candidates/<int:cid>/reject", methods=["POST"])
 @login_required
+@admin_required  # 【TRAE SOLO CN v5.18.3审计修复】写操作需管理员权限
 def reject_candidate(cid):
     """拒绝 FAQ 候选"""
     try:
@@ -206,6 +208,7 @@ def get_knowledge():
 
 @faq_bp.route("/knowledge", methods=["POST"])
 @login_required
+@admin_required  # 【TRAE SOLO CN v5.18.3审计修复】写操作需管理员权限
 def add_knowledge():
     """新增 FAQ 知识库条目"""
     try:
@@ -243,6 +246,7 @@ def add_knowledge():
 
 @faq_bp.route("/knowledge/<int:faq_id>", methods=["PUT"])
 @login_required
+@admin_required  # 【TRAE SOLO CN v5.18.3审计修复】写操作需管理员权限
 def update_knowledge(faq_id):
     """更新 FAQ 知识库条目"""
     try:
@@ -280,6 +284,7 @@ def update_knowledge(faq_id):
 
 @faq_bp.route("/knowledge/<int:faq_id>", methods=["DELETE"])
 @login_required
+@admin_required  # 【TRAE SOLO CN v5.18.3审计修复】写操作需管理员权限
 def delete_knowledge(faq_id):
     """删除 FAQ 知识库条目"""
     try:
@@ -299,6 +304,7 @@ def delete_knowledge(faq_id):
 
 @faq_bp.route("/distill", methods=["POST"])
 @login_required
+@admin_required  # 【TRAE SOLO CN v5.18.3审计修复】触发蒸馏需管理员权限
 def distill():
     """手动触发 FAQ 蒸馏"""
     try:

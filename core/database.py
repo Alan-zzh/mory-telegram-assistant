@@ -55,9 +55,18 @@ class DB:
         self.conn.execute("PRAGMA journal_mode=WAL;")
         # 【v4.3.2修复F-07】WAL自动checkpoint，防止WAL文件无限增长
         self.conn.execute("PRAGMA wal_autocheckpoint=1000;")
+        # 【TRAE SOLO CN v5.18.3审计修复】busy_timeout=30s，高并发写锁等待，杜绝 database is locked
+        self.conn.execute("PRAGMA busy_timeout=30000;")
+        # 【TRAE SOLO CN v5.18.3】WAL 模式下 synchronous=NORMAL 安全且更快
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
         self._init_tables()
-        # 初始化7个Repo实例
-        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo
+        # 【v5.24.0 阶段1-A】用 WriteQueueConnectionProxy 包装连接，写操作自动走队列
+        # PRAGMA 和建表已在真实连接上执行完毕，代理包装后所有 Repo 的写操作自动全量化
+        from core.db_connection_proxy import WriteQueueConnectionProxy
+        self._real_conn = self.conn  # 保留真实连接引用（供 close/WriteQueue Worker 使用）
+        self.conn = WriteQueueConnectionProxy(self._real_conn)
+        # 初始化8个Repo实例
+        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo
         self.users = UserRepo(self)
         self.groups = GroupRepo(self)
         self.points = PointsRepo(self)
@@ -66,6 +75,7 @@ class DB:
         self.social = SocialRepo(self)
         self.questions = QuestionRepo(self)
         self.relay = RelayRepo(self)
+        self.ab_test = ABTestRepo(self)
 
     # 【v4.3.2修复F-05】添加close()方法，确保SQLite连接正确关闭
     def close(self):
@@ -86,9 +96,8 @@ class DB:
             if self.conn:
                 with _db_lock:
                     self.conn.close()
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # ──────────────────────────── 异常处理辅助 ──────────────────────────
     def _log_db_error(self, operation: str, error: Exception, level: str = "warning", context: str = ""):
         """
@@ -115,12 +124,20 @@ class DB:
             try:
                 from modules.auto_tasks import report_fault
                 report_fault("数据库严重错误", msg, "🚨")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         else:
             logger.warning(msg)
 
     # ─────────────────────────────── 初始化 ──────────────────────────────
+    def _safe_add_column(self, cursor, table: str, column: str, definition: str):
+        """[TRAE SOLO CN] v5.19.0 幂等添加列：用 PRAGMA 检查列存在性，避免 ALTER TABLE 重复执行报错"""
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        if column not in existing_cols:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            logger.info(f"✅ 列已添加: {table}.{column}")
+
     def _init_tables(self):
         with _db_lock:
             c = self.conn.cursor()
@@ -157,11 +174,23 @@ class DB:
                 PRIMARY KEY (uid, date)
             )""")
 
-            # 购物车挽回
+            # 购物车挽回（旧表，保留兼容）
             c.execute("""CREATE TABLE IF NOT EXISTS cart_recovery (
                 uid INTEGER PRIMARY KEY,
                 ts INTEGER
             )""")
+
+            # 漏斗状态机（v5.20.0 - 4阶段转化追踪 + 乐观锁并发保护）
+            c.execute("""CREATE TABLE IF NOT EXISTS funnel_state (
+                uid INTEGER PRIMARY KEY,
+                state TEXT NOT NULL DEFAULT 'touched',
+                state_ts INTEGER NOT NULL DEFAULT 0,
+                version INTEGER NOT NULL DEFAULT 1,
+                recovery_stage INTEGER NOT NULL DEFAULT 0,
+                recovery_ts INTEGER NOT NULL DEFAULT 0
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_funnel_state_state ON funnel_state(state)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_funnel_state_recovery ON funnel_state(state, recovery_stage, recovery_ts)")
 
             # 阅后即焚追踪（【修复v21.33】复合主键，Telegram message_id跨群会重复）
             c.execute("""CREATE TABLE IF NOT EXISTS reply_tracking (
@@ -1101,6 +1130,217 @@ class DB:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_relay_admin_msg ON relay_sessions(admin_chat_id, admin_msg_id)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_relay_ts ON relay_sessions(ts)")
+
+            # 用户画像表（Telegram API 2026 适配 - 支持个性化播报）
+            c.execute("""CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id INTEGER PRIMARY KEY,
+                tags TEXT DEFAULT '[]',
+                level INTEGER DEFAULT 0,
+                interests TEXT DEFAULT '[]',
+                last_interaction TIMESTAMP,
+                conversation_rounds INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_profiles_level ON user_profiles(level)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_profiles_tags ON user_profiles(tags)")
+
+            # 按钮样式表（Telegram API 2026 适配 - 彩色按钮配置）
+            c.execute("""CREATE TABLE IF NOT EXISTS button_styles (
+                button_id TEXT PRIMARY KEY,
+                style TEXT DEFAULT 'default',
+                icon_custom_emoji_id TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+
+            # A/B 测试统计表（v5.18.0 - HTML vs Rich Message 转化率对比）
+            c.execute("""CREATE TABLE IF NOT EXISTS ab_test_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_name TEXT NOT NULL,
+                format_version TEXT NOT NULL,
+                sent_count INTEGER DEFAULT 0,
+                conversion_count INTEGER DEFAULT 0,
+                ts INTEGER DEFAULT 0
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ab_test_group ON ab_test_stats(group_name, format_version)")
+
+            # 按钮点击统计表（v5.18.0 - 追踪不同样式按钮点击率）
+            c.execute("""CREATE TABLE IF NOT EXISTS button_click_stats (
+                button_id TEXT NOT NULL,
+                style TEXT DEFAULT 'default',
+                impressions INTEGER DEFAULT 0,
+                clicks INTEGER DEFAULT 0,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (button_id, style)
+            )""")
+
+            # [TRAE SOLO CN] 追溯扫描日志表（用于冷却机制）
+            c.execute("""CREATE TABLE IF NOT EXISTS retroactive_scan_log (
+                ts REAL NOT NULL,
+                scanned INTEGER DEFAULT 0,
+                ads_found INTEGER DEFAULT 0,
+                deleted INTEGER DEFAULT 0
+            )""")
+
+            # [TRAE SOLO CN] v5.19.0 新增：user_profiles 扩展 6 列（动态画像标签系统）
+            # ALTER TABLE ADD COLUMN 不支持 IF NOT EXISTS，用 PRAGMA 检查列存在性实现幂等
+            self._safe_add_column(c, "user_profiles", "activity_score", "REAL DEFAULT 0.0")
+            self._safe_add_column(c, "user_profiles", "flirt_affinity", "REAL DEFAULT 0.0")
+            self._safe_add_column(c, "user_profiles", "spend_tendency", "REAL DEFAULT 0.0")
+            self._safe_add_column(c, "user_profiles", "resistance_idx", "REAL DEFAULT 0.5")
+            self._safe_add_column(c, "user_profiles", "peak_hours", "TEXT DEFAULT '[]'")
+            self._safe_add_column(c, "user_profiles", "persona_tags", "TEXT DEFAULT '[]'")
+
+            # [v5.26.0] 用户生命周期阶段标签（New/Active/Silent/Churning/Lost）
+            self._safe_add_column(c, "user_profiles", "lifecycle_stage", "TEXT DEFAULT 'New'")
+
+            # ── [TRAE SOLO CN] v5.19.0 A/B 测试与 Telemetry 表 ──────
+            c.execute("""CREATE TABLE IF NOT EXISTS ab_experiments (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                description TEXT DEFAULT '',
+                variant_a_name TEXT DEFAULT 'A',
+                variant_b_name TEXT DEFAULT 'B',
+                variant_a_config TEXT DEFAULT '{}',
+                variant_b_config TEXT DEFAULT '{}',
+                traffic_split INTEGER DEFAULT 50,
+                scope TEXT DEFAULT 'private',
+                status TEXT DEFAULT 'running',
+                start_time INTEGER DEFAULT 0,
+                end_time INTEGER DEFAULT 0,
+                rolled_back_at INTEGER DEFAULT 0,
+                created_at INTEGER DEFAULT 0
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS ab_user_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experiment_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER DEFAULT 0,
+                variant TEXT NOT NULL DEFAULT 'A',
+                assigned_at INTEGER DEFAULT 0,
+                UNIQUE(experiment_id, user_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ab_assign_exp_user ON ab_user_assignments(experiment_id, user_id)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS telemetry_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER DEFAULT 0,
+                experiment_id TEXT DEFAULT '',
+                variant TEXT DEFAULT '',
+                event_type TEXT NOT NULL,
+                event_value REAL DEFAULT 0,
+                event_meta TEXT DEFAULT '{}',
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_exp ON telemetry_events(experiment_id, variant, event_type, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_user ON telemetry_events(user_id, ts)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS conversation_telemetry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER DEFAULT 0,
+                experiment_id TEXT DEFAULT '',
+                variant TEXT DEFAULT '',
+                message_text TEXT DEFAULT '',
+                bot_reply_text TEXT DEFAULT '',
+                intent TEXT DEFAULT '',
+                sentiment TEXT DEFAULT '',
+                round_num INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_conv_telemetry_exp ON conversation_telemetry(experiment_id, variant, ts)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS weekly_ab_report (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                week_start TEXT NOT NULL,
+                experiment_id TEXT NOT NULL,
+                variant_a_ctr REAL DEFAULT 0,
+                variant_b_ctr REAL DEFAULT 0,
+                variant_a_conversion REAL DEFAULT 0,
+                variant_b_conversion REAL DEFAULT 0,
+                top_positive_features TEXT DEFAULT '[]',
+                top_negative_features TEXT DEFAULT '[]',
+                recommendation TEXT DEFAULT '',
+                generated_at INTEGER DEFAULT 0,
+                UNIQUE(week_start, experiment_id)
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS ab_guardian_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experiment_id TEXT NOT NULL,
+                alert_type TEXT NOT NULL,
+                alert_reason TEXT DEFAULT '',
+                threshold_value REAL DEFAULT 0,
+                actual_value REAL DEFAULT 0,
+                action_taken TEXT DEFAULT '',
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_guardian_exp ON ab_guardian_log(experiment_id, ts)")
+
+            # ── [阶段2-C] 多模型路由 A/B 测试指标表 ──────────────────
+            # 记录每次 AI 调用的延迟/成本/转化，按 group 聚合分析模型效能
+            c.execute("""CREATE TABLE IF NOT EXISTS ab_test_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL DEFAULT 0,
+                group_name TEXT NOT NULL DEFAULT '',
+                model TEXT DEFAULT '',
+                latency_ms REAL DEFAULT 0,
+                cost REAL DEFAULT 0,
+                converted INTEGER DEFAULT 0,
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ab_metrics_group ON ab_test_metrics(group_name, model, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ab_metrics_ts ON ab_test_metrics(ts)")
+
+            # ── [v5.26.0] 内容质量评估表（LLM-as-a-Judge）──────────
+            # 存储 LLM 评估的对话质量评分（自然度/相关性/人格一致性）
+            c.execute("""CREATE TABLE IF NOT EXISTS interaction_quality_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                naturalness_score INTEGER NOT NULL CHECK(naturalness_score BETWEEN 1 AND 5),
+                relevance_score INTEGER NOT NULL CHECK(relevance_score BETWEEN 1 AND 5),
+                persona_score INTEGER NOT NULL CHECK(persona_score BETWEEN 1 AND 5),
+                evaluated_at INTEGER NOT NULL,
+                reason TEXT DEFAULT '',
+                UNIQUE(conversation_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_quality_scores_evaluated_at ON interaction_quality_scores(evaluated_at)")
+
+            # ── [阶段3-E] RBAC 权限变更审批流表 ──────────────────
+            # 记录每次权限变更申请的完整生命周期：申请/审批/拒绝/取消
+            # 审批通过后由 dashboard/rbac_approval.py 同步更新 user_roles 表
+            c.execute("""CREATE TABLE IF NOT EXISTS permission_change_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                requester_id INTEGER NOT NULL,
+                target_user_id INTEGER NOT NULL,
+                requested_role TEXT NOT NULL,
+                reason TEXT,
+                status TEXT DEFAULT 'pending',
+                approver_id INTEGER,
+                approved_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_perm_req_status ON permission_change_requests(status)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_perm_req_target ON permission_change_requests(target_user_id)")
+
+            # ── [v5.24.0 阶段3-C] 多 Bot 任务分工编排路由表 ──────────────
+            # 静态路由表：决定哪个 Bot 负责哪个群组的哪些模块
+            # allowed_modules 为 JSON 数组，如 ["group_chat","scheduled_broadcast","direct_sales"]
+            # 详见 core/bot_routing.py
+            c.execute("""CREATE TABLE IF NOT EXISTS bot_group_routing (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                allowed_modules TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(bot_id, chat_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_bot_routing_chat ON bot_group_routing(chat_id, is_active)")
 
             self.conn.commit()
 

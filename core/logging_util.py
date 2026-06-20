@@ -12,6 +12,7 @@ import logging
 import json
 import sys
 import time  # 【v4.3.2修复M-08】补充import time（log_execution需要）
+import os
 import traceback
 from threading import local
 from logging.handlers import RotatingFileHandler
@@ -232,6 +233,48 @@ def log_execution(logger_name: str = 'main', level: int = logging.DEBUG,
         return wrapper
     return decorator
 
+def cleanup_old_logs(log_dir: str, retention_days: int = 30) -> int:
+    """
+    清理超过指定天数的日志文件
+
+    Args:
+        log_dir: 日志目录路径
+        retention_days: 保留天数，默认30天
+
+    Returns:
+        删除的文件数量
+    """
+    if not os.path.exists(log_dir):
+        return 0
+
+    cutoff_time = time.time() - (retention_days * 86400)
+    removed_count = 0
+
+    try:
+        for filename in os.listdir(log_dir):
+            if not filename.endswith('.log'):
+                continue
+
+            filepath = os.path.join(log_dir, filename)
+            if not os.path.isfile(filepath):
+                continue
+
+            try:
+                file_mtime = os.path.getmtime(filepath)
+                if file_mtime < cutoff_time:
+                    os.remove(filepath)
+                    removed_count += 1
+            except Exception as e:
+                # 单个文件删除失败不影响其他文件
+                logger.debug(f"日志文件删除失败: {filepath} - {e}")
+
+    except Exception as e:
+        # 目录读取失败
+        logger.debug(f"日志目录读取失败: {log_dir} - {e}")
+
+    return removed_count
+
+
 # time模块已在文件顶部导入
 
 __all__ = [
@@ -242,4 +285,5 @@ __all__ = [
     'clear_logging_context',
     'exception_handler',
     'log_execution',
+    'cleanup_old_logs',
 ]

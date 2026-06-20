@@ -233,9 +233,8 @@ class ProactiveEngage:
                 message_id=sent_msg.message_id,
                 reply_markup=fb_markup,
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     # ────────────────────────── 内部方法 ──────────────────────────
 
     def _generate_reply(self, msg: str, matched_keyword: str, uname: str, uid: int = 0) -> str:
@@ -362,8 +361,8 @@ class ProactiveEngage:
             for w in words:
                 if w in word_kws:
                     return w
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         return ""
 
     def _is_in_cooldown(self, uid: int, cooldown_minutes: int) -> bool:
@@ -447,9 +446,8 @@ class ProactiveEngage:
                 self._daily_count_dict[uid] = (today, 1)
             else:
                 self._daily_count_dict[uid] = (today, entry[1] + 1)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     def _maybe_cleanup_cooldowns(self):
         """每10分钟清理一次过期冷却和昨日计数（防内存膨胀）"""
         try:
@@ -468,5 +466,5 @@ class ProactiveEngage:
                 stale = [uid for uid, entry in self._daily_count_dict.items() if entry[0] != today]
                 for uid in stale:
                     del self._daily_count_dict[uid]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")

@@ -108,9 +108,8 @@ def handle_backup(bot, m, config, db):
             )
         try:
             os.unlink(tmp_path)
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         logger.info(f"群设置备份: chat={chat_id} by={uid} records={_sum_counts(backup_data)}")
 
     except Exception as e:

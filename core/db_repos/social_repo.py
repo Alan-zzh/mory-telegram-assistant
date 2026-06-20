@@ -15,6 +15,15 @@ class SocialRepo:
     def __init__(self, db):
         """db: DB实例，通过 db.conn 和 db.lock 访问连接和锁"""
         self._db = db
+        self._fsm = None  # 延迟初始化 FunnelStateMachine
+
+    @property
+    def fsm(self):
+        """延迟初始化漏斗状态机（避免循环导入）"""
+        if self._fsm is None:
+            from core.funnel_state_machine import FunnelStateMachine
+            self._fsm = FunnelStateMachine(self._db)
+        return self._fsm
 
     @property
     def conn(self):
@@ -99,36 +108,114 @@ class SocialRepo:
                 break
         return count
 
-    # ─────────────────────────────── 购物车 ──────────────────────────────
-    def set_cart(self, uid: int):
+    # ─────────────────────────────── 购物车（兼容旧接口 + 状态机集成）──
+    def set_cart(self, uid: int, is_memory_assisted: bool = False):
+        """
+        将用户标记为购物车状态。
+        同时写入旧表 cart_recovery（兼容）和 funnel_state 状态机，
+        并初始化挽回时间线（15分钟后触发第一次挽回）。
+
+        【TRAE SOLO CN v5.18.3审计修复】converted 用户复购时允许重新进入 carted，
+        状态机 TRANSITION_MAP 已支持 converted→carted 流转。
+        【阶段3-A】is_memory_assisted 透传给 funnel_state.transition 用于记忆归因。
+        """
         with self.lock:
+            # 旧表兼容
             self.conn.execute("INSERT OR REPLACE INTO cart_recovery VALUES (?,?)",
                              (uid, int(time.time())))
             self.conn.commit()
+        # 状态机：转换到 carted（converted 用户复购时也允许，TRANSITION_MAP 已支持）
+        if self.fsm.transition(uid, "carted", is_memory_assisted=is_memory_assisted):
+            # 初始化挽回时间线：15分钟后第一次触发
+            self.init_cart_recovery(uid)
 
     def get_expired_carts(self, delay_seconds: int = 86400):
+        """
+        获取超时未成交的购物车用户（兼容旧接口）。
+        同时从旧表删除记录。
+        """
         cutoff = int(time.time()) - delay_seconds
         with self.lock:
             c = self.conn.cursor()
             c.execute("SELECT uid FROM cart_recovery WHERE ts<?", (cutoff,))
             rows = [r[0] for r in c.fetchall()]
             if rows:
-                # 【v4.3.2修复S-09】添加长度限制，防止IN子句过长
                 rows = rows[:100]
                 self.conn.execute(f"DELETE FROM cart_recovery WHERE uid IN ({','.join('?'*len(rows))})",
                                  rows)
                 self.conn.commit()
             return rows
 
-    # ─────────────────────────────── 转化漏斗（事件化） ───────────────────
+    # ─────────────────────────────── 购物车挽回（新接口 - 时间衰减调度）──
+
+    def init_cart_recovery(self, uid: int):
+        """
+        初始化购物车挽回时间线。
+        设置 stage=0，并在 15分钟后触发第一次挽回。
+        只在用户首次进入 carted 状态时调用。
+        """
+        now_ts = int(time.time())
+        first_trigger = now_ts + 900  # 15分钟后
+        return self.fsm.set_recovery_stage(uid, 0, first_trigger)
+
+    def advance_recovery_stage(self, uid: int, stage: int) -> bool:
+        """
+        推进挽回阶段并设置下次触发时间。
+        stage=1 → 2小时后触发
+        stage=2 → 24小时后触发
+        stage=3 → 终态，不再触发
+        """
+        now_ts = int(time.time())
+        intervals = {1: 7200, 2: 86400}  # 2小时, 24小时
+        next_ts = now_ts + intervals.get(stage, 999999999)
+        return self.fsm.set_recovery_stage(uid, stage, next_ts)
+
+    def get_pending_cart_recoveries(self, limit: int = 20) -> list:
+        """
+        获取当前需要触发挽回的用户列表。
+        返回 [(uid, recovery_stage), ...]
+        """
+        return self.fsm.get_pending_recoveries()[:limit]
+
+    def cancel_cart_recovery(self, uid: int):
+        """用户已转化，取消所有挽回任务"""
+        self.fsm.cancel_recovery(uid)
+
+    # ─────────────────────────────── 转化漏斗（事件化 - 纯日志，状态由状态机管理）──
     def log_conversion_event(self, uid: int, event: str, mode: str = ""):
-        """event: touched | interested | consulted | paid"""
+        """
+        写入转化漏斗事件日志（仅记录，不改变状态机状态）。
+        状态流转由 set_cart() / transition() 等显式方法控制。
+        event: touched | interested | consulted | paid
+        """
         with self.lock:
             self.conn.execute(
                 "INSERT INTO conversion_events(uid, event, ts, mode) VALUES (?, ?, ?, ?)",
                 (uid, event, int(time.time()), mode)
             )
             self.conn.commit()
+
+    def log_paid(self, uid: int, value: float = 0, chat_id: int = 0, mode: str = "",
+                 is_memory_assisted: bool = False):
+        """
+        记录支付事件：写入日志 + 状态机转换到 converted + 取消挽回。
+        这是唯一应触发 converted 状态的入口。
+
+        【阶段3-A】is_memory_assisted 透传给 funnel_state.transition 用于记忆归因。
+        """
+        # 事件日志
+        self.log_conversion_event(uid, "paid", mode)
+        # 写入 conversions 表（金额追踪）
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO conversions(uid, event, value, chat_id, ts) VALUES (?, ?, ?, ?, ?)",
+                (uid, "paid", value, chat_id, int(time.time()))
+            )
+            self.conn.commit()
+        # 状态机：转换到 converted + 取消挽回
+        if self.fsm.transition(uid, "converted", mode, is_memory_assisted=is_memory_assisted):
+            self.cancel_cart_recovery(uid)
+            logger.info(f"💰 用户转化: uid={uid} value={value}")
 
     def get_user_consult_count(self, uid: int, window: int = 86400) -> int:
         """查询用户convert咨询次数（默认24小时内）"""

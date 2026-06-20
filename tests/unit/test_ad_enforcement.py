@@ -102,15 +102,18 @@ def test_enforce_ad_user_mutes_deletes_and_never_kicks_or_bans():
     )
 
     assert result["code"] == 200
-    assert bot.deleted == [(-1001, 66), (-1001, 60)]
+    assert bot.deleted == [(-1001, 66), (-1001, 60), (-1001, 61)]
     assert len(bot.restricted) == 1
     assert bot.restricted[0][0:2] == (-1001, 42)
+    assert bot.restricted[0][2]["permissions"]["can_react_to_messages"] is False
+    assert bot.restricted[0][2]["permissions"]["can_send_paid_media"] is False
     assert bot.ban_calls == []
     assert bot.kick_calls == []
     assert db.blacklist == [(42, "[Codex] 单测广告")]
     assert any("global_blacklist" in sql for sql, _ in db.conn.executed)
     assert (-1001, 66) in db.marked
     assert (-1001, 60) in db.marked
+    assert (-1001, 61) in db.marked
     assert any(call[0] == 99 for call in bot.sent)
 
 
@@ -134,6 +137,29 @@ def test_enforce_ad_user_keeps_mute_and_blacklist_when_deletion_disabled():
     assert result["code"] == 200
     assert bot.deleted == []
     assert len(bot.restricted) == 1
+    assert result["data"]["reactions_cleaned"] is False
     assert db.blacklist == [(42, "[Codex] 删除关闭")]
     assert bot.ban_calls == []
     assert bot.kick_calls == []
+
+
+def test_enforce_ad_user_reports_reaction_cleanup(monkeypatch):
+    from modules import ad_enforcement
+    from modules.ad_enforcement import enforce_ad_user
+
+    bot = _FakeBot()
+    db = _FakeDB()
+    monkeypatch.setattr(ad_enforcement, "delete_all_message_reactions_compat", lambda *args, **kwargs: True)
+
+    result = enforce_ad_user(
+        bot=bot,
+        db=db,
+        config={"ENABLE_MESSAGE_DELETION": False, "AD_CLEANUP_REACTIONS": True},
+        chat_id=-1001,
+        uid=42,
+        uname="广告号",
+        reason="[Codex] 清反应",
+        current_msg_id=66,
+    )
+
+    assert result["data"]["reactions_cleaned"] is True

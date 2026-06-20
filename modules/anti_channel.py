@@ -47,9 +47,8 @@ def check_anti_channel(bot, m, config, db):
         member = bot.get_chat_member(chat_id, uid)
         if member.status in ("administrator", "creator"):
             return False
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # 检查是否为频道转发
     is_channel_forward = False
     if m.forward_origin:

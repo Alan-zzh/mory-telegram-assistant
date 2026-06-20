@@ -1,0 +1,52 @@
+# vulture 白名单（v5.28.0 重写，仅保留经验证有效的条目）
+# 格式：Python 文件，引用的名称会被 vulture 视为"已使用"
+# 验证日期：2026-06-20，基于实际代码库 grep 验证
+
+# === Handler 注册函数（main.py 动态 import 调用） ===
+# main.py:115-128 通过 from ... import + 直接调用注册
+register_member_handlers
+register_callback_handlers
+register_media_handlers
+register_business_handlers
+
+# === 配置函数（模块级，可能被动态读取） ===
+# core/settings.py:323, core/bot_initializer.py:252
+get_config
+load_config
+
+# === Telegram Bot 回调处理器（嵌套闭包，装饰器注册） ===
+# core/handlers/callback_handlers.py 内 @bot.callback_query_handler 装饰的嵌套函数
+on_settings_callback
+on_verify_callback
+on_feedback_callback
+on_lottery_callback
+on_vote_kick_callback
+
+# === APScheduler 定时任务回调 ===
+# modules/scheduled_msg.py:97，被 modules/auto_tasks.py:4288 动态 import 调用
+run_scheduled_messages
+
+# === 魔术方法（Python 框架隐式调用） ===
+# 代码库 59 个文件 110 处定义，vulture 无法识别框架调用
+__init__
+__str__
+__repr__
+__call__
+__enter__
+__exit__
+__del__
+__getattr__
+__setattr__
+__getitem__
+__setitem__
+__delitem__
+__iter__
+__next__
+__len__
+__contains__
+
+# === pytest 约定（测试框架动态发现） ===
+setup_module
+teardown_module
+setup_function
+teardown_function

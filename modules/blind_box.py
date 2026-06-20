@@ -119,9 +119,8 @@ def handle_blind_box(bot, m, config, db):
             ).fetchone()
             if prob_row:
                 prob_info = f"\n📊 概率：{prob_row[0]}%"
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         # 发放奖品积分
         if prize_value > 0:
             _lv_result = db.add_points(uid, prize_value, source="blindbox")

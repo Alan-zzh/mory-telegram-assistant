@@ -30,8 +30,8 @@ def _get_settings(db, chat_id):
         ).fetchone()
         if row:
             return {"enabled": row[0], "threshold": row[1]}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return None
 
 
@@ -63,9 +63,8 @@ def check_nsfw_image(bot, m, config, db):
         member = bot.get_chat_member(chat_id, uid)
         if member.status in ("administrator", "creator"):
             return False
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # 调用NSFW检测API
     try:
         score = _detect_nsfw(bot, photo, config)

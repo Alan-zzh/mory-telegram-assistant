@@ -11,25 +11,18 @@
 ```
 tests/
 ├── README.md           # 本文件
-├── _archive/           # 历史归档（v5.12.1 之前根目录 47 个 _*.py 临时文件）
 ├── integration/        # 集成测试（端到端、多模块协作）
 └── unit/               # 单元测试（单函数/单模块）
 ```
 
-## 📦 _archive/ 归档内容
+## 🧹 历史清理说明
 
-- **来源**：根目录 47 个 `_*.py`（`v5.12.0 之前`临时诊断/测试文件）
-- **原因**：违反 F1 铁律（测试在 `tests/`、根目录禁临时文件）
-- **保留策略**：**只读**（不再修改/运行）
-- **典型文件**：
-  - `_check_vps.py` ~ `_check_vps16.py`（VPS 配置/状态检查）
-  - `_test_*.py`（临时功能验证）
-  - `_read_log*.py`（日志读取）
-  - `_cleanup_ads.py` / `_debug_ad.py`（广告检测调试）
-  - `_verify_deploy.py` / `_deploy_fix.py`（部署验证）
-  - `_delete_ads*.py` / `_manual_burn.py`（消息删除）
-  - `_task1_survey.py`（任务调研）
-- **完整列表**：`Get-ChildItem tests/_archive/`
+- 旧的一次性 `_*.py` 调试/测试脚本已经不再作为仓库资产保留。
+- 这类脚本如果仍有价值，应重写为：
+  - `tests/unit/test_xxx.py`
+  - `tests/integration/test_xxx_integration.py`
+  - 或 `scripts/verify_xxx.py`
+- 以后不再新增 `tests/_archive/` 这种长期堆放区，避免继续沉积失真的旧脚本。
 
 ## 🆕 新测试如何写？
 
@@ -44,7 +37,7 @@ tests/
 ## ⚠️ 不要再做的事
 
 - ❌ 根目录写 `_test_xxx.py` / `_check_xxx.py` / `_debug_xxx.py`
-- ❌ 在 `tests/_archive/` 里修改/运行旧文件
+- ❌ 再建新的历史测试堆放目录
 - ❌ 把测试放在 `scripts/` 目录（除非叫 `verify_*` 端到端脚本）
 
 ## 🔗 相关

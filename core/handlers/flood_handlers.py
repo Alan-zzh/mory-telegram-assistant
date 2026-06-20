@@ -42,9 +42,8 @@ def check_antiflood(dctx) -> bool:
                 handle_flood_user(bot, m, CONFIG, db)
                 clear_logging_context()
                 return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -67,9 +66,8 @@ def check_anti_channel(dctx) -> bool:
         if check_anti_channel(bot, m, CONFIG, db):
             clear_logging_context()
             return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -96,9 +94,8 @@ def check_nsfw(dctx) -> bool:
         if check_nsfw_image(bot, m, CONFIG, db):
             clear_logging_context()
             return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -148,15 +145,14 @@ def check_message_lock(dctx) -> bool:
             if CONFIG.get("ENABLE_MESSAGE_DELETION", False):
                 try:
                     bot.delete_message(chat_id, m.message_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
             else:
                 logger.warning(f"[消息锁] ENABLE_MESSAGE_DELETION 未开启，跳过删除消息")
             clear_logging_context()
             return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -182,9 +178,8 @@ def check_slow_mode(dctx) -> bool:
         if uid not in admin_ids and check_slow_mode(bot, m, CONFIG, db):
             clear_logging_context()
             return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -207,9 +202,8 @@ def check_clean_service(dctx) -> bool:
         if check_clean_service(bot, m, CONFIG, db):
             clear_logging_context()
             return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 

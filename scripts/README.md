@@ -1,16 +1,13 @@
 # Scripts
 
-调试和诊断工具集，仅在需要时手动运行。
+当前保留的都是还在用的运维脚本，不再保留那批一次性调试脚本说明。
 
 ## 脚本清单
 
 | 脚本 | 用途 |
 |------|------|
-| debug_db.py | VPS数据库查询诊断 |
-| debug_vps.py | VPS全面诊断脚本 |
-| deep_check.py | 深度关键词触发诊断 |
-| find_bug.py | 历史日志错误排查 |
-| full_diagnosis.py | VPS全功能诊断报告 |
-| get_keyword_module.py | 查看VPS keyword_trigger模块 |
-| test_connection.py | 通义千问API连接测试 |
-| test_vps_ai.py | VPS AI功能数据检查 |
+| cleanup_vps.py | 清理 VPS 上遗留的旧脚本和垃圾文件（基础版） |
+| cleanup_vps_full.py | VPS 完整清理：垃圾文件 + __pycache__ + logrotate 配置 + journal 清理（v5.22.0 审计配套） |
+| restart_bot.py | 远端重启 Bot 服务 |
+| restore_after_reinstall.py | VPS 重装后恢复项目运行态 |
+| ssh_helper.py | 统一 SSH 连接与命令执行辅助 |

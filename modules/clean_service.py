@@ -202,8 +202,8 @@ def check_clean_service(bot, m, config, db) -> bool:
             try:
                 bot.delete_message(chat_id, m.message_id)
                 logger.debug(f"🗑️ 已清理服务消息: chat={chat_id} msg={m.message_id} type={m.content_type}")
-            except Exception:
-                pass  # 消息已删除或无权限，静默忽略
+            except Exception as e:
+                logger.debug(f"消息删除异常: {e}")  # 消息已删除或无权限，静默忽略
         threading.Timer(3.0, _delayed_delete).start()
     except Exception as e:
         logger.warning(f"服务消息删除调度失败: {e}")

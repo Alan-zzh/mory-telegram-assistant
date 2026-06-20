@@ -9,6 +9,7 @@ from functools import wraps
 from pathlib import Path
 from flask import g, jsonify, session
 from datetime import datetime, timedelta, timezone
+from core.config_compat import normalize_runtime_config, compact_runtime_config
 
 _CST = timezone(timedelta(hours=8))
 
@@ -21,8 +22,8 @@ def _signal_config_reload():
     """通知Bot进程重载配置"""
     try:
         RELOAD_FLAG.touch()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
 sys.path.insert(0, _MORY_ROOT)
 from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH
 
@@ -63,8 +64,11 @@ def get_db():
     if mode == "media":
         _ensure_media_db(db_path)
     if 'db' not in g:
-        g.db = sqlite3.connect(db_path)
+        # 【TRAE SOLO CN v5.18.3审计修复】Dashboard 连接加 WAL + busy_timeout，防止与 Bot 进程互锁
+        g.db = sqlite3.connect(db_path, timeout=30.0)
         g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA journal_mode=WAL")
+        g.db.execute("PRAGMA busy_timeout=30000")
     return g.db
 
 
@@ -86,7 +90,7 @@ def read_config():
             return _config_cache["data"]
         # 缓存未命中：重新读取
         with open(cfg_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            data = normalize_runtime_config(json.load(f))
         _config_cache["data"] = data
         _config_cache["mtime"] = mtime
         _config_cache["loaded_at"] = now
@@ -100,6 +104,7 @@ def write_config(cfg):
     cfg_path = os.path.join(_MORY_ROOT, "config.json")
     tmp_path = cfg_path + ".tmp"
     try:
+        cfg = compact_runtime_config(cfg)
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, cfg_path)
@@ -108,8 +113,8 @@ def write_config(cfg):
     except Exception:
         try:
             os.unlink(tmp_path)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         return False
 
 
@@ -235,12 +240,14 @@ def admin_required(f):
     def wrapped(*args, **kwargs):
         if not session.get("logged_in"):
             return jsonify({"ok": False, "msg": "未登录"}), 401
-        if session.get("role", "admin") != "admin":
+        # 【TRAE SOLO CN v5.18.3审计修复】默认 viewer，最小权限原则
+        if session.get("role", "viewer") != "admin":
             return jsonify({"ok": False, "msg": "需要管理员权限"}), 403
         return f(*args, **kwargs)
     return wrapped
 
 
 def get_current_role():
-    """获取当前登录用户的角色"""
-    return session.get("role", "admin")
+    """获取当前登录用户的角色（默认 viewer，最小权限原则）"""
+    # 【TRAE SOLO CN v5.18.3审计修复】默认 viewer 而非 admin，防止 session 异常时越权
+    return session.get("role", "viewer")

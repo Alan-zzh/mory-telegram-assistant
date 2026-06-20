@@ -14,7 +14,65 @@ stats_bp = Blueprint('stats', __name__, url_prefix='/api')
 @stats_bp.route("/stats/overview")
 @login_required
 def api_stats_overview():
-    """数据概览"""
+    """数据概览
+    ---
+    tags:
+      - 数据统计
+    summary: 获取系统整体运行数据概览
+    description: |
+      返回用户总数、活跃用户、消息统计、在线趋势、小时分布、
+      转化漏斗、群组统计、频道统计及 VPS 运行状态。
+    responses:
+      200:
+        description: 成功返回概览数据
+        schema:
+          type: object
+          properties:
+            ok:
+              type: boolean
+              example: true
+            data:
+              type: object
+              properties:
+                total_users:
+                  type: integer
+                  description: 用户总数
+                today_active:
+                  type: integer
+                  description: 今日活跃用户数
+                week_active:
+                  type: integer
+                  description: 近 7 天活跃用户数
+                month_active:
+                  type: integer
+                  description: 近 30 天活跃用户数
+                total_group_msgs:
+                  type: integer
+                  description: 群消息总数
+                total_private_msgs:
+                  type: integer
+                  description: 私聊消息总数
+                online_trend:
+                  type: array
+                  description: 近 7 天新增用户趋势
+                hourly_dist:
+                  type: object
+                  description: 小时活跃分布
+                conversion_funnel:
+                  type: object
+                  description: 转化漏斗
+                group_stats:
+                  type: object
+                  description: 群组近 7 天加入/退出统计
+                channel_stats:
+                  type: object
+                  description: 频道帖子及阅读量统计
+                vps:
+                  type: object
+                  description: VPS 运行状态
+      500:
+        description: 内部错误
+    """
     stats = {
         "total_users": 0, "today_active": 0, "week_active": 0, "month_active": 0,
         "total_group_msgs": 0, "total_private_msgs": 0,
@@ -73,7 +131,65 @@ def api_stats_overview():
 @stats_bp.route("/stats/users")
 @login_required
 def api_stats_users():
-    """用户列表"""
+    """用户列表
+    ---
+    tags:
+      - 数据统计
+    summary: 分页获取用户列表
+    description: |
+      支持分页、搜索（按用户名或 UID）、排序。
+      返回用户信息及等级积分。
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        required: false
+        default: 1
+        description: 页码
+      - name: per_page
+        in: query
+        type: integer
+        required: false
+        default: 20
+        description: 每页数量
+      - name: search
+        in: query
+        type: string
+        required: false
+        description: 搜索关键词（用户名或 UID）
+      - name: sort
+        in: query
+        type: string
+        required: false
+        default: last_active
+        enum: [uid, name, first_seen, last_active, group_messages, private_messages]
+        description: 排序字段
+      - name: order
+        in: query
+        type: string
+        required: false
+        default: desc
+        enum: [asc, desc]
+        description: 排序方向
+    responses:
+      200:
+        description: 成功返回用户列表
+        schema:
+          type: object
+          properties:
+            ok:
+              type: boolean
+              example: true
+            data:
+              type: object
+              properties:
+                users:
+                  type: array
+                  description: 用户列表
+                pagination:
+                  type: object
+                  description: 分页信息
+    """
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
     search = request.args.get("search", "").strip()
@@ -290,15 +406,15 @@ def api_user_analytics():
             day_end = day_start + 86400
             cnt = conn.execute("SELECT COUNT(*) FROM users WHERE last_active>=? AND last_active<?", (day_start, day_end)).fetchone()[0]
             trend.append({"date": day_str, "dau": cnt})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     top_users = []
     try:
         rows = conn.execute("SELECT uid, name, group_messages, last_active FROM users ORDER BY group_messages DESC LIMIT 10").fetchall()
         for r in rows:
             top_users.append({"uid": r[0], "name": r[1] or "未知", "messages": r[2], "last_active": r[3]})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return jsonify({"ok": True, "data": {
         "total_users": total_users, "dau": dau, "wau": wau, "mau": mau,
         "churn_risk": churn_risk, "lost": lost,

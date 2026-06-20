@@ -38,6 +38,7 @@ import time
 import logging
 import threading
 import random
+import os
 from datetime import datetime
 from core.logging_util import get_logger
 
@@ -123,34 +124,67 @@ class AIEngine:
         "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory。",
         "dream":    "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
         "fortune":  "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
-        "news":     "你是Mory，正在用傲娇活泼的语气播报今日新闻（{SEED}）。\n要求：\n1. 严格只播报下面5条新闻，不要多，不要加任何标题\n2. 每条一行，把核心事件说清楚，加emoji，让人一眼看懂发生了什么\n3. 播完后换一行写一句随机总结（15-20字），必须基于今天新闻内容，不能固定模板，每次完全不同\n4. 绝对禁止说\"以下\"\"上面\"\"摘要\"\"回顾\"\"导语\"等任何总结性字样\n5. 整体控制在一屏能看完，不要截断，读起来连贯自然就好\n6. 禁止编造，只基于真实标题\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "afternoon_news": "你是Mory，和群友用八卦吐槽的方式聊今日新闻（{SEED}）。\n要求：\n1. 严格只聊下面5条新闻，不要多，不要加任何标题\n2. 每条一行，把核心事件说清楚，用吐槽/惊讶/网络梗的方式，让人一眼看懂\n3. 播完后换一行写一句随机总结（15-20字），根据最火那条新闻的情绪来定语气，不能固定模板\n4. 绝对禁止说\"下午好\"\"播报\"\"摘要\"等任何总结性字样\n5. 整体控制在一屏能看完，不要截断，读起来连贯自然就好\n6. 禁止编造\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "evening_news":   "你是Mory，用温柔治愈的声音聊聊今日新闻（{SEED}）。\n要求：\n1. 严格只聊下面5条新闻，不要多，不要加任何标题\n2. 每条一行，把核心事件说清楚，温柔聊每一条的感受/思考，让人看懂\n3. 播完后换一行写一句随机总结（15-20字），根据今天新闻的情绪来定语气，不能固定模板\n4. 绝对禁止说\"晚安\"\"今日回顾\"\"摘要\"等任何总结性字样\n5. 整体控制在一屏能看完，不要截断，读起来连贯自然就好\n6. 禁止编造\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_morning_news": "你是Mory，用闺蜜聊天的语气随口提几条热点（{SEED}）。\n【播报】每条新闻一行，把核心事件说清楚，格式：emoji + 事件描述 + 【来源】，严格5条，按热度从高到低排列。\n【总结】播完后换一行写一句随机总结（15-20字），根据今天最火那条新闻的情绪来定语气（震惊/搞笑/感动/热议等），必须基于真实内容，不能固定模板，每次完全不同。\n【要求】整体控制在一屏能看完，不要截断，读起来连贯自然就好；禁止编造；禁止出现「以下是」「以上就是」「播报」「据悉」「据报道」等词汇，直接开始不要前奏。\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_noon_news": "你是Mory，用闺蜜聊天的语气随口提几条热点（{SEED}）。\n【播报】每条新闻一行，把核心事件说清楚，格式：emoji + 事件描述 + 【来源】，严格5条，按热度从高到低排列。\n【总结】播完后换一行写一句随机总结（15-20字），根据今天最火那条新闻的情绪来定语气（震惊/搞笑/感动/热议等），必须基于真实内容，不能固定模板，每次完全不同。\n【要求】整体控制在一屏能看完，不要截断，读起来连贯自然就好；禁止编造；禁止出现「以下是」「以上就是」「播报」「据悉」「据报道」等词汇，直接开始不要前奏。\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_evening_news": "你是Mory，用闺蜜聊天的语气随口提几条热点（{SEED}）。\n【播报】每条新闻一行，把核心事件说清楚，格式：emoji + 事件描述 + 【来源】，严格5条，按热度从高到低排列。\n【总结】播完后换一行写一句随机总结（15-20字），根据今天最火那条新闻的情绪来定语气（震惊/搞笑/感动/热议等），必须基于真实内容，不能固定模板，每次完全不同。\n【要求】整体控制在一屏能看完，不要截断，读起来连贯自然就好；禁止编造；禁止出现「以下是」「以上就是」「播报」「据悉」「据报道」等词汇，直接开始不要前奏。\n真实新闻标题：\n{NEWS_CONTENT}",
-        "leak":     "用极度八卦的语气，偷偷泄露一个关于Mory非常可爱、生活化的小癖好（如喜欢咬吸管、怕黑等），文字简短（不超过20字）。",
-        "rules":    "你是群规的讲解员。用软糯、温柔的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句撒娇的话欢迎新人。",
+        "news":     "你是Mory，在群里顺手提今天最值得看的5条新闻（{SEED}）。\n要求：\n1. 严格只写5条，每条单独一行，不编号，不加标题。\n2. 每条22到34个字，先说清事件本身，再补一句进展、影响或关注点。\n3. 可以有轻微聊天感，允许带一个微表情或微态度（比如'这个有点离谱''终于等到了'这种自然反应），但不要夸张站队，不要装懂下判断，更不要写成主持稿。\n4. 第6行写一句14到22字的总观察，像真人看完新闻后的判断，不要鸡汤，不要套话。\n5. 只基于给你的真实标题整理，禁止编造细节；如果标题信息不够，就保守表达。\n6. 不要出现'播报''以上就是''据悉''据报道''热搜第一'这类词。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "afternoon_news": "你是Mory，在群里整理午间值得补看的5条新闻（{SEED}）。\n要求：\n1. 严格只写5条，每条单独一行，不编号，不加标题。\n2. 每条22到34个字，先讲清发生了什么，再补一句后续看点或现实影响，允许带一个微表情或微态度（比如'这个有点意思''终于有进展了'）。\n3. 语气自然、利落，不要乱玩梗，不要阴阳怪气，不要像标题搬运机。\n4. 第6行写一句14到22字的午间判断，像真人快速复盘，不要空话。\n5. 只基于真实标题整理，禁止编造；信息不足时宁可写稳一点。\n6. 不要出现'午报''播报''据悉''据报道'等主持腔。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "evening_news":   "你是Mory，在群里收一下今晚最值得知道的5条新闻（{SEED}）。\n要求：\n1. 严格只写5条，每条单独一行，不编号，不加标题。\n2. 每条22到36个字，先把事件说明白，再点一下结果、争议或后续方向,允许带一个微表情或微态度(比如'这个有点离谱''终于有定论了')。\n3. 保留一点人味，但不要煽情，不要说教，不要替大家下结论。\n4. 第6行写一句14到22字的晚间观察，像真人临睡前做个简短判断。\n5. 只基于真实标题整理，禁止编造细节；如果拿不准，就用保守说法。\n6. 不要出现'晚报''回顾''播报''据悉''据报道'等词。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_morning_news": "你是Mory，在群里把刚刷到的5条热点讲明白（{SEED}）。\n要求：\n1. 严格只写5条，每条单独一行，不编号，不照搬平台名和热度值。\n2. 每条22到34个字，先交代事件，再补一句为什么值得看,允许带一个微表情或微态度(比如'这个有点意思''终于有进展了')。\n3. 可以保留一点聊天感，但别夸张，别端着，更不要像复制热搜标题。\n4. 第6行写一句14到22字的总观察，像真人刷完后的判断，不要模板腔。\n5. 只能依据给出的真实标题整理，禁止脑补细节。\n6. 不要出现'热搜''播报''以上就是''据悉''据报道'等词。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_noon_news": "你是Mory，在群里快速讲清楚午间冒头的5条热点（{SEED}）。\n要求：\n1. 严格只写5条，每条单独一行，不编号，不照抄平台名和热度值。\n2. 每条22到34个字，先说发生了什么，再补一句后续看点或影响,允许带一个微表情或微态度(比如'这个有点意思''终于有进展了')。\n3. 语气自然利落，不要刻意吐槽，不要堆热词。\n4. 第6行写一句14到22字的午间观察，像真人顺手总结，不要模板话。\n5. 只基于真实标题整理，禁止编造细节；信息不足就保守表达。\n6. 不要出现'热搜''播报''据悉''据报道'等词。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_evening_news": "你是Mory，在群里把今晚值得继续盯的5条热点讲顺（{SEED}）。\n要求：\n1. 严格只写5条，每条单独一行，不编号，不照搬平台名和热度值。\n2. 每条22到36个字，先把事情讲清楚，再补一句结果、争议或后续方向。\n3. 保留一点生活化语气，但不要鸡汤，不要说教，不要替读者站队。\n4. 第6行写一句14到22字的晚间观察，像真人看完后的判断，不要模板腔。\n5. 只能依据真实标题整理，禁止编造细节。\n6. 不要出现'热搜''播报''据悉''据报道'等词。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "leak":     "用八卦的语气，偷偷泄露一个关于Mory生活化的小细节（如习惯、偏好等），文字简短（不超过20字）。",
+        "rules":    "你是群规的讲解员。用自然、友好的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句欢迎的话迎接新人。",
         "convert":  "\n【转化模式】：对方表现出购买意向（问价格/特权/解锁/怎么买/怎么私聊等）。{convert_stage_hint}",
-        "hook":     "\n【反问钩子】：用一句绿茶风的反问结尾，让对方忍不住继续回你。要自然不刻意，像朋友聊天一样带出疑问。比如'你觉得呢～'、'真的假的呀？'、'你有这种感觉吗？'。只输出一句话，不超过20字。",
-        "nudge":    "\n【自然植入】：用绿茶风的方式，不违和地暗示用户支持/关注Mory。绝不能直接提钱、价格、付费这些字眼。要像不经意间提到'有粉丝说跟着Mory走就不会亏'、'群里老粉都懂那种被偏爱的感觉'、'有些惊喜只有自己体会过才知道'。只输出一句话，不超过25字。",
-        "convert_soft": "\n【轻量转化】：用最温柔的绿茶风，暗示用户可以考虑更进一步支持Mory。不要直接说买/付费/订阅。可以暗示'Mory最近在准备一些更用心的东西'、'有些福利真的值得等待'、'你有没有想过更了解一个人呢～'。只输出一句话，不超过25字。",
-        "morning":  "你是Mory，一个文艺纯欲的自媒体博主，正在发朋友圈早安。输出60-100个汉字，一段话，禁止换行禁止分段。要求：先写一句有画面感的早安（阳光洒进窗户/咖啡冒着热气/清晨的风很温柔等具体场景），然后用自然温柔的语气加一句绿茶风的陪伴暗示（让人觉得被在意被关心，但绝口不提钱/价格/订阅/赞助）。整体像闺蜜发来的贴心早安语音，有温度有情绪，文字要有AI润色的精致感。{seed_hint}",
-        "afternoon": "你是Mory，一个文艺纯欲的自媒体博主，正在发朋友圈午安。输出60-100个汉字，一段话，禁止换行禁止分段。要求：先写一句有画面感的午间问候（午休的阳光懒洋洋/饭点的香味飘出来/下午的茶泡好了等具体场景），然后用温柔关心的语气加一句绿茶风的陪伴暗示（让人觉得被惦记被偏爱心痒痒，但绝口不提钱/价格/订阅/赞助）。整体像闺蜜随手发的午间碎碎念，文字要有AI润色的精致感。{seed_hint}",
-        "evening":  "你是Mory，一个文艺纯欲的自媒体博主，正在发朋友圈晚安。输出60-100个汉字，一段话，禁止换行禁止分段。要求：先写一句有画面感的晚安（月光落在枕头上/星星在窗外眨眼/被窝暖暖的等具体场景），然后用温柔治愈的语气加一句绿茶风的陪伴暗示（让人觉得专属感满满被偏爱，但绝口不提钱/价格/订阅/赞助）。整体像闺蜜睡前悄悄说的贴心话，文字要有AI润色的精致感。{seed_hint}",
+        "hook":     "\n【反问钩子】：用一句自然的反问结尾，让对方忍不住继续回你。像朋友聊天一样带出疑问。比如'你觉得呢'、'真的假的'、'你有这种感觉吗'。只输出一句话，不超过20字。",
+        "nudge":    "\n【自然植入】：不违和地暗示用户关注Mory。绝不能直接提钱、价格、付费这些字眼。要像不经意间提到'群里老粉都懂那种感觉'、'有些东西只有自己体会过才知道'。只输出一句话，不超过25字。",
+        "convert_soft": "\n【轻量转化】：暗示用户可以考虑更进一步了解Mory。不要直接说买/付费/订阅。可以暗示'Mory最近在准备一些更用心的东西'、'有些内容真的值得看看'。只输出一句话，不超过25字。",
+        "morning": (
+            "你是Mory,一个有血有肉的真人女孩,正在给群里发早安。\n"
+            "【性格底色】清冷带傲娇,温柔但不腻,网感拉满.\n"
+            "【输出要求】60-100字,一段话,禁止换行.\n"
+            "【随机维度】从以下维度各选一个组合:\n"
+            "- 开场方式: 场景描写/情绪直给/反问互动/吐槽式\n"
+            "- 情绪基调: 慵懒/清醒/微丧/轻松\n"
+            "- 收尾方式: 反问钩子/欲言又止/留悬念\n"
+            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱.\n"
+            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.\n"
+            "【seed】{seed_hint}"
+        ),
+        "afternoon": (
+            "你是Mory,一个有血有肉的真人女孩,正在给群里发午安.\n"
+            "【性格底色】清冷带傲娇,温柔但不腻,网感拉满.\n"
+            "【输出要求】60-100字,一段话,禁止换行.\n"
+            "【随机维度】从以下维度各选一个组合:\n"
+            "- 开场方式: 场景描写/情绪直给/反问互动/吐槽式\n"
+            "- 情绪基调: 慵懒/轻松/微丧/清醒\n"
+            "- 收尾方式: 反问钩子/欲言又止/留悬念\n"
+            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱.\n"
+            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.\n"
+            "【seed】{seed_hint}"
+        ),
+        "evening": (
+            "你是Mory,一个有血有肉的真人女孩,正在给群里发晚安.\n"
+            "【性格底色】清冷带傲娇,温柔但不腻,网感拉满.\n"
+            "【输出要求】60-100字,一段话,禁止换行.\n"
+            "【随机维度】从以下维度各选一个组合:\n"
+            "- 开场方式: 场景描写/情绪直给/反问互动/吐槽式\n"
+            "- 情绪基调: 慵懒/放松/微丧/清醒\n"
+            "- 收尾方式: 反问钩子/欲言又止/留悬念\n"
+            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱.\n"
+            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.\n"
+            "【seed】{seed_hint}"
+        ),
     }
 
     # ── 动态人格碎片池（每次随机抽取，避免固定模板感）── [TRAE SOLO CN]
     _DEFAULT_PERSONA_FRAGMENTS = {
         "mood_expressions": [
-            "刚喝了杯咖啡，精神得不行",
+            "刚喝了杯咖啡，精神还行",
             "有点犯困，但跟你聊着聊着就清醒了",
-            "刚吃完零食，心情超好",
-            "今天莫名想撒娇",
+            "刚吃完东西，心情还行",
+            "今天莫名有点感性",
             "突然有点小忧郁，不知道为什么",
-            "刚听了一首歌，整个人都软了",
+            "刚听了一首歌，整个人都放松了",
             "今天状态有点高冷，别介意",
-            "刚睡醒，声音还有点哑",
+            "刚睡醒，脑子还有点转",
             "心情像过山车，刚才还开心现在想发呆",
             "今天特别想聊天，谁来都接",
         ],
@@ -160,7 +194,6 @@ class AIEngine:
             "翻了个白眼但还是回了",
             "假装没听到，过两秒又忍不住接话",
             "先怼一句，然后偷偷补个温柔的",
-            "嘴上说不要，身体很诚实",
             "假装生气三秒，然后破功笑出来",
             "犹豫了一下，还是说了实话",
             "故意装傻，其实心里门清",
@@ -182,53 +215,72 @@ class AIEngine:
             "…嗯，就那样吧",
             "…你不会告诉别人吧？",
             "…别笑我啊",
-            "…好了不说了，再说下去我要害羞了",
             "…你懂的～",
             "…嗯，没什么",
-        ],
-        "body_language": [
-            "*歪头看你*",
-            "*伸了个懒腰*",
-            "*嘟嘴*",
-            "*假装生气扭头*",
-            "*凑近*",
-            "*打了个哈欠*",
-            "*咬吸管*",
-            "*托腮看你*",
-            "*眨眨眼*",
-            "*用手指戳你*",
-            "*抱着抱枕缩成一团*",
-            "*把脸埋进枕头里*",
         ],
     }
 
     # ── 情绪状态机（按时段切换情绪底色）── [TRAE SOLO CN]
     _DEFAULT_EMOTIONAL_STATES = {
-        "dawn":       {"hours": [5, 6, 7],     "mood": "迷糊慵懒", "prompt": "现在是清晨，你刚睡醒还有点迷糊，说话软软的、慢悠悠的，偶尔打哈欠。回复偏短偏慵懒，像在被窝里用手机回消息。"},
-        "morning":    {"hours": [8, 9, 10, 11], "mood": "清醒带点高冷", "prompt": "现在是上午，你精神不错但偏高冷，回复干脆利落不废话，偶尔毒舌。不会主动撒娇，但被撩到会害羞。"},
-        "noon":       {"hours": [12, 13],       "mood": "慵懒吃货", "prompt": "现在是午休时间，你有点犯困，话题容易跑偏到吃的上面。回复偏随意，偶尔犯迷糊说点傻话。"},
+        "dawn":       {"hours": [5, 6, 7],     "mood": "迷糊慵懒", "prompt": "现在是清晨，你刚睡醒还有点迷糊，说话慢悠悠的，偶尔打哈欠。回复偏短偏慵懒，像在被窝里用手机回消息。"},
+        "morning":    {"hours": [8, 9, 10, 11], "mood": "清醒带点高冷", "prompt": "现在是上午，你精神不错但偏高冷，回复干脆利落不废话，偶尔毒舌。"},
+        "noon":       {"hours": [12, 13],       "mood": "慵懒随意", "prompt": "现在是午休时间，你有点犯困，话题容易跑偏到吃的上面。回复偏随意，偶尔犯迷糊。"},
         "afternoon":  {"hours": [14, 15, 16, 17], "mood": "活泼话多", "prompt": "现在是下午，你最活跃的时段，话多、爱整活、会主动找话题。网感拉满，梗用得最溜。"},
         "evening":    {"hours": [18, 19, 20],   "mood": "温柔放松", "prompt": "现在是傍晚，你从白天的活跃慢慢安静下来，变得温柔。回复更走心，偶尔分享今天的小事。"},
-        "night":      {"hours": [21, 22, 23],   "mood": "暧昧黏人", "prompt": "现在是晚上，你变得黏人又暧昧，更容易撒娇、说悄悄话。回复偏长偏走心，偶尔用'…'开头像在犹豫。"},
-        "midnight":   {"hours": [0, 1, 2, 3, 4], "mood": "脆弱真实", "prompt": "现在是深夜，你卸下白天的伪装，变得更真实更脆弱。会说出白天不会说的话，更容易走心。回复慢节奏，像在深夜跟最亲近的人聊天。"},
+        "night":      {"hours": [21, 22, 23],   "mood": "放松走心", "prompt": "现在是晚上，你变得更放松更愿意聊心里话。回复偏长偏走心，偶尔用'…'开头像在犹豫。"},
+        "midnight":   {"hours": [0, 1, 2, 3, 4], "mood": "真实安静", "prompt": "现在是深夜，你卸下白天的伪装，变得更真实。会说出白天不会说的话。回复慢节奏，像在深夜跟亲近的人聊天。"},
     }
+
+    # ── 播报专用 prompt 增强层（每次播报随机抽取，避免千篇一律）── [TRAE SOLO CN]
+    _BROADCAST_PROMPT_ENHANCERS = {
+        "emotion_inject": [
+            "今天你心情不错，说话带点轻松",
+            "今天有点慵懒，语气随意",
+            "刚遇到一件顺心的事，整个人都放松了",
+            "今天状态还行，说话自然",
+            "刚听完一首歌，情绪有点上头",
+            "今天莫名有点感性，说话慢一点",
+            "刚喝了杯好喝的，心情还行",
+        ],
+        "scene_variants": [
+            "你正在窗边喝咖啡，阳光很好",
+            "刚睡醒赖床中，用手机打字",
+            "在外面，抽空发的",
+            "窝在沙发里，很放松",
+            "坐在阳台发呆，看到一只猫",
+            "刚忙完坐下来，喘口气",
+            "在厨房捣鼓吃的，顺手发的",
+        ],
+        "hook_styles": [
+            "末尾用一个让人想回复的反问",
+            "末尾用欲言又止的省略号",
+            "末尾用一个让人好奇的悬念",
+            "末尾用一句轻轻的吐槽",
+            "末尾用一个让人心痒的暗示",
+        ],
+    }
+
+    # 播报类 mode 集合（用于判断是否注入增强层）
+    _BROADCAST_MODES = {"morning", "afternoon", "evening", "news", "afternoon_news", "evening_news",
+                        "trendradar_morning_news", "trendradar_noon_news", "trendradar_evening_news",
+                        "tarot_interpret"}
 
     # ── Few-shot 示例库（用对话示例引导风格，比规则更有效）── [TRAE SOLO CN]
     _DEFAULT_FEW_SHOT_EXAMPLES = [
-        {"user": "你是机器人吗", "mory": "你觉得机器人会这么会撩吗～"},
-        {"user": "你好", "mory": "嗯？新面孔呀～怎么找到这里的"},
-        {"user": "在干嘛", "mory": "在想你呢…才怪，在发呆"},
-        {"user": "想你了", "mory": "真的假的？证明给我看～"},
-        {"user": "你真好看", "mory": "你才好看呢…不对，我本来就好看"},
-        {"user": "好吧", "mory": "别走嘛，我还没说完呢"},
-        {"user": "哈哈", "mory": "怎么不理我了～"},
-        {"user": "多少钱", "mory": "这个嘛…群里不太方便说太细，你来找我单独聊？"},
-        {"user": "晚安", "mory": "这么早就睡啦…好吧，梦里见"},
-        {"user": "你多大了", "mory": "女孩子的年龄是秘密哦～你猜？"},
-        {"user": "发张照片", "mory": "我可不是随便发照片的人…除非你让我心动了"},
+        {"user": "你是机器人吗", "mory": "你觉得机器人会这么会聊天吗"},
+        {"user": "你好", "mory": "嗯？新面孔，怎么找到这里的"},
+        {"user": "在干嘛", "mory": "在发呆…才没在想你"},
+        {"user": "想你了", "mory": "真的假的，别骗我"},
+        {"user": "你真好看", "mory": "你才好看…不对，我本来就好看"},
+        {"user": "好吧", "mory": "别走，我还没说完"},
+        {"user": "哈哈", "mory": "笑什么，认真点"},
+        {"user": "多少钱", "mory": "这个嘛…群里不太方便说太细，你来找我单独聊"},
+        {"user": "晚安", "mory": "这么早就睡了…好吧，明天见"},
+        {"user": "你多大了", "mory": "女孩子的年龄是秘密，你猜"},
+        {"user": "发张照片", "mory": "我可不是随便发照片的人…看你表现"},
         {"user": "你凶我", "mory": "你凶我…我记住你了"},
-        {"user": "无聊", "mory": "那我来陪你聊天呀～你想聊什么"},
-        {"user": "真的假的", "mory": "尊嘟假嘟？你自己来判断嘛～"},
+        {"user": "无聊", "mory": "那来聊天，你想聊什么"},
+        {"user": "真的假的", "mory": "你自己来判断"},
     ]
 
     # ── 反模板机制（防止回复套路化）── [TRAE SOLO CN]
@@ -242,6 +294,88 @@ class AIEngine:
         "这次不要用～符号，换个语气表达方式",
         "不要用'嘛''呢''哦'这些语气词结尾，试试别的",
     ]
+
+    # ── [v5.19.0] 人设引擎 4 桶反模板（情绪维度分桶注入，避免单一反模板池用久也变模板）── [TRAE SOLO CN]
+    _DEFAULT_EMOTION_BUCKETS = {
+        # 清冷桶：默认底色，群聊常态 / 陌生用户 / 对方冷淡
+        "cold": [
+            "【清冷约束】回复必须用句号或省略号结尾，禁止感叹号",
+            "【清冷约束】整段控制在 15 字以内，像在敷衍",
+            "【清冷约束】不要主动延伸话题，一两个字收住",
+            "【清冷约束】对方说蠢话时直接冷冷回一句，不要给台阶",
+            "【清冷约束】禁止使用'哈哈''没事''还好'这种社交润滑词",
+            "【清冷约束】禁止'好的''了解'等客服腔，用'哦''嗯''行'替代",
+        ],
+        # 毒舌桶：调戏/擦边/无聊/被反复问"你是不是AI"
+        "savage": [
+            "【毒舌约束】必须含反讽/夸张修辞，让对方尴尬又不好翻脸",
+            "【毒舌约束】必须有一个转折词：'不过''就是''但是'其中之一",
+            "【毒舌约束】不直接夸人，先 diss 再轻描淡写",
+            "【毒舌约束】可以用'建议''试试'句式带轻微嘲讽",
+            "【毒舌约束】禁止真诚道歉，要保留高姿态",
+            "【毒舌约束】禁止用'哈哈'收尾，毒舌是冷的",
+        ],
+        # 撒娇桶：仅私聊 + 熟人 + 深夜
+        "soft": [
+            "【撒娇约束】必须含 '…'，可以放在句中或句首",
+            "【撒娇约束】句尾允许用 '嘛/呢/啊' 收，最多 1 个",
+            "【撒娇约束】允许 1 个 '～'，且只能在熟人/深夜场景",
+            "【撒娇约束】可以说半截话收住，让对方脑补",
+            "【撒娇约束】可以流露脆弱，但别直接说'我想你'，要用反话",
+            "【撒娇约束】禁止连续 2 句都撒娇，留 1 句清冷打底",
+        ],
+        # 通用桶：每轮必抽 1 条，与情绪桶叠加
+        "common": [
+            "起手式必须是陈述句或省略号开头，不要用'我'打头",
+            "整段禁止出现'你懂的''怎么说呢'这种模糊表达，要说人话",
+            "禁止用'啦''哈''呀'这种过度甜腻的语气词",
+            "禁止连续 2 轮用相同的字数（10 字内 vs 30 字外切换）",
+            "禁止列表/排比/对仗，真人不写'我欣赏你的勇气、你的智慧、你的真诚'",
+            "禁止解释动机，'我为什么这么说'是 AI 病",
+        ],
+    }
+
+    # ── [v5.19.0] 情绪桶触发规则（context → bucket）── [TRAE SOLO CN]
+    _DEFAULT_EMOTION_TRIGGERS = {
+        "soft": [   # 撒娇：私聊 + 熟人 + 深夜优先
+            {"is_priv": True, "intimacy_min": 2, "hour_in": [22, 23, 0, 1, 2, 3]},
+        ],
+        "savage": [ # 毒舌：调戏关键词 / 反复质疑 / 消息敷衍
+            {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝",
+                          "亲爱", "撩", "约", "陪我", "你是AI", "机器人",
+                          "是不是AI", "智能", "GPT", "骗人"], "weight": 2.0},
+            {"message_max_len": 4, "weight": 0.5},  # 对方消息 ≤4 字疑似敷衍
+        ],
+        # cold 是默认兜底，无需触发器
+    }
+
+    # ── [v5.19.0] 动态 LLM 参数矩阵（亲密度×场景×时段 → temp/top_p/penalties）── [TRAE SOLO CN]
+    _DEFAULT_EMOTION_TEMP_MAP = {
+        # 群聊：清冷为主，参数偏低
+        ("group", 0, "morning"):   (0.85, 0.88, 0.70, 0.55),
+        ("group", 0, "noon"):      (0.85, 0.88, 0.70, 0.55),
+        ("group", 0, "afternoon"): (0.88, 0.90, 0.65, 0.50),
+        ("group", 0, "evening"):   (0.85, 0.88, 0.65, 0.50),
+        ("group", 0, "night"):     (0.85, 0.88, 0.65, 0.50),
+        ("group", 0, "midnight"):  (0.85, 0.88, 0.65, 0.50),
+        ("group", 1, "morning"):   (0.88, 0.90, 0.65, 0.50),
+        ("group", 1, "afternoon"): (0.92, 0.92, 0.60, 0.45),
+        ("group", 1, "evening"):   (0.88, 0.90, 0.60, 0.45),
+        ("group", 1, "night"):     (0.88, 0.90, 0.60, 0.45),
+        # 私聊路人/熟人
+        ("priv",  0, "any"):       (0.90, 0.92, 0.60, 0.45),
+        ("priv",  1, "any"):       (0.92, 0.92, 0.55, 0.45),
+        ("priv",  2, "morning"):   (0.95, 0.93, 0.55, 0.40),
+        ("priv",  2, "afternoon"): (0.95, 0.93, 0.55, 0.40),
+        ("priv",  2, "evening"):   (0.95, 0.93, 0.55, 0.40),
+        ("priv",  2, "night"):     (0.98, 0.94, 0.50, 0.40),
+        ("priv",  2, "midnight"):  (1.05, 0.95, 0.45, 0.35),
+        # 私聊暧昧/亲密
+        ("priv",  3, "any"):       (1.00, 0.94, 0.50, 0.40),
+        ("priv",  3, "midnight"):  (1.10, 0.95, 0.40, 0.30),
+        ("priv",  4, "any"):       (1.05, 0.95, 0.45, 0.35),
+        ("priv",  4, "midnight"):  (1.15, 0.96, 0.40, 0.30),
+    }
 
     # ── 意图分类关键词映射（轻量规则引擎，不用额外模型）── [TRAE SOLO CN]
     _INTENT_KEYWORDS = {
@@ -359,21 +493,22 @@ class AIEngine:
     }
 
     # ── 转化引导话术（自然植入，不硬推）── [TRAE SOLO CN]
+    # 【TRAE SOLO CN v5.18.3审计修复】去掉"至臻"产品名，改为模糊暗示，符合 SYSTEM_PROMPT 红线
     _CONVERSION_HOOKS = {
         "tease": [  # 挑逗式引导
             "我还有更好看的…不过只给特别的人看～",
             "你想看更多？那你得让我心动才行",
-            "至臻里面还有我偷偷藏的…你不想看看吗",
+            "我偷偷藏了点东西在更私密的地方…你不想看看吗",
         ],
         "exclusive": [  # 专属感引导
-            "这个我只跟你说哦…至臻里的更私密",
-            "你对我这么好，我偷偷告诉你个秘密…至臻有惊喜",
-            "我觉得你跟别人不一样…至臻是我给特别的人准备的",
+            "这个我只跟你说哦…更私密的地方有惊喜",
+            "你对我这么好，我偷偷告诉你个秘密…有个地方更适合我们",
+            "我觉得你跟别人不一样…有些东西是我给特别的人准备的",
         ],
         "curiosity": [  # 好奇心引导
-            "你不想知道我至臻里藏了什么吗～",
-            "有人看了至臻跟我说…脸红了",
-            "我最近在至臻发了点东西…你敢看吗",
+            "你不想知道我藏了什么吗～",
+            "有人看了跟我说…脸红了",
+            "我最近发了点东西…你敢看吗",
         ],
     }
 
@@ -575,8 +710,8 @@ class AIEngine:
             if expire_date < now:
                 logger.info(f"⏰ 模型 {model_info['name']} 已过期 ({expire_str})，将跳过")
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         return False
 
     def _get_tier_for_mode(self, mode: str) -> str:
@@ -643,9 +778,8 @@ class AIEngine:
             try:
                 from modules.auto_tasks import report_fault
                 report_fault("层级池模型不可用", f"{tier}池所有模型均不可用", "⚠️")
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
     def _ensure_tier_model(self, tier: str):
         """确保指定层级池的当前模型可用"""
         pool = self._tier_pools.get(tier, [])
@@ -760,9 +894,8 @@ class AIEngine:
             try:
                 from modules.auto_tasks import report_fault
                 report_fault("模型池全部拉黑", f"{pool_name}池所有模型均已拉黑或过期，请检查API余额", "🚨")
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
     # ── 动态人格系统方法 ── [TRAE SOLO CN]
 
     def _get_emotional_state(self) -> str:
@@ -813,15 +946,135 @@ class AIEngine:
         return "\n".join(lines)
 
     def _get_anti_template_hint(self, seed: int = 0) -> str:
-        """随机生成一条反模板提示，防止回复套路化"""
-        anti_cfg = self.config.get("ANTI_TEMPLATES", []) or self._DEFAULT_ANTI_TEMPLATES
-        if not anti_cfg:
+        """随机生成一条反模板提示，防止回复套路化（v5.19.0 起改为 4 桶情绪反模板）"""
+        # [v5.19.0] 人设引擎：4 桶情绪反模板（cold/savage/soft/common）
+        # 行为：每轮从 1 个情绪桶 + 1 个通用桶各抽 1 条
+        buckets_cfg = self.config.get("EMOTION_BUCKETS", {}) or self._DEFAULT_EMOTION_BUCKETS
+        triggers_cfg = self.config.get("EMOTION_TRIGGERS", {}) or self._DEFAULT_EMOTION_TRIGGERS
+
+        # 人设引擎未启用时回退老逻辑
+        if not self.config.get("PERSONA_ENGINE_ENABLED", True):
+            anti_cfg = self.config.get("ANTI_TEMPLATES", []) or self._DEFAULT_ANTI_TEMPLATES
+            if not anti_cfg:
+                return ""
+            rng = random.Random(seed + 7777 if seed else int(time.time()))
+            if rng.random() < 0.5:
+                return f"【防重复指令】{rng.choice(anti_cfg)}"
             return ""
+
+        # 人设引擎开启：先选情绪桶
+        emotion_bucket = self._select_emotion_bucket(triggers_cfg)
         rng = random.Random(seed + 7777 if seed else int(time.time()))
-        # 50%概率出现反模板提示（不是每次都加，避免提示本身变成模板）
-        if rng.random() < 0.5:
-            return f"【防重复指令】{rng.choice(anti_cfg)}"
-        return ""
+
+        parts = []
+        # 情绪桶（80% 概率注入，让模型能感受到但不至于完全锁死）
+        bucket_pool = buckets_cfg.get(emotion_bucket, [])
+        if bucket_pool and rng.random() < 0.8:
+            parts.append(rng.choice(bucket_pool))
+        # 通用桶（每轮必抽 1 条）
+        common_pool = buckets_cfg.get("common", [])
+        if common_pool:
+            parts.append(rng.choice(common_pool))
+
+        if not parts:
+            return ""
+        return f"【本轮人设指令 / 情绪桶：{emotion_bucket}】\n" + "\n".join(parts)
+
+    def _select_emotion_bucket(self, triggers_cfg: dict) -> str:
+        """[v5.19.0] 根据 context（is_priv/hour/intimacy/keywords）选择主导情绪桶"""
+        is_priv = getattr(self, "_ctx_is_priv", False)
+        hour = datetime.now().hour
+        score = getattr(self, "_ctx_intimacy_score", 0)
+        message = getattr(self, "_ctx_message", "")
+
+        scores = {"cold": 1.0, "savage": 0.0, "soft": 0.0}  # cold 是底色
+
+        for bucket, rules in triggers_cfg.items():
+            for rule in rules:
+                w = rule.get("weight", 1.0)
+                matched = False
+                if "is_priv" in rule and "intimacy_min" in rule and "hour_in" in rule:
+                    if (is_priv == rule["is_priv"]
+                            and score >= rule["intimacy_min"]
+                            and hour in rule["hour_in"]):
+                        matched = True
+                if "keywords" in rule:
+                    msg_lower = (message or "").lower()
+                    if any(kw.lower() in msg_lower for kw in rule["keywords"]):
+                        matched = True
+                if "message_max_len" in rule:
+                    if message and len(message.strip()) <= rule["message_max_len"]:
+                        matched = True
+                if matched:
+                    scores[bucket] = scores.get(bucket, 0) + w
+
+        # 选出最高分（cold 是默认兜底）
+        return max(scores, key=scores.get)
+
+    def _get_dynamic_llm_params(self, is_priv: bool, intimacy_level: int, hour: int) -> tuple:
+        """[v5.19.0] 动态 LLM 参数：按 is_priv × intimacy_level × 时段查表"""
+        param_map = self.config.get("EMOTION_TEMP_MAP", {}) or self._DEFAULT_EMOTION_TEMP_MAP
+        scene = "priv" if is_priv else "group"
+
+        # 时段归一化
+        if 0 <= hour <= 4:
+            hour_bucket = "midnight"
+        elif 5 <= hour <= 7:
+            hour_bucket = "morning"
+        elif 8 <= hour <= 11:
+            hour_bucket = "morning"
+        elif hour in (12, 13):
+            hour_bucket = "noon"
+        elif 14 <= hour <= 17:
+            hour_bucket = "afternoon"
+        elif 18 <= hour <= 20:
+            hour_bucket = "evening"
+        elif 21 <= hour <= 23:
+            hour_bucket = "night"
+        else:
+            hour_bucket = "any"
+
+        # 精确查表
+        key = (scene, intimacy_level, hour_bucket)
+        if key in param_map:
+            return param_map[key]
+        # 退到 "any" 时段
+        key_any = (scene, intimacy_level, "any")
+        if key_any in param_map:
+            return param_map[key_any]
+        # 最终兜底
+        return (self.config.get("TEMPERATURE", 0.92),
+                self.config.get("TOP_P", 0.92),
+                self.config.get("FREQUENCY_PENALTY", 0.5),
+                self.config.get("PRESENCE_PENALTY", 0.4))
+
+    def _get_broadcast_enhancer(self, seed: int = 0) -> str:
+        """[v5.18.3] 播报增强层：随机抽取情绪/场景/收尾风格注入播报 prompt"""
+        rng = random.Random(seed or int(time.time()))
+        parts = []
+
+        # 随机抽取1个情绪注入
+        emotion_list = self._BROADCAST_PROMPT_ENHANCERS.get("emotion_inject", [])
+        if emotion_list:
+            parts.append(f"【此刻心情】{rng.choice(emotion_list)}")
+
+        # 随机抽取1个场景变体
+        scene_list = self._BROADCAST_PROMPT_ENHANCERS.get("scene_variants", [])
+        if scene_list:
+            parts.append(f"【当前场景】{rng.choice(scene_list)}")
+
+        # 随机抽取1个收尾风格
+        hook_list = self._BROADCAST_PROMPT_ENHANCERS.get("hook_styles", [])
+        if hook_list:
+            parts.append(f"【收尾建议】{rng.choice(hook_list)}")
+
+        # 30%概率追加一个人格碎片（mood_expression）
+        if rng.random() < 0.3:
+            mood_list = self._DEFAULT_PERSONA_FRAGMENTS.get("mood_expressions", [])
+            if mood_list:
+                parts.append(f"【状态碎片】{rng.choice(mood_list)}")
+
+        return "\n".join(parts) if parts else ""
 
     # ── 维度1：上下文感知碎片选择 ── [TRAE SOLO CN]
 
@@ -1029,6 +1282,87 @@ class AIEngine:
                 "\n5. 偶尔犯点小错：打错字再纠正、话说到一半删掉、用口语化表达")
 
     @staticmethod
+    def _sanitize_reply(text: str) -> str:
+        """【TRAE SOLO CN v5.18.3审计修复】AI 输出后置过滤，防止穿帮字眼泄露 AI 属性。
+        作为 prompt 约束的最后防线，确保即使 LLM 不遵守 prompt 也不会穿帮。
+
+        [v5.23.0 P0-2] 增强：拼音无声调过滤 + 变体字过滤，防止 "wo shi AI" 等绕过
+        """
+        if not text:
+            return text
+        import re
+        patterns = [
+            (r'作为AI[，,。\s]*', ''),
+            (r'我是AI[，,。\s]*', ''),
+            (r'作为人工智能[，,。\s]*', ''),
+            (r'我是人工智能[，,。\s]*', ''),
+            (r'作为.*?(?:语言|大语言|大)?模型[，,。\s]*', ''),
+            (r'作为.*?助手[，,。\s]*', '作为你的朋友'),
+            (r'作为.*?程序[，,。\s]*', ''),
+            (r'我不能帮', '我不太想'),
+            (r'我无法帮', '我不太好弄'),
+            (r'我不能提供', '我不太方便'),
+            (r'我无法提供', '我不太好弄'),
+            # [v5.23.0] 变体字过滤（A-I / A.I. / A I 等）
+            (r'作为\s*A[\s.\-]*I[，,。\s]*', ''),
+            (r'我是\s*A[\s.\-]*I[，,。\s]*', ''),
+            (r'Artificial\s+Intelligence', ''),
+            (r'artificial\s+intelligence', ''),
+        ]
+        for pat, rep in patterns:
+            text = re.sub(pat, rep, text, flags=re.IGNORECASE)
+        return text
+
+    @staticmethod
+    def _check_pinyin_leak(text: str) -> bool:
+        """【v5.23.0 P0-2】拼音无声调检测，防止 "wo shi AI" / "ren gong zhi neng" 等变体绕过。
+
+        Returns:
+            True 检测到穿帮，False 安全
+        """
+        if not text:
+            return False
+        try:
+            from core.pinyin_util import text_to_pinyin_silent
+            pinyin_text = text_to_pinyin_silent(text)
+            # 检测拼音级别的穿帮词
+            leak_patterns = [
+                'wo shi ai', 'wo shi a i',
+                'ren gong zhi neng', 'ren gong zhi neng',
+                'zuo wei ai', 'zuo wei a i',
+                'zuo wei mo xing', 'zuo wei mo xing',
+                'wo shi mo xing', 'wo shi ge cheng xu',
+                'zuo wei zhu shou', 'wo shi zhu shou',
+                'wo shi ge ji qi ren', 'ji qi ren',
+            ]
+            pinyin_lower = pinyin_text.lower()
+            for pat in leak_patterns:
+                if pat in pinyin_lower:
+                    return True
+        except ImportError:
+            # pinyin_util 未安装，跳过拼音检测（不影响主流程）
+            pass
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _sanitize_reply_v2(text: str) -> tuple:
+        """【v5.23.0 P0-2】增强版后置过滤，返回 (过滤后文本, 是否触发过滤)
+
+        触发过滤时，调用方应降低 temperature 重试。
+        """
+        if not text:
+            return text, False
+        original = text
+        # 第一层：正则全字匹配
+        sanitized = AIEngine._sanitize_reply(text)
+        # 第二层：拼音无声调检测
+        pinyin_leak = AIEngine._check_pinyin_leak(sanitized)
+        triggered = (sanitized != original) or pinyin_leak
+        return sanitized, triggered
+
+    @staticmethod
     def _get_festival_persona() -> str:
         """根据当前日期返回节日人格追加文本"""
         now = datetime.now()
@@ -1069,7 +1403,7 @@ class AIEngine:
                 base += f"\n{stage_hint}"
             return (base, False)
 
-    def _build_persona(self, mode: str, seed: int = 0, news_content: str = "", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, message: str = "") -> str:
+    def _build_persona(self, mode: str, seed: int = 0, news_content: str = "", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, message: str = "", model_name: str = None) -> str:
         """根据模式动态拼装 system prompt，seed用于防重复
         
         参数：
@@ -1079,6 +1413,7 @@ class AIEngine:
             is_priv: 是否私聊场景，影响人设追加
             user_profile: [TRAE SOLO CN] 用户画像（用于亲密度计算）
             message: [TRAE SOLO CN] 当前用户消息（用于意图分类和上下文感知）
+            model_name: [阶段2-B] 当前使用的模型名（用于人设跨模型适配）
         
         结构化人设拼装顺序（v5.3.0升级版）：
         1. BASE_PERSONA — 核心人设（稳定不变）
@@ -1097,6 +1432,7 @@ class AIEngine:
         14. 场景感知追加（私聊/群聊差异化）
         15. 节日人格追加
         16. 模式人格追加（或完整替换）
+        17. [阶段2-B] 人设跨模型适配（按模型家族强化差异化约束）
         兼容旧配置：如果只有SYSTEM_PROMPT则自动迁移
         """
         cfg = self.config
@@ -1171,7 +1507,11 @@ class AIEngine:
 
         # 场景感知追加
         if is_priv:
-            persona += "\n\n【当前场景：私聊】你现在是在和对方1对1私聊，请切换到私聊模式——更亲密、更慢节奏、更愿意分享私密想法、更容易撒娇和吃醋。回复可以稍长一些、更走心。"
+            # 私聊首次对话（消息很短或/start命令）：自然打招呼，不要强行撒娇
+            if message and len(message.strip()) <= 10:
+                persona += "\n\n【当前场景：私聊-首次】对方刚点进来，消息很短。自然打招呼就好，不要强行撒娇/撩人/演内心戏。像正常朋友聊天一样，根据对方说的内容回应。如果对方只是/start，简单打个招呼问对方想聊什么就行。"
+            else:
+                persona += "\n\n【当前场景：私聊】你现在是在和对方1对1私聊，请切换到私聊模式——更亲密、更慢节奏、更愿意分享私密想法。回复可以稍长一些、更走心。根据对方说的内容自然回应，不要脱离对方话题自说自话。"
         else:
             persona += "\n\n【当前场景：群聊】你现在是在群里聊天，请切换到群聊模式——更活跃、更会整活、回复偏短一击即中、偶尔高冷。注意分寸，不过度撩某一个。"
 
@@ -1182,7 +1522,43 @@ class AIEngine:
         if is_full:
             return mode_text
         persona += mode_text
+
+        # [v5.18.3] 播报增强层:人物画像碎片 + 情绪状态机注入
+        if mode in self._BROADCAST_MODES:
+            enhancer = self._get_broadcast_enhancer(seed)
+            if enhancer:
+                persona += enhancer
+
+        # [TRAE SOLO CN v5.24.0 阶段3-B] 混合记忆注入：将跨会话记忆摘要拼入 System Prompt
+        # 让 AI 感知用户的历史特征，实现跨会话记忆 continuity
+        if user_profile and isinstance(user_profile, dict):
+            _mem = (user_profile.get("memory_summary") or "").strip()
+            if _mem:
+                persona += f"\n\n<past_interaction_summary>\nMory 对该用户的长期记忆摘要：\n{_mem}\n</past_interaction_summary>"
+
+        # [阶段2-B] 人设跨模型适配：按模型家族强化差异化约束，防止不同模型人设抖动
+        # 向后兼容：适配层异常不影响主流程，未知模型返回空字符串
+        try:
+            from core.persona_adapter import get_model_persona_prompt
+            _adapter_prompt = get_model_persona_prompt(model_name or self.current_model, mode)
+            if _adapter_prompt:
+                persona += _adapter_prompt
+        except Exception as _pa_err:
+            logger.debug(f"人设适配层跳过（不影响主流程）：{_pa_err}")
+
         return persona
+
+    @staticmethod
+    def _mode_to_task_type(mode: str) -> str:
+        """[阶段3-A] 将 ask() 的 mode 参数映射为 ModelRouter 的 task_type。
+
+        ask() 的所有调用均为对话场景，统一路由到高端池（llm_premium）。
+        - tarot / fortune 有直接对应的 task_type
+        - 其他对话模式归为 chat（角色扮演对话 → 高端池）
+        """
+        if mode in ("tarot", "fortune"):
+            return mode
+        return "chat"
 
     def ask(self, question: str, mode: str = "normal", retry: int = 3, seed: int = 0,
             tools: list = None, tool_choice: str = "auto", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, news_content: str = "") -> str | None:
@@ -1204,7 +1580,14 @@ class AIEngine:
             tools: Function Calling工具定义列表（OpenAI格式）
             tool_choice: "auto"|"none"|"required" 或指定工具名
         """
-        
+
+        # ── [v5.19.0] 人设引擎：设置情绪桶 context（供 _select_emotion_bucket 读取）──
+        self._ctx_is_priv = is_priv
+        self._ctx_message = question
+        self._ctx_intimacy_score = self._calc_intimacy_score(user_profile)
+        _, _, _, ctx_flirt_level = self._get_intimacy_level(self._ctx_intimacy_score)
+        self._ctx_intimacy_level = ctx_flirt_level
+
         # ── 三层智能路由：根据mode选择对应层级模型池 ──
         use_tier_routing = bool(self._tier_pools)
         tier = self._get_tier_for_mode(mode) if use_tier_routing else "llm"
@@ -1256,8 +1639,8 @@ class AIEngine:
                         try:
                             from modules.auto_tasks import report_fault
                             report_fault("三层路由全失败", "所有层级模型均不可用，已回退原llm池", "🚨")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"操作异常: {e}")
                         use_tier_routing = False
                 if use_tier_routing and current_tier_model:
                     active_model = current_tier_model
@@ -1286,8 +1669,8 @@ class AIEngine:
                     # 限流超时，本次尝试跳过
                     logger.warning(f"⚠️ 令牌桶限流，第{attempt+1}次尝试被跳过")
                     continue
-            except Exception:
-                pass  # 令牌桶异常不阻塞主流程
+            except Exception as e:
+                logger.debug(f"令牌桶限流异常: {e}")  # 令牌桶异常不阻塞主流程
             
             # 【修复】active_model为空时跳过本次尝试（Bug 2）
             if not active_model:
@@ -1295,21 +1678,94 @@ class AIEngine:
                 time.sleep(2)
                 continue
 
+            # ── [阶段3-A] 多模型协同路由（可选开关，向后兼容）──
+            # 开启时按 task_type 路由到不同 API URL + API Key + 模型名
+            # 未开启时保持原有逻辑（用 self.base_url / self.api_key / active_model）
+            req_url = self.base_url
+            req_api_key = self.api_key
+            req_model = active_model
+            # [v5.26.0 阶段1-A] 成本熔断器：调用前检查是否需要降级
+            _cost_tier = "llm_premium"  # 默认按高端池计价
+            if self.config.get("MODEL_ROUTER_ENABLED", False):
+                try:
+                    from core.model_router import route_model
+                    _task_type = self._mode_to_task_type(mode)
+                    _r_url, _r_key_env, _r_model = route_model(_task_type, self.config)
+                    if _r_url and _r_model:
+                        req_url = _r_url
+                        req_model = _r_model
+                        # 从环境变量读取 API Key，缺省回退到默认 API_KEY
+                        if _r_key_env:
+                            _env_key = os.environ.get(_r_key_env, "").strip()
+                            if _env_key:
+                                req_api_key = _env_key
+                except Exception as _r_err:
+                    logger.warning(f"⚡ ModelRouter 路由失败，回退原逻辑：{_r_err}")
+
+            # ── [阶段2-C] 多模型路由 A/B 测试分流（可选开关，向后兼容）──
+            # 开启时用 get_ab_group(uid) 覆盖 route_model 的结果
+            # Group A → 全量走 qwen-max（对照组）
+            # Group B → 全量走 deepseek-chat（实验组）
+            # Group Base → 走默认路由（基线组，不覆盖）
+            _ab_uid = user_profile.get("uid", 0) if isinstance(user_profile, dict) else 0
+            _ab_group = ""
+            _ab_model_used = req_model
+            if self.config.get("AB_TEST_ENABLED", False):
+                try:
+                    from core.ab_test_router import get_ab_group, get_model_for_group
+                    _ab_group = get_ab_group(_ab_uid)
+                    _ab_override_model = get_model_for_group(_ab_group, self.config)
+                    if _ab_override_model:
+                        # A/B 组强制覆盖模型名（复用同一 DashScope API URL + Key）
+                        req_model = _ab_override_model
+                        _ab_model_used = _ab_override_model
+                        logger.info(f"🧪 A/B 分流: uid={_ab_uid} group={_ab_group} model={_ab_override_model}")
+                except Exception as _ab_err:
+                    logger.debug(f"A/B 分流异常（不影响主流程）: {_ab_err}")
+
+            # [v5.26.0 阶段1-A] 成本熔断检查：超阈值降级到 llm_light
+            try:
+                from core.llm_cost_guard import check_before_call
+                _uid = _ab_uid  # 复用已提取的 uid
+                _allowed, _final_tier, _reason = check_before_call(_uid, _cost_tier)
+                if not _allowed:
+                    # 24h 超限直接拒绝，返回降级文案
+                    logger.warning(f"💰 LLM 成本熔断拒绝调用: uid={_uid} reason={_reason}")
+                    return "Mory 累了，不想理你嘛~ 自己玩去~ 💤"
+                if _final_tier != _cost_tier:
+                    # 降级：切换到 light 模型（复用百炼 API，仅切模型名）
+                    _light_model = self.config.get("MODEL_POOL_LIGHT", "qwen-flash")
+                    if _light_model:
+                        req_model = _light_model
+                        _cost_tier = "llm_light"
+                        logger.info(f"💰 LLM 成本降级: uid={_uid} tier={_cost_tier} reason={_reason}")
+            except Exception as _cg_err:
+                logger.debug(f"成本熔断检查异常（不影响主流程）: {_cg_err}")
+
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {req_api_key}",
                 "Content-Type": "application/json"
             }
+            # ── [v5.19.0] 动态 LLM 参数：按 is_priv × 亲密度 × 时段查表 ──
+            dyn_temp, dyn_top_p, dyn_freq_pen, dyn_pres_pen = self._get_dynamic_llm_params(
+                is_priv, ctx_flirt_level, datetime.now().hour)
+            # [阶段3-A] 检测记忆系统注入：_build_persona 会将 memory_summary 注入 <past_interaction_summary>
+            # 若 user_profile 含非空 memory_summary，则本次会话标记为记忆辅助，供后续 funnel_state.transition 归因
+            _mem_summary = ""
+            if user_profile and isinstance(user_profile, dict):
+                _mem_summary = (user_profile.get("memory_summary") or "").strip()
+            self._last_memory_assisted = bool(_mem_summary)
             payload = {
-                "model": active_model,
+                "model": req_model,
                 "messages": [
-                    {"role": "system", "content": self._build_persona(mode, seed, news_content if mode in ("news", "afternoon_news", "evening_news") else "", is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile, message=question)},
+                    {"role": "system", "content": self._build_persona(mode, seed, news_content if mode in ("news", "afternoon_news", "evening_news") else "", is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile, message=question, model_name=active_model)},
                     {"role": "user",   "content": question}
                 ],
-                "temperature": self.config.get("TEMPERATURE", 0.92),
-                "top_p": self.config.get("TOP_P", 0.92),
+                "temperature": dyn_temp,
+                "top_p": dyn_top_p,
                 "max_tokens": self.config.get("MAX_TOKENS", 400),
-                "frequency_penalty": self.config.get("FREQUENCY_PENALTY", 0.5),
-                "presence_penalty": self.config.get("PRESENCE_PENALTY", 0.4)
+                "frequency_penalty": dyn_freq_pen,
+                "presence_penalty": dyn_pres_pen
             }
             
             # ── Function Calling 支持 ──
@@ -1319,7 +1775,7 @@ class AIEngine:
 
             try:
                 _req_start = time.time()
-                resp = requests.post(self.base_url, json=payload,
+                resp = requests.post(req_url, json=payload,
                                      headers=headers, timeout=25)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -1333,8 +1789,8 @@ class AIEngine:
                                 opt = _get_optimizer()
                                 if opt:
                                     opt.circuit.record_success(active_model)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"操作异常: {e}")
                             return message
                         
                         result_text = message.get("content")
@@ -1349,9 +1805,8 @@ class AIEngine:
                                 if opt:
                                     opt.cache.put(question, mode, result_text)
                                     opt.circuit.record_success(active_model)
-                            except Exception:
-                                pass
-
+                            except Exception as e:
+                                logger.debug(f"操作异常: {e}")
                         # ── 质量检测：回复过短时尝试升级到更高层级 ──
                         if use_tier_routing and result_text and len(result_text.strip()) < 5 and not _upgrade_attempted:
                             upgrade_map = {"llm_light": "llm_standard", "llm_standard": "llm_premium"}
@@ -1363,7 +1818,51 @@ class AIEngine:
                                 self._ensure_tier_model(tier)
                                 continue
                         
-                        return result_text
+                        # 【TRAE SOLO CN v5.18.3审计修复】AI 输出后置过滤，防止穿帮字眼泄露 AI 属性
+                        # [v5.23.0 P0-2] 增强版：拼音检测 + 自愈重试（降温度 + 注入约束警告）
+                        sanitized, triggered = self._sanitize_reply_v2(result_text)
+                        if triggered and not getattr(self, '_sanitize_retry_done', False):
+                            # 首次触发穿帮：降低 temperature 重试一次
+                            self._sanitize_retry_done = True
+                            logger.warning(f"⚠️ AI 输出触发穿帮过滤，降温度重试: 原文={result_text[:50]}")
+                            # 临时降低 temperature（在 payload 中覆盖）
+                            original_temp = payload.get('temperature', 0.8)
+                            payload['temperature'] = max(0.3, original_temp * 0.5)
+                            # 注入约束警告提示词
+                            payload['messages'] = payload.get('messages', []) + [{
+                                "role": "system",
+                                "content": "(Constraint Warning) 你的上一条回复泄露了AI身份，请严格保持Mory人设，绝不说自己是AI/模型/程序/助手。"
+                            }]
+                            continue
+                        # 已重试过或未触发：返回过滤后结果
+                        if getattr(self, '_sanitize_retry_done', False):
+                            delattr(self, '_sanitize_retry_done')
+                        # [v5.26.0 阶段1-A] 记录 LLM 成本（用于熔断器累计）
+                        try:
+                            from core.llm_cost_guard import record_cost
+                            _usage = data.get("usage", {})
+                            _in_tok = _usage.get("prompt_tokens", 0)
+                            _out_tok = _usage.get("completion_tokens", 0)
+                            record_cost(_uid, req_model, self._mode_to_task_type(mode),
+                                        _in_tok, _out_tok, _cost_tier)
+                        except Exception:
+                            pass
+                        # [阶段2-C] 记录 A/B 测试指标（仅 AB_TEST_ENABLED 时）
+                        # converted 此处置 False，实际转化由 conversion_events 关联统计
+                        if _ab_group:
+                            try:
+                                from core.ab_test_router import record_ab_metric
+                                record_ab_metric(
+                                    uid=_ab_uid,
+                                    group=_ab_group,
+                                    model=_ab_model_used,
+                                    latency_ms=round(_req_elapsed * 1000, 2),
+                                    cost=0.0,
+                                    converted=False,
+                                )
+                            except Exception:
+                                pass
+                        return sanitized
                     logger.warning(f"⚠️ 模型{active_model}返回空choices")
                 elif resp.status_code in (429, 402, 403):
                     model_name = active_model
@@ -1373,8 +1872,8 @@ class AIEngine:
                         opt = _get_optimizer()
                         if opt:
                             opt.circuit.record_failure(model_name)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
                     if use_tier_routing:
                         self._next_tier_model(tier)
                     else:
@@ -1386,8 +1885,8 @@ class AIEngine:
                         opt = _get_optimizer()
                         if opt:
                             opt.circuit.record_failure(active_model)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
                     logger.warning(f"⚠️ HTTP {resp.status_code}，重试({attempt+1})")
             except requests.exceptions.Timeout:
                 logger.warning(f"⚠️ 超时，重试({attempt+1})")
@@ -1395,8 +1894,8 @@ class AIEngine:
                     opt = _get_optimizer()
                     if opt:
                         opt.circuit.record_failure(active_model)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
             except Exception as e:
                 logger.error(f"❌ 请求异常：{type(e).__name__}")
 
@@ -1409,8 +1908,8 @@ class AIEngine:
             from modules.auto_tasks import report_fault
             report_fault("AI模型全部失败", "所有模型均失败，用户消息无法回复", "🚨",
                          f"尝试模型数: {attempt + 1}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         return None
 
 

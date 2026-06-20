@@ -8,6 +8,7 @@
 """
 
 import os
+from pathlib import Path
 
 # 自动加载 .env 文件（如果存在）
 _env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
@@ -37,11 +38,27 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
+def _existing_default_keys() -> list[str]:
+    """返回本机可用的默认 SSH key 路径。"""
+    ssh_dir = Path.home() / ".ssh"
+    candidates = [
+        ssh_dir / "id_ed25519_deploy",
+        ssh_dir / "id_ed25519",
+        ssh_dir / "id_rsa",
+    ]
+    return [str(path) for path in candidates if path.exists()]
+
+
+_configured_key = _env("VPS_SSH_KEY", "").strip()
+VPS_SSH_KEYS = [str(Path(_configured_key).expanduser())] if _configured_key else _existing_default_keys()
+
+
 VPS = {
     "host": _env("VPS_HOST", ""),  # 【v4.3.2修复F-03】移除硬编码IP默认值
     "port": _env_int("VPS_PORT", 22),
     "user": _env("VPS_USER", "ubuntu"),
     "pass": _env("VPS_SSH_PASS", ""),
+    "keys": VPS_SSH_KEYS,
     "root": _env("VPS_PATH", "/home/ubuntu/mory_assistant"),  # 【v4.3.2修复】路径也从环境变量读取
 }
 
@@ -50,6 +67,7 @@ VPS_HOST = VPS["host"]
 VPS_PORT = VPS["port"]
 VPS_USER = VPS["user"]
 VPS_PASS = VPS["pass"]
+VPS_KEY_FILES = VPS["keys"]
 VPS_PATH = VPS["root"]
 
 # ── SSH 主机密钥缓存（防止 MITM 攻击）──
@@ -81,18 +99,16 @@ class _CachedHostKeyPolicy:
                     if len(parts) >= 2:
                         hostname, key_b64 = parts[0], parts[1]
                         self._known_keys[hostname] = key_b64
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     def _save_known_hosts(self):
         """保存主机密钥到文件"""
         try:
             with open(_KNOWN_HOSTS_FILE, "w") as f:
                 for hostname, key_b64 in self._known_keys.items():
                     f.write(f"{hostname} {key_b64}\n")
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
     def missing_host_key(self, client, hostname, key):
         """paramiko 回调：服务器发送了主机密钥"""
         import paramiko
@@ -127,11 +143,15 @@ def ssh_connect(client, timeout: int = 15):
     # 【v4.3.2修复F-03】校验必填项
     if not VPS_HOST:
         raise ValueError("VPS_HOST 未设置！请在 .env 文件中配置 VPS_HOST=<IP地址>")
-    if not VPS_PASS:
-        raise ValueError("VPS_SSH_PASS 未设置！请在 .env 文件中配置 VPS_SSH_PASS=<密码>")
+    if not VPS_PASS and not VPS_KEY_FILES:
+        raise ValueError("VPS_SSH_PASS / VPS_SSH_KEY 均未设置，且本机未找到默认SSH key")
     client.set_missing_host_key_policy(_ssh_policy)
     client.connect(
         VPS_HOST, port=VPS_PORT,
-        username=VPS_USER, password=VPS_PASS,
+        username=VPS_USER,
+        password=VPS_PASS or None,
+        key_filename=VPS_KEY_FILES or None,
+        look_for_keys=False,
+        allow_agent=False,
         timeout=timeout,
     )

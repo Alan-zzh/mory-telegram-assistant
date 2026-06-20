@@ -108,9 +108,8 @@ def apply_blocklist_action(bot, m, config, db, chat_id, uid):
             bot.delete_message(chat_id, m.message_id)
         else:
             logger.warning(f"[黑名单模式] ENABLE_MESSAGE_DELETION 未开启，跳过删除消息")
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     if mode == "delete":
         # 仅删除，无其他操作
         logger.info(f"黑名单删除消息: chat={chat_id} uid={uid}")

@@ -54,8 +54,8 @@ def check_banned_words(dctx) -> bool:
     if check_banned_words(bot, m, CONFIG, db):
         try:
             apply_blocklist_action(bot, m, CONFIG, db, chat_id, uid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         clear_logging_context()
         return True
     return False
@@ -82,8 +82,8 @@ def check_night_mode(dctx) -> bool:
         if can_delete_message(CONFIG):
             try:
                 bot.delete_message(chat_id, m.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         logger.info(f"🌙 夜间模式拦截: uid={uid} msg={msg[:30]}")
         clear_logging_context()
         return True
@@ -106,7 +106,7 @@ def check_ad_detection(dctx) -> bool:
         return False
 
     msg = dctx.text
-    if not msg or len(msg) < 2:
+    if not msg:
         return False
 
     # 跳过 Bot 命令，避免误封 /start@Bot 等正常指令
@@ -128,6 +128,38 @@ def check_ad_detection(dctx) -> bool:
     uname = dctx.uname
     chat_id = dctx.chat_id
 
+    # 短消息也必须先看资料层信号：广告号常用“1”等无意义内容探活。
+    try:
+        user_bio = ""
+        try:
+            user_chat = bot.get_chat(uid)
+            user_bio = (getattr(user_chat, "bio", "") or "")[:500]
+        except Exception as e:
+            logger.debug(f"[AD] 短消息资料检测拉取Bio失败: uid={uid} err={e}")
+        from modules.ad_profile_signals import detect_profile_ad_signal
+        profile_result = detect_profile_ad_signal(bot, m.from_user, user_bio, CONFIG)
+        if profile_result.get("is_ad"):
+            from modules.ad_enforcement import enforce_ad_user
+            enforce_ad_user(
+                bot=bot,
+                db=db,
+                config=CONFIG,
+                chat_id=chat_id,
+                uid=uid,
+                uname=uname,
+                reason=f"资料广告检测-{profile_result.get('reason', '')}",
+                message=m,
+                current_msg_id=getattr(m, "message_id", 0),
+                notify_admin=True,
+            )
+            clear_logging_context()
+            return True
+    except Exception as e:
+        logger.debug(f"[AD] 资料层广告检测异常: uid={uid} err={e}")
+
+    if len(msg) < 2:
+        return False
+
     # [TRAE SOLO CN] v5.8.2 追踪群消息发送者到 group_members 表（渐进式构建完整成员列表）
     try:
         if dctx.is_group and m.from_user and not m.from_user.is_bot:
@@ -135,9 +167,8 @@ def check_ad_detection(dctx) -> bool:
             _s_uname = getattr(_su, 'username', '') or ''
             _s_display = (_su.first_name or '') + (_su.last_name or '')
             db.upsert_group_member(_su.id, chat_id, _s_uname, _s_display, '', 'member')
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # [TRAE SOLO CN] v5.8.0 新增：白名单机制（群管理员/指定用户免检）
     whitelist_cfg = CONFIG.get("AD_WHITELIST", {})
     whitelist_uids = whitelist_cfg.get("user_ids", []) if isinstance(whitelist_cfg, dict) else []
@@ -149,9 +180,8 @@ def check_ad_detection(dctx) -> bool:
         if member and member.status in ("administrator", "creator"):
             logger.debug(f"[AD] 群管理员免检: uid={uid} status={member.status}")
             return False
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # 保存消息快照（用于编辑消息检测）
     snapshot_message(chat_id, m.message_id, msg)
 
@@ -211,9 +241,8 @@ def check_ad_detection(dctx) -> bool:
                 message_meta["is_new_user"] = True
                 message_meta["joined_minutes_ago"] = int(elapsed_minutes)
                 logger.info(f"[AD] 新用户行为: uid={uid}, 加入{int(elapsed_minutes)}分钟前")
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     # [Trae] v5.3.1 优化：传递user_id和bot参数，确保显示名称被正确捕获
     # [TRAE SOLO CN] v5.7.5 新增：传入bio进行联合检测
     # [TRAE SOLO CN] v5.8.0 新增：传入message_meta进行元数据辅助检测

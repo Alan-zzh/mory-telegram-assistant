@@ -68,9 +68,8 @@ def check_achievements(dctx) -> bool:
 
     try:
         check_achievements_for_user(bot, chat_id, db, uid, CONFIG)
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -93,9 +92,8 @@ def check_guess_reply(dctx) -> bool:
         if handle_guess_reply(bot, m, CONFIG, db):
             clear_logging_context()
             return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
     return False
 
 
@@ -258,9 +256,8 @@ def _handle_private_feedback(dctx, analysis: dict) -> bool:
                     f"💬 消息：{msg[:150]}\n"
                     f"💡 请手动解封",
                     parse_mode="HTML")
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
     mory_bot.reply_and_track(m, feedback_reply)
     return True
 

@@ -28,40 +28,48 @@ class TrackingRepo:
 
     # ─────────────────────────────── 阅后即焚 ────────────────────────────
     def track_reply(self, bot_msg_id: int, chat_id: int, user_msg_id: int):
-        """记录机器人回复，追踪原消息是否被删（复合主键：bot_msg_id+chat_id）"""
-        with self.lock:
-            try:
-                if not bot_msg_id or not chat_id or not user_msg_id:
-                    logger.error(f"📌 track_reply参数无效: bot={bot_msg_id} chat={chat_id} user={user_msg_id}")
-                    return
+        """记录机器人回复，追踪原消息是否被删（复合主键：bot_msg_id+chat_id）
 
-                ts = int(time.time())
-                self.conn.execute("INSERT OR REPLACE INTO reply_tracking (bot_msg_id, chat_id, user_msg_id, ts, replied) VALUES (?,?,?,?,0)",
-                                 (bot_msg_id, chat_id, user_msg_id, ts))
+        [v5.24.0] 改回标准模式，由 WriteQueueConnectionProxy 自动拦截走队列
+        """
+        if not bot_msg_id or not chat_id or not user_msg_id:
+            logger.error(f"📌 track_reply参数无效: bot={bot_msg_id} chat={chat_id} user={user_msg_id}")
+            return
+
+        ts = int(time.time())
+        try:
+            with self.lock:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO reply_tracking (bot_msg_id, chat_id, user_msg_id, ts, replied) VALUES (?,?,?,?,0)",
+                    (bot_msg_id, chat_id, user_msg_id, ts),
+                )
                 self.conn.commit()
-                logger.info(f"📌 阅后即焚追踪成功：bot={bot_msg_id} chat={chat_id} user={user_msg_id} ts={ts}")
-            except Exception as e:
-                logger.error(f"📌 阅后即焚追踪失败：{e}")
-                try:
-                    from modules.auto_tasks import report_fault
-                    report_fault("阅后即焚追踪失败", f"bot_msg={bot_msg_id} chat={chat_id}: {str(e)[:80]}", "⚠️")
-                except Exception as fault_err:
-                    self._db._log_db_error("report_fault 调用", fault_err, "error", f"阅后即焚 bot_msg={bot_msg_id}")
+            logger.debug(f"📌 阅后即焚追踪：bot={bot_msg_id} chat={chat_id} user={user_msg_id} ts={ts}")
+        except Exception as e:
+            logger.error(f"📌 阅后即焚追踪失败：{e}")
+            try:
+                from modules.auto_tasks import report_fault
+                report_fault("阅后即焚追踪失败", f"bot_msg={bot_msg_id} chat={chat_id}: {str(e)[:80]}", "⚠️")
+            except Exception as fault_err:
+                self._db._log_db_error("report_fault 调用", fault_err, "error", f"阅后即焚 bot_msg={bot_msg_id}")
 
     def track_bot_message(self, chat_id: int, bot_msg_id: int):
         """[TRAE SOLO CN] 追踪Bot主动消息（新闻/问候等），24小时TTL后自动删除
 
         与track_reply不同：user_msg_id=0表示无用户触发，replied=1表示不需要等用户回复
+        [v5.24.0] 改回标准模式，由 WriteQueueConnectionProxy 自动拦截走队列
         """
-        with self.lock:
-            try:
-                ts = int(time.time())
-                self.conn.execute("INSERT OR REPLACE INTO reply_tracking (bot_msg_id, chat_id, user_msg_id, ts, replied) VALUES (?,?,?,?,1)",
-                                 (bot_msg_id, chat_id, 0, ts))
+        ts = int(time.time())
+        try:
+            with self.lock:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO reply_tracking (bot_msg_id, chat_id, user_msg_id, ts, replied) VALUES (?,?,?,?,1)",
+                    (bot_msg_id, chat_id, 0, ts),
+                )
                 self.conn.commit()
-                logger.info(f"📌 Bot主动消息追踪：bot={bot_msg_id} chat={chat_id} ts={ts}")
-            except Exception as e:
-                logger.error(f"📌 Bot主动消息追踪失败：{e}")
+            logger.debug(f"📌 Bot主动消息追踪：bot={bot_msg_id} chat={chat_id} ts={ts}")
+        except Exception as e:
+            logger.error(f"📌 Bot主动消息追踪失败：{e}")
 
     def mark_replied(self, bot_msg_id: int, chat_id: int = 0):
         """用户回复了机器人的消息，标记为已回复（不自动删除）"""

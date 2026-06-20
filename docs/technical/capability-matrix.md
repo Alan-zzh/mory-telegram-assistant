@@ -134,9 +134,9 @@
 | `news` | **llm_premium** | 早间新闻（旗舰模型，保证质量） |
 | `afternoon_news` | **llm_premium** | 午间新闻（旗舰模型） |
 | `evening_news` | **llm_premium** | 晚间新闻（旗舰模型） |
-| `trendradar_morning_news` | **llm_premium** | 趋势雷达早间新闻（TrendRadar 数据源） |
-| `trendradar_noon_news` | **llm_premium** | 趋势雷达午间新闻 |
-| `trendradar_evening_news` | **llm_premium** | 趋势雷达晚间新闻 |
+| `trendradar_morning_news` | **llm_premium** | 趋势雷达早间新闻（兼容模式，已并入统一新闻主流程） |
+| `trendradar_noon_news` | **llm_premium** | 趋势雷达午间新闻（兼容模式） |
+| `trendradar_evening_news` | **llm_premium** | 趋势雷达晚间新闻（兼容模式） |
 
 #### 1.3.2 三池分工策略
 
@@ -144,7 +144,7 @@
 |--------|---------|---------|-------------|
 | **llm_light** | **最高**（morning/afternoon/evening/wakeup/reactivate 每次自动任务 + 主动搭话） | 模板化话术 / 高频问候 / 轻量引导 | 速度快 / 成本低 / 通用模式够用 |
 | **llm_standard** | **中**（普通对话 / 4 模式 / 转化 / 购物车挽回） | 个性化对话 / 情感交互 / 商业引导 | 平衡质量与成本 |
-| **llm_premium** | **低**（每日 3 次新闻 + 3 次 TrendRadar） | 新闻播报 / 趋势分析 / 旗舰场景 | 质量优先 / 不可降级 |
+| **llm_premium** | **低**（每日 3 次统一新闻播报） | 新闻播报 / 趋势整理 / 旗舰场景 | 质量优先 / 不可降级 |
 
 #### 1.3.3 路由调用流程（main.py 处理）
 
@@ -527,7 +527,7 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 - **L1 用户名 + Bio + 头像检测**：`avatar_detector.py` 协助（NSFW 头像）
 - **L2 9 维度关键词**：`ad_patterns_encoded.py` 维护（Unicode 转义存储，规避平台审核）
 - **L3 零宽字符检测**：检测零宽空格 / 零宽连字符等隐写字符
-- **L4 追溯扫描**：调 `retroactive_scan()` 双模式追溯（详见 [MEMBER_SCAN_METHOD.md](../../MEMBER_SCAN_METHOD.md)）
+- **L4 追溯扫描**：调 `retroactive_scan()` 双模式追溯（详见 [MEMBER_SCAN_METHOD.md](../reference/MEMBER_SCAN_METHOD.md)）
 - **数据表**：`ad_suspicious_users`（uid / 群 / 命中层级 / 时间 / 处置）
 
 **`antiflood.py`（防刷屏）**：
@@ -789,7 +789,7 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 6. `/api/settings/anti-raid` — 反突袭（threshold=5/window=60）
 7. `/api/settings/ad-spam` — 广告/反垃圾
 8. `/api/settings/inactive-clean` — 不活跃清理
-9. `/api/settings/cleanservice` — 服务消息清理
+9. `/api/settings/clean-service` — 服务消息清理（`/cleanservice` 仅兼容旧调用）
 10. `/api/settings/message-deletion` — 消息批量删除
 
 **B 积分 / 商业组（14）**：
@@ -803,16 +803,12 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 18. `/api/settings/coupons` — 优惠券列表
 19. `/api/settings/redpacket` — 红包（min/max）
 20. `/api/settings/lottery` — 抽奖
-21. `/api/settings/blindbox` — 盲盒（cost=50）
-22. `/api/settings/blind-box` — 盲盒（重复端点，Dashboard 兼容）
-23. `/api/settings/luckywheel` — 幸运转盘（cost=30/free_spins=1）
-24. `/api/settings/lucky-wheel` — 幸运转盘（重复端点）
+21. `/api/settings/blind-box` — 盲盒（cost=50，`/blindbox` 仅兼容旧调用）
+22. `/api/settings/lucky-wheel` — 幸运转盘（cost=30/free_spins=1，`/luckywheel` 仅兼容旧调用）
 
 **C 任务 / 成就 / 邀请 / 打赏组（6）**：
-25. `/api/settings/dailyquest` — 每日任务
-26. `/api/settings/daily-quest` — 每日任务（重复）
-27. `/api/settings/achievement` — 成就
-28. `/api/settings/achievements` — 成就列表（重复）
+25. `/api/settings/daily-quest` — 每日任务（`/dailyquest` 仅兼容旧调用）
+26. `/api/settings/achievements` — 成就系统（`/achievement` 仅兼容旧调用）
 29. `/api/settings/tip` — 打赏（min_amount=1）
 30. `/api/settings/commands` — 命令启用/禁用
 
@@ -829,7 +825,7 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 38. `/api/settings/goodbye` — 告别消息
 39. `/api/settings/rules` — 群规则
 40. `/api/settings/pin` — 置顶管理
-41. `/api/settings/clean-service` — 清理服务（重复 cleaservice）
+41. `/api/settings/clean-service` — 清理服务
 42. `/api/settings/links` — 链接处理
 
 **F 自定义 / 群备注 / 群备份 / 备忘组（3）**：
@@ -852,7 +848,7 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 
 **I 工具 / 杂项组（8）**：
 55. `/api/settings/exchange-rate` — 汇率查询
-56. `/api/settings/visual-dashboard` — 可视化仪表板
+56. `/api/settings/dashboard` — 可视化仪表板（`/visual-dashboard` 仅兼容旧调用）
 57. `/api/settings/language` — 语言（zh / en）
 58. `/api/settings/spam-action` — 垃圾处置（mute/kick/ban）
 59. `/api/settings/autoreply` — 自动回复开关 + 贴纸概率
@@ -887,12 +883,12 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 | # | 类别 | 端点范围 | 按钮数（约） | 主要功能 |
 |---|------|---------|-------------|---------|
 | 1 | **群管类** | warning / slowmode / report / votekick / antiflood / anti-raid / antidelete / approval / pin / message-locks | **18** | warn / mute / kick / ban / pin / delete 等 |
-| 2 | **反垃圾类** | ad-spam / cas / antichannel / cleanservice / inactive-clean / message-deletion | **15** | ad / spam / raid / flood / nsfw / 僵尸等 |
+| 2 | **反垃圾类** | ad-spam / cas / antichannel / clean-service / inactive-clean / message-deletion | **15** | ad / spam / raid / flood / nsfw / 僵尸等 |
 | 3 | **积分类** | checkin / points-rules / points-decay / level-titles / daily-quest / achievements / tip / commands | **16** | 签到 / 积分 / 商城 / 兑换 / 衰减等 |
 | 4 | **商业类** | shop / shop-items / coupon / coupons / redpacket / lottery / blindbox / blind-box / luckywheel / lucky-wheel | **14** | 商城 / 优惠 / 红包 / 抽奖 / 盲盒 / 转盘等 |
 | 5 | **娱乐类** | games / autoreply / sticker | **8** | 游戏 / 自动回复 / 贴纸等 |
 | 6 | **调度类** | morning / night / news / broadcasts / greeting / goodbye / rules / dashboard / afk | **16** | 早安 / 晚安 / 新闻 / 播报 / 欢迎 / 告别 / 群规等 |
-| 7 | **系统类** | bot-core / exchange-rate / visual-dashboard / language / spam-action / speech-stats / group-backup | **12** | 配置 / 汇率 / 可视化 / 语言 / 统计 / 备份等 |
+| 7 | **系统类** | bot-core / exchange-rate / dashboard / language / spam-action / speech-stats / group-backup | **12** | 配置 / 汇率 / 可视化 / 语言 / 统计 / 备份等 |
 | 8 | **AI 类** | ai-model / pricing / persona / group-notes / links / custom-commands | **16** | 模型 / 价格 / 人设 / 备注 / 链接 / 自定义命令等 |
 
 **合计**：18+15+16+14+8+16+12+16 = **115 按钮**（v5.12.2 文档描述 115，本节 v5.12.3 进一步分组详化）。

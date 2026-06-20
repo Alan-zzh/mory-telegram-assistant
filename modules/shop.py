@@ -148,9 +148,8 @@ def handle_exchange(bot, m, config, db, item_name):
                     admin_id,
                     f"📦 新的兑换订单\n👤 用户：{uname}(id={uid})\n📦 商品：{name}\n💰 积分：{cost}"
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         logger.info(f"兑换: uid={uid} item={name} cost={cost}")
 
     except Exception as e:
@@ -264,9 +263,8 @@ def handle_ship_order(bot, m, config, db, order_id):
         # 通知用户
         try:
             bot.send_message(order[1], f"📦 您的订单已发货！\n📦 商品：{order[2]}")
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         logger.info(f"发货: order_id={order_id} item={order[2]}")
 
     except Exception as e:
@@ -312,9 +310,8 @@ def handle_complete_order(bot, m, config, db, order_id):
         # 通知用户
         try:
             bot.send_message(order[1], f"📦 您的订单已完成！\n📦 商品：{order[2]}")
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         logger.info(f"完成订单: order_id={order_id} item={order[2]}")
 
     except Exception as e:
@@ -363,9 +360,8 @@ def handle_refund_order(bot, m, config, db, order_id):
         # 通知用户
         try:
             bot.send_message(order[1], f"📦 您的订单已退款\n📦 商品：{order[2]}\n💰 退回积分：{order[3]}")
-        except Exception:
-            pass
-
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
         logger.info(f"退款: order_id={order_id} uid={order[1]} 退回={order[3]}积分")
 
     except Exception as e:
