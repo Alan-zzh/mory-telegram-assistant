@@ -189,51 +189,52 @@ def main():
     # 建立 SSH 连接
     client = paramiko.SSHClient()
     ssh_connect(client)
+    try:
+        # 第一步：健康检查
+        print("\n[检测] 执行健康检查...")
+        healthy = check_health_with_retry(config, client)
 
-    # 第一步：健康检查
-    print("\n[检测] 执行健康检查...")
-    healthy = check_health_with_retry(config, client)
+        if healthy:
+            print("\n✓ 服务健康，无需回滚。")
+            return {"action": "none", "status": "healthy"}
 
-    if healthy:
-        print("\n✓ 服务健康，无需回滚。")
-        client.close()
-        return {"action": "none", "status": "healthy"}
+        print("\n✗ 服务不健康，准备回滚...")
 
-    print("\n✗ 服务不健康，准备回滚...")
+        # 第二步：停止服务
+        stop_services(config, client)
 
-    # 第二步：停止服务
-    stop_services(config, client)
+        # 第三步：切换版本目录
+        swapped = swap_versions(config, client)
+        if not swapped:
+            # 目录切换失败，尝试重启原服务
+            print("\n✗ 版本切换失败，尝试恢复原服务...")
+            start_services(config, client)
+            send_alert(config, "版本目录切换失败，已尝试恢复原服务")
+            return {"action": "rollback_failed", "status": "failed"}
 
-    # 第三步：切换版本目录
-    swapped = swap_versions(config, client)
-    if not swapped:
-        # 目录切换失败，尝试重启原服务
-        print("\n✗ 版本切换失败，尝试恢复原服务...")
+        # 第四步：重启服务
         start_services(config, client)
-        send_alert(config, "版本目录切换失败，已尝试恢复原服务")
-        client.close()
-        return {"action": "rollback_failed", "status": "failed"}
 
-    # 第四步：重启服务
-    start_services(config, client)
+        # 第五步：验证回滚结果
+        rollback_ok = verify_rollback(config, client)
 
-    # 第五步：验证回滚结果
-    rollback_ok = verify_rollback(config, client)
+        # 第六步：发送告警
+        if rollback_ok:
+            send_alert(config, "部署后健康检查失败，已自动回滚到上一版本，回滚后服务正常。")
+        else:
+            send_alert(config, "部署后健康检查失败，已自动回滚，但回滚后服务仍不健康！需人工介入！")
 
-    # 第六步：发送告警
-    if rollback_ok:
-        send_alert(config, "部署后健康检查失败，已自动回滚到上一版本，回滚后服务正常。")
-    else:
-        send_alert(config, "部署后健康检查失败，已自动回滚，但回滚后服务仍不健康！需人工介入！")
-
-    client.close()
-
-    result_status = "rolled_back_healthy" if rollback_ok else "rolled_back_unhealthy"
-    print(f"\n{'=' * 50}")
-    print(f"回滚完成: {result_status}")
-    print(f"{'=' * 50}")
-
-    return {"action": "rollback", "status": result_status}
+        result_status = "rolled_back_healthy" if rollback_ok else "rolled_back_unhealthy"
+        print(f"\n{'=' * 50}")
+        print(f"回滚完成: {result_status}")
+        print(f"{'=' * 50}")
+        return {"action": "rollback", "status": result_status}
+    finally:
+        # 【v5.31.2 修复】SSH 连接泄漏防护：任何异常路径都确保关闭
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

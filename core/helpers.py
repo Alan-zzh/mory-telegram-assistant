@@ -81,6 +81,19 @@ def safe_delete_broadcast(bot, chat_id, msg_id, label: str = "broadcast"):
         return False
 
 
+def db_lock_from_db(db):
+    """获取数据库模块的 _db_lock（用于审计 task_log 等需要数据库锁的场景）
+
+    Args:
+        db: Database 实例或其代理
+
+    Returns:
+        threading.Lock: 数据库模块级锁
+    """
+    from core.database import _db_lock as db_lock
+    return db_lock
+
+
 def format_user_mention(uid, name):
     """生成统一的用户可点击提及链接（HTML格式）
 

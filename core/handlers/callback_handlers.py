@@ -23,6 +23,28 @@ logger = get_logger("callback_handlers")
 def register_callback_handlers(bot, ctx):
     """注册所有回调查询处理器到bot实例"""
 
+    def _is_blacklisted_callback(call) -> bool:
+        uid = getattr(getattr(call, "from_user", None), "id", 0) or 0
+        if not uid:
+            return False
+        try:
+            admin_ids = set((ctx.config or {}).get("ADMIN_IDS", []) or [])
+            admin_id = (ctx.config or {}).get("ADMIN_ID", 0)
+            if admin_id:
+                admin_ids.add(admin_id)
+            return uid not in admin_ids and bool(ctx.db.is_blacklisted(uid))
+        except Exception as e:
+            logger.debug(f"回调黑名单检查失败 uid={uid}: {e}")
+            return False
+
+    @bot.callback_query_handler(func=_is_blacklisted_callback)
+    def on_blacklisted_callback(call):
+        try:
+            bot.answer_callback_query(call.id, text="当前账号无法使用机器人功能", show_alert=False)
+            logger.info(f"🚫 黑名单按钮回调拦截: uid={call.from_user.id} data={getattr(call, 'data', '')}")
+        except Exception as e:
+            logger.debug(f"黑名单按钮回调应答失败: {e}")
+
     # ── 反馈按钮回调（fb_like / fb_dislike）──────────────────────────
     @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("fb_"))
     def on_feedback_callback(call):
@@ -108,39 +130,6 @@ def register_callback_handlers(bot, ctx):
         except Exception as e:
             logger.error(f"投票踢人回调异常：{e}")
 
-    # ── 通用按钮点击追踪（v5.18.0 - 按钮点击统计） ─────────────────────────
-    # 放在最后作为兜底，确保所有 callback_query 都被记录
-    @bot.callback_query_handler(func=lambda call: True)
-    def on_any_callback(call):
-        """通用按钮点击追踪 - 记录所有按钮点击到 button_click_stats 表。"""
-        try:
-            if not call.data:
-                return
-            # 提取按钮 ID 和样式（约定：btn_{style}_{id} 或 callback_data 前缀作为按钮 ID）
-            data = str(call.data)
-            # 尝试从 callback_data 中解析按钮 ID 和样式
-            # 格式约定：btn_<style>_<id>  或 直接 <id>
-            if data.startswith("btn_"):
-                parts = data.split("_", 2)
-                if len(parts) >= 3:
-                    style = parts[1]
-                    button_id = parts[2]
-                else:
-                    style = "default"
-                    button_id = data
-            else:
-                # 从 callback_data 提取主前缀作为按钮 ID
-                button_id = data.split("_")[0] if "_" in data else data
-                style = "default"
-            # 异步记录（不阻塞主流程）
-            try:
-                if hasattr(ctx, 'db') and ctx.db and hasattr(ctx.db, 'record_button_click'):
-                    ctx.db.record_button_click(button_id, style)
-            except Exception as e:
-                logger.debug(f"操作异常: {e}")
-        except Exception as e:
-            logger.debug(f"按钮点击追踪异常（已忽略）: {e}")
-
     # ── 僵尸清理回调 ──────────────────────────────────────────────
     @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("zc_"))
     def _cb_zombie_clean(call):
@@ -152,6 +141,34 @@ def register_callback_handlers(bot, ctx):
     def _cb_ghost_clean(call):
         from modules.inactive_clean import handle_ghost_confirm
         handle_ghost_confirm(bot, call, ctx.config, ctx.db)
+
+    # ── 通用按钮点击追踪（v5.18.0 - 按钮点击统计） ─────────────────────────
+    # 必须在所有专用 callback handler 之后注册；telebot 首个匹配后会停止分发。
+    @bot.callback_query_handler(func=lambda call: True)
+    def on_any_callback(call):
+        """通用按钮点击追踪 - 记录所有按钮点击到 button_click_stats 表。"""
+        try:
+            if not call.data:
+                return
+            data = str(call.data)
+            if data.startswith("btn_"):
+                parts = data.split("_", 2)
+                if len(parts) >= 3:
+                    style = parts[1]
+                    button_id = parts[2]
+                else:
+                    style = "default"
+                    button_id = data
+            else:
+                button_id = data.split("_")[0] if "_" in data else data
+                style = "default"
+            try:
+                if hasattr(ctx, 'db') and ctx.db and hasattr(ctx.db, 'record_button_click'):
+                    ctx.db.record_button_click(button_id, style)
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
+        except Exception as e:
+            logger.debug(f"按钮点击追踪异常（已忽略）: {e}")
 
     # ── /settings 命令处理器 ──────────────────────────────────────────
     @bot.message_handler(commands=["settings"])

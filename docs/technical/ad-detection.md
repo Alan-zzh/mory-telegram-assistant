@@ -1,7 +1,7 @@
 # 广告检测系统完整规范
 
 > **被 [AGENTS.md](../../AGENTS.md) 索引引用 · 适用版本：v5.0.0+**
-> **最后更新**：2026-06-14（v5.16.5 [Codex] 反应清理 + Business 消息同步）
+> **最后更新**：2026-06-26（v5.30.2 新成员入群头像OCR+BIO广告检测）
 
 ## 概述
 
@@ -183,6 +183,45 @@ def retroactive_scan(bot, chat_id, start_msg_id, end_msg_id, admin_id):
 | v5.16.4 | Premium emoji 状态漏检 | 保留 `emoji_status_custom_emoji_id` + 状态贴纸元数据/OCR + 短消息资料层检测 |
 | v5.16.4 | 日志假删但群里残留 | 删除失败不标记 deleted；无 msg_id 的旧残留明确不能承诺自动删 |
 
+### 八、新成员入群全维度检测（v5.30.2 [opencode]）
+
+新人入群时，`group_mgr.py:handle_new_members()` 执行以下检测链：
+
+```
+1. 用户名关键词匹配（AUTO_MUTE_NAMES）
+2. 用户名可疑检测（check_username_suspicious）
+3. 色情头像检测（check_and_ban_if_porn_avatar）
+4. 头像OCR文字检测（check_avatar_ocr_text）← v5.30.2 新增
+5. BIO简介广告检测（BIO_PATTERNS + detect_profile_ad_signal）← v5.30.2 新增
+```
+
+**头像OCR检测**：
+- 下载用户头像图片 → AI视觉模型识别文字
+- 命中"看我简介""点我主页""进群了解"等广告关键词 → 评分≥2 直接处置
+- 解决了"看我简介"类视觉广告（emoji/贴纸叠加在头像图片上）无法被文本规则检测的问题
+
+**BIO简介检测**：
+- 调用 `bot.get_chat(user.id)` 获取用户 bio 字段
+- 用 `BIO_PATTERNS` 正则匹配（零TOKEN消耗）
+- 未命中时再调用 `detect_profile_ad_signal()` 做完整检测（含emoji状态）
+
+**任一检测命中 → `enforce_ad_user()` 统一处置**
+
+### 九、删除消息能力验证（v5.30.2 铁律）
+
+**Telegram Bot API 支持管理员删除群内任何消息**，包括其他用户发送的消息。
+
+前置条件：
+1. Bot 必须是群管理员，且 `can_delete_messages: true`
+2. Bot Token 必须有效（`getMe` 返回 200）
+
+排查删除失败的固定顺序：
+1. **验证 Token 有效性**：`getMe` → 401 = Token 过期/撤销，去 @BotFather 重新获取
+2. **验证 Bot 权限**：`getChatMember` → 确认 `can_delete_messages: true`
+3. **验证 msg_id**：暴力扫描 msg_id 范围，`deleteMessage` 返回 200 = 成功
+
+**永远不要对用户说"没办法删除"或"消息不存在"** —— 先验证上述 3 步。
+
 ## 引用
 
 - `AGENTS.md` 类别7（AI 自我审计 4 条铁律）→ 根目录 `AGENTS.md` 搜 `类别7`
@@ -191,6 +230,7 @@ def retroactive_scan(bot, chat_id, start_msg_id, end_msg_id, admin_id):
 
 ## 更新历史
 
+- 2026-06-26 (v5.30.2) — [opencode] 新成员入群头像OCR+BIO广告检测 + 删除消息能力验证铁律
 - 2026-06-12 (v5.16.2) — [Codex] 广告治理当前策略纠正为永久禁言+双黑名单+删消息，不踢人
 - 2026-06-14 (v5.16.5) — [Codex] 广告反应清理(deleteAllMessageReactions) + Business deleted_business_messages 同步 message_snapshots.deleted
 - 2026-06-13 (v5.16.4) — [Codex] Premium emoji 状态 OCR 识别与旧残留消息删除边界补充

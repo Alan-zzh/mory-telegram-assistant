@@ -53,9 +53,9 @@ FORTUNE_TEXTS = _DEFAULT_FORTUNE_TEXTS
 def draw_tarot(name: str = "亲爱的") -> str:
     """随机抽取塔罗牌"""
     card_name, card_desc = random.choice(list(TAROT_CARDS.items()))
-    return (f"✨ {name} 的今日运势卡牌是：\n\n"
+    return (f"✨ {name} 今天抽到的牌：\n\n"
             f"【{card_name}】\n{card_desc}\n\n"
-            f"🔮 记住：命运掌握在自己手中，牌只是镜子。")
+            f"🔮 别想太多。")
 
 
 def get_fortune() -> str:
@@ -77,25 +77,23 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
     # 契合度测试
     if "契合度" in msg:
         mory_bot.reply_and_track(m,
-            f"✨ 星盘扫描中...\n\n"
-            f"结论：你的灵魂和 {bot_name} 契合度高达 **99.9%**！\n"
-            f"你简直就是为她量身定制的守护者！💫")
+            f"✨ 扫完了。你和Mory契合度99.9%。没救了。💫")
         return True
 
     # 大冒险
     if "大冒险" in msg:
         dares = [
-            f"🎲 请在群里发一句对{bot_name}最深情的告白！",
-            f"🎲 说出你手机里存了{bot_name}几张照片？",
-            f"🎲 描述一下你梦里的{bot_name}是什么样的？",
-            f"🎲 用3个词形容你眼中的{bot_name}！",
+            f"🎲 说一句你最想对Mory说的话。",
+            f"🎲 老实交代，手机里存了几张Mory照片？",
+            f"🎲 梦到过Mory吗？描述一下。",
+            f"🎲 三个词，形容Mory。",
         ]
         mory_bot.reply_and_track(m, random.choice(dares))
         return True
 
     # Mory密码彩蛋
     if f"{bot_name}密码" in msg or "密码" == msg.strip():
-        mory_bot.reply_and_track(m, f"🤫 嘘... 奖励你一个专属飞吻 💋\n悄悄告诉你，{bot_name}今天心情特别好哦～")
+        mory_bot.reply_and_track(m, f"🤫 被你发现了。💋 今天心情还行。")
         return True
 
     # 碎片寻宝
@@ -104,19 +102,19 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
         score, already_today, consecutive = db.inc_puzzle_score(uid)
         if already_today:
             mory_bot.reply_and_track(m,
-                f"👀 你今天已经收集过暗号了～\n"
-                f"当前进度：{score}/7（连续{consecutive}天）\n"
-                f"坚持每天来一次，凑齐7天就能领盲盒奖励哦！🎁")
+                f"👀 今天收过了。\n"
+                f"进度：{score}/7（连续{consecutive}天）\n"
+                f"凑齐7天领奖励。🎁")
         elif score >= 7:
             mory_bot.reply_and_track(m,
-                f"🎉 恭喜你连续{consecutive}天收集齐了暗号！\n"
-                f"快去私聊{bot_name}老板领专属盲盒奖励吧～ 🎁\n"
-                f"（进度已重置，可以重新开始新一轮收集～）")
+                f"🎉 连续{consecutive}天集齐了。\n"
+                f"私聊我领奖励。🎁\n"
+                f"（进度重置，下一轮开始。）")
         else:
             mory_bot.reply_and_track(m,
-                f"🔍 发现暗号碎片！今日收集成功～\n"
-                f"当前进度：{score}/7（已连续{consecutive}天）\n"
-                f"每天在群里提到「{puzzle_word}」即可收集一次～")
+                f"🔍 找到暗号碎片。\n"
+                f"进度：{score}/7（连续{consecutive}天）\n"
+                f"每天说「{puzzle_word}」收一次。")
         return False  # 不消费，允许AI继续正常回复
 
     # 叫醒服务注册
@@ -127,19 +125,18 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
             if ":" in wake_time and len(wake_time) == 5:
                 db.set_wake_up(uid, wake_time)
                 mory_bot.reply_and_track(m,
-                    f"⏰ 记下啦～ 以后每天 {wake_time} "
-                    f"小助理会准时叫你起床哦！好好休息～")
+                    f"⏰ 记下了。每天{wake_time}叫你。")
                 return True
         mory_bot.reply_and_track(m, "⚠️ 格式：/叫醒 08:30")
         return True
 
     # 价格表查询
-    if msg.strip() in ("价格表", "价格", "多少钱", "怎么买"):
+    if msg.strip() in ("价格表", "价格", "多少钱", "怎么买", "门槛"):
         price_list = config.get("PRICE_LIST", {})
         lines = [
-            "💎 Mory 付费服务一览\n"
+            "💎 来啦来啦，价格表给你～\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "📥 付费订阅（完整版内容）\n"
+            "📥 订阅类\n"
         ]
         # 付费订阅类
         sub_items = ["至臻精选", "至臻全享", "精选图集"]
@@ -160,7 +157,7 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
             if note:
                 lines.append(f"     {note}")
 
-        lines.append("\n💌 社交解锁")
+        lines.append("\n💌 其他")
         social_items = ["社交解锁1阶", "社交解锁2阶", "社交解锁3阶"]
         social_desc = ["加QQ/TG，1v1聊天，解锁定制/原味/寄拍权限",
                        "私人微信朋友圈，更新最真的日常，私密感拉满",
@@ -171,7 +168,7 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
                 desc = social_desc[i] if i < len(social_desc) else ""
                 lines.append(f"  {i+1}⃣ ¥{info['price']} | {desc}")
 
-        lines.append("\n🎬 独家定制（@MorychannelBot自助下单）")
+        lines.append("\n🎬 定制")
         custom_items = ["不露脸软核定制", "深度剧本演绎", "极致互动狙击"]
         custom_desc = ["5分钟，指定服装/台词/动作，只要你想我就演绎",
                        "10分钟，全剧本角色扮演，灵魂演技全场景",
@@ -181,7 +178,7 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
             if info:
                 lines.append(f"  ¥{info['price']} | {custom_desc[i]}")
 
-        lines.append("\n👕 原味套餐（@MorychannelBot自助下单）")
+        lines.append("\n👕 原味")
         orig_items = ["原味-贴身袜类", "原味-私密内裤", "原味-深度袜类",
                       "原味-撕裂套装", "原味-精选内裤", "原味-运动Bra", "原味-私藏旧鞋"]
         orig_desc = ["船袜/短袜/丝袜任选，穿戴1天",
@@ -197,8 +194,8 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
                 lines.append(f"  {i+1}⃣ ¥{info['price']} | {orig_desc[i]}")
 
         lines.append("\n━━━━━━━━━━━━━━━━━━")
-        lines.append("@MorychannelBot 自助下单 | 联系小助理咨询")
-        lines.append("未成年禁入 | 理智消费")
+        lines.append("所有东西找 @MorychannelBot 下单就好啦～")
+        lines.append("未成年不许来哦。理智消费，买了不退换的哦。")
 
         mory_bot.reply_and_track(m, "\n".join(lines))
         db.set_cart(uid)
@@ -220,7 +217,7 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
                 f"积分：{pts} 分\n\n"
                 f"发言+1分 | 购买+10分 | 邀请+5分")
         else:
-            mory_bot.reply_and_track(m, "🌱 你还是新人，多发言积累积分吧～")
+            mory_bot.reply_and_track(m, "🌱 新人，多说话攒积分。")
         return True
 
     return False
@@ -291,7 +288,7 @@ def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes, mory_bot):
                 except OSError:
                     font = ImageFont.load_default()
 
-        text = "🔒 订阅解锁完整版 @MorychannelBot"
+        text = "想看完整版？@MorychannelBot 等你哦"
         bbox = draw.textbbox((0, 0), text, font=font)
         tw = bbox[2] - bbox[0]
         x = (img.width - tw) / 2
@@ -304,7 +301,7 @@ def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes, mory_bot):
         bio.seek(0)
 
         bot.send_photo(gid, bio,
-                       caption=f"{config['BOT_NAME']}发新图啦～ 想看无遮挡版？你懂的～ 🔥")
+                       caption=f"新拍的啦～完整版在 @MorychannelBot 哦 🔥")
         mory_bot.reply_and_track(m, "✅ 打码完成并已推群")
         logger.info("📸 图片打码推群成功")
 
@@ -322,7 +319,7 @@ def _handle_user_photo_vision(bot, m, config: dict, img_bytes: bytes, ai):
     from core.ai_engine import analyze_image
     
     uid = m.from_user.id
-    uname = m.from_user.first_name or "哥哥"
+    uname = m.from_user.first_name or "你"
     cid = m.chat.id
     
     # 随机概率触发（避免每张图都分析，节省token）
@@ -331,14 +328,14 @@ def _handle_user_photo_vision(bot, m, config: dict, img_bytes: bytes, ai):
         return
     
     # AI识图prompt
-    prompt = f"""你是Mory，一个可爱又有点小色色的闺蜜。
+    prompt = f"""你是Mory，嘴硬心软，有点傲娇。
 
-用户「{uname}」在群里发了一张照片，请用傲娇又撩人的语气评价这张照片。
+用户「{uname}」在群里发了一张照片，评价这张照片，可以调侃、吐槽、偶尔夸一句，不要撒娇卖萌。
 
 要求：
-1. 30-60字，像闺蜜私聊一样自然
+1. 30-60字，自然像朋友说话
 2. 根据照片内容具体评价（不要泛泛而谈）
-3. 可以调侃、撩人、吃醋、羡慕等情绪
+3. 可以调侃、吐槽、偶尔夸一句
 4. 结尾要有emoji
 5. 绝对不要提"AI"、"识别"、"分析"等字眼
 6. 不要重复相同的开头

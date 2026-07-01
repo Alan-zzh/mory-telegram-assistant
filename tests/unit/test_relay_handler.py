@@ -35,6 +35,7 @@ class _FakeDB:
     def __init__(self):
         self.sessions = []
         self.lookup = None
+        self.blacklist = []
 
     def save_session(self, **kwargs):
         self.sessions.append(kwargs)
@@ -42,6 +43,9 @@ class _FakeDB:
 
     def find_by_admin_msg(self, admin_chat_id, admin_msg_id):
         return self.lookup
+
+    def blacklist_add(self, uid, reason):
+        self.blacklist.append((uid, reason))
 
 
 class _FakeUser:
@@ -123,3 +127,22 @@ def test_handle_admin_reply_copies_media_back_to_user():
 
     assert ok is True
     assert bot.copy_calls[0] == (123, 777, 1001, "[管理员回复] 这是图片说明")
+
+
+def test_handle_admin_reply_blacklists_relay_user_without_forwarding_command():
+    from core.handlers.relay_handler import handle_admin_reply
+
+    bot = _FakeBot()
+    db = _FakeDB()
+    db.lookup = {"user_id": 123, "user_chat_id": 123, "source_type": "private"}
+    cfg = {"ADMIN_ID": 777, "ADMIN_IDS": [777]}
+    reply_target = _FakeForwarded(9001)
+    admin_msg = _FakeMessage(uid=777, name="管理员", chat_id=777, message_id=999, text="拉黑", reply_to_message=reply_target)
+
+    ok = handle_admin_reply(bot, db, cfg, admin_msg)
+
+    assert ok is True
+    assert db.blacklist == [(123, "管理员从私聊中继手动拉黑")]
+    assert bot.send_calls[0][0] == 777
+    assert "已拉黑" in bot.send_calls[0][1]
+    assert all(call[0] != 123 for call in bot.send_calls)

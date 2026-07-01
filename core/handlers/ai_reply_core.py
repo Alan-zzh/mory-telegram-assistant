@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-AI回复核心子函数 - P10 AI回复的内部处理逻辑
+⚠️ DEPRECATED 废弃文件
+AI回复核心子函数 - 旧版P10实现，已被 ai_reply_handler.py 完全替代。
+本文件仅保留给旧版ai_handlers.handle_ai_reply引用，新代码禁止导入。
+所有新功能请在 ai_reply_handler.py 中实现。
 
-包含：
+原包含：
 - 连续对话追踪（内存字典 + 线程安全）
 - AI回复处理（FC处理、彩蛋追加、延迟发送）
 - 私聊转发管理员
 - 统一管理员通知
 - 递进引导提示词构建（转化/情感/闲聊）
-- 连续对话追加（绿茶风反问）
+- 连续对话追加（清冷反问）
 - 深夜警告生成
 - Function Calling 工具定义
 """
@@ -16,9 +19,12 @@ AI回复核心子函数 - P10 AI回复的内部处理逻辑
 import time
 import random
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from core.logging_util import get_logger
+
+# 【v5.31.2 修复】VPS 运行在 UTC，时段/日期相关逻辑必须用 CST（UTC+8）
+_CST = timezone(timedelta(hours=8))
 from core.helpers import format_user_mention
 
 logger = get_logger("ai_reply_core")
@@ -105,7 +111,7 @@ def process_ai_response(dctx, resp, mode, conv_count, fortune_bonus, notify_admi
         if fortune_bonus:
             resp += f"\n\n🎴 今日签：{get_fortune()}"
 
-    # 连续对话追加：绿茶风反问 + 转化引导
+    # 连续对话追加：清冷反问 + 转化引导
     if is_group and mode == "normal" and conv_count >= 2:
         append_text = append_conv_response(ctx.ai, conv_count)
         if append_text:
@@ -120,7 +126,7 @@ def process_ai_response(dctx, resp, mode, conv_count, fortune_bonus, notify_admi
         and random.randint(1, 100) <= 30
         and conv_count < 3
     )
-    hour_now = datetime.now().hour
+    hour_now = datetime.now(_CST).hour
     if is_priv and 0 <= hour_now < 5 and len(resp) > 60 and random.randint(1, 100) <= 50:
         should_split = True
 
@@ -242,27 +248,27 @@ def build_convert_hint(db, uid, conv_count) -> tuple:
     if consult_count <= 1:
         _v = random.choice([1, 2, 3])
         if _v == 1:
-            stage_hint = "\n【转化-首次-A】：用户第一次问消费类问题。直接告诉：自助下单找 @MorychannelBot 按提示操作即可，简洁说明档位。语气温柔但不撩人，重点是给出明确操作路径。"
+            stage_hint = "\n【转化-首次-A】：直接告诉他：找 @MorychannelBot，自己看。别啰嗦。"
         elif _v == 2:
-            stage_hint = "\n【转化-首次-B】：用户首次咨询消费类。引导自助：找 @MorychannelBot 就能下单，操作很简单。语气亲切自然，像朋友推荐一样，别太正式。"
+            stage_hint = "\n【转化-首次-B】：用户第一次问。给路径：@MorychannelBot 自助下单，按提示来。"
         else:
-            stage_hint = "\n【转化-首次-C】：用户刚问消费类问题。直接给路径：@MorychannelBot 是自助下单机器人，按提示选就行。简短明了，别啰嗦，让用户知道怎么操作。"
+            stage_hint = "\n【转化-首次-C】：第一次问消费的事。简洁说：@MorychannelBot 下单，很简单。"
     elif consult_count == 2:
         _v = random.choice([1, 2, 3])
         if _v == 1:
-            stage_hint = "\n【转化-二次-A】：用户再次询问，有兴趣但犹豫。用撩人话术引导下单，给预览诱饵：@moryselect 有初步预览，每周更新海量资源。可以撩一下但核心还是引导下单。"
+            stage_hint = "\n【转化-二次-A】：又来问了？直接去 @MorychannelBot 看不就完了。"
         elif _v == 2:
-            stage_hint = "\n【转化-二次-B】：用户又来问了，说明心动了。换个角度撩：先给甜头 @moryselect 看看预览，再引导 @MorychannelBot 下单。语气带点小暧昧，让用户觉得不买亏了。"
+            stage_hint = "\n【转化-二次-B】：还在问？那边都写着的，自己看。"
         else:
-            stage_hint = "\n【转化-二次-C】：用户第二次咨询，还在观望。用好奇心驱动：'好多人在 @moryselect 那边都看过了，你也可以先看看～'，然后自然引导 @MorychannelBot 下单。别催，要勾。"
+            stage_hint = "\n【转化-二次-C】：问两遍了...去 @MorychannelBot，别在群里说了。"
     else:
         _v = random.choice([1, 2, 3])
         if _v == 1:
-            stage_hint = "\n【转化-多次-A】：用户问了3次以上还没下单，需要人工介入。告诉用户：'我帮你转达Mory，等我这的回复谢谢。'语气温柔真诚，让用户感到被重视。"
+            stage_hint = "\n【转化-多次-A】：你问题好多。算了我帮你问她，等着。"
         elif _v == 2:
-            stage_hint = "\n【转化-多次-B】：用户反复咨询但没下单，可能需要Mory亲自来。说：'我帮你跟Mory说一声，她看到会来找你的，稍等哦～'让用户觉得有人在为他操心。"
+            stage_hint = "\n【转化-多次-B】：行吧行吧，我帮你说一声。"
         else:
-            stage_hint = "\n【转化-多次-C】：多次咨询未转化，转人工。说：'你的问题我帮你转给Mory了，她会亲自回复你的，等我消息～'语气诚恳，给用户安全感。"
+            stage_hint = "\n【转化-多次-C】：真能问...我转达一下，你别催。"
         notify_admin_reason = "convert_stuck"
 
     return stage_hint, notify_admin_reason
@@ -276,18 +282,18 @@ def build_emotional_hint(conv_count) -> tuple:
     if conv_count >= 4:
         _v = random.choice([1, 2, 3])
         if _v == 1:
-            stage_hint = "\n【情感-深度-A】：用户聊了好几轮，情绪复杂。安慰完后说：'我帮你跟Mory说一声吧，她看到会来找你的～'让用户知道有人在背后关心ta。"
+            stage_hint = "\n【情感-深度-A】：......嗯。这种事别跟我说。"
         elif _v == 2:
-            stage_hint = "\n【情感-深度-B】：多轮对话了，用户可能需要真人支持。安慰后温柔说：'要不要我帮你转达给Mory？她人超好的，会帮你的～'给用户一个出口，不硬推。"
+            stage_hint = "\n【情感-深度-B】：想听安慰去找她，我不会。"
         else:
-            stage_hint = "\n【情感-深度-C】：聊了挺久了，用户情绪需要更多关注。说：'我帮你通知Mory吧，等她回复你，她一定会的～'语气温暖坚定，让用户有依靠感。"
+            stage_hint = "\n【情感-深度-C】：你跟我说这些没用。找Mory去。"
         notify_admin_reason = "emotional_deep"
     elif conv_count >= 2:
         _v = random.choice([1, 2])
         if _v == 1:
-            stage_hint = "\n【情感-引导-A】：用户情绪需要持续关注。安慰完后轻描淡写：'其实Mory人也很nice的，有啥想说的也可以跟她说～'。自然带出，不硬推。"
+            stage_hint = "\n【情感-引导-A】：对了，Mory比我会安慰人。"
         else:
-            stage_hint = "\n【情感-引导-B】：聊了两轮了，用户可能需要更多支持。安慰后顺带提：'Mory平时也在线的，有啥事找她也行～'。像不经意提到一个朋友，不刻意。"
+            stage_hint = "\n【情感-引导-B】：这种事找她说比较好。"
 
     return stage_hint, notify_admin_reason
 
@@ -300,24 +306,24 @@ def build_normal_hint(conv_count) -> tuple:
     if conv_count >= 6:
         _v = random.choice([1, 2, 3])
         if _v == 1:
-            stage_hint = "\n【闲聊-收网-A】：聊了很多轮了，自然收尾。说：'我帮你跟Mory说一声，让她来看看你～'，或者'跟你聊天好开心～@MorychannelBot 那边还有更多好玩的哦'。二选一。"
+            stage_hint = "\n【闲聊-收网-A】：行了，说这么多够了。@MorychannelBot 那边有事。"
         elif _v == 2:
-            stage_hint = "\n【闲聊-收网-B】：聊了好久，该收了。自然说：'下次再聊～对了，@moryselect 每周都有新内容，你可以看看'，或者'我帮你转达给Mory，让她来找你玩～'。选一个。"
+            stage_hint = "\n【闲聊-收网-B】：不聊了。你要是好奇就去那边看。"
         else:
-            stage_hint = "\n【闲聊-收网-C】：多轮闲聊，温和引导。'好啦今天先这样～想看更多的话 @MorychannelBot 那边解锁就行'，或者'我帮你通知Mory，让她来陪你～'。自然过渡。"
+            stage_hint = "\n【闲聊-收网-C】：话真多。想更多就找 @MorychannelBot。"
         notify_admin_reason = "chat_deep"
     elif conv_count >= 5:
         _v = random.choice([1, 2])
         if _v == 1:
-            stage_hint = "\n【闲聊-深度-A】：聊了5轮以上，关系升温了。自然暗示：'跟你聊天好开心～@MorychannelBot 那边可以直接解锁更多内容哦'。"
+            stage_hint = "\n【闲聊-深度-A】：聊得差不多了。@MorychannelBot 那边有别的东西。"
         else:
-            stage_hint = "\n【闲聊-深度-B】：聊了好几轮，气氛不错。不经意提：'你要是喜欢这里，@moryselect 有超多好东西，每周更新～'。"
+            stage_hint = "\n【闲聊-深度-B】：你话挺多。那边有些群里不发的。"
     elif conv_count >= 3:
         _v = random.choice([1, 2])
         if _v == 1:
-            stage_hint = "\n【闲聊-升温-A】：聊了好几轮，气氛不错。不经意提：'对了，你知道 @moryselect 吗？那边有超多好东西，每周都更新～'。自然植入，不硬推。"
+            stage_hint = "\n【闲聊-升温-A】：对了，有些东西群里不发。"
         else:
-            stage_hint = "\n【闲聊-升温-B】：聊了几轮，可以轻推一下。随口说：'群里还有 @MorychannelBot 可以解锁更多内容哦～'。像推荐一个好玩的地方，不刻意。"
+            stage_hint = "\n【闲聊-升温-B】：想多看点什么找 @MorychannelBot。"
 
     return stage_hint, notify_admin_reason
 
@@ -327,20 +333,20 @@ def build_normal_hint(conv_count) -> tuple:
 # ═══════════════════════════════════════════════════════════════════════
 
 def append_conv_response(ai, conv_count: int) -> str:
-    """连续对话追加：绿茶风反问 + 转化引导，返回追加文本"""
+    """连续对话追加：清冷反问 + 转化引导，返回追加文本"""
     seed_h = random.randint(100000, 999999)
 
     append_mode = None
     append_prompt = ""
     if conv_count >= 5 and random.randint(1, 10) <= 3:
         append_mode = "convert_soft"
-        append_prompt = f"用户已和你连续聊了{conv_count}轮，自然收尾引导"
+        append_prompt = f"聊了好几轮了，清冷收个尾，自然提一句私聊就行。"
     elif conv_count >= 3 and random.randint(1, 10) <= 3:
         append_mode = "nudge"
-        append_prompt = "用户和你聊得不错，不经意间植入暗示"
+        append_prompt = "聊得还行，随口提一句那边有别的内容，别硬推。"
     elif random.randint(1, 10) <= 6:
         append_mode = "hook"
-        append_prompt = "基于刚才的对话，用绿茶风反问结尾让对话继续"
+        append_prompt = "用一句清冷的反问或半句话收尾，让对方想接话，不要卖萌撒娇，不要绿茶风。"
 
     if append_mode:
         try:
@@ -351,7 +357,7 @@ def append_conv_response(ai, conv_count: int) -> str:
                 if append_text:
                     return f"\n\n{append_text.strip()}"
             except concurrent.futures.TimeoutError:
-                logger.info("连续对话追加超时（5秒），跳过")
+                logger.info("连续对话追加超时（25秒），跳过")
         except Exception as e:
             logger.warning(f"连续对话追加失败（跳过）：{e}")
 
@@ -359,7 +365,7 @@ def append_conv_response(ai, conv_count: int) -> str:
 
 
 def generate_late_night_warning(ai, uname, is_group, uid):
-    """生成深夜撩人警告消息（带随机性和人设）"""
+    """生成深夜警告消息（带随机性和人设）"""
     # 40%概率直接使用备用文案
     if random.random() < 0.4:
         return get_late_night_fallback(uname)
@@ -368,19 +374,20 @@ def generate_late_night_warning(ai, uname, is_group, uid):
     try:
         seed = uid + int(time.time()) % 3600
         prompt = (
-            f"你是Mory，一个贴心又有点小调皮的小姐姐。\n\n"
+            f"你是Mory，一个嘴硬心软的Mory。\n\n"
             f"现在是凌晨，用户{uname}还在群里发消息不睡觉。\n"
             f"你要用关心但不说教的方式提醒他去睡觉。\n\n"
             f"要求：\n"
-            f"1. 20-30字，像闺蜜私聊一样自然\n"
-            f"2. 带点小撒娇/小关心\n"
+            f"1. 20字以内，清冷短句\n"
+            f"2. 嘴硬地关心，不撒娇\n"
             f"3. 可以暗示：熬夜会变丑/对身体不好/明天没精神\n"
-            f"4. 结尾要有emoji（😴💤🌙✨选一个）\n"
+            f"4. 结尾可以有一个emoji（😴💤🌙选一个）\n"
             f"5. seed={seed}，每次必须不同\n\n"
             f"禁止：\n"
             f"- 不要说教式语气（如'你应该'、'你必须'）\n"
+            f"- 不要称呼用户'哥哥'，不要用'嘛''啦''～'\n"
             f"- 不要出现'老板'这个词（不在回复里使用任何'老板'称谓）\n"
-            f"- 控制在30字以内"
+            f"- 控制在20字以内"
         )
         ai_reply = ai.ask(prompt, mode="normal")
         if ai_reply and len(ai_reply) > 5:
@@ -394,15 +401,15 @@ def generate_late_night_warning(ai, uname, is_group, uid):
 def get_late_night_fallback(uname):
     """备用深夜文案库（高度随机化）"""
     templates = [
-        f"哎呀{uname}～这么晚还不睡呀？熬夜会掉头发的哦～快去被窝里躲着吧 💤",
-        f"诶嘿～{uname}还在活跃呀？月亮都困得打哈欠了，你也快去休息嘛～🌙",
-        f"{uname}哥哥～再熬下去明天要变熊猫眼了啦！快去梦里找我玩～😴",
-        f"偷偷告诉你哦{uname}～熬夜会变笨的！小Mory可不想明天看到迷糊的你～✨",
-        f"呜呼{uname}～深夜不睡觉是在等谁呀？快闭眼休息啦，明天见～💤",
-        f"{uname}～你是在偷偷熬夜刷手机吗？小心被小Mory抓包哦～快去睡！😴",
-        f"嘿{uname}～夜深啦～星星都困得眨眼了，你也该去被窝里躲着啦～🌙",
-        f"{uname}哥哥～再晚下去要错过好运了！快去睡吧，梦里啥都有～✨",
-        f"哎呀呀{uname}～这么精神呀？小Mory都打哈欠了，你也快去休息嘛～💤",
-        f"{uname}～深夜是皮肤修复的黄金时间哦！快去睡美容觉吧～😴",
+        "还没睡？🌙",
+        "熬夜会变丑。😴",
+        "再不睡明天起不来。💤",
+        "早点休息。",
+        "几点了还在这。🌙",
+        "还不睡？",
+        "夜猫子。😴",
+        "去睡。",
+        "别熬了。💤",
+        "明天没精神别怪我。🌙",
     ]
     return random.choice(templates)

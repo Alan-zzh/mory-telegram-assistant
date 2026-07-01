@@ -135,8 +135,9 @@ class HTTPClient:
         headers: Optional[Dict] = None,
         timeout: Optional[int] = None,
         retry_times: Optional[int] = None,
-        retry_delay: Optional[float] = None
-    ) -> Dict:
+        retry_delay: Optional[float] = None,
+        raw_text: bool = False
+    ) -> Union[Dict, str]:
         """
         发送GET请求
         
@@ -147,9 +148,10 @@ class HTTPClient:
             timeout: 超时时间（秒），None则使用默认值
             retry_times: 重试次数，None则使用默认值
             retry_delay: 重试延迟（秒），None则使用默认值
+            raw_text: 是否返回原始响应文本（默认False返回解析后的字典）
             
         Returns:
-            响应数据字典
+            响应数据字典，或原始响应文本（raw_text=True时）
             
         Raises:
             HTTPTimeoutError: 请求超时
@@ -162,7 +164,8 @@ class HTTPClient:
             headers=headers,
             timeout=timeout,
             retry_times=retry_times,
-            retry_delay=retry_delay
+            retry_delay=retry_delay,
+            raw_text=raw_text
         )
     
     def post(
@@ -173,8 +176,9 @@ class HTTPClient:
         headers: Optional[Dict] = None,
         timeout: Optional[int] = None,
         retry_times: Optional[int] = None,
-        retry_delay: Optional[float] = None
-    ) -> Dict:
+        retry_delay: Optional[float] = None,
+        raw_text: bool = False
+    ) -> Union[Dict, str]:
         """
         发送POST请求
         
@@ -186,9 +190,10 @@ class HTTPClient:
             timeout: 超时时间（秒）
             retry_times: 重试次数
             retry_delay: 重试延迟（秒）
+            raw_text: 是否返回原始响应文本（默认False返回解析后的字典）
             
         Returns:
-            响应数据字典
+            响应数据字典，或原始响应文本（raw_text=True时）
             
         Raises:
             HTTPTimeoutError: 请求超时
@@ -202,7 +207,8 @@ class HTTPClient:
             headers=headers,
             timeout=timeout,
             retry_times=retry_times,
-            retry_delay=retry_delay
+            retry_delay=retry_delay,
+            raw_text=raw_text
         )
     
     def _request(
@@ -215,8 +221,9 @@ class HTTPClient:
         headers: Optional[Dict] = None,
         timeout: Optional[int] = None,
         retry_times: Optional[int] = None,
-        retry_delay: Optional[float] = None
-    ) -> Dict:
+        retry_delay: Optional[float] = None,
+        raw_text: bool = False
+    ) -> Union[Dict, str]:
         """
         内部请求方法（带重试机制）
         
@@ -237,9 +244,10 @@ class HTTPClient:
             timeout: 超时时间
             retry_times: 重试次数
             retry_delay: 重试延迟
+            raw_text: 是否返回原始响应文本
             
         Returns:
-            响应数据字典
+            响应数据字典，或原始响应文本（raw_text=True时）
         """
         # 使用配置的默认值
         timeout = timeout or self.config["default_timeout"]
@@ -254,7 +262,8 @@ class HTTPClient:
             "data": data,
             "json_data": json_data,
             "headers": headers,
-            "timeout": timeout
+            "timeout": timeout,
+            "raw_text": raw_text
         }
         
         # 执行请求拦截器
@@ -287,7 +296,7 @@ class HTTPClient:
             logger.error(error_msg)
         raise HTTPRequestError(error_msg) from last_error
     
-    def _do_request(self, request_params: Dict) -> Dict:
+    def _do_request(self, request_params: Dict) -> Union[Dict, str]:
         """
         执行实际的HTTP请求
         
@@ -297,7 +306,7 @@ class HTTPClient:
             request_params: 请求参数字典
             
         Returns:
-            响应数据字典
+            响应数据字典，或原始响应文本（raw_text=True时）
         """
         method = request_params["method"]
         url = request_params["url"]
@@ -306,6 +315,7 @@ class HTTPClient:
         json_data = request_params.get("json_data")
         headers = request_params.get("headers")
         timeout = request_params["timeout"]
+        raw_text = request_params.get("raw_text", False)
         
         # 构建完整URL（带查询参数）
         if params:
@@ -317,12 +327,12 @@ class HTTPClient:
         try:
             import requests
             return self._do_request_with_requests(
-                method, url, data, json_data, headers, timeout
+                method, url, data, json_data, headers, timeout, raw_text
             )
         except ImportError:
             # 回退到 urllib
             return self._do_request_with_urllib(
-                method, url, data, json_data, headers, timeout
+                method, url, data, json_data, headers, timeout, raw_text
             )
     
     def _do_request_with_requests(
@@ -332,8 +342,9 @@ class HTTPClient:
         data: Optional[Union[Dict, str, bytes]],
         json_data: Optional[Dict],
         headers: Optional[Dict],
-        timeout: int
-    ) -> Dict:
+        timeout: int,
+        raw_text: bool = False
+    ) -> Union[Dict, str]:
         """
         使用 requests 库发送请求
         
@@ -344,9 +355,10 @@ class HTTPClient:
             json_data: JSON格式的请求体数据
             headers: 请求头
             timeout: 超时时间
+            raw_text: 是否返回原始响应文本
             
         Returns:
-            响应数据字典
+            响应数据字典，或原始响应文本（raw_text=True时）
         """
         import requests
         
@@ -371,6 +383,12 @@ class HTTPClient:
         # 检查响应状态（非2xx会抛出异常）
         resp.raise_for_status()
         
+        # 如果请求原始文本，直接返回
+        if raw_text:
+            if self.config["enable_logging"]:
+                logger.info(f"HTTP请求成功: {method} {url} - 状态码: {resp.status_code} (原始文本)")
+            return resp.text
+        
         # 解析响应
         try:
             result = resp.json()
@@ -391,8 +409,9 @@ class HTTPClient:
         data: Optional[Union[Dict, str, bytes]],
         json_data: Optional[Dict],
         headers: Optional[Dict],
-        timeout: int
-    ) -> Dict:
+        timeout: int,
+        raw_text: bool = False
+    ) -> Union[Dict, str]:
         """
         使用 urllib 库发送请求（回退方案）
         
@@ -403,9 +422,10 @@ class HTTPClient:
             json_data: JSON格式的请求体数据
             headers: 请求头
             timeout: 超时时间
+            raw_text: 是否返回原始响应文本
             
         Returns:
-            响应数据字典
+            响应数据字典，或原始响应文本（raw_text=True时）
         """
         # 默认请求头
         default_headers = {
@@ -434,7 +454,12 @@ class HTTPClient:
         # 发送请求并处理异常
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
+                resp_text = resp.read().decode("utf-8")
+                if raw_text:
+                    if self.config["enable_logging"]:
+                        logger.info(f"HTTP请求成功: {method} {url} (原始文本)")
+                    return resp_text
+                result = json.loads(resp_text)
         except urllib.error.HTTPError as e:
             raise HTTPRequestError(f"HTTP错误: {e.code} - {e.reason}")
         except urllib.error.URLError as e:

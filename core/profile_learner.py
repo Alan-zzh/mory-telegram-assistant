@@ -9,10 +9,13 @@ import json
 import re
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# CST 时区常量（VPS 为 UTC，统一使用 CST 避免时间错位）
+_CST = timezone(timedelta(hours=8))
 
 # 兴趣关键词映射表
 INTEREST_KEYWORDS = {
@@ -139,7 +142,7 @@ class ProfileLearner:
 
         # 6. 兴趣标签 + VIP/高价值（原有逻辑保留，立即写库）
         new_interests = detect_interests(text)
-        current = self.db.get_user_profile(user_id) or {
+        current = self.db.get_user_persona_profile(user_id) or {
             "user_id": user_id, "tags": [], "level": 0, "interests": [],
             "conversation_rounds": 0, "activity_score": 0.0, "flirt_affinity": 0.0,
             "spend_tendency": 0.0, "resistance_idx": 0.5, "peak_hours": [], "persona_tags": [],
@@ -147,7 +150,7 @@ class ProfileLearner:
         old_interests = set(current.get("interests", []) or [])
         merged_interests = list(old_interests | set(new_interests))
         current["interests"] = merged_interests
-        current["last_interaction"] = datetime.now().isoformat()
+        current["last_interaction"] = datetime.now(_CST).isoformat()
         current["conversation_rounds"] = current.get("conversation_rounds", 0) + 1
 
         # 7. 实时更新画像维度（基于内存计数器）

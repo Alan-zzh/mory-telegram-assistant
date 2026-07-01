@@ -122,8 +122,8 @@ def _get_db_file_path(db_conn) -> str:
         row = real.execute("PRAGMA database_list").fetchone()
         if row and row[2]:
             return row[2]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"PRAGMA database_list 失败，回退默认路径: {e}")
     # 回退到项目根目录的 mory.db
     return os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

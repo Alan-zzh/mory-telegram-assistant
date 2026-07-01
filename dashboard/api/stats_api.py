@@ -84,13 +84,14 @@ def api_stats_overview():
         r = conn.execute("SELECT COUNT(*) FROM users").fetchone()
         stats["total_users"] = r[0] if r else 0
         # [TRAE SOLO CN] v5.12.3 修复：today_start 应为今天0点的 Unix 时间戳
-        today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        # 【v5.31.2 修复】原 datetime.now() 无 tz 返回 UTC，CST 0:00-8:00 漏算今日活跃
+        today_start = int(datetime.now(_CST).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
         r = conn.execute("SELECT COUNT(*) FROM users WHERE last_active >= ?", (today_start,)).fetchone()
         stats["today_active"] = r[0] if r else 0
-        week_start = int((datetime.now() - timedelta(days=7)).timestamp())
+        week_start = int((datetime.now(_CST) - timedelta(days=7)).timestamp())
         r = conn.execute("SELECT COUNT(*) FROM users WHERE last_active >= ?", (week_start,)).fetchone()
         stats["week_active"] = r[0] if r else 0
-        month_start = int((datetime.now() - timedelta(days=30)).timestamp())
+        month_start = int((datetime.now(_CST) - timedelta(days=30)).timestamp())
         r = conn.execute("SELECT COUNT(*) FROM users WHERE last_active >= ?", (month_start,)).fetchone()
         stats["month_active"] = r[0] if r else 0
         r = conn.execute("SELECT COALESCE(SUM(group_messages),0), COALESCE(SUM(private_messages),0) FROM users").fetchone()
@@ -100,7 +101,7 @@ def api_stats_overview():
         for row in r:
             stats["conversion_funnel"][row[0] or "unknown"] = row[1]
         for i in range(7):
-            day = datetime.now() - timedelta(days=6-i)
+            day = datetime.now(_CST) - timedelta(days=6-i)
             day_start = int(day.replace(hour=0, minute=0, second=0).timestamp())
             day_end = int(day.replace(hour=23, minute=59, second=59).timestamp())
             r = conn.execute("SELECT COUNT(*) FROM users WHERE first_seen >= ? AND first_seen <= ?", (day_start, day_end)).fetchone()

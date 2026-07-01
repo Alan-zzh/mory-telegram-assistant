@@ -80,6 +80,21 @@ def test_profile_status_ocr_hits_image_only_look_profile(monkeypatch):
     assert bot.downloaded == ["stickers/thumb-1.webp"]
 
 
+def test_profile_bio_group_invite_link_blocks_on_join():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bio = (
+        "带两个缺钱的兄弟，只要你肯付出，一天保你一万打底，"
+        "想做的兄弟，进群找了解: https://t.me/+pJMFeWCqXow2NmI1"
+    )
+
+    result = detect_profile_ad_signal(None, _FakeUser(first_name="甜甜 Shaikh", status_id=""), bio, {})
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert "资料文字命中广告规则" in result["reason"]
+
+
 def test_telebot_user_keeps_emoji_status_extra_field():
     from core.telebot_compat import preserve_user_extra_fields
     from telebot import types
@@ -160,3 +175,76 @@ def test_short_message_still_blocks_profile_status_ad():
     assert check_ad_detection(dctx) is True
     assert bot.deleted == [(-1001, 88)]
     assert bot.restricted[0][0:2] == (-1001, 42)
+
+
+# =====================================================================
+# v5.28.3 回归测试：色情引流组合模式检测
+# 修复 SM/淫素/过夜/出+年龄 等关键词覆盖漏洞
+# =====================================================================
+
+
+def test_bio_sm_dog_pattern():
+    """回归：Bio 含 SM+母狗+交友 必须被资料层识别"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="蜜桃成熟时", status_id=""),
+        bio="精全国各地SM母狗交友信息：https://t.me/+zXWSqSu64ORhZmQ9"
+    )
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert "资料文字命中广告规则" in result["reason"]
+
+
+def test_bio_night_service_pattern():
+    """回归：Bio 含 过夜+服务+链接 必须被资料层识别"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="夜猫子", status_id=""),
+        bio="全国各地可以过夜，联系@service_bot https://t.me/+abc123"
+    )
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert "资料文字命中广告规则" in result["reason"]
+
+
+def test_bio_sm交友_link_pattern():
+    """回归：Bio 含 SM+交友+链接 必须被资料层识别"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="SM玩家", status_id=""),
+        bio="SM交友信息：https://t.me/+smgroup"
+    )
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+
+
+def test_adult_keyword_sm_in_text():
+    """回归：消息含 SM 必须被消息层识别"""
+    from modules.ad_detector import AdDetector
+
+    detector = AdDetector({"AD_ENABLED": True})
+    result = detector.detect(
+        username="smhwmt",
+        msg="SM全套服务，私聊了解",
+        user_id=999
+    )
+    assert result["is_ad"] is True
+
+
+def test_adult_keyword_淫素_in_text():
+    """回归：消息含 淫素 必须被消息层识别"""
+    from modules.ad_detector import AdDetector
+
+    detector = AdDetector({"AD_ENABLED": True})
+    result = detector.detect(
+        username="testuser",
+        msg="出23岁淫素，可以过夜",
+        user_id=998
+    )
+    assert result["is_ad"] is True

@@ -113,11 +113,12 @@ class WriteQueue:
         with self._lock:
             if not self._running:
                 return
-            self._running = False
             # 投递哨兵任务唤醒 Worker
             self._queue.put(None)
         if self._worker:
             self._worker.join(timeout=timeout)
+        with self._lock:
+            self._running = False
             logger.info("✅ WriteQueue Worker 已停止")
 
     def enqueue(self, conn, sql: str, params: tuple = (), callback=None, is_critical: bool = False) -> bool:
@@ -256,7 +257,7 @@ class WriteQueue:
     def _run_loop(self):
         """Worker 主循环"""
         logger.info("🔄 DBWriteWorker 开始消费队列")
-        while self._running:
+        while True:
             try:
                 task = self._queue.get(timeout=1.0)
             except queue.Empty:
@@ -289,24 +290,33 @@ class WriteQueue:
         logger.info("🔄 DBWriteWorker 已退出")
 
     def _execute_task(self, task: _WriteTask):
-        """执行单个写任务"""
+        """执行单个写任务
+
+        【v5.31.2 P0 修复】rowcount 丢失 bug：
+        之前创建新 _WriteResult 对象赋值给 task.future.result，
+        但 enqueue_and_wait 返回的是本地 result 引用（初始 rowcount=0），
+        导致 claim_task 等依赖 rowcount 的方法永远拿到 0，所有任务被误判为"数据库锁拦截"。
+        修复：直接更新 task.future.result 的字段，保持对象引用不变。
+        """
         cur = task.conn.execute(task.sql, task.params)
         task.conn.commit()
 
-        result = None
-        if task.callback or task.future:
-            result = _WriteResult()
-            result.rowcount = cur.rowcount
-            result.lastrowid = cur.lastrowid
+        # 直接更新 future.result 的字段（future.result 由 enqueue_and_wait 创建并共享引用）
+        if task.future:
+            task.future.result.rowcount = cur.rowcount
+            task.future.result.lastrowid = cur.lastrowid
 
         if task.callback:
+            # callback 仍需独立 result 对象（避免与 future.result 共享状态）
+            r = _WriteResult()
+            r.rowcount = cur.rowcount
+            r.lastrowid = cur.lastrowid
             try:
-                task.callback(result)
+                task.callback(r)
             except Exception as e:
                 logger.debug(f"WriteQueue callback 异常: {e}")
 
         if task.future:
-            task.future.result = result
             task.future.set()
 
 

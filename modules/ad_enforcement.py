@@ -81,12 +81,24 @@ def _write_blacklists(bot, db, uid: int, reason: str) -> bool:
     except Exception as e:
         ok = False
         logger.warning(f"写入global_blacklist失败: uid={uid} err={e}")
+        try:
+            from modules.auto_tasks import report_fault
+            report_fault("广告处置失败", f"写入global_blacklist失败 uid={uid}: {e}", "🚨")
+        except Exception as e2:
+            # 【v5.31.2 修复】告警链断裂会导致管理员无法感知广告号未被封禁
+            logger.error(f"广告处置告警上报失败(global_blacklist): {e2}")
     try:
         if hasattr(db, "blacklist_add"):
             db.blacklist_add(uid, reason)
     except Exception as e:
         ok = False
         logger.warning(f"写入blacklist失败: uid={uid} err={e}")
+        try:
+            from modules.auto_tasks import report_fault
+            report_fault("广告处置失败", f"写入blacklist失败 uid={uid}: {e}", "🚨")
+        except Exception as e2:
+            # 【v5.31.2 修复】告警链断裂会导致管理员无法感知广告号未被封禁
+            logger.error(f"广告处置告警上报失败(blacklist): {e2}")
     return ok
 
 

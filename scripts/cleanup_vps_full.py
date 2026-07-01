@@ -98,122 +98,127 @@ def main():
     print(f"[1/6] ✅ SSH 连接成功 {VPS_HOST}")
 
     sftp = client.open_sftp()
-
-    # ── 步骤 2：删除垃圾文件 ──
-    print(f"\n[2/6] 删除遗留垃圾文件 ...")
-    deleted = []
-    for rel_path in FILES_TO_DELETE:
-        remote_path = f"{VPS_PATH}/{rel_path}"
-        try:
-            sftp.stat(remote_path)
-            sftp.remove(remote_path)
-            print(f"  ✅ 已删除：{rel_path}")
-            deleted.append(rel_path)
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            print(f"  ⚠️ 删除失败 {rel_path}：{e}")
-    if not deleted:
-        print("  ℹ️  无垃圾文件需要删除")
-    else:
-        print(f"  小计：删除 {len(deleted)} 个文件")
-
-    # ── 步骤 3：清理 __pycache__ ──
-    print(f"\n[3/6] 清理 __pycache__ 目录 ...")
-    stdin, stdout, stderr = client.exec_command(
-        f'find {VPS_PATH} -type d -name __pycache__ -exec rm -rf {{}} + 2>/dev/null; '
-        f'echo "PYCACHE_CLEANED"'
-    )
-    out = stdout.read().decode().strip()
-    if "PYCACHE_CLEANED" in out:
-        print("  ✅ __pycache__ 已清理")
-    else:
-        print(f"  ⚠️ 清理结果：{out}")
-
-    # ── 步骤 4：配置 logrotate ──
-    print(f"\n[4/6] 配置 logrotate ...")
-    logrotate_path = "/etc/logrotate.d/mory-assistant"
-    # 先写本地临时文件再上传（用 sftp.put）
-    import tempfile, os
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False, encoding='utf-8') as tf:
-        tf.write(LOGROTATE_CONF)
-        tmp_path = tf.name
     try:
-        # 上传到 /tmp 再 sudo mv
-        remote_tmp = "/tmp/mory_logrotate.conf"
-        sftp.put(tmp_path, remote_tmp)
+        # ── 步骤 2：删除垃圾文件 ──
+        print(f"\n[2/6] 删除遗留垃圾文件 ...")
+        deleted = []
+        for rel_path in FILES_TO_DELETE:
+            remote_path = f"{VPS_PATH}/{rel_path}"
+            try:
+                sftp.stat(remote_path)
+                sftp.remove(remote_path)
+                print(f"  ✅ 已删除：{rel_path}")
+                deleted.append(rel_path)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                print(f"  ⚠️ 删除失败 {rel_path}：{e}")
+        if not deleted:
+            print("  ℹ️  无垃圾文件需要删除")
+        else:
+            print(f"  小计：删除 {len(deleted)} 个文件")
+
+        # ── 步骤 3：清理 __pycache__ ──
+        print(f"\n[3/6] 清理 __pycache__ 目录 ...")
         stdin, stdout, stderr = client.exec_command(
-            f'echo {VPS_PASS} | sudo -S cp {remote_tmp} {logrotate_path} 2>&1; '
-            f'echo {VPS_PASS} | sudo -S chown root:root {logrotate_path} 2>&1; '
-            f'echo {VPS_PASS} | sudo -S chmod 644 {logrotate_path} 2>&1; '
-            f'rm -f {remote_tmp}; '
-            f'echo LOGROTATE_DONE'
+            f'find {VPS_PATH} -type d -name __pycache__ -exec rm -rf {{}} + 2>/dev/null; '
+            f'echo "PYCACHE_CLEANED"'
         )
         out = stdout.read().decode().strip()
-        if "LOGROTATE_DONE" in out:
-            print(f"  ✅ logrotate 配置已写入 {logrotate_path}")
+        if "PYCACHE_CLEANED" in out:
+            print("  ✅ __pycache__ 已清理")
         else:
-            print(f"  ⚠️ logrotate 配置结果：{out}")
-        # 测试 logrotate 配置
-        stdin, stdout, stderr = client.exec_command(
-            f'echo {VPS_PASS} | sudo -S logrotate -d {logrotate_path} 2>&1 | tail -5'
-        )
-        test_out = stdout.read().decode().strip()
-        if "error" in test_out.lower():
-            print(f"  ⚠️ logrotate 配置测试有警告：{test_out}")
-        else:
-            print(f"  ✅ logrotate 配置测试通过")
-    finally:
-        os.unlink(tmp_path)
+            print(f"  ⚠️ 清理结果：{out}")
 
-    # ── 步骤 5：清理 systemd journal（保留 7 天）──
-    print(f"\n[5/6] 清理 systemd journal 旧日志（保留 7 天）...")
-    stdin, stdout, stderr = client.exec_command(
-        f'echo {VPS_PASS} | sudo -S journalctl --vacuum-time=7d 2>&1 | tail -5'
-    )
-    out = stdout.read().decode().strip()
-    print(f"  {out}")
-
-    sftp.close()
-
-    # ── 步骤 6：验证清理结果 ──
-    print(f"\n[6/6] 验证清理结果 ...")
-    # 重新检查垃圾文件
-    remaining = []
-    for rel_path in FILES_TO_DELETE:
-        remote_path = f"{VPS_PATH}/{rel_path}"
+        # ── 步骤 4：配置 logrotate ──
+        print(f"\n[4/6] 配置 logrotate ...")
+        logrotate_path = "/etc/logrotate.d/mory-assistant"
+        # 先写本地临时文件再上传（用 sftp.put）
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False, encoding='utf-8') as tf:
+            tf.write(LOGROTATE_CONF)
+            tmp_path = tf.name
         try:
-            sftp = client.open_sftp()
-            sftp.stat(remote_path)
-            remaining.append(rel_path)
-            sftp.close()
+            # 上传到 /tmp 再 sudo mv
+            remote_tmp = "/tmp/mory_logrotate.conf"
+            sftp.put(tmp_path, remote_tmp)
+            stdin, stdout, stderr = client.exec_command(
+                f'echo {VPS_PASS} | sudo -S cp {remote_tmp} {logrotate_path} 2>&1; '
+                f'echo {VPS_PASS} | sudo -S chown root:root {logrotate_path} 2>&1; '
+                f'echo {VPS_PASS} | sudo -S chmod 644 {logrotate_path} 2>&1; '
+                f'rm -f {remote_tmp}; '
+                f'echo LOGROTATE_DONE'
+            )
+            out = stdout.read().decode().strip()
+            if "LOGROTATE_DONE" in out:
+                print(f"  ✅ logrotate 配置已写入 {logrotate_path}")
+            else:
+                print(f"  ⚠️ logrotate 配置结果：{out}")
+            # 测试 logrotate 配置
+            stdin, stdout, stderr = client.exec_command(
+                f'echo {VPS_PASS} | sudo -S logrotate -d {logrotate_path} 2>&1 | tail -5'
+            )
+            test_out = stdout.read().decode().strip()
+            if "error" in test_out.lower():
+                print(f"  ⚠️ logrotate 配置测试有警告：{test_out}")
+            else:
+                print(f"  ✅ logrotate 配置测试通过")
+        finally:
+            os.unlink(tmp_path)
+
+        # ── 步骤 5：清理 systemd journal（保留 7 天）──
+        print(f"\n[5/6] 清理 systemd journal 旧日志（保留 7 天）...")
+        stdin, stdout, stderr = client.exec_command(
+            f'echo {VPS_PASS} | sudo -S journalctl --vacuum-time=7d 2>&1 | tail -5'
+        )
+        out = stdout.read().decode().strip()
+        print(f"  {out}")
+
+        sftp.close()
+
+        # ── 步骤 6：验证清理结果 ──
+        print(f"\n[6/6] 验证清理结果 ...")
+        # 重新检查垃圾文件
+        remaining = []
+        for rel_path in FILES_TO_DELETE:
+            remote_path = f"{VPS_PATH}/{rel_path}"
+            try:
+                sftp = client.open_sftp()
+                try:
+                    sftp.stat(remote_path)
+                    remaining.append(rel_path)
+                finally:
+                    sftp.close()
+            except Exception:
+                pass
+        if remaining:
+            print(f"  ⚠️ 以下文件仍存在：{remaining}")
+        else:
+            print(f"  ✅ 所有垃圾文件已清理")
+
+        # 磁盘占用对比
+        stdin, stdout, stderr = client.exec_command(f'du -sh {VPS_PATH} 2>/dev/null; df -h / | tail -1')
+        print(f"\n  清理后磁盘占用：")
+        print(f"  {stdout.read().decode().strip()}")
+
+        # 服务状态最终确认
+        print(f"\n  服务状态最终确认：")
+        for svc in ['mory-assistant', 'mory-dashboard']:
+            stdin, stdout, stderr = client.exec_command(f'sudo systemctl is-active {svc}')
+            print(f"    {svc}: {stdout.read().decode().strip()}")
+
+        print("\n" + "=" * 60)
+        print(f"  ✅ VPS 清理完成！")
+        print(f"     - 删除垃圾文件：{len(deleted)} 个")
+        print(f"     - __pycache__：已清理")
+        print(f"     - logrotate：已配置")
+        print(f"     - journal：已清理 7 天前日志")
+        print("=" * 60)
+    finally:
+        try:
+            client.close()
         except Exception:
             pass
-    if remaining:
-        print(f"  ⚠️ 以下文件仍存在：{remaining}")
-    else:
-        print(f"  ✅ 所有垃圾文件已清理")
-
-    # 磁盘占用对比
-    stdin, stdout, stderr = client.exec_command(f'du -sh {VPS_PATH} 2>/dev/null; df -h / | tail -1')
-    print(f"\n  清理后磁盘占用：")
-    print(f"  {stdout.read().decode().strip()}")
-
-    # 服务状态最终确认
-    print(f"\n  服务状态最终确认：")
-    for svc in ['mory-assistant', 'mory-dashboard']:
-        stdin, stdout, stderr = client.exec_command(f'sudo systemctl is-active {svc}')
-        print(f"    {svc}: {stdout.read().decode().strip()}")
-
-    client.close()
-
-    print("\n" + "=" * 60)
-    print(f"  ✅ VPS 清理完成！")
-    print(f"     - 删除垃圾文件：{len(deleted)} 个")
-    print(f"     - __pycache__：已清理")
-    print(f"     - logrotate：已配置")
-    print(f"     - journal：已清理 7 天前日志")
-    print("=" * 60)
 
 
 if __name__ == "__main__":

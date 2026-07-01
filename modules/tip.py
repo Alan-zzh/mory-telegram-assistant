@@ -1,6 +1,7 @@
 """打赏/积分转赠模块"""
 import time
 from datetime import datetime, timezone, timedelta
+from core.database import _db_lock
 from core.logging_util import get_logger
 
 _CST = timezone(timedelta(hours=8))
@@ -47,14 +48,28 @@ def handle_tip(bot, m, config, db, extra=""):
         bot.reply_to(m, "⚠️ 打赏金额最少为 1 积分")
         return
 
-    # 检查打赏者余额
-    tipper_points = db.get_user_points(tipper.id)
-    if tipper_points is None or tipper_points < amount:
-        bot.reply_to(m, f"⚠️ 积分不足！你当前有 {tipper_points or 0} 积分，还差 {amount - (tipper_points or 0)} 积分")
-        return
+    # [TRAE SOLO CN] 原子扣款：UPDATE ... WHERE uid=? AND points>=?，避免 TOCTOU 竞态
+    with _db_lock:
+        cur = db.conn.execute(
+            "UPDATE user_levels SET points = points - ? WHERE uid = ? AND points >= ?",
+            (amount, tipper.id, amount)
+        )
+        if cur.rowcount == 0:
+            db.conn.rollback()
+            tipper_points = db.get_user_points(tipper.id) or 0
+            bot.reply_to(m, f"⚠️ 积分不足！你当前有 {tipper_points} 积分，还差 {amount - tipper_points} 积分")
+            return
+        # 记录积分日志
+        try:
+            db.conn.execute(
+                "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                (tipper.id, -amount, db.get_user_points(tipper.id), "tip", int(time.time()))
+            )
+        except Exception as e:
+            logger.debug(f"操作异常: {e}")
+        db.conn.commit()
 
-    # 执行打赏：扣减打赏者、增加接收者
-    db.add_points(tipper.id, -amount, source="tip")
+    # 执行打赏：增加接收者（add_points 内部自带锁与日志）
     _lv_result = db.add_points(recipient.id, amount, source="tip")
 
     # 群内公告

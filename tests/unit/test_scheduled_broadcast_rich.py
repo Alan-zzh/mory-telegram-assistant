@@ -347,6 +347,11 @@ def test_execute_scheduled_broadcast_supports_rich_message(monkeypatch):
 
 
 def test_text_broadcast_prefers_rich_message_when_enabled(monkeypatch):
+    """Rich Message HTML 自动转换已在 v5.31.0 临时禁用，当前预期回退到 HTML 发送。
+
+    原因：_html_to_rich_components 生成的组件格式触发 Telegram API 400
+    "object expected as rich message"。待组件转换器修复后再恢复 Rich 优先。
+    """
     captured = {}
     db = _FakeDb()
     cfg = {
@@ -357,19 +362,21 @@ def test_text_broadcast_prefers_rich_message_when_enabled(monkeypatch):
         ],
     }
 
-    def fake_send_rich(bot, chat_id, rich_message, **kwargs):
-        captured["rich"] = rich_message
-        return SimpleNamespace(message_id=515)
+    def fake_send_rich(*args, **kwargs):
+        raise AssertionError("HTML 自动转 Rich 已禁用，不应调用 send_rich_message_compat")
 
-    def fake_send_message(*args, **kwargs):
-        raise AssertionError("Rich开启时不应直接走HTML发送")
+    def fake_send_message(bot, chat_id, text, **kwargs):
+        captured["text"] = text
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(message_id=515)
 
     monkeypatch.setattr(scheduled_broadcast, "send_rich_message_compat", fake_send_rich)
     monkeypatch.setattr(scheduled_broadcast, "send_message_compat", fake_send_message)
 
     scheduled_broadcast.execute_scheduled_broadcast(object(), -1005, cfg, db, target_broadcast_id="rich_text")
 
-    assert "正文" in captured["rich"]
+    assert "正文" in captured["text"]
+    assert captured["kwargs"]["parse_mode"] == "HTML"
     assert db.tracked == [(-1005, 515, "text")]
 
 

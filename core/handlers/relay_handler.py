@@ -14,6 +14,52 @@ from core.helpers import format_user_mention
 logger = get_logger("relay_handler")
 
 
+def _manual_blacklist_user(bot, db, uid: int, reason: str) -> bool:
+    """管理员从中继消息手动拉黑用户。"""
+    ok = False
+    try:
+        if hasattr(db, "blacklist_add"):
+            db.blacklist_add(uid, reason)
+            ok = True
+    except Exception as e:
+        logger.warning(f"写入本地黑名单失败 uid={uid}: {e}")
+
+    try:
+        actor_id = 0
+        try:
+            actor_id = bot.get_me().id
+        except Exception:
+            actor_id = 0
+        if hasattr(db, "conn"):
+            db.conn.execute(
+                "INSERT OR IGNORE INTO global_blacklist "
+                "(user_id, reason, added_by, added_at) VALUES (?,?,?,datetime('now'))",
+                (uid, reason, actor_id),
+            )
+            db.conn.commit()
+            ok = True
+    except Exception as e:
+        logger.warning(f"写入全局黑名单失败 uid={uid}: {e}")
+    return ok
+
+
+def _parse_blacklist_reply(text: str) -> str | None:
+    """识别管理员回复中继消息时的一键拉黑指令。"""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    commands = ("拉黑", "黑名单", "加入黑名单", "/blacklist", "/block", "block")
+    for cmd in commands:
+        if lowered == cmd:
+            return "管理员从私聊中继手动拉黑"
+        prefix = f"{cmd} "
+        if lowered.startswith(prefix):
+            extra = raw[len(cmd):].strip()
+            return extra or "管理员从私聊中继手动拉黑"
+    return None
+
+
 def _save_relay_session(db, admin_chat_id: int, admin_msg_id: int, uid: int, chat_id: int, source_type: str) -> None:
     """保存一条中继会话记录。"""
     try:
@@ -120,6 +166,17 @@ def handle_admin_reply(bot, db, CONFIG, message):
         # 文本消息加管理员前缀，媒体消息原样转发
         reply_text = message.text or ""
         reply_caption = getattr(message, "caption", "") or ""
+        blacklist_reason = _parse_blacklist_reply(reply_text)
+        if blacklist_reason:
+            ok = _manual_blacklist_user(bot, db, int(user_id), blacklist_reason)
+            bot.send_message(
+                message.chat.id,
+                f"{'✅' if ok else '⚠️'} 已拉黑 {format_user_mention(user_id, '用户')}\n原因：{blacklist_reason}",
+                parse_mode="HTML",
+            )
+            logger.info(f"🚫 管理员中继拉黑: uid={user_id} ok={ok} reason={blacklist_reason}")
+            return True
+
         if reply_text:
             bot.send_message(user_chat_id, f"[管理员回复] {reply_text}")
         elif reply_caption:

@@ -118,12 +118,12 @@ def handle_exchange_rate(bot, m, config, db, query: str):
     base, target = _parse_currency_query(query)
 
     try:
-        import requests
+        from core.http_client import get_http_client, HTTPRequestError
+        client = get_http_client()
 
         # 使用免费汇率API（无需Key）
         url = f"https://open.er-api.com/v6/latest/{base}"
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
+        data = client.get(url, timeout=10)
 
         if data.get("result") != "success":
             bot.reply_to(m, "❌ 汇率查询失败，API返回异常")
@@ -175,12 +175,9 @@ def handle_exchange_rate(bot, m, config, db, query: str):
 
         bot.reply_to(m, text)
 
-    except requests.Timeout:
-        logger.warning(f"汇率查询超时: query={query}")
-        bot.reply_to(m, "❌ 汇率查询超时，请稍后再试")
-    except requests.RequestException as e:
-        logger.error(f"汇率查询网络异常: {e}")
-        bot.reply_to(m, "❌ 汇率查询网络异常，请稍后再试")
+    except HTTPRequestError as e:
+        logger.error(f"汇率查询失败: {e}")
+        bot.reply_to(m, "❌ 汇率查询失败，请稍后再试")
     except Exception as e:
         logger.error(f"汇率查询异常: {e}")
         bot.reply_to(m, "❌ 汇率查询失败，请稍后再试")

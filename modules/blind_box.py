@@ -88,24 +88,33 @@ def handle_blind_box(bot, m, config, db):
         cost = max(1, int(cost * discount))
 
     try:
-        # 检查积分是否足够
-        current_points = db.get_user_points(uid)
-        if current_points is None:
-            current_points = 0
-
-        if current_points < cost:
-            deficit = cost - current_points
-            bot.reply_to(
-                m,
-                f"❌ 积分不足！\n"
-                f"💎 当前积分：{current_points}\n"
-                f"🎫 需要积分：{cost}\n"
-                f"📉 还差：{deficit}积分"
+        # [TRAE SOLO CN] 原子扣款：UPDATE ... WHERE uid=? AND points>=?，避免 TOCTOU 竞态
+        with _db_lock:
+            cur = db.conn.execute(
+                "UPDATE user_levels SET points = points - ? WHERE uid = ? AND points >= ?",
+                (cost, uid, cost)
             )
-            return
-
-        # 扣除积分
-        db.add_points(uid, -cost, source="blindbox")
+            if cur.rowcount == 0:
+                db.conn.rollback()
+                current_points = db.get_user_points(uid) or 0
+                deficit = cost - current_points
+                bot.reply_to(
+                    m,
+                    f"❌ 积分不足！\n"
+                    f"💎 当前积分：{current_points}\n"
+                    f"🎫 需要积分：{cost}\n"
+                    f"📉 还差：{deficit}积分"
+                )
+                return
+            # 记录积分日志
+            try:
+                db.conn.execute(
+                    "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                    (uid, -cost, db.get_user_points(uid), "blindbox", int(time.time()))
+                )
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
+            db.conn.commit()
 
         # 抽取奖品
         prize_name, prize_value = _select_prize(db)
@@ -120,7 +129,7 @@ def handle_blind_box(bot, m, config, db):
             if prob_row:
                 prob_info = f"\n📊 概率：{prob_row[0]}%"
         except Exception as e:
-            logger.debug(f"操作异常: {e}")
+            logger.warning(f"盲盒概率查询失败: {e}")
         # 发放奖品积分
         if prize_value > 0:
             _lv_result = db.add_points(uid, prize_value, source="blindbox")

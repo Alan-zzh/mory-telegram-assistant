@@ -3,6 +3,9 @@
 import time
 from flask import Blueprint, request, jsonify
 from dashboard.helpers import login_required, admin_required, get_current_role, get_db, read_config, write_config
+from core.logging_util import get_logger
+
+logger = get_logger("features_api")
 
 features_bp = Blueprint('features', __name__, url_prefix='/api')
 
@@ -237,7 +240,8 @@ def api_settings_federation():
         try:
             rows = conn.execute("SELECT user_id, banned_by, reason, chat_id, ts FROM federation_bans ORDER BY ts DESC").fetchall()
             bans = [{"user_id": r[0], "banned_by": r[1], "reason": r[2] or "", "chat_id": r[3], "ts": r[4]} for r in rows]
-        except Exception:
+        except Exception as e:
+            logger.error(f"查询联邦封禁列表失败: {e}")
             bans = []
         return jsonify({"ok": True, "data": {"bans": bans}})
     elif request.method == "POST":

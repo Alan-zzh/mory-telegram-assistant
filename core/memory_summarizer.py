@@ -408,7 +408,7 @@ def _save_memory_summary(db, uid: int, summary: str):
             try:
                 c.execute("ALTER TABLE user_profiles ADD COLUMN memory_summary TEXT DEFAULT ''")
             except Exception:
-                pass  # 列已存在
+                pass  # 幂等添加列：列已存在则跳过  # 列已存在
 
             # 更新 memory_summary
             c.execute(
@@ -423,7 +423,8 @@ def _save_memory_summary(db, uid: int, summary: str):
                 )
             db.conn.commit()
     except Exception as e:
-        logger.debug(f"保存记忆摘要失败: {e}")
+        # 【v5.31.2 修复】用户记忆丢失应告警，否则用户画像逐渐失真无人知晓
+        logger.warning(f"保存记忆摘要失败 uid={uid}: {e}")
 
 
 def get_memory_summary(db, uid: int) -> str:
@@ -435,7 +436,7 @@ def get_memory_summary(db, uid: int) -> str:
             try:
                 c.execute("ALTER TABLE user_profiles ADD COLUMN memory_summary TEXT DEFAULT ''")
             except Exception:
-                pass
+                pass  # 幂等添加列：列已存在则跳过
             c.execute("SELECT memory_summary FROM user_profiles WHERE user_id=?", (uid,))
             row = c.fetchone()
             return row[0] if row and row[0] else ""
@@ -465,7 +466,7 @@ def seed_initial_memory(uid: int, first_message: str, db=None) -> bool:
         return False
     try:
         # 幂等检查：已有 memory_summary 则跳过
-        existing_profile = db.get_user_profile(uid)
+        existing_profile = db.get_user_persona_profile(uid)
         if existing_profile and (existing_profile.get("memory_summary") or "").strip():
             return False
 

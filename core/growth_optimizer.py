@@ -174,7 +174,7 @@ def _ensure_conversion_columns(conn: Any) -> None:
         try:
             conn.execute(ddl)
         except Exception:
-            pass
+            pass  # 幂等添加列：列已存在则跳过
 
 
 def log_attribution_event(db: Any, uid: int, event: str, mode: str, source: str, campaign_id: str) -> None:

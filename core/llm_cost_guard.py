@@ -77,6 +77,11 @@ class LLMCostGuard:
         self._user_windows: Dict[int, deque] = defaultdict(lambda: deque(maxlen=500))
         self._lock = threading.Lock()
 
+        # 【v5.31.2 修复】待刷盘的详细日志队列
+        # 之前 flush_to_db 只建表不写数据，llm_cost_logs 永远为空，重启后熔断器累计清零
+        # 现在 record_cost 缓存详细日志，flush_to_db 批量写入数据库
+        self._pending_logs = deque(maxlen=10000)
+
         # 降级状态记录（uid → 降级解除时间戳）
         self._downgraded_users: Dict[int, float] = {}
         self._global_downgrade_until = 0.0  # 全局降级解除时间
@@ -174,8 +179,9 @@ class LLMCostGuard:
                     f"全局 1h 消费 ${global_cost:.2f} 超阈值 ${self.global_hourly_limit:.2f}，"
                     f"已自动降级 llm_light 持续 1h"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                # 【v5.31.2 修复】成本熔断告警链断裂会导致管理员无法感知成本失控
+                logger.error(f"LLM成本全局熔断告警发送失败: {e}")
             return (True, "llm_light", "global_hourly_limit_exceeded")
 
         # 4. 检查用户 1h 消费
@@ -226,6 +232,8 @@ class LLMCostGuard:
             self._user_windows[uid].append((now, cost))
             self._stats["total_calls"] += 1
             self._stats["total_cost"] += cost
+            # 【v5.31.2 修复】缓存详细日志供 flush_to_db 批量写入
+            self._pending_logs.append((uid, model_name, task_type, input_tokens, output_tokens, cost, tier, now))
 
         logger.debug(
             f"💰 记录成本: uid={uid} model={model_name} tier={tier} "
@@ -246,7 +254,10 @@ class LLMCostGuard:
 
     def flush_to_db(self, db_conn):
         """
-        定时刷盘到 llm_cost_logs 表（由 auto_tasks 每 5min 调用）。
+        【v5.31.2 修复】定时刷盘到 llm_cost_logs 表（由 auto_tasks 每 5min 调用）。
+
+        之前只建表不写数据，llm_cost_logs 永远为空，重启后熔断器累计清零。
+        现在批量写入 _pending_logs 队列中的详细日志，写入后清空队列。
 
         表结构：
         CREATE TABLE IF NOT EXISTS llm_cost_logs (
@@ -268,11 +279,24 @@ class LLMCostGuard:
                     estimated_cost REAL, tier TEXT, timestamp INTEGER
                 )
             """)
-            # 内存数据已在 record_cost 实时累计，此处仅确保表存在
-            # 实际批量写入可在未来扩展（当前内存统计已足够熔断决策）
+
+            # 批量写入待刷盘的详细日志
+            with self._lock:
+                if not self._pending_logs:
+                    db_conn.commit()
+                    return
+                batch = list(self._pending_logs)
+                self._pending_logs.clear()
+
+            db_conn.executemany(
+                "INSERT INTO llm_cost_logs (uid, model_name, task_type, input_tokens, output_tokens, estimated_cost, tier, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                batch
+            )
             db_conn.commit()
+            logger.debug(f"💰 LLMCostGuard flush_to_db: 写入 {len(batch)} 条成本日志")
         except Exception as e:
-            logger.debug(f"flush_to_db 异常: {e}")
+            # flush 失败应告警，否则成本日志表缺失无人感知
+            logger.warning(f"flush_to_db 异常: {e}")
 
 
 # ── 模块级单例 ──────────────────────────────────────────────────────

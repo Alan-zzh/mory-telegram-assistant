@@ -4,65 +4,81 @@ import os
 import time
 import hmac
 import secrets
-from datetime import datetime, timedelta
+import threading
+from datetime import datetime, timedelta, timezone
 from flask import request, jsonify, session, g
 from dashboard.helpers import get_db, login_required
+
+# 【Loop 16】CST 时区，避免 VPS(UTC) 下登录时间错位 8 小时
+_CST = timezone(timedelta(hours=8))
 
 # ============ 速率限制 ============
 _dashboard_rate_limits = {}
 _RATE_LIMIT_MAX_ENTRIES = 10000
 _RATE_LIMIT_CLEANUP_INTERVAL = 300  # 每5分钟清理一次过期条目
 _last_rate_cleanup = 0
+# 【v5.31.2 修复】Flask threaded=True 下并发请求会绕过限流/暴力破解保护，加锁保护
+_rate_limit_lock = threading.Lock()
 
 # ============ 登录失败记录 ============
 _login_failures = {}
 _LOGIN_LOCKOUT_SECONDS = 600
 _LOGIN_MAX_FAILS = 5
+_login_failures_lock = threading.Lock()
 
 
 def _check_rate_limit(ip: str, max_requests: int = 60, window_seconds: int = 60) -> bool:
-    """IP速率限制检查"""
+    """IP速率限制检查（线程安全）"""
     import time as _time
     now = _time.time()
-    # 定期清理过期条目，防止内存泄漏
     global _last_rate_cleanup
-    if now - _last_rate_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
-        expired_keys = [k for k, v in _dashboard_rate_limits.items() if now > v["reset_at"]]
-        for k in expired_keys:
-            del _dashboard_rate_limits[k]
-        _last_rate_cleanup = now
-    if len(_dashboard_rate_limits) > _RATE_LIMIT_MAX_ENTRIES:
-        oldest = min(_dashboard_rate_limits, key=lambda k: _dashboard_rate_limits[k]["reset_at"])
-        del _dashboard_rate_limits[oldest]
-    record = _dashboard_rate_limits.get(ip)
-    if not record or now > record["reset_at"]:
-        _dashboard_rate_limits[ip] = {"count": 1, "reset_at": now + window_seconds}
+    with _rate_limit_lock:
+        # 定期清理过期条目，防止内存泄漏
+        if now - _last_rate_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
+            expired_keys = [k for k, v in _dashboard_rate_limits.items() if now > v["reset_at"]]
+            for k in expired_keys:
+                _dashboard_rate_limits.pop(k, None)  # 并发安全删除
+            _last_rate_cleanup = now
+        if len(_dashboard_rate_limits) > _RATE_LIMIT_MAX_ENTRIES:
+            oldest = min(_dashboard_rate_limits, key=lambda k: _dashboard_rate_limits[k]["reset_at"])
+            _dashboard_rate_limits.pop(oldest, None)
+        record = _dashboard_rate_limits.get(ip)
+        if not record or now > record["reset_at"]:
+            _dashboard_rate_limits[ip] = {"count": 1, "reset_at": now + window_seconds}
+            return True
+        record["count"] += 1
+        if record["count"] > max_requests:
+            return False
         return True
-    record["count"] += 1
-    if record["count"] > max_requests:
-        return False
-    return True
 
 
 def _get_login_fails(ip):
-    """获取登录失败次数"""
-    info = _login_failures.get(ip)
-    if not info:
-        return {"count": 0, "first_fail_at": 0}
-    if time.time() - info["first_fail_at"] > _LOGIN_LOCKOUT_SECONDS:
-        del _login_failures[ip]
-        return {"count": 0, "first_fail_at": 0}
-    return info
+    """获取登录失败次数（线程安全）"""
+    with _login_failures_lock:
+        info = _login_failures.get(ip)
+        if not info:
+            return {"count": 0, "first_fail_at": 0}
+        if time.time() - info["first_fail_at"] > _LOGIN_LOCKOUT_SECONDS:
+            _login_failures.pop(ip, None)  # 并发安全删除
+            return {"count": 0, "first_fail_at": 0}
+        # 返回副本避免外部修改影响内部状态
+        return dict(info)
 
 
 def _set_login_fails(ip, info):
-    """记录登录失败"""
-    _login_failures[ip] = info
+    """记录登录失败（线程安全）"""
+    with _login_failures_lock:
+        # 【v5.31.2 修复】加上限保护，防止攻击者用大量不同 IP 各失败 1 次后不再访问导致内存累积
+        if len(_login_failures) > _RATE_LIMIT_MAX_ENTRIES:
+            oldest = min(_login_failures, key=lambda k: _login_failures[k].get("first_fail_at", 0))
+            _login_failures.pop(oldest, None)
+        _login_failures[ip] = info
 
 
 def _clear_login_fails(ip):
-    """清除登录失败记录"""
-    _login_failures.pop(ip, None)
+    """清除登录失败记录（线程安全）"""
+    with _login_failures_lock:
+        _login_failures.pop(ip, None)
 
 
 # ============ CSRF Token 管理 ============
@@ -181,7 +197,7 @@ def init_auth(app):
         viewer_pw = os.environ.get("DASHBOARD_VIEWER_PASSWORD", "")
         if hmac.compare_digest(pw, admin_pw):
             session["logged_in"] = True
-            session["login_time"] = datetime.now().isoformat()
+            session["login_time"] = datetime.now(_CST).isoformat()
             session["role"] = "admin"
             # [阶段3-F] RBAC 角色同步：若请求携带 user_id，从 DB 读取角色覆盖默认角色
             _sync_role_from_db(data)
@@ -190,7 +206,7 @@ def init_auth(app):
             return jsonify({"ok": True, "csrf_token": session.get("_csrf_token", ""), "role": session.get("role", "admin")})
         if viewer_pw and len(viewer_pw) >= 6 and hmac.compare_digest(pw, viewer_pw):
             session["logged_in"] = True
-            session["login_time"] = datetime.now().isoformat()
+            session["login_time"] = datetime.now(_CST).isoformat()
             session["role"] = "viewer"
             # [阶段3-F] RBAC 角色同步：若请求携带 user_id，从 DB 读取角色覆盖默认角色
             _sync_role_from_db(data)

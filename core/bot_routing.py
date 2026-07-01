@@ -70,7 +70,7 @@ class BotRouter:
             from core.shared_db import _get_shared_conn
             return _get_shared_conn()
         except Exception as e:
-            logger.debug(f"获取共享连接失败: {e}")
+            logger.warning(f"获取共享连接失败: {e}")
             return None
 
     def _ensure_table(self, conn) -> bool:
@@ -168,7 +168,7 @@ class BotRouter:
                 # 模块在允许列表中 → 放行
                 return module_name in allowed_modules
         except Exception as e:
-            logger.debug(f"should_handle 查询失败 bot={bot_id} chat={chat_id} module={module_name}: {e}")
+            logger.warning(f"should_handle 查询失败 bot={bot_id} chat={chat_id} module={module_name}: {e}")
             # 异常时按默认策略降级，不阻断主流程
             return self.default_policy == "allow"
 
@@ -203,7 +203,7 @@ class BotRouter:
                         continue
             return None
         except Exception as e:
-            logger.debug(f"get_active_bot_for_module 失败 chat={chat_id} module={module_name}: {e}")
+            logger.warning(f"get_active_bot_for_module 失败 chat={chat_id} module={module_name}: {e}")
             return None
 
     # ── 路由管理 ──────────────────────────────────────────────────────
@@ -312,7 +312,7 @@ class BotRouter:
                 })
             return result
         except Exception as e:
-            logger.debug(f"list_routing 失败: {e}")
+            logger.warning(f"list_routing 失败: {e}")
             return []
 
 

@@ -331,7 +331,7 @@ def _get_minimal_default_config() -> dict:
     return {
         "TOKEN": "", "API_KEY": "", "ADMIN_ID": 0, "GROUP_ID": 0,
         "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-        "MODEL_POOLS": {"llm": [{"name": "qwen-plus", "expire": "2099-12-31"}]},
+        "MODEL_POOLS": {"llm": [{"name": "qwen3.7-max-preview", "expire": "2026-08-24"}, {"name": "glm-5.2", "expire": "2026-09-15"}]},
         "REPLY_CHANCE": 10, "_CONFIG_VERSION": "5.0.0",
         "SYSTEM_PROMPT": "你是Mory，一个活泼可爱的小助理。",
     }
@@ -666,8 +666,8 @@ def initialize_bot() -> BotContext:
                         if _time.time() - last_ts < 86400:
                             logger.info("[启动追溯扫描] 24小时内已扫描过，跳过")
                             return
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"查询 retroactive_scan_log 失败，继续执行扫描: {e}")
                 test_msg = bot.send_message(group_id, ".", disable_notification=True)
                 current_msg_id = test_msg.message_id
                 bot.delete_message(group_id, current_msg_id)
@@ -683,8 +683,9 @@ def initialize_bot() -> BotContext:
                         (_time.time(), scan_result["scanned"], scan_result["ads_found"], scan_result["deleted"])
                     )
                     db.conn.commit()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 【v5.31.2 修复】日志写入失败会导致下次启动重复扫描，浪费 API 配额
+                    logger.warning(f"启动追溯扫描日志写入失败: {e}")
                 # 只在有实际删除时才通知管理员
                 if scan_result["deleted"] > 0:
                     report = (
@@ -782,7 +783,8 @@ def _restore_db_from_backup(db, cfg):
                     from modules.auto_tasks import report_fault
                     report_fault("数据库异常已自动恢复", f"从备份{_latest_backup}恢复成功", "⚠️")
                 except Exception as e:
-                    logger.debug(f"操作异常: {e}")
+                    # 【v5.31.2 修复】数据库恢复后管理员通知失败应告警
+                    logger.warning(f"数据库恢复后告警发送失败: {e}")
             except Exception as restore_err:
                 logger.critical(f"❌ 数据库恢复失败：{restore_err}")
                 logger.critical("   → 请手动从 backup/ 目录恢复")
@@ -790,7 +792,8 @@ def _restore_db_from_backup(db, cfg):
                     from modules.auto_tasks import report_fault
                     report_fault("数据库损坏且恢复失败", str(restore_err), "🚨")
                 except Exception as e:
-                    logger.debug(f"操作异常: {e}")
+                    # 【v5.31.2 修复】CRITICAL：数据库损坏+恢复失败+告警失败=三重故障，必须告警
+                    logger.critical(f"数据库恢复失败且告警发送失败（三重故障）: {e}")
         else:
             logger.error("   → 无可用备份，请手动检查数据库")
     else:
@@ -800,6 +803,7 @@ def _restore_db_from_backup(db, cfg):
 def _test_db_write():
     """启动时数据库写入测试（验证track_reply功能正常，使用内存SQLite）"""
     logger = _get_logger()
+    test_conn = None
     try:
         logger.info("🔍 开始阅后即焚数据库功能测试...")
         import sqlite3 as _sqlite3
@@ -823,7 +827,6 @@ def _test_db_write():
                             (test_bot_id, test_chat_id, test_user_id, int(time.time())))
         test_cursor.execute("SELECT bot_msg_id FROM reply_tracking WHERE bot_msg_id=?", (test_bot_id,))
         found = test_cursor.fetchone() is not None
-        test_conn.close()
 
         if found:
             logger.info("✅ 阅后即焚数据库功能测试通过（内存测试，未写生产库）")
@@ -833,6 +836,13 @@ def _test_db_write():
         logger.error(f"❌ 阅后即焚数据库写入测试异常：{e}")
         import traceback
         logger.error(f"❌ 测试异常详情：{traceback.format_exc()}")
+    finally:
+        # 【v5.31.2 修复】SQL 失败时也要关闭 test_conn，避免连接泄漏
+        if test_conn is not None:
+            try:
+                test_conn.close()
+            except Exception:
+                pass
 
 
 def _init_keyword_triggers(db):

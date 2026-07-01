@@ -17,10 +17,13 @@ import time
 import threading
 import logging
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from core.logging_util import get_logger
 
 logger = get_logger("optimizer")
+
+# CST 时区常量（VPS 为 UTC，统一使用 CST 避免时间错位）
+_CST = timezone(timedelta(hours=8))
 
 
 # ════════════════════════ 1. 熔断器 ════════════════════════════════════
@@ -384,7 +387,7 @@ class OptimizerManager:
         """生成完整诊断报告（管理员指令用）"""
         return {
             "enabled": self.enabled,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": datetime.now(_CST).strftime("%Y-%m-%d %H:%M:%S"),
             "circuit_breaker": self.circuit.get_all_status(),
             "cache": self.cache.get_stats(),
             "rate_limiter": self.limiter.get_stats(),

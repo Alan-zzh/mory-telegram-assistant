@@ -68,6 +68,13 @@ _last_saved_model_idx = None
 _news_pushed_today = set()
 _news_cache_lock = threading.Lock()
 
+_AI_FALLBACK_MARKERS = (
+    "脑子刚才短路",
+    "刚才走神",
+    "网络有点卡",
+    "刚刚没反应过来",
+)
+
 _last_task_run = {}
 _task_lock = threading.Lock()
 
@@ -82,19 +89,9 @@ _LAST_HEARTBEAT = 0
 _LAST_HEARTBEAT_LOCK = threading.Lock()
 _WATCHDOG_TIMEOUT_SEC = 900  # 15 分钟
 
-# 关键任务清单（健康检查用）
-_CRITICAL_TASKS = [
-    # (job_id, expected_hour, expected_minute, grace_minute)
-    ("greeting_morning",   8,   5, 30),
-    ("greeting_afternoon", 12, 35, 30),
-    ("greeting_evening",   23,  5, 30),
-    ("news_morning",       9,   5, 30),
-    ("news_afternoon",     13,  5, 30),
-    ("news_evening",       20, 35, 30),
-    ("daily_report",       9,  10, 30),
-    ("weekly_report",      None, None, 3600),  # 每周一
-    ("monthly_report",     None, None, 3600),  # 每月1日
-]
+# 【v5.31.2 修复】移除重复的 _CRITICAL_TASKS 定义（原 4 元组格式，已被 line ~3907 的 3 元组定义覆盖）
+# 健康检查 _job_health_check 实际使用的是 3 元组 (task_key, task_desc, expected_hour) 格式
+# 保留 weekly_report/monthly_report 不在此清单内（它们是周/月报，不适合按小时检查）
 
 
 def _register_job(scheduler, func, job_id: str, **trigger_kwargs):
@@ -378,15 +375,19 @@ def _job_proactive_audit(rm):
 
         # 6. 备份文件
         try:
-            backup_dir = os.path.join(os.path.dirname(__file__), "..", "backups")
-            if os.path.isdir(backup_dir):
+            backup_dir = os.path.join(os.path.dirname(__file__), "..", "backup")
+            if not os.path.isdir(backup_dir):
+                issues.append("🔴 [P0] 备份目录不存在")
+            else:
                 backups = sorted(glob.glob(os.path.join(backup_dir, "*.db")), key=os.path.getmtime, reverse=True)
                 if not backups:
                     issues.append("🔴 [P0] 备份目录为空")
                 else:
-                    age_hours = (time.time() - os.path.getmtime(backups[0])) / 3600
-                    if age_hours > 48:
-                        issues.append(f"🟡 [P1] 最新备份 {age_hours:.0f} 小时前")
+                    latest = backups[0]
+                    age_hours = (time.time() - os.path.getmtime(latest)) / 3600
+                    file_size = os.path.getsize(latest)
+                    if age_hours >= 25 or file_size <= 0:
+                        issues.append(f"🔴 [P0] 备份异常：最新备份 {age_hours:.0f} 小时前，大小 {file_size} 字节")
         except Exception as e:
             logger.debug(f"备份文件检查失败: {e}")
 
@@ -596,7 +597,9 @@ class _FaultReporter:
                     k: v for k, v in data.items()
                     if now - v < self._DEDUP_SEC
                 }
-        except Exception:
+        except Exception as e:
+            # 【v5.31.2 修复】加载失败清空去重窗口会导致历史告警重新发送（轰炸），必须 warning
+            logger.warning(f"告警去重状态加载失败，去重窗口被清空: {e}")
             self._last_alert = {}
 
     def _save_dedup_state(self):
@@ -604,8 +607,9 @@ class _FaultReporter:
         try:
             with open(self._DEDUP_STATE_FILE, "w", encoding="utf-8") as f:
                 json.dump(self._last_alert, f)
-        except Exception:
-            pass
+        except Exception as e:
+            # 【v5.31.2 修复】告警去重状态持久化失败会导致重复发送历史告警或丢失去重窗口
+            logger.warning(f"告警去重状态持久化失败: {e}")
 
     def bind(self, rm):
         self._rm = rm
@@ -868,7 +872,7 @@ def _extract_news_key(line: str) -> str:
     return text
 
 
-def _prepare_news_lines(raw_news: str, source_hint: str = "", limit: int = 5) -> list[str]:
+def _prepare_news_lines(raw_news: str, source_hint: str = "", limit: int = 10) -> list[str]:
     """整理新闻标题，过滤当天已发送内容，但只在真正发送成功后再写入缓存"""
     _clear_news_cache_if_new_day()
     with _news_cache_lock:
@@ -909,6 +913,25 @@ def _build_news_ai_mode(time_desc: str, source_name: str) -> str:
         "晚间": "evening_news",
     }
     return mapping.get(time_desc, "news")
+
+
+def _looks_like_ai_fallback(text: str) -> bool:
+    """识别 AIEngine 所有模型失败后的聊天兜底，避免当新闻播报发送。"""
+    value = (text or "").strip()
+    return bool(value) and any(marker in value for marker in _AI_FALLBACK_MARKERS)
+
+
+def _build_news_without_ai(lines: list[str], time_desc: str) -> str:
+    """LLM 不可用时，用真实标题生成保守新闻文案。"""
+    cleaned = []
+    for line in lines[:5]:
+        core = line.split("】", 1)[-1].split("🔥", 1)[0].strip()
+        if core:
+            cleaned.append(core[:36])
+    while len(cleaned) < 5:
+        cleaned.append("晚点再补一条更稳的消息")
+    observation = f"{time_desc}先看这几条，后续有新进展再跟"
+    return "\n".join(cleaned[:5] + [observation])
 
 
 def _get_preferred_news_lines(time_desc: str, config: dict | None = None) -> tuple[list[str], str]:
@@ -1113,7 +1136,7 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
     【v5.18.1】v2.0：使用 build_rich_news_html 富文本排版，添加 @MorychannelBot 转化按钮
     """
     try:
-        with TaskTransactionManager(task_name, rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+        with TaskTransactionManager(task_name, rm.db, resources=None, min_interval_sec=7200) as tx:
             if not tx.claimed:
                 return
             gid = rm.config.get("GROUP_ID", 0)
@@ -1134,10 +1157,19 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
 
             ai_mode = _build_news_ai_mode(time_desc, source_name)
             news = rm.ai.ask(news_input, mode=ai_mode, seed=seed, news_content=news_input)
+            if not news or _looks_like_ai_fallback(news):
+                logger.warning(f"{time_desc}新闻 AI 生成不可用，使用真实标题兜底排版")
+                _notify_admin_system_failure(
+                    rm,
+                    "新闻AI生成降级",
+                    f"类型: {time_desc}新闻，模型不可用，已用真实标题兜底，避免重复重试",
+                    "⚠️",
+                )
+                news = _build_news_without_ai(lines, time_desc)
 
             if news:
                 # 使用 v1.0 富文本新闻排版（自动 HTML 转义 + emoji 点缀 + 观察行 blockquote）
-                rich_news = build_rich_news_html(time_desc, news, source_name)
+                rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
 
                 # 构建转化按钮 → @MorychannelBot
                 markup = types.InlineKeyboardMarkup()
@@ -1427,19 +1459,47 @@ def _get_fallback_greeting(period: str) -> str:
     return "你好"
 
 
+def _get_all_group_ids(config) -> list:
+    """【v5.31.0 修复 Bug D】获取所有管理群组（GROUP_ID + MANAGED_GROUPS 合并去重）
+
+    复用 ad_scan 的多群遍历模式，统一 greeting/broadcast 多群支持。
+    Returns: 群ID列表（int），去重后保留顺序
+    """
+    group_ids = []
+    gid = config.get("GROUP_ID", 0)
+    if gid:
+        group_ids.append(gid)
+    try:
+        mg = config.get("MANAGED_GROUPS", [])
+        if isinstance(mg, int):
+            mg = [mg]
+        if mg:
+            for g in mg:
+                if g and g not in group_ids:
+                    group_ids.append(g)
+    except Exception as e:
+        logger.debug(f"获取MANAGED_GROUPS失败: {e}")
+    return group_ids
+
+
 def _job_greeting_morning(rm):
-    """早安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删"""
+    """早安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删
+
+    【v5.31.0 修复】task_key 加日期后缀避免 task_log 残留导致永久死锁；
+    多群遍历（GROUP_ID + MANAGED_GROUPS）支持多联排
+    """
     try:
         if not _is_greeting_enabled(rm.config, "morning"):
             logger.info("[Codex] 早安问候未开启，跳过")
             return
-        with TaskTransactionManager("greeting_morning", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+        today = datetime.now(_CST).strftime("%Y-%m-%d")
+        with TaskTransactionManager(f"greeting_morning_{today}", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
             if not tx.claimed:
                 return
-            gid = rm.config.get("GROUP_ID", 0)
-            if gid == 0:
-                _record_abort("greeting_morning", "GROUP_ID为0")
-                raise _TaskAbort("GROUP_ID为0")
+            group_ids = _get_all_group_ids(rm.config)
+            if not group_ids:
+                _record_abort("greeting_morning", "无管理群")
+                raise _TaskAbort("无管理群")
 
             seed = random.randint(100000, 999999)
             msg = rm.ai.ask("早安", mode="morning", seed=seed)
@@ -1450,11 +1510,17 @@ def _job_greeting_morning(rm):
             msg = msg.replace("\n", " ").strip()[:250]
             suffix = _get_dynamic_suffix("morning") if _needs_suffix(msg) else ""
             rich = build_rich_greeting_html("morning", msg, suffix.strip())
-            sent = _send_greeting(rm, gid, rich, "greeting_morning")
-            if sent:
-                logger.info(f"☀️ 早安已发送：{msg}")
-                return
-            raise _TaskAbort("早安发送失败")
+            sent_any = False
+            for gid in group_ids:
+                try:
+                    sent = _send_greeting(rm, gid, rich, "greeting_morning")
+                    if sent:
+                        sent_any = True
+                        logger.info(f"☀️ 早安已发送到群 {gid}：{msg}")
+                except Exception as e:
+                    logger.warning(f"☀️ 早安发送到群 {gid} 失败: {e}")
+            if not sent_any:
+                raise _TaskAbort("早安全部群发送失败")
     except _TaskAbort:
         pass
     except Exception as e:
@@ -1463,18 +1529,23 @@ def _job_greeting_morning(rm):
 
 
 def _job_greeting_afternoon(rm):
-    """午安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删"""
+    """午安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删
+
+    【v5.31.0 修复】task_key 加日期后缀避免 task_log 残留导致永久死锁；
+    多群遍历（GROUP_ID + MANAGED_GROUPS）支持多联排
+    """
     try:
         if not _is_greeting_enabled(rm.config, "afternoon"):
             logger.info("[Codex] 午安问候未开启，跳过")
             return
-        with TaskTransactionManager("greeting_afternoon", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+        today = datetime.now(_CST).strftime("%Y-%m-%d")
+        with TaskTransactionManager(f"greeting_afternoon_{today}", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
             if not tx.claimed:
                 return
-            gid = rm.config.get("GROUP_ID", 0)
-            if gid == 0:
-                _record_abort("greeting_afternoon", "GROUP_ID为0")
-                raise _TaskAbort("GROUP_ID为0")
+            group_ids = _get_all_group_ids(rm.config)
+            if not group_ids:
+                _record_abort("greeting_afternoon", "无管理群")
+                raise _TaskAbort("无管理群")
 
             seed = random.randint(100000, 999999)
             msg = rm.ai.ask("午安", mode="afternoon", seed=seed)
@@ -1485,11 +1556,17 @@ def _job_greeting_afternoon(rm):
             msg = msg.replace("\n", " ").strip()[:250]
             suffix = _get_dynamic_suffix("afternoon") if _needs_suffix(msg) else ""
             rich = build_rich_greeting_html("afternoon", msg, suffix.strip())
-            sent = _send_greeting(rm, gid, rich, "greeting_afternoon")
-            if sent:
-                logger.info(f"🍃 午安已发送：{msg}")
-                return
-            raise _TaskAbort("午安发送失败")
+            sent_any = False
+            for gid in group_ids:
+                try:
+                    sent = _send_greeting(rm, gid, rich, "greeting_afternoon")
+                    if sent:
+                        sent_any = True
+                        logger.info(f"🍃 午安已发送到群 {gid}：{msg}")
+                except Exception as e:
+                    logger.warning(f"🍃 午安发送到群 {gid} 失败: {e}")
+            if not sent_any:
+                raise _TaskAbort("午安全部群发送失败")
     except _TaskAbort:
         pass
     except Exception as e:
@@ -1498,18 +1575,23 @@ def _job_greeting_afternoon(rm):
 
 
 def _job_greeting_evening(rm):
-    """晚安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删"""
+    """晚安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删
+
+    【v5.31.0 修复】task_key 加日期后缀避免 task_log 残留导致永久死锁；
+    多群遍历（GROUP_ID + MANAGED_GROUPS）支持多联排
+    """
     try:
         if not _is_greeting_enabled(rm.config, "evening"):
             logger.info("[Codex] 晚安问候未开启，跳过")
             return
-        with TaskTransactionManager("greeting_evening", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+        today = datetime.now(_CST).strftime("%Y-%m-%d")
+        with TaskTransactionManager(f"greeting_evening_{today}", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
             if not tx.claimed:
                 return
-            gid = rm.config.get("GROUP_ID", 0)
-            if gid == 0:
-                _record_abort("greeting_evening", "GROUP_ID为0")
-                raise _TaskAbort("GROUP_ID为0")
+            group_ids = _get_all_group_ids(rm.config)
+            if not group_ids:
+                _record_abort("greeting_evening", "无管理群")
+                raise _TaskAbort("无管理群")
 
             seed = random.randint(100000, 999999)
             msg = rm.ai.ask("晚安", mode="evening", seed=seed)
@@ -1520,11 +1602,17 @@ def _job_greeting_evening(rm):
             msg = msg.replace("\n", " ").strip()[:250]
             suffix = _get_dynamic_suffix("evening") if _needs_suffix(msg) else ""
             rich = build_rich_greeting_html("evening", msg, suffix.strip())
-            sent = _send_greeting(rm, gid, rich, "greeting_evening")
-            if sent:
-                logger.info(f"🌙 晚安已发送：{msg}")
-                return
-            raise _TaskAbort("晚安发送失败")
+            sent_any = False
+            for gid in group_ids:
+                try:
+                    sent = _send_greeting(rm, gid, rich, "greeting_evening")
+                    if sent:
+                        sent_any = True
+                        logger.info(f"🌙 晚安已发送到群 {gid}：{msg}")
+                except Exception as e:
+                    logger.warning(f"🌙 晚安发送到群 {gid} 失败: {e}")
+            if not sent_any:
+                raise _TaskAbort("晚安全部群发送失败")
     except _TaskAbort:
         pass
     except Exception as e:
@@ -1563,20 +1651,31 @@ def _generate_wakeup_message(uid: int, now: datetime, rm) -> str:
 
 
 def _job_wakeup_check(rm):
-    """叫醒服务检查（每分钟）- AI生成个性化叫醒语"""
+    """叫醒服务检查（每分钟）- AI生成个性化叫醒语
+
+    【v5.31.2 修复】锁顺序死锁：
+    原持有 locked_multi(['db','bot','config']) 期间调用 _generate_wakeup_message
+    (内部 locked('ai'))，锁顺序为 config→ai，与 _execute_news_task/_job_leak 的
+    ai→config 形成 AB-BA 死锁，30秒超时打破后两任务都失败。
+    修复：分离数据读取与 AI 生成，只在读 db 时持锁，AI 生成+发送不持 db/config 锁。
+    """
     try:
         now = datetime.now(_CST)
         time_str = now.strftime("%H:%M")
 
-        with rm.locked_multi(['db', 'bot', 'config']):
-            for uid, wake_time in rm.db.get_all_wake_ups():
-                if wake_time == time_str:
-                    try:
-                        wake_msg = _generate_wakeup_message(uid, now, rm)
-                        rm.bot.send_message(uid, wake_msg)
-                        logger.info(f"⏰ 叫醒服务：uid={uid}")
-                    except Exception as e:
-                        logger.warning(f"叫醒服务发送失败 uid={uid}：{e}")
+        # 只在读取时持有 db 锁，避免与 ai→config 顺序冲突
+        with rm.locked('db'):
+            wake_ups = [(uid, wt) for uid, wt in rm.db.get_all_wake_ups() if wt == time_str]
+
+        # AI 生成 + 发送不持有 db/config 锁，避免锁顺序冲突
+        for uid, _ in wake_ups:
+            try:
+                wake_msg = _generate_wakeup_message(uid, now, rm)  # 内部自行获取 ai 锁
+                with rm.locked('bot'):
+                    rm.bot.send_message(uid, wake_msg)
+                logger.info(f"⏰ 叫醒服务：uid={uid}")
+            except Exception as e:
+                logger.warning(f"叫醒服务发送失败 uid={uid}：{e}")
     except Exception as e:
         logger.error(f"叫醒服务检查失败：{e}")
 
@@ -1773,13 +1872,20 @@ def _generate_reactivate_message(uid: int, rm) -> str:
 def _job_reactivate(rm):
     """醋意挽回（每小时）- AI生成个性化消息"""
     try:
-        with TaskTransactionManager("reactivate", rm.db, resources=['bot', 'config'], min_interval_sec=3600) as tx:
+        # 高频任务：每小时一个窗口，避免 task_log UNIQUE 索引拦截
+        _window = datetime.now(_CST).strftime("%Y-%m-%d_%H")
+        task_key = f"reactivate_{_window}"
+        with TaskTransactionManager(task_key, rm.db, resources=['bot', 'config'], min_interval_sec=3600) as tx:
             if not tx.claimed:
                 return
             ts = int(time.time())
             three_days_ago = ts - 259200
 
             inactive = rm.db.get_inactive_users(three_days_ago, rm.config.get("ADMIN_ID", 0))
+            if not inactive:
+                logger.info("💌 醋意挽回本轮无可私聊候选，正常跳过")
+                return
+
             sent_count = 0
             for uid, _name in inactive[:3]:
                 if random.random() < 0.25:
@@ -1894,13 +2000,19 @@ def _job_cart_recovery(rm):
       - 失败时自动跳过，不阻塞后续用户
     """
     try:
-        with TaskTransactionManager("cart_recovery", rm.db, resources=['bot', 'config'],
+        # 高频任务：每 5 分钟一个窗口，避免 task_log UNIQUE 索引拦截
+        _window = datetime.now(_CST).strftime("%Y-%m-%d_%H%M")
+        task_key = f"cart_recovery_{_window}"
+        with TaskTransactionManager(task_key, rm.db, resources=['bot', 'config'],
                                     min_interval_sec=300) as tx:  # 5分钟间隔
             if not tx.claimed:
                 return
 
             sent_count = 0
             pending = rm.db.get_pending_cart_recoveries(limit=20)
+            if not pending:
+                logger.info("🛒 购物车挽回本轮无可私聊候选，正常跳过")
+                return
 
             for uid, stage in pending:
                 if sent_count >= 10:  # 每轮最多发10条，防止突发过载
@@ -2035,6 +2147,17 @@ def _job_ttl_cleanup(rm):
         _cleanup_radar_cooldown()
     except Exception as e:
         logger.debug(f"内存字典清理跳过：{e}")
+    # 【v5.31.2 修复】注册 antiflood + edit_detector 清理函数（原定义但从未调用导致内存泄漏）
+    try:
+        from modules.antiflood import cleanup_flood_cache
+        cleanup_flood_cache(max_age=300)
+    except Exception as e:
+        logger.debug(f"刷屏缓存清理跳过：{e}")
+    try:
+        from modules.edit_detector import cleanup_old_snapshots
+        cleanup_old_snapshots(max_age=86400)
+    except Exception as e:
+        logger.debug(f"编辑快照清理跳过：{e}")
 
 
 def _job_save_config(rm):
@@ -3312,7 +3435,7 @@ def _job_tarot_flirt(rm):
 
             logger.info(f"🎴 塔罗搭讪目标: {uname} 说: {user_msg[:30]}")
 
-            tarot_base = _get_tarot_cache(uid, datetime.now())
+            tarot_base = _get_tarot_cache(uid, datetime.now(_CST))
 
             tarot = _generate_tarot_ai_content(tarot_base, uid, rm)
 
@@ -3399,11 +3522,14 @@ def _do_backup(db_file: str):
         import sqlite3 as _sqlite3
         src_conn = _sqlite3.connect(db_file)
         dst_conn = _sqlite3.connect(dest)
-        # 【TRAE SOLO CN v5.18.3审计修复】备份连接加 busy_timeout，防止与 Bot 进程互锁
-        src_conn.execute("PRAGMA busy_timeout=30000")
-        src_conn.backup(dst_conn)
-        dst_conn.close()
-        src_conn.close()
+        try:
+            # 【TRAE SOLO CN v5.18.3审计修复】备份连接加 busy_timeout，防止与 Bot 进程互锁
+            src_conn.execute("PRAGMA busy_timeout=30000")
+            src_conn.backup(dst_conn)
+        finally:
+            # 【v5.31.2 修复】backup 失败时也要关闭连接，避免源库读锁残留阻塞 Bot 写操作
+            dst_conn.close()
+            src_conn.close()
         # [v5.16.5] 按时间分层保留：24 小时内全部保留 + 24 小时外每天 1 份×7 天
         all_backups = sorted(glob.glob(os.path.join(backup_dir, "mory_backup_*.db")))
         now_ts = time.time()
@@ -3468,11 +3594,14 @@ def _job_daily_backup(rm):
         import sqlite3 as _sqlite3
         src_conn = _sqlite3.connect(db_src)
         dst_conn = _sqlite3.connect(db_dest)
-        # 【TRAE SOLO CN v5.18.3审计修复】备份连接加 busy_timeout，防止与 Bot 进程互锁
-        src_conn.execute("PRAGMA busy_timeout=30000")
-        src_conn.backup(dst_conn)
-        dst_conn.close()
-        src_conn.close()
+        try:
+            # 【TRAE SOLO CN v5.18.3审计修复】备份连接加 busy_timeout，防止与 Bot 进程互锁
+            src_conn.execute("PRAGMA busy_timeout=30000")
+            src_conn.backup(dst_conn)
+        finally:
+            # 【v5.31.2 修复】backup 失败时也要关闭连接，避免源库读锁残留阻塞 Bot 写操作
+            dst_conn.close()
+            src_conn.close()
 
         # 备份配置文件
         config_src = os.path.join(base_dir, "config.json")
@@ -3526,20 +3655,39 @@ def _job_log_cleanup(rm):
         try:
             db = rm.db
             with db.lock:
-                # 30 天前的日志表
-                for table in ["task_log", "spam_track", "puzzle_daily", "broadcast_tracking",
-                              "orphan_cleanup_log", "group_join_log", "group_left_log",
-                              "proactive_engage_log", "retroactive_scan_log", "button_click_stats"]:
+                # 30 天前的日志表（表名 → 实际时间戳列名，避免 no such column: ts）
+                tables_30 = {
+                    "task_log": "exec_ts",
+                    "spam_track": "window_start",
+                    "puzzle_daily": "ts",
+                    "broadcast_tracking": "ts",
+                    "orphan_cleanup_log": "run_at",
+                    "group_join_log": "ts",
+                    "group_left_log": "ts",
+                    "proactive_engage_log": "ts",
+                    "retroactive_scan_log": "ts",
+                    "button_click_stats": "last_updated",
+                }
+                for table, ts_col in tables_30.items():
                     try:
-                        db.conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff_30,))
+                        db.conn.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff_30,))
                     except Exception as de:
                         logger.debug(f"清理 {table} 跳过: {de}")
                 # 90 天前的日志表
-                for table in ["admin_logs", "telemetry_events", "conversation_telemetry",
-                              "ab_guardian_log", "points_log", "deleted_messages",
-                              "message_snapshots", "ab_test_stats", "weekly_ab_report"]:
+                tables_90 = {
+                    "admin_logs": "ts",
+                    "telemetry_events": "ts",
+                    "conversation_telemetry": "ts",
+                    "ab_guardian_log": "ts",
+                    "points_log": "ts",
+                    "deleted_messages": "ts",
+                    "message_snapshots": "ts",
+                    "ab_test_stats": "ts",
+                    "weekly_ab_report": "generated_at",
+                }
+                for table, ts_col in tables_90.items():
                     try:
-                        db.conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff_90,))
+                        db.conn.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff_90,))
                     except Exception as de:
                         logger.debug(f"清理 {table} 跳过: {de}")
                 db.conn.commit()
@@ -3625,7 +3773,9 @@ def _job_startup_history_cleanup(rm):
 def _job_startup_member_scan(rm):
     """[TRAE SOLO CN] v5.8.1 启动时扫描群成员（数据库驱动+用户名/Bio/头像检测）"""
     try:
-        with TaskTransactionManager("startup_member_scan", rm.db, resources=None, min_interval_sec=3600) as tx:
+        # 【v5.31.2 修复】高频任务 task_key 加时间窗口后缀，避免 UNIQUE 索引拦截
+        _hour = datetime.now(_CST).strftime("%Y-%m-%d_%H")
+        with TaskTransactionManager(f"startup_member_scan_{_hour}", rm.db, resources=None, min_interval_sec=3600) as tx:
             if not tx.claimed:
                 return
 
@@ -3848,7 +3998,8 @@ def _job_health_check(rm):
             if current_hour < expected_hour:
                 logger.debug(f"🏥 [health_check] {task_desc} 未到预期时间({expected_hour}:00)，跳过")
                 continue
-            if not rm.db.is_task_executed_today(task_key):
+            check_key = f"{task_key}_{today}"
+            if not rm.db.is_task_executed_today(check_key):
                 missed.append(f"• {task_desc}（应在{expected_hour}:00前执行）")
                 logger.info(f"🏥 [health_check] ❌ {task_desc} 今日未执行")
             else:
@@ -3880,7 +4031,9 @@ def _job_health_check(rm):
 def _job_night_mode_start(rm):
     """夜间模式开启"""
     try:
-        with TaskTransactionManager("night_mode_start", rm.db, resources=None, min_interval_sec=3600) as tx:
+        # 【v5.31.2 修复】task_key 加日期后缀，避免 UNIQUE 索引拦截当日重试
+        _today = datetime.now(_CST).strftime("%Y-%m-%d")
+        with TaskTransactionManager(f"night_mode_start_{_today}", rm.db, resources=None, min_interval_sec=3600) as tx:
             if not tx.claimed:
                 return
             from modules.night_mode import start_night_mode
@@ -3898,7 +4051,9 @@ def _job_night_mode_start(rm):
 def _job_night_mode_end(rm):
     """夜间模式关闭"""
     try:
-        with TaskTransactionManager("night_mode_end", rm.db, resources=None, min_interval_sec=3600) as tx:
+        # 【v5.31.2 修复】task_key 加日期后缀，避免 UNIQUE 索引拦截当日重试
+        _today = datetime.now(_CST).strftime("%Y-%m-%d")
+        with TaskTransactionManager(f"night_mode_end_{_today}", rm.db, resources=None, min_interval_sec=3600) as tx:
             if not tx.claimed:
                 return
             from modules.night_mode import end_night_mode
@@ -3946,15 +4101,25 @@ def _register_scheduled_broadcasts(scheduler, rm):
 
 
 def _job_scheduled_broadcast(rm, chat_id, broadcast_id):
-    """执行定点播报"""
+    """执行定点播报（多群遍历）
+
+    【v5.31.0 修复 Bug C】移除外层 TaskTransactionManager（双层 claim 冗余），
+    只依赖 execute_scheduled_broadcast 内层 claim（task_key 带 chat_id + 日期）。
+    外层 broadcast_{id} 无日期后缀曾导致 task_log 残留→claim_task 永久失败→播报全灭。
+    【v5.31.0 修复 Bug D】多群遍历（GROUP_ID + MANAGED_GROUPS）支持多联排。
+    chat_id 参数保留兼容 cron 注册签名，实际使用 _get_all_group_ids 遍历。
+    """
     try:
-        with TaskTransactionManager(f"broadcast_{broadcast_id}", rm.db, resources=None, min_interval_sec=60) as tx:
-            if not tx.claimed:
-                return
-            from modules.scheduled_broadcast import execute_scheduled_broadcast
-            execute_scheduled_broadcast(rm.bot, chat_id, rm.config, rm.db, target_broadcast_id=broadcast_id)
-    except _TaskAbort:
-        pass
+        from modules.scheduled_broadcast import execute_scheduled_broadcast
+        group_ids = _get_all_group_ids(rm.config)
+        if not group_ids:
+            logger.warning(f"⚠️ 定点播报 {broadcast_id} 无管理群，跳过")
+            return
+        for gid in group_ids:
+            try:
+                execute_scheduled_broadcast(rm.bot, gid, rm.config, rm.db, target_broadcast_id=broadcast_id)
+            except Exception as e:
+                logger.warning(f"📢 定点播报 {broadcast_id} 发送到群 {gid} 失败: {e}")
     except Exception as e:
         logger.error(f"📢 定点播报执行失败 {broadcast_id}: {e}")
 
@@ -4176,7 +4341,7 @@ def _job_sync_user_lifecycle_buckets(rm):
 
 
 def start_background(bot, config: Dict[str, Any], db, ai, save_config_fn):
-    """启动后台任务引擎"""
+    """启动后台任务引擎（v5.31.x 重构后使用 TaskScheduler）"""
     # 【v4.9.3】防重入保护：避免重复启动导致多个scheduler实例并发调度
     global _scheduler_instance
     if _scheduler_instance is not None and getattr(_scheduler_instance, 'running', False):
@@ -4189,9 +4354,57 @@ def start_background(bot, config: Dict[str, Any], db, ai, save_config_fn):
     _fault_reporter.bind(rm)
 
     if HAS_APSCHEDULER:
-        _start_with_apscheduler(rm)
+        _start_with_task_scheduler(rm)
     else:
         _start_with_legacy_loop(rm)
+
+
+def _start_with_task_scheduler(rm):
+    """新调度器入口：自动发现并注册 tasks/ 下所有任务。"""
+    global _scheduler_instance
+    from tasks.task_scheduler import create_scheduler
+
+    scheduler = create_scheduler(rm)
+    _scheduler_instance = scheduler.scheduler
+
+    # 启动看门狗（不进入 APScheduler，单独后台线程）
+    try:
+        from tasks.monitoring.watchdog_task import WatchdogTask
+        WatchdogTask(rm).start(timeout_sec=_WATCHDOG_TIMEOUT_SEC)
+    except Exception as e:
+        logger.warning(f"看门狗启动失败: {e}")
+
+    # 启动时一次性任务
+    try:
+        from tasks.maintenance.startup_member_scan_task import StartupMemberScanTask
+        StartupMemberScanTask(rm).run()
+    except Exception as e:
+        logger.warning(f"启动成员扫描失败: {e}")
+
+    try:
+        from tasks.maintenance.startup_history_cleanup_task import StartupHistoryCleanupTask
+        StartupHistoryCleanupTask(rm).run()
+    except Exception as e:
+        logger.warning(f"启动历史清理失败: {e}")
+
+    # 场景化触发器注册（默认关闭，需 config 开启）
+    try:
+        from modules.triggers.cold_group import ColdGroupTrigger
+        from modules.triggers.night_hint import NightHintTrigger
+        ColdGroupTrigger().register(_scheduler_instance, rm)
+        NightHintTrigger().register(_scheduler_instance, rm)
+    except Exception as e:
+        logger.warning(f"场景化触发器注册失败: {e}")
+
+    # 附加调度监控（监听 EXECUTED/ERROR/MISSED 事件）
+    try:
+        from core.scheduler_monitor import attach_to_scheduler
+        attach_to_scheduler(_scheduler_instance)
+    except Exception as e:
+        logger.warning(f"调度监控附加失败（非致命）: {e}")
+
+    scheduler.start()
+    logger.info("✅ 后台任务引擎已通过 TaskScheduler 启动")
 
 
 def _start_with_apscheduler(rm):
@@ -4361,6 +4574,19 @@ def _start_with_apscheduler(rm):
             update_metrics()
         except Exception as e:
             logger.error(f"Prometheus 指标采集异常：{e}")
+        # 【v5.31.2 修复】LLMCostGuard 刷盘（每 5 分钟）
+        # 之前 flush_to_db 从未被调用，导致 llm_cost_logs 表从未创建，
+        # 服务重启后 24h 累计成本数据丢失，熔断器"重置"。
+        try:
+            from core.llm_cost_guard import get_guard
+            guard = get_guard()
+            if guard and guard.enabled:
+                # rm.db.conn 可能是 WriteQueueConnectionProxy，用 raw connection 避免 commit 问题
+                raw_conn = getattr(rm.db, '_real_conn', None) or getattr(rm.db, 'conn', None)
+                if raw_conn:
+                    guard.flush_to_db(raw_conn)
+        except Exception as _flush_err:
+            logger.debug(f"LLMCostGuard flush_to_db 跳过: {_flush_err}")
     scheduler.add_job(_job_update_prometheus_metrics, "interval", minutes=5, args=[rm], id="update_prometheus_metrics", max_instances=1, coalesce=True, misfire_grace_time=300)
 
     # [TRAE SOLO CN] v5.19.0 新增：场景化触发器注册（默认关闭，需 config 开启）
@@ -4421,6 +4647,22 @@ def _start_with_apscheduler(rm):
         scheduler.add_job(_job_sync_scheduler_metrics, "interval", minutes=5, id="sync_scheduler_metrics", max_instances=1, coalesce=True, misfire_grace_time=300)
     except Exception as e:
         logger.warning(f"注册 sync_scheduler_metrics 任务失败: {e}")
+
+    # 【v5.31.1 第四层防御】关键任务健康检查（每 30 分钟）
+    # 检查早安/午安/晚安/4个播报是否在预期时间窗口内成功执行，未执行则 CRITICAL 告警
+    # 杜绝 v5.31.0 播报全灭但无人发现的问题
+    def _job_critical_jobs_health_check():
+        try:
+            from core.scheduler_monitor import check_critical_jobs_health
+            check_critical_jobs_health(scheduler, rm.config)
+        except Exception as e:
+            logger.debug(f"关键任务健康检查异常：{e}")
+    try:
+        scheduler.add_job(_job_critical_jobs_health_check, "interval", minutes=30,
+                          id="critical_jobs_health_check", max_instances=1, coalesce=True, misfire_grace_time=600)
+        logger.info("✅ 已注册关键任务健康检查（每30分钟）：broadcast/greeting 执行监控")
+    except Exception as e:
+        logger.warning(f"注册 critical_jobs_health_check 任务失败: {e}")
 
     # [TRAE SOLO CN] v5.25.0 阶段2-B 告警风暴风险控制：定时汇总（每 5 分钟）
     # 对 5min 窗口内 count>1 的告警发送合并汇总，清空已汇总计数器，避免告警刷屏
@@ -4529,28 +4771,37 @@ def _legacy_task_loop(rm):
             except Exception as e:
                 logger.error(f"startup_history_cleanup超时或异常: {e}")
 
-            with TaskTransactionManager("burn_probe", rm.db, resources=None, min_interval_sec=180) as tx:
+            # 高频任务：分钟级窗口，避免 task_log UNIQUE 索引拦截
+            _window = datetime.now(_CST).strftime("%Y-%m-%d_%H%M")
+            task_key = f"burn_probe_{_window}"
+            with TaskTransactionManager(task_key, rm.db, resources=None, min_interval_sec=180) as tx:
                 if tx.claimed:
                     try:
                         _job_burn_probe(rm)
                     except Exception as e:
                         logger.error(f"burn_probe异常: {e}")
 
-            with TaskTransactionManager("burn_orphan", rm.db, resources=None, min_interval_sec=600) as tx:
+            # 高频任务：分钟级窗口，避免 task_log UNIQUE 索引拦截
+            _window = datetime.now(_CST).strftime("%Y-%m-%d_%H%M")
+            task_key = f"burn_orphan_{_window}"
+            with TaskTransactionManager(task_key, rm.db, resources=None, min_interval_sec=600) as tx:
                 if tx.claimed:
                     try:
                         _job_burn_orphan(rm)
                     except Exception as e:
                         logger.error(f"burn_orphan超时或异常: {e}")
 
-            with TaskTransactionManager("backup", rm.db, resources=None, min_interval_sec=3600) as tx:
+            # 【v5.31.2 修复】高频任务 task_key 加时间窗口后缀，避免 UNIQUE 索引拦截
+            _bk_hour = datetime.now(_CST).strftime("%Y-%m-%d_%H")
+            with TaskTransactionManager(f"backup_{_bk_hour}", rm.db, resources=None, min_interval_sec=3600) as tx:
                 if tx.claimed:
                     try:
                         _job_backup(rm)
                     except Exception as e:
                         logger.error(f"backup异常: {e}")
 
-            with TaskTransactionManager("ttl_cleanup", rm.db, resources=None, min_interval_sec=3600) as tx:
+            _tc_hour = datetime.now(_CST).strftime("%Y-%m-%d_%H")
+            with TaskTransactionManager(f"ttl_cleanup_{_tc_hour}", rm.db, resources=None, min_interval_sec=3600) as tx:
                 if tx.claimed:
                     try:
                         _job_ttl_cleanup(rm)

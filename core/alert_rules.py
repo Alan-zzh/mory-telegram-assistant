@@ -139,7 +139,8 @@ def check_dashboard_restarts() -> Optional[dict]:
                 "context": {"n_restarts": n_restarts},
             }
     except Exception as e:
-        logger.debug(f"[check_dashboard_restarts 跳过] {type(e).__name__}: {e}")
+        # 【v5.31.2 修复】dashboard 重启监控失效应告警
+        logger.warning(f"[check_dashboard_restarts 跳过] {type(e).__name__}: {e}")
     return None
 
 

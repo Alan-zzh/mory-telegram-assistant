@@ -39,6 +39,18 @@ EXCLUDE_NAMES = {
     "start.sh", "deploy.bat", "start_dashboard.bat", "docker_deploy.sh",
 }
 
+# 【死代码清理列表】本地已删除的文件，部署时自动从服务器删除，保持服务器干净
+# 新增死代码直接加进来，部署时自动清理
+DEAD_REMOTE_FILES = [
+    "core/cache_manager.py",
+    "core/migrate.py",
+    "core/monitoring.py",
+    "core/rate_limiter.py",
+    "core/router_statistics.py",
+    "modules/predictive_patrol.py",
+    "docs/review-report-20260621.md",
+]
+
 # 需要动态扫描的目录（递归收集所有 .py 文件）
 SCAN_DIRS = ["core", "modules", "dashboard", "scripts"]  # [v5.12.4] 修复：scripts/ 不在 SCAN_DIRS 导致 force_orphan_cleanup.py 未自动部署
 
@@ -183,6 +195,23 @@ def main():
         uploaded = upload_files(sftp, str(ROOT), VPS_PATH, files_to_upload,
             progress_cb=lambda done, total: print(f"  ⏳ 上传进度: {done}/{total}", end="\r") if done % 20 == 0 or done == total else None)
         print(f"\r  ✅ 已上传 {len(uploaded)}/{len(files_to_upload)} 个文件" + " " * 20)
+
+        # 【死代码清理】删除本地已移除的文件，保持服务器整洁
+        print("\n  清理服务器死代码文件 ...")
+        deleted_count = 0
+        for dead_rel in DEAD_REMOTE_FILES:
+            remote_dead = f"{VPS_PATH}/{dead_rel}"
+            try:
+                sftp.stat(remote_dead)
+                sftp.remove(remote_dead)
+                print(f"  🗑 已删除死代码：{dead_rel}")
+                deleted_count += 1
+            except FileNotFoundError:
+                pass  # 文件本来就不存在，跳过
+            except Exception as e:
+                print(f"  ⚠️ 删除 {dead_rel} 失败：{e}")
+        if deleted_count == 0:
+            print("  ℹ️ 无死代码需要清理")
 
         # 确保 logs/ + config/ 目录存在
         ensure_remote_dir(sftp, f"{VPS_PATH}/logs")

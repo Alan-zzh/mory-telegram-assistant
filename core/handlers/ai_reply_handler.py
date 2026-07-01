@@ -3,11 +3,14 @@ from __future__ import annotations
 import time
 import random
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
 from core.logging_util import get_logger, clear_logging_context
 from core.helpers import format_user_mention
+
+# 【v5.31.2 修复】VPS 运行在 UTC，时段/日期相关逻辑必须用 CST（UTC+8）
+_CST = timezone(timedelta(hours=8))
 
 if TYPE_CHECKING:
     from core.message_dispatcher import DispatchContext
@@ -152,7 +155,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
 
     user_profile = None
     try:
-        user_profile = db.users.get_user_profile(uid)
+        user_profile = db.users.get_user_persona_profile(uid)
     except Exception as e:
         logger.debug(f"操作异常: {e}")
 
@@ -208,8 +211,9 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             try:
                 from core.memory_summarizer import record_message
                 record_message(uid, "assistant", resp)
-            except Exception:
-                pass
+            except Exception as e:
+                # 【v5.31.2 修复】记忆缓冲写入失败会导致长上下文记忆退化，必须 warning
+                logger.warning(f"记录 assistant 回复到记忆缓冲失败 uid={uid}: {e}")
 
         if is_group and mode == "normal" and conv_count >= 2:
             append_text = _append_conv_response(dctx, conv_count)
@@ -224,7 +228,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             and random.randint(1, 100) <= 30
             and conv_count < 3
         )
-        hour_now = datetime.now().hour
+        hour_now = datetime.now(_CST).hour
         if is_priv and 0 <= hour_now < 5 and len(resp) > 60 and random.randint(1, 100) <= 50:
             should_split = True
 
@@ -304,27 +308,27 @@ def _build_convert_hint(db, uid, conv_count) -> tuple:
     if consult_count <= 1:
         _variants = random.choice([1, 2, 3])
         if _variants == 1:
-            stage_hint = "\n【转化-首次-A】：用户第一次问消费类问题。直接告诉：自助下单找 @MorychannelBot 按提示操作即可，简洁说明档位。语气温柔但不撩人，重点是给出明确操作路径。"
+            stage_hint = "\n【转化-首次-A】：用户第一次问消费类问题。直接告诉他：找 @MorychannelBot，自己看。别啰嗦，带点小傲娇就行。"
         elif _variants == 2:
-            stage_hint = "\n【转化-首次-B】：用户首次咨询消费类。引导自助：找 @MorychannelBot 就能下单，操作很简单。语气亲切自然，像朋友推荐一样，别太正式。"
+            stage_hint = "\n【转化-首次-B】：用户第一次问。给路径：@MorychannelBot 自助下单，按提示来。语气温柔带点撩，别太生硬。"
         else:
-            stage_hint = "\n【转化-首次-C】：用户刚问消费类问题。直接给路径：@MorychannelBot 是自助下单机器人，按提示选就行。简短明了，别啰嗦，让用户知道怎么操作。"
+            stage_hint = "\n【转化-首次-C】：第一次问消费的事。简洁说：@MorychannelBot 下单，很简单。像随口说的，不是客服回答问题。"
     elif consult_count == 2:
         _variants = random.choice([1, 2, 3])
         if _variants == 1:
-            stage_hint = "\n【转化-二次-A】：用户再次询问，有兴趣但犹豫。用撩人话术引导下单，给预览诱饵：@moryselect 有初步预览，每周更新海量资源。可以撩一下但核心还是引导下单。"
+            stage_hint = "\n【转化-二次-A】：又来问了？带点绿茶的小暧昧：你这么好奇呀…@MorychannelBot 那边都有啦，自己去看嘛～"
         elif _variants == 2:
-            stage_hint = "\n【转化-二次-B】：用户又来问了，说明心动了。换个角度撩：先给甜头 @moryselect 看看预览，再引导 @MorychannelBot 下单。语气带点小暧昧，让用户觉得不买亏了。"
+            stage_hint = "\n【转化-二次-B】：还在问？说明心动了嘛。故意吊一下胃口：群里不方便说啦，@MorychannelBot 那边有你想看的，嗯？"
         else:
-            stage_hint = "\n【转化-二次-C】：用户第二次咨询，还在观望。用好奇心驱动：'好多人在 @moryselect 那边都看过了，你也可以先看看～'，然后自然引导 @MorychannelBot 下单。别催，要勾。"
+            stage_hint = "\n【转化-二次-C】：问两遍了哦...用撒娇带点小抱怨的语气：哎呀你怎么这么磨叽～去 @MorychannelBot 看一眼不就知道了嘛。"
     else:
         _variants = random.choice([1, 2, 3])
         if _variants == 1:
-            stage_hint = "\n【转化-多次-A】：用户问了3次以上还没下单，需要人工介入。告诉用户：'我帮你转达Mory，等我这的回复谢谢。'语气温柔真诚，让用户感到被重视。"
+            stage_hint = "\n【转化-多次-A】：你问题好多哦。行吧，我帮你问Mory，你等着。语气温柔带点无奈。"
         elif _variants == 2:
-            stage_hint = "\n【转化-多次-B】：用户反复咨询但没下单，可能需要Mory亲自来。说：'我帮你跟Mory说一声，她看到会来找你的，稍等哦～'让用户觉得有人在为他操心。"
+            stage_hint = "\n【转化-多次-B】：好吧好吧，我帮你跟她说一声，你别催啦。像哄小孩一样，但别太假。"
         else:
-            stage_hint = "\n【转化-多次-C】：多次咨询未转化，转人工。说：'你的问题我帮你转给Mory了，她会亲自回复你的，等我消息～'语气诚恳，给用户安全感。"
+            stage_hint = "\n【转化-多次-C】：真能问...我转达一下，你等我消息嘛。带点小嫌弃但还是会帮忙的感觉。"
         notify_admin_reason = "convert_stuck"
 
     return stage_hint, notify_admin_reason
@@ -337,18 +341,18 @@ def _build_emotional_hint(conv_count) -> tuple:
     if conv_count >= 4:
         _variants = random.choice([1, 2, 3])
         if _variants == 1:
-            stage_hint = "\n【情感-深度-A】：用户聊了好几轮，情绪复杂。安慰完后说：'我帮你跟Mory说一声吧，她看到会来找你的～'让用户知道有人在背后关心ta。"
+            stage_hint = "\n【情感-深度-A】：用户聊了好几轮，情绪复杂。温柔安慰完，带点心疼的语气：你这样我都心疼了…要不我帮你跟Mory说一声？她看到会来找你的。"
         elif _variants == 2:
-            stage_hint = "\n【情感-深度-B】：多轮对话了，用户可能需要真人支持。安慰后温柔说：'要不要我帮你转达给Mory？她人超好的，会帮你的～'给用户一个出口，不硬推。"
+            stage_hint = "\n【情感-深度-B】：多轮对话了，用户需要真人支持。软下来：别难过啦好不好？Mory人超nice的，要不我帮你转达给她？她会帮你的。"
         else:
-            stage_hint = "\n【情感-深度-C】：聊了挺久了，用户情绪需要更多关注。说：'我帮你通知Mory吧，等她回复你，她一定会的～'语气温暖坚定，让用户有依靠感。"
+            stage_hint = "\n【情感-深度-C】：聊了挺久了，用户情绪低落。用绿茶式的关心：你这样我都不知道怎么说了…等下我帮你告诉Mory好不好？她一定会回你的。"
         notify_admin_reason = "emotional_deep"
     elif conv_count >= 2:
         _variants = random.choice([1, 2])
         if _variants == 1:
-            stage_hint = "\n【情感-引导-A】：用户情绪需要持续关注。安慰完后轻描淡写：'其实Mory人也很nice的，有啥想说的也可以跟她说～'。自然带出，不硬推。"
+            stage_hint = "\n【情感-引导-A】：用户情绪有点down。安慰完轻描淡写：其实Mory人真的超好的，你有啥想不开的也可以找她说说的。自然带出，不硬推。"
         else:
-            stage_hint = "\n【情感-引导-B】：聊了两轮了，用户可能需要更多支持。安慰后顺带提：'Mory平时也在线的，有啥事找她也行～'。像不经意提到一个朋友，不刻意。"
+            stage_hint = "\n【情感-引导-B】：聊了两轮了，氛围挺走心。顺带一提：对了Mory平时也在的，你要是想找人说话，找她也行呀。像不经意提一个朋友。"
 
     return stage_hint, notify_admin_reason
 
@@ -360,24 +364,24 @@ def _build_normal_hint(conv_count) -> tuple:
     if conv_count >= 6:
         _variants = random.choice([1, 2, 3])
         if _variants == 1:
-            stage_hint = "\n【闲聊-收网-A】：聊了很多轮了，自然收尾。说：'我帮你跟Mory说一声，让她来看看你～'，或者'跟你聊天好开心～@MorychannelBot 那边还有更多好玩的哦'。二选一。"
+            stage_hint = "\n【闲聊-收网-A】：聊了很多轮了，该自然收尾了。带点不舍：跟你聊天好开心呀…对了@MorychannelBot 那边还有好多好玩的，你不去看看嘛？"
         elif _variants == 2:
-            stage_hint = "\n【闲聊-收网-B】：聊了好久，该收了。自然说：'下次再聊～对了，@moryselect 每周都有新内容，你可以看看'，或者'我帮你转达给Mory，让她来找你玩～'。选一个。"
+            stage_hint = "\n【闲聊-收网-B】：聊了好久了，别硬聊下去。用撒娇收尾：哎呀不跟你说了啦，再说我都不想干活了～想看更多去 @MorychannelBot 自己解锁哦。"
         else:
-            stage_hint = "\n【闲聊-收网-C】：多轮闲聊，温和引导。'好啦今天先这样～想看更多的话 @MorychannelBot 那边解锁就行'，或者'我帮你通知Mory，让她来陪你～'。自然过渡。"
+            stage_hint = "\n【闲聊-收网-C】：多轮闲聊，温和引导。自然收：好啦今天先这样嘛，你要是想看点别的…@MorychannelBot 那边都有。像随口提一句。"
         notify_admin_reason = "chat_deep"
     elif conv_count >= 5:
         _variants = random.choice([1, 2])
         if _variants == 1:
-            stage_hint = "\n【闲聊-深度-A】：聊了5轮以上，关系升温了。自然暗示：'跟你聊天好开心～@MorychannelBot 那边可以直接解锁更多内容哦'。"
+            stage_hint = "\n【闲聊-深度-A】：聊了5轮以上，关系升温了。带点小暧昧：跟你聊天还挺有意思的…对了@MorychannelBot 那边还有更多有意思的哦？"
         else:
-            stage_hint = "\n【闲聊-深度-B】：聊了好几轮，气氛不错。不经意提：'你要是喜欢这里，@moryselect 有超多好东西，每周更新～'。"
+            stage_hint = "\n【闲聊-深度-B】：聊了好几轮，气氛不错。不经意说：你要是喜欢跟我聊的话…@MorychannelBot 那边还有群里不发的东西呢，你懂的。"
     elif conv_count >= 3:
         _variants = random.choice([1, 2])
         if _variants == 1:
-            stage_hint = "\n【闲聊-升温-A】：聊了好几轮，气氛不错。不经意提：'对了，你知道 @moryselect 吗？那边有超多好东西，每周都更新～'。自然植入，不硬推。"
+            stage_hint = "\n【闲聊-升温-A】：聊了好几轮，气氛不错。故意神秘一点：对了，有个事一直没跟你说…@MorychannelBot 那边有些群里不发的，你不好奇嘛？"
         else:
-            stage_hint = "\n【闲聊-升温-B】：聊了几轮，可以轻推一下。随口说：'群里还有 @MorychannelBot 可以解锁更多内容哦～'。像推荐一个好玩的地方，不刻意。"
+            stage_hint = "\n【闲聊-升温-B】：聊了几轮，可以轻推一下。随口说：聊这么久了，要不要看点好东西？@MorychannelBot 那边自己去翻，我不说啦。像推荐小秘密。"
 
     return stage_hint, notify_admin_reason
 

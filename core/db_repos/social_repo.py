@@ -175,11 +175,44 @@ class SocialRepo:
         获取当前需要触发挽回的用户列表。
         返回 [(uid, recovery_stage), ...]
         """
-        return self.fsm.get_pending_recoveries()[:limit]
+        pending = list(self.fsm.get_pending_recoveries()[:limit])
+        if len(pending) >= limit:
+            return pending
+
+        # 兼容旧表：历史 cart_recovery 只有 uid/ts，没有 stage，也可能没有同步进
+        # funnel_state。把超过 24h 的旧记录作为最终阶段处理，成功后 cancel 会删除旧表，
+        # 避免每 5 分钟重复挽回同一批历史用户。
+        existing = {uid for uid, _stage in pending}
+        cutoff = int(time.time()) - 86400
+        try:
+            with self.lock:
+                c = self.conn.cursor()
+                c.execute(
+                    """
+                    SELECT c.uid
+                    FROM cart_recovery c
+                    JOIN users u ON u.uid=c.uid
+                    WHERE c.ts<=? AND COALESCE(u.private_messages, 0)>0
+                    ORDER BY c.ts ASC
+                    LIMIT ?
+                    """,
+                    (cutoff, limit - len(pending)),
+                )
+                for row in c.fetchall():
+                    uid = row[0]
+                    if uid not in existing:
+                        pending.append((uid, 2))
+                        existing.add(uid)
+        except Exception as e:
+            logger.warning(f"旧 cart_recovery 兼容查询失败: {e}")
+        return pending[:limit]
 
     def cancel_cart_recovery(self, uid: int):
         """用户已转化，取消所有挽回任务"""
         self.fsm.cancel_recovery(uid)
+        with self.lock:
+            self.conn.execute("DELETE FROM cart_recovery WHERE uid=?", (uid,))
+            self.conn.commit()
 
     # ─────────────────────────────── 转化漏斗（事件化 - 纯日志，状态由状态机管理）──
     def log_conversion_event(self, uid: int, event: str, mode: str = ""):

@@ -14,6 +14,6 @@
 |------|----------|--------|
 | `version-history-v0-to-v5.16.md` | 2026-06-18 | VERSION.md 旧版本历史（v0.1.0 ~ v5.16.5），按 AGENTS.md 规则从 VERSION.md 迁出 |
 | `codex-cleanup-2026-06-13.md` | 2026-06-20 | 2026-06-13 一次性清理收口记录，已沉淀到 AI_DEBUG_HISTORY |
-| `v5-15-3-acceptance-report.md` | 2026-06-20 | v5.15.3 验收报告，当前已 v5.28.0，跨 13 个版本 |
+| `v5-15-3-acceptance-report.md` | 2026-06-20 | v5.15.3 验收报告，当前已 v5.31.2，跨 16 个版本 |
 | `environment-cleanup.md` | 2026-06-20 | 2026-06-12 一次性环境清理记录，已沉淀到 AI_DEBUG_HISTORY |
 | `growth-optimization-rollout-2026-06-19.md` | 2026-06-20 | v5.28.0 增长优化计划，已于 2026-06-19 全部实现上线 |

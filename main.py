@@ -22,6 +22,7 @@ sys.path.insert(0, base_dir)
 
 def main():
     """主入口：初始化 → 注册 → 启动"""
+    logger = logging.getLogger("main")
 
     # ════════════════════════════════════════════════════════════════════
     #  1. 初始化核心组件（环境变量/依赖/配置/DB/AI/Bot/中间件等）
@@ -42,7 +43,6 @@ def main():
     preflight_result = preflight_check(CONFIG, db_instance=DB, ai_instance=AI)
     if not preflight_result["ok"]:
         # 致命问题：阻断启动（但先通知 admin 然后再退出）
-        logger = __import__('logging').getLogger("main")
         logger.critical("🚨 preflight 启动检查失败，阻断启动")
 
         # 指数退避：连续失败时等待更久再退出，防止 systemd 重启轰炸
@@ -70,8 +70,8 @@ def main():
     if os.path.exists(_backoff_file):
         try:
             os.remove(_backoff_file)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"清除 preflight 失败计数文件失败: {e}")
 
     start_config_reload_watcher(CONFIG)
 
@@ -156,6 +156,11 @@ def main():
         except Exception as e:
             logging.getLogger("main").warning(f"停机时保存配置失败：{e}")
         try:
+            from core.write_queue import write_queue
+            write_queue.stop(timeout=10.0)
+        except Exception as e:
+            logging.getLogger("main").warning(f"停机时停止 WriteQueue 失败：{e}")
+        try:
             ctx.db.close()
         except Exception as e:
             logging.getLogger("main").warning(f"停机时关闭数据库失败：{e}")
@@ -177,8 +182,6 @@ def main():
     # ════════════════════════════════════════════════════════════════════
     #  5. 启动 Bot
     # ════════════════════════════════════════════════════════════════════
-    logger = logging.getLogger("main")
-
     bot_name = CONFIG.get("BOT_NAME", "Mory")
     _llm_pool = CONFIG.get("MODEL_POOLS", {}).get("llm", CONFIG.get("MODEL_POOL", []))
     _cur_idx = CONFIG.get("CURRENT_MODEL_INDEX", 0)

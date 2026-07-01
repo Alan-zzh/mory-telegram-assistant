@@ -1,3 +1,442 @@
+## v5.31.2 [2026-06-30] [Puzan-OS]
+### Token 消耗暗病排查 + 多智能体联排根治 10 项问题
+
+### Hotfix [2026-07-01] 代码与文档失真纠正（Loop 审计）
+- **修复 `core/ai_engine.py:1979-1984` 缩进语法错误**：`try/except` 块缩进错位导致整个模块无法 import，`verify_db_methods.py` 与生产启动均失败；已对齐缩进并通过 `py_compile`。
+- 修正 `README.md` 模块总数：`modules/` 87 + `core/` 48 = 135 个（原 95+35/122 与实际目录不符）。
+- 修正 `README.md` 自动任务数：`_job_*` 函数 53 个（原 52 个）。
+- 修正 `README.md` / `project_snapshot.md` Dashboard API 文件数：21 个（原 22 个），路由数 156 条保持不变。
+- 修正 `README.md` 资讯 mode 路由说明：当前 `config.json.example` / `core/ai_engine.py` 实际将 6 个新闻 mode 路由到 `llm_standard`，`llm_premium` 在 `MODE_ROUTING` 中暂无直接分配，与设计意图差异已加注释。
+- 修正 `project_snapshot.md` 模块数与 DB 委托方法数：162 个（原 159 个）。
+
+### Hotfix [2026-06-30] [Codex] 生产监控闭环与长期稳定性
+- 真实生产巡检确认：VPS `43.153.23.115` RUNNING，`mory-assistant` / `mory-dashboard` 双 active，`/api/health` 返回 v5.31.2，watchdog 持续健康，本地 `puzan_loop_monitor` 已开启 loop 模式。
+- 修复 `main.py` preflight 成功后清理失败计数文件时 `logger` 未定义的潜在启动崩溃；优雅停机增加 `WriteQueue.stop()`，关闭 DB 前先 drain 异步写队列。
+- 修复 `core/write_queue.py` 停机时先置 `_running=False` 导致队列尾部任务可能未 drain 的问题，改为哨兵前任务消费完再退出。
+- 修复 `callback_handlers.py` 通用 callback 兜底注册早于 `zc_` / `ghost_` 专用回调，导致僵尸/不活跃清理确认按钮被吞的问题。
+- 修复 `scripts/vps_watchdog.py` 同时写文件和 stdout，被 cron 重定向到同一日志后每条记录重复一遍的问题；修复 `scripts/puzan_loop_monitor.py` 只查当前用户 crontab、漏报 root watchdog cron 的监控误判。
+- 修复 `scripts/puzan_loop_monitor.py` L4 指标两处时间/schema 误判：`task_log.exec_ts` 实为秒级而非毫秒，`token_usage.timestamp` 带 `+08:00` 必须转 Unix 秒比较；同时把 `token_usage.cost` 和主库 `llm_cost_logs.estimated_cost` 分开显示。
+- 修复生产实况发现的 `cart_recovery` 没执行根因：旧 `cart_recovery` 表历史记录未同步进 `funnel_state`，导致每 5 分钟调度绿但业务没有可执行对象；现兼容读取旧表中可私聊用户，成功后同步删除旧表记录。
+- 修复 `reactivate` 先生成 LLM 文案再发现用户不可私聊的问题：未打开私聊的群成员不再进入唤醒候选，避免 Telegram 403 和 token 浪费。
+- VPS 验证：远端备份 `backups/prod_recovery_target_fix_20260701_002251`；远端 `py_compile` 和 `verify_db_methods.py` 通过；00:25 真实 `cart_recovery_2026-07-01_0025` 执行，00:26:20 成功发送 1 条并终态，`token_usage` 新增 `cart_recovery` 成功记录。
+- 修复空候选调度噪声：`cart_recovery` / `reactivate` 没有可私聊候选时正常跳过，不再抛 `_TaskAbort("无发送目标")` 造成事务异常假告警；00:35 真实 `cart_recovery_2026-07-01_0035` 验证为正常跳过。
+- 本地验证：5 文件 `py_compile` 通过；`PYTHONUTF8=1 python scripts/verify_db_methods.py` 通过，162 个委托方法无缺失无孤儿；3 个黑名单/中继相关单测 7 passed。
+
+### Hotfix [2026-06-30] [Codex] 新闻源多样性与富文本
+- 修复真实新闻“七源并行但最快源先返回即独占”的问题，改为 12 源并行收集后去重、分类、均衡挑选，科技/AI 类最多 2 条，单源优先最多 3 条。
+- 新闻候选从 5 条提升到 10 条，AI 再从多类目候选中整理 5 条；6 个新闻 prompt 增加“至少 3 个类目，科技/AI 最多 2 条”约束。
+- 新闻富文本增加“多源汇总 · 均衡筛选”来源角标，保留 5 条正文 + 折叠观察行 + bot footer。
+- VPS 已热修部署并验证：远端编译通过，实时样本覆盖财经/文娱/生活/体育/国际/科技/综合，22:19:55 新 PID 启动后双服务 active，watchdog 健康。
+
+### Hotfix [2026-06-30] [Codex] 晚间新闻 AI 失败告警风暴
+- 修复 `news_evening` 在模型连续超时后触发 `build_rich_news_html()` 参数异常，导致 `task_log` 锁释放并每 5 分钟重试、反复上报「AI模型全部失败」的问题。
+- 新闻任务识别 AIEngine 友好降级文案后，改用真实新闻标题生成非 LLM 兜底新闻；同时不再持有全局 `ai/config` 资源锁等待模型超时，避免拖累 `cart_recovery` / `reactivate`。
+- VPS 热修已部署并重启验证：双服务 active，`/api/health` v5.31.2，重启后未再出现新的 formatter 参数异常、`retry_news_evening` 或资源锁超时。
+
+**触发**：用户反馈"为什么这么快额度就耗尽了，明明没做什么为什么 token 消耗这么快有什么隐形问题"。多智能体并行排查发现高频任务死锁、配置缺失、沉默失败、资源泄漏、告警缺失等多类暗病。
+
+**P0 致命修复**：
+- **高频任务 task_log 死锁**：`cart_recovery` 每 5 分钟、`reactivate` 每小时、`burn_probe/burn_orphan` 高频任务的 task_key 无时间窗口后缀，首次成功后 task_log 残留导致 `INSERT OR IGNORE` 永久拦截后续执行。4 个 task_key 加时间窗口后缀（`cart_recovery` 用 `%Y-%m-%d_%H%M` 分钟级，`reactivate` 用 `%Y-%m-%d_%H` 小时级）
+- **task_log UNIQUE 索引迁移失败静默**：`core/database.py` line 467-474 索引创建异常从 `logger.debug` 升级为 `logger.error + report_fault`，防重机制失效不再无人发现
+- **新增 DB 方法未注册触发 `__getattr__` CRITICAL**：`_job_proactive_audit` 调用 `check_integrity()` / `get_recent_task_logs()` 未注册。`config_repo.py` 实现两个方法 + `database.py` `_REPO_METHOD_MAP` 注册
+
+**P1 高危修复**：
+- **`config.json.example` 缺 MODEL_COSTS 字段**：补全 9 个模型池（llm/llm_light/llm_standard/llm_premium/vision/omni/voice_tts/voice_asr/embedding）的输入/输出价格，LLMCostGuard 计算有依据
+- **`dashboard/helpers.py` SSH 连接泄漏**：`get_vps_status()` 函数添加 `finally: client.close()` 块
+- **`TaskTransactionManager._release_task` 不可靠**：WriteQueueConnectionProxy 包装层 `commit()` 可能抛 'no transaction is active'，改用 `_real_conn` 绕过代理三层防御（Repo 层 → 直连 SQL → CRITICAL 告警）
+- **`_CRITICAL_TASKS` 重复定义**：原 line 86-97（4 元组 9 任务）和 line ~3907（3 元组 7 任务）冲突，删除第一个
+- **`ad_enforcement._write_blacklists()` 失败无告警**：global_blacklist 和 blacklist 写入失败的 except 分支添加 `report_fault` 上报
+
+**P2 中危修复**：
+- **AIEngine timeout 25s → 45s**：匹配 qwen3.6-plus 实际响应时间，避免超时失败重试
+- **task max_attempts 5 → 3**：减少失败放大和 token 浪费
+- **token_usage 记录缺失**：`core/ai_engine.py` line 2057-2078 新增 prompt/completion tokens 写入 `data/router_usage.db`，token 消耗可追溯
+- **evening_news 路由错误**：从 `llm_premium`（100% 失败率，qwen3.7-max 超时 + glm-5.2 配额耗尽）改为 `llm_standard`
+- **`database.py` close/`__del__` 方法 `_logger`/`conn` bug**：`getattr(self, '_logger', logger)` 和 `self.conn` 在 GC 时会触发 `__getattr__` 委托机制 CRITICAL，改用 `self.__dict__.get('conn')` 避免 fallthrough
+- **config.json LLMCostGuard 开启**：`LLM_COST_GUARD_ENABLED=true`，用户小时限 $1.0，全局小时限 $5.0
+- **vision 模型池清空**：避免误用图像理解模型处理文本任务
+
+**Loop 监控轮 1 发现并修复**：
+- **P0 triggers 中 `rm.db.execute/commit` 未注册被静默吞错**：`modules/triggers/cold_group.py` 和 `modules/triggers/night_hint.py` 调用 `rm.db.execute()` / `rm.db.commit()` 触发 `__getattr__` CRITICAL，被 `except Exception: pass` 静默吞掉。改用 `rm.db.conn.execute/commit` + `logger.debug` → `logger.warning`
+- **P1 5 个每小时任务 task_key 无日期后缀**：`startup_member_scan`/`night_mode_start`/`night_mode_end`/`backup`/`ttl_cleanup` 加日期/小时后缀，避免 UNIQUE 索引拦截
+- **VPS 端 cron 监控部署**：每 15 分钟自动巡检，记录到 `logs/v5312_monitor.log`，告警记录到 `logs/v5312_alerts.log`
+
+**Loop 监控轮 2 发现并修复**：
+- **P0 VPS root 密码明文泄漏 15 处**：13 个 `tmp_*.py` + `query_vps_db.py` + `query_vps_db_fast.py` 含硬编码 VPS root 密码，全部删除（违反 AGENTS.md 凭据铁律）
+- **P0 LLM 成本熔断告警链断裂**：`core/llm_cost_guard.py:177` `send_alert` 失败被 `except Exception: pass` 吞掉，升级为 `logger.error`；`flush_to_db` 失败从 `logger.debug` 升级为 `logger.warning`
+- **P1 广告处置告警链断裂**：`modules/ad_enforcement.py:87,98` `report_fault` 失败被 `except Exception: pass` 吞掉，升级为 `logger.error`
+- **P1 数据库恢复告警链断裂**：`core/bot_initializer.py:785,793` 数据库恢复成功/失败后 `report_fault` 失败被吞，升级为 `logger.warning` / `logger.critical`（三重故障必须告警）
+- **P1 SSH 连接泄漏**：`scripts/auto_rollback.py` 多 return 点无 finally 保护，用 `try/finally` 包裹确保 `client.close()`
+- **P1 告警去重状态持久化失败沉默**：`modules/auto_tasks.py:601` `_save_dedup_state` 失败被 `except Exception: pass` 吞掉，升级为 `logger.warning`
+- **P2 scheduled_broadcast release_task 失败沉默**：`modules/scheduled_broadcast.py` 6 处 `release_task` 失败从 `logger.debug` 升级为 `logger.warning`，避免 task_log 残留锁导致播报静默跳过
+- **P2 bot_routing 路由查询失败沉默**：`core/bot_routing.py` 4 处路由查询失败从 `logger.debug` 升级为 `logger.warning`
+- **P2 alert_rules 告警规则跳过沉默**：`core/alert_rules.py:142` dashboard 重启监控失效从 `logger.debug` 升级为 `logger.warning`
+- **P2 memory_summarizer 保存摘要失败沉默**：`core/memory_summarizer.py:426` 用户记忆丢失从 `logger.debug` 升级为 `logger.warning`
+
+**Loop 监控轮 5 发现并修复**：
+- **P1 journalctl 无 Python 日志**：`core/logging_util.py:135-141` 非 tty 环境（systemd）不添加 StreamHandler，导致 journalctl 完全无 Python 日志，服务挂死等问题无法排查。检测 `INVOCATION_ID` 环境变量强制输出 stdout，部署后 journalctl 立即出现 bot_initializer/database/apscheduler.scheduler 等日志
+- **发现 6-28 服务挂死 22 小时**：6-28 0:00 ~ 20:39 CST 服务挂死（journalctl 无日志，dmesg 无 OOM），全天 greeting/scheduled_broadcast/news 全部缺失。根因是 systemd 配置无 `WatchdogSec`，Python 进程死锁时不会自动重启。本次修复 P1-1（journalctl 日志），P1-2（WatchdogSec）留作后续
+
+**Loop 监控轮 6 发现并修复 P0**：
+- **P0 WriteQueue rowcount 丢失导致所有定时任务失效**：`core/write_queue.py` `_execute_task` 创建新 `_WriteResult` 对象赋值给 `task.future.result`，但 `enqueue_and_wait` 返回本地 `result` 引用（rowcount=0），导致 `claim_task` 永远返回 False，所有定时任务被误判为"数据库锁拦截"实际未执行业务逻辑。修复：直接更新 `task.future.result` 字段保持引用一致
+- **P0 TaskTransactionManager.__exit__ 内存锁误设**：`core/task_transaction.py` `__exit__` 即使 `claimed=False` 也调用 `_confirm_task_done` 设置内存锁，修复为 `claimed=False` 时直接返回
+- **P1 独立看门狗部署**：`scripts/vps_watchdog.py` 每 2 分钟检查 /api/health，连续 3 次失败自动重启服务，缓解 systemd 无 WatchdogSec 的死锁检测问题
+
+**Loop 监控轮 7 发现并修复 P1**：
+- **P1 LLMCostGuard flush_to_db 从未被调用**：`core/llm_cost_guard.py` `flush_to_db` 方法定义了但无任何代码调用，且实现只建表不写数据，导致 `llm_cost_logs` 表永不创建，服务重启后熔断器 24h 累计成本清零，全局日熔断阈值（$50）实际无法基于历史数据触发。修复：1) `__init__` 添加 `_pending_logs` 队列；2) `record_cost` 缓存详细日志；3) `flush_to_db` 重写为批量 `executemany INSERT`；4) `modules/auto_tasks.py` `_job_update_prometheus_metrics` 添加 `flush_to_db` 调用（每 5 分钟）
+- **08:05 greeting_morning 关键里程碑验证通过**：P0 修复后首次 greeting_morning 任务成功执行（claim_task rowcount=1 → LLM glm-5.1 调用 → 消息发送到群 → token_usage 新增 id=5 记录 → 内存锁设置 → next run 2026-06-30 08:05）
+- **暗病搜索总结（Loop 轮 10）**：多智能体搜索 5 个维度，确认 _release_task 三层防御已就位、scheduled_broadcast 6 处 release_task 全在异常分支、无硬编码 model_name 绕过 config、无 except:pass 静默吞异常、db_repos 启动自检兜底
+
+**Loop 监控轮 8 发现并修复**：
+- **P2 metrics.py _update_llm_cost 字段名不匹配**：`core/metrics.py` `_update_llm_cost()` 读取 `stats.get("total_cost_cents", 0)` 但 `LLMCostGuard.get_stats()` 返回的字段是 `total_cost`（美元），导致 Prometheus 指标 `mory_llm_cost_cents` 永远为 0。修复：改为 `total_cost_usd = stats.get("total_cost", 0.0)` + `int(total_cost_usd * 100)` 转换为美分
+- **发现 VPS 网络层不可达事件**：08:32 本地 SSH/Ping/HTTP 6616 全部超时，`mcp_ssh-doctor` 确认 TCP 端口 22 不可达（网络层不通，非 SSH 配置问题）。启动 `scripts/_tmp_vps_recovery.py` 后台轮询（每 3 分钟，最多 4 小时），VPS 恢复后自动执行清理+完整验证流程
+- **发现旧 `_vps_monitor_cron.py` 误报**：grep -iE "error|critical|exception" 匹配到 "EXECUTED/ERROR/MISSED" 中的 ERROR 产生误报告警。创建 `scripts/_tmp_clean_cron.py` 待 VPS 恢复后清理
+
+**Loop 监控轮 9 多智能体暗病搜索修复 11 处（3 P1 + 8 P2）**：
+- **P1 group_repo 静默吞异常**：`core/db_repos/group_repo.py` `snapshot_message`/`mark_message_deleted`/`get_user_messages` 三个 Repo 方法 except 块直接 return 无日志，广告治理关键路径失败后广告消息删不掉无人感知。改为 `logger.warning`
+- **P1 task_transaction 资源锁释放失败沉默**：`core/task_transaction.py:163` `_release_resource_locks` 锁释放失败只 `logger.debug`，生产不可见会导致任务长期饥饿。改为 `logger.warning`
+- **P1 auto_tasks 告警去重状态加载失败清空**：`modules/auto_tasks.py:593` `_load_dedup_state` 加载失败清空去重窗口无日志，会导致历史告警重新发送（轰炸）。改为 `logger.warning`（与 `_save_dedup_state` 修复一致）
+- **P2 ai_reply_handler 记忆缓冲失败沉默**：`core/handlers/ai_reply_handler.py:211` 记录 assistant 回复到记忆缓冲失败 `except: pass`，长上下文记忆退化。改为 `logger.warning`
+- **P2 bot_initializer 启动追溯扫描日志失败沉默**：`core/bot_initializer.py:686` INSERT 失败 `except: pass`，下次启动重复扫描浪费 API 配额。改为 `logger.warning`
+- **P2 auto_tasks 备份连接资源泄漏 ×2**：`modules/auto_tasks.py:3457/3527` `_do_backup` 和 `_job_daily_backup` 备份连接仅成功路径 close，backup 失败时连接不关闭源库读锁残留阻塞 Bot 写操作。用 try/finally 包裹 close
+- **P2 bot_initializer 测试连接资源泄漏**：`core/bot_initializer.py:803` `_test_db_write` 内存连接中间 SQL 失败时不关闭，改为 try/finally + 前置声明 `test_conn = None`
+- **P2 scheduled_broadcast INSERT 字段时机依赖**：`modules/scheduled_broadcast.py:637` `_log_broadcast_attribution` INSERT 引用 source/campaign_id 但 conversion_events 建表时只有 5 字段，需先调用 `_ensure_conversion_columns` 加列，否则抛 OperationalError 被静默吞掉。改为 INSERT 前调用 `_ensure_conversion_columns(db.conn)`
+- **P2 metrics.py _update_conversion_total 双重暗病**：`core/metrics.py:120` 1) 调用 `dashboard.helpers.get_db()` 使用 Flask `g` 对象在 Bot 进程无 Flask 上下文抛 RuntimeError；2) SQL 查询 `bot_id` 字段但表只有 5 字段抛 OperationalError。改为直接 `sqlite3.connect()` + SQL 去掉 `bot_id`
+
+**Loop 监控轮 10 第三轮暗病搜索修复 6 处（1 P1 + 1 P2 + 4 P3）**：
+- **P1 _job_wakeup_check 锁顺序死锁**：`modules/auto_tasks.py:1618` 持有 `locked_multi(['db','bot','config'])` 期间调用 `_generate_wakeup_message`（内部 `locked('ai')`），锁顺序 `config→ai` 与 `_execute_news_task`/`_job_leak` 的 `ai→config` 形成 AB-BA 死锁，30 秒超时打破后两任务都失败。修复：分离数据读取与 AI 生成，只在读 db 时持锁
+- **P2 Dashboard 限流/暴力破解并发绕过**：`dashboard/auth.py:12-65` Flask `threaded=True` 下 `_dashboard_rate_limits`/`_login_failures` 无锁保护，TOCTOU 可绕过限流和 `_LOGIN_MAX_FAILS=5` 暴力破解保护；`del` 可能 KeyError。修复：添加 `_rate_limit_lock`/`_login_failures_lock` 保护，`del` 改 `pop`，`_get_login_fails` 返回副本
+- **P3 report.py TOCTOU**：`modules/report.py:21` `_report_cooldown` 无锁，Bot 50 线程并发下可绕过 5 分钟冷却。修复：添加 `_report_cooldown_lock`，`del` 改 `pop`
+- **P3 settings_panel.py KeyError**：`modules/settings_panel.py:1321` `del _pending_value_sessions[session_key]` 并发可能 KeyError。修复：改为 `pop(session_key, None)`
+- **P3 message_dispatcher 死代码**：`core/message_dispatcher.py:57` `_append_pool = ThreadPoolExecutor(max_workers=2)` 创建后从未被使用，浪费 2 个空线程。修复：注释掉死代码
+- **P3 scripts open() 未用 with**：`scripts/vps_check_scan_config.py:6` + `scripts/vps_debug_scan.py:45` `json.load(open(...))` 依赖 GC 回收。修复：改为 `with open(...) as f: cfg = json.load(f)`
+
+**Loop 监控轮 11 第四轮暗病搜索修复 10 处（6 P2 + 4 P3）**：
+- **P2 ai_engine.py 时区错位**：`core/ai_engine.py:1023/1105/1345/1487/1933` 5 处 `datetime.now().hour` 用于情绪状态/情绪桶/场景模拟/节日人格/动态 LLM 参数，VPS 运行在 UTC 导致 CST 0:00-8:00 时段全部错位 8 小时。修复：顶部添加 `_CST`，5 处改 `datetime.now(_CST)`
+- **P2 tracking_repo.py 时区错位**：`core/db_repos/tracking_repo.py:514` `today_start` 用 `datetime.now()` 无 tz，CST 0:00-8:00 漏算今日搭讪统计。修复：改 `datetime.now(_CST)`
+- **P2 dashboard/stats_api 时区错位**：`dashboard/api/stats_api.py:87/90/93/103` 4 处 `datetime.now()` 导致"今日活跃"在 CST 0:00-8:00 漏算，7 日趋势日期错位。修复：改 `datetime.now(_CST)`
+- **P2 dashboard/health_api 显示时间用 UTC**：`dashboard/api/health_api.py:202` `datetime.now().strftime(...)` 显示 UTC 时间给运维，故障时间错位 8 小时。修复：顶部添加 `_CST`，改 `datetime.now(_CST).strftime(...)`
+- **P2 antiflood 清理函数从未调用**：`modules/antiflood.py:211` `cleanup_flood_cache` 定义但从未被调用，`_flood_cache` 持续累积。修复：在 `_job_ttl_cleanup` 中注册调用
+- **P2 edit_detector 清理函数从未调用**：`modules/edit_detector.py:139` `cleanup_old_snapshots` 定义但从未被调用，`_message_snapshots` 月级别积累数万条目。修复：在 `_job_ttl_cleanup` 中注册调用
+- **P3 proactive_engage 时区错位**：`modules/proactive_engage.py:416/431/444/466` 4 处 `datetime.now().strftime` 用 UTC 日期，每日搭讪限额在 CST 0:00-8:00 不生效。修复：顶部添加 `_CST`，4 处改 `datetime.now(_CST)`，DB 查询 `localtime` 改 `'+8 hours'`
+- **P3 scheduled_broadcast campaign_id 时区**：`modules/scheduled_broadcast.py:640` `campaign_id` 用 UTC 日期，CST 16:00 后归因 fragmentation。修复：改 `datetime.now(_CST)`
+- **P3 admin_cmds + natural_cmd 显示时间用 UTC**：`modules/admin_cmds.py:945/1149/1232` + `modules/natural_cmd.py:1673/1707` 5 处显示时间错位 8 小时。修复：改 `datetime.now(_CST)`
+- **P3 auth.py _login_failures 无 max size**：`dashboard/auth.py:65` `_login_failures` 无上限，攻击者用大量不同 IP 各失败 1 次后不再访问导致内存累积。修复：`_set_login_fails` 加上限保护
+
+**Loop 监控轮 12 第五轮暗病搜索修复 6 处（6 P2/P3 datetime.now() 时区错位遗漏）**：
+- **P2 ai_engine.py 节日人格时区（前序修复未生效）**：`core/ai_engine.py:1487` `_get_festival_persona` 仍用 `datetime.now()`，Loop 11 前序 Edit 未生效，CST 0:00-8:00 情人节/万圣节/春节错位。修复：改为 `datetime.now(_CST)`
+- **P2 message_dispatcher.py 凌晨延迟时区**：`core/message_dispatcher.py:149` `_calc_humanized_delay` 凌晨 0-5 点加延迟用 `datetime.now().hour`，凌晨加延迟在白天触发。修复：顶部添加 `_CST`，改为 `datetime.now(_CST).hour`
+- **P2 ai_reply_handler.py 凌晨拆消息时区**：`core/handlers/ai_reply_handler.py:228` 凌晨 0-5 点私聊拆消息概率判断错位。修复：顶部添加 `_CST`，改为 `datetime.now(_CST).hour`
+- **P3 ai_reply_core.py 凌晨拆消息时区（DEPRECATED）**：`core/handlers/ai_reply_core.py:126` 旧版 AI 回复同上错位，仍被旧代码引用。修复：顶部添加 `_CST`，改为 `datetime.now(_CST).hour`
+- **P2 trendradar_news.py 新闻日期时区**：`core/trendradar_news.py:47` 新闻去重缓存日期切换用 UTC 日期，CST 0:00-8:00 缓存提前 8 小时清空导致新闻重复推送。修复：顶部添加 `_CST`，改为 `datetime.now(_CST).strftime(...)`
+- **P2 night_hint.py 夜间窗口时区**：`modules/triggers/night_hint.py:35` 夜间窗口（22-2 点）判断用 UTC 时间，夜间暗示在 CST 6:00-10:00 白天触发。修复：顶部添加 `_CST`，改为 `datetime.now(_CST).hour`
+
+**变更文件**：
+- `core/database.py` — close/`__del__` 方法 `_logger`/`conn` bug + _REPO_METHOD_MAP 注册 2 方法 + task_log 索引告警升级
+- `core/task_transaction.py` — _release_task 三层防御 + __exit__ claimed=False 修复
+- `core/write_queue.py` — _execute_task rowcount 丢失修复
+- `core/llm_cost_guard.py` — flush_to_db 重写 + _pending_logs 队列 + record_cost 缓存详细日志
+- `core/db_repos/config_repo.py` — 新增 check_integrity / get_recent_task_logs
+- `core/ai_engine.py` — timeout/max_attempts/token_usage 记录/evening_news 路由 + 5 处 datetime.now() 时区修复（Loop 11 P2）+ 1 处节日人格时区修复（Loop 12 P2，前序修复未生效）
+- `core/db_repos/tracking_repo.py` — today_start 时区修复（Loop 11 P2）
+- `dashboard/api/stats_api.py` — 4 处 datetime.now() 时区修复（Loop 11 P2）
+- `dashboard/api/health_api.py` — 显示时间时区修复 + _CST 定义（Loop 11 P2）
+- `modules/proactive_engage.py` — 4 处 datetime.now() 时区修复 + DB 查询 localtime 改 +8 hours（Loop 11 P3）
+- `modules/admin_cmds.py` — 3 处显示时间时区修复（Loop 11 P3）
+- `modules/natural_cmd.py` — 2 处显示时间时区修复 + _CST 定义（Loop 11 P3）
+- `core/metrics.py` — _update_llm_cost 字段名修复（total_cost_cents → total_cost 美分转换）+ _update_conversion_total 双重暗病修复（Flask 上下文 + SQL bot_id 字段）
+- `modules/auto_tasks.py` — 4 个高频任务 task_key 时间窗口后缀 + 删除 _CRITICAL_TASKS 重复定义 + _load_dedup_state 静默吞异常修复 + 备份连接资源泄漏修复 ×2 + _job_wakeup_check 锁顺序死锁修复（Loop 10）+ _job_ttl_cleanup 注册 antiflood/edit_detector 清理函数（Loop 11 P2）
+- `modules/ad_enforcement.py` — _write_blacklists 添加 report_fault
+- `modules/scheduled_broadcast.py` — _log_broadcast_attribution INSERT 前调用 _ensure_conversion_columns 加列 + campaign_id 时区修复（Loop 11 P3）
+- `core/db_repos/group_repo.py` — snapshot_message/mark_message_deleted/get_user_messages 静默吞异常改为 logger.warning
+- `core/handlers/ai_reply_handler.py` — 记录 assistant 回复到记忆缓冲失败改为 logger.warning + 凌晨拆消息时区修复（Loop 12 P2）
+- `core/bot_initializer.py` — 启动追溯扫描日志失败改为 logger.warning + _test_db_write 内存连接资源泄漏修复
+- `dashboard/helpers.py` — get_vps_status SSH 连接泄漏修复
+- `dashboard/auth.py` — 限流/登录失败计数加锁保护（Loop 10 P2 并发绕过修复）+ del 改 pop + _login_failures max size 上限保护（Loop 11 P3）
+- `modules/report.py` — _report_cooldown 加锁保护（Loop 10 P3 TOCTOU 修复）+ del 改 pop
+- `modules/settings_panel.py` — del _pending_value_sessions 改 pop（Loop 10 P3 KeyError 修复）
+- `core/message_dispatcher.py` — 移除死代码 _append_pool（Loop 10 P3）+ 凌晨延迟时区修复（Loop 12 P2）
+- `core/handlers/ai_reply_core.py` — 凌晨拆消息时区修复（Loop 12 P3，DEPRECATED 文件仍被旧代码引用）
+- `core/trendradar_news.py` — 新闻去重缓存日期切换时区修复（Loop 12 P2）
+- `modules/triggers/night_hint.py` — 夜间窗口判断时区修复（Loop 12 P2）
+- `scripts/vps_check_scan_config.py` — open() 改 with open（Loop 10 P3）
+- `scripts/vps_debug_scan.py` — open() 改 with open（Loop 10 P3）
+- `config.json` — LLMCostGuard 开启 + vision 池清空 + evening_news 路由（通过 safe_upload_config 部署）
+- `config.json.example` — 补全 MODEL_COSTS 字段
+- `version.py` / `VERSION.md` / `CHANGELOG.md` / `AI_DEBUG_HISTORY.md` — 六件套同步
+
+**验证**：
+- 本地：py_compile 8 文件通过 + JSON 校验 + `scripts/verify_db_methods.py` 162 方法无缺失
+- VPS：mory-assistant + mory-dashboard 双 active + `/api/health` v5.31.2 + 无 CRITICAL + token_usage 3 条记录 + cart_recovery 带后缀 task_key 成功执行 + 旧 task_key 残留已清理 + check_integrity/get_recent_task_logs 实际调用 OK
+
+### 部署验证（Loop 监控轮 13，2026-06-29 21:00）
+- **VPS IP 修正**：用腾讯云 Lighthouse API 发现正确 IP `43.153.23.115`（前序误用 `43.159.168.175`）
+- **21 文件部署**：paramiko SFTP 上传到 `/home/ubuntu/mory_assistant/`，py_compile 全部通过（修复 __pycache__ 权限后）
+- **服务重启**：mory-assistant + mory-dashboard 双 active；preflight 5 项检查 OK；APScheduler 30+ 任务全部注册
+- **数据验证**：task_log 74 条今日记录 + llm_cost_logs 14 条 + router_usage.db token_usage 20 条（澄清：token_usage 写入 `data/router_usage.db` 而非 `mory.db`，前序"P2 待调查"为误报）
+- **环境凭证**：`.env` 追加腾讯云 API 凭证 + `VPS_USER` 从 `root` 改为 `ubuntu`
+
+### Loop 监控轮 14 第六轮暗病搜索修复 3 P0+2 P1（2026-06-29 22:30）
+- **P0-1 非可重入锁死锁**：`core/database.py:40` `Lock()` → `RLock()`，解决 redpacket/lucky_wheel 6 个调用点在 `with _db_lock:` 内调 `db.add_points()` 的死锁（管理员发红包、用户转盘全部功能恢复）
+- **P0-2 `get_user_profile` 重复定义**：`user_repo.py:285` 重命名为 `get_user_persona_profile`，`_REPO_METHOD_MAP` 注册新方法，更新 5 个调用点（profile_learner/memory_summarizer/ai_reply_handler/night_hint/ab_test_api），保留 admin_cmds 用第一定义（users 表聚合，修复 KeyError）
+- **P0-3 `health_api.py` SQL 字段不匹配**：4 处 SQL 引用不存在的 `status`/`ts`/`task_name`/`error_msg` 列，改写用 `task_key`/`exec_ts`，task_log 语义"只记录成功执行"故 success_rate=100%
+- **P1-1 审计日志静默丢失**：`silent_actions.py:148` `logger.debug` → `logger.error` + `report_fault` 上报
+- **P1-3 塔罗时区错位**：`auto_tasks.py:3396` `datetime.now()` → `datetime.now(_CST)`
+- **P2-3 features_api 静默吞 DB 错误**：`features_api.py:240` `except Exception:` → `except Exception as e: logger.error(...)`，联邦封禁列表查询失败不再静默
+- **P2-2 scripts/ SSH 泄漏 6 处**：restart_bot/upload_and_ban/vps_debug_updates/vps_run_scan_bg/vps_stop_and_check_updates/cleanup_vps_full 添加 try/finally + ssh.close()
+- **验证**：10 文件 py_compile OK + DB 方法注册 162 个无缺失 + VPS 部署成功 + 服务双 active + journalctl 无错误
+
+### Loop 监控轮 20 第十一轮盲区扫描+文档失真治理 5 处代码+16 处文档（2026-06-30）
+- **P0 `modules/shop.py:88-112` TOCTOU 漏洞**：积分检查在锁外，扣分在锁内但非原子（缺 `AND points >= ?`）。redpacket/blind_box/tip 用 db.lock 原子扣分，与 shop._db_lock 不同锁，并发下积分可能变负数。修复：改为原子 SQL `UPDATE user_levels SET points=points-? WHERE uid=? AND points >= ?` + rowcount=0 时 rollback 并返回"积分不足（并发竞争）"
+- **P1 `scripts/emergency_ban_ad_user.py:35,39` 时区+类型不一致**：用 `datetime.now().isoformat()` 写入 blacklist.added_at 列，但生产代码 group_repo.py:217 用 `int(time.time())`。修复：改为 `int(time.time())` 与生产代码一致，删除 `from datetime import datetime`，添加 `import time`
+- **P2 `core/bot_initializer.py:669` 静默吞异常**：`except Exception: pass` 吞掉 retroactive_scan_log 查询错误。改为 `except Exception as e: logger.debug(...)`
+- **P2 `core/pinyin_util.py:80` 静默吞异常**：`except Exception: pass` 吞掉 lazy_pinyin 异常。添加 `import logging` + `logger`，改为 `except Exception as e: logger.debug(...)`
+- **P2 `dashboard/app.py:159` sqlite3.connect 不在 finally**：`_init_conn.close()` 不在 finally 块中，抛异常时连接泄漏。修复：包入 `try: ... finally: _init_conn.close()`
+- **文档失真治理 16 处**：project_snapshot.md 9 处违规 AI 署名删除 + 部署文件数 27→37+（算术错误纠正）+ _CST 修复处数 18+→40+；AI_DEBUG_HISTORY.md 经验教训 15+→37+；CHANGELOG.md + AI_DEBUG_HISTORY.md DB 方法数 161→162
+- **验证**：5 文件 py_compile OK + VPS 部署 5 文件成功 + 服务双 active + /api/health v5.31.2 + grep 验证全部到位 + journalctl 无错误
+
+### Loop 监控轮 19 补救修复 health_api.py 时区残留 2 处（2026-06-30）
+- **`dashboard/api/health_api.py:48,228` 时区残留**：Loop 18 Edit 报告"All occurrences were successfully replaced"但实际 line 48/228 未生效（仅 line 161 成功）。本轮用 `replace_all=true` 一次替换两处相同字符串，重新部署验证 `datetime.now(_CST): 4` + `datetime.now() 残留: 0`
+- **教训**：Edit 工具"成功"报告不可信，必须用 Grep 二次验证实际内容
+- **验证**：1 文件 py_compile OK + VPS 部署成功 + 服务双 active + /api/health v5.31.2
+
+### Loop 监控轮 18 第十轮最终盲区扫描修复 3 P0+11 P1+3 P2（2026-06-30）
+- **P0 `dashboard/api/health_api.py:48,161,228` 时区残留**：3 处 cutoff 计算用 `datetime.now()`（文件已定义 `_CST` 但未使用），CST 0:00-8:00 期间健康度评分查询窗口偏移 8 小时。修复：改为 `datetime.now(_CST)`，与 stats_api.py 修复模式对齐
+- **P1 `core/db_connection_proxy.py:190,197` 静默吞 commit/rollback 异常**：proxy commit/rollback 失败用 `logger.debug` 吞掉，可能掩盖事务问题。升级为 `logger.warning`
+- **P1 `core/ai_engine.py:2061,2083` 静默吞 LLM 成本/token 记录失败**：LLM 成本记录 + token_usage 写入失败用 `logger.debug` 吞掉，影响计费准确性。升级为 `logger.warning`
+- **P1 `scripts/vps_force_retroactive_scan.py:168` 裸 except**：`except: pass` 吞所有异常包括 KeyboardInterrupt。改为 `except Exception as e: print(..., file=sys.stderr)`
+- **P1 8 处 `except Exception: pass` 静默吞异常**：`message_dispatcher.py:762,771`（reply_to 失败）/ `scheduler_monitor.py:71`（last_duration 计算）/ `db_migration_monitor.py:125`（PRAGMA database_list）/ `ab_test_router.py:142`（获取 db 实例）/ `dashboard/helpers.py:184`（SSH client.close）/ `main.py:63,73`（preflight 退避）。全部改为 `except Exception as e: logger.debug(f"...: {e}")`
+- **P2 3 处幂等添加列加注释**：`memory_summarizer.py:438,410` + `growth_optimizer.py:176` 的 `ALTER TABLE ... ADD COLUMN` 后 `except: pass` 加注释"幂等添加列：列已存在则跳过"
+- **文档同步**：CHANGELOG.md 行 1 版本块日期 2026-06-29 → 2026-06-30
+- **验证**：12 文件 py_compile OK + VPS 部署 12 文件成功 + 服务双 active + /api/health v5.31.2 + journalctl 无错误
+
+### Loop 监控轮 17 第九轮 P0+3 P3 修复（2026-06-30）
+- **P0 `modules/shop.py:126` SQL 列名错误**：兑换扣积分 `INSERT INTO points_log (uid, delta, reason, ts)` 用错列名（points_log 表 schema 是 `id, uid, change_amount, balance_after, source, ts`），导致**兑换功能 100% 失败**。修复：改用正确列名 + 补 `balance_after = db.get_user_points(uid) or 0` 作为余额快照，与 redpacket.py / blind_box.py / tip.py 对齐
+- **P3 `core/profile_learner.py:150` 时区缺失**：用户画像 `last_interaction` 时间戳用 `datetime.now()`（VPS UTC，与 CST 差 8 小时），改为 `datetime.now(_CST)`，新增 `_CST = timezone(timedelta(hours=8))` 常量
+- **P3 `core/optimizer.py:387` 时区缺失**：优化管理器诊断报告 `timestamp` 用 `datetime.now()`，改为 `datetime.now(_CST)`，import 补 `timezone`
+- **P3 `core/router_database.py:115` 时区缺失**：token_usage 表 `timestamp` 字段用 `datetime.now()`（影响按日统计准确性），改为 `datetime.now(_CST)`，import 补 `timezone, timedelta`
+- **验证**：4 文件 py_compile OK + VPS 部署 4 文件成功 + 服务双 active + /api/health v5.31.2 + grep 新代码全部到位 + journalctl 无错误
+
+### Loop 监控轮 16 第八轮 P3 修复+文档失真治理（2026-06-30 00:37）
+- **历史 bug redpacket.py:282 points_log 列名错误**：过期退回积分 INSERT 用错列名（delta/reason → change_amount/balance_after/source），审计日志长期缺失，修复后与领取处对齐
+- **P3-1 硬编码路径**：`dashboard/helpers.py:163,165` SSH 命令硬编码 `/home/ubuntu/mory_assistant/main.py` → 引用 `VPS_PATH`
+- **P3-2 dashboard auth 时区**：`dashboard/auth.py:197,206` `datetime.now()` → `datetime.now(_CST)`，登录时间不错位 8 小时
+- **P3-3 funnel_api 时区**：`dashboard/api/funnel_api.py:80` `datetime.now()` → `datetime.now(_CST)`，漏斗统计日期不错位
+- **P3-4 admin_cmds 5 处 status 吞异常**：健康检查 4 处 `logger.debug` + 1 处 `except: patch_test` → `logger.warning` 带具体描述
+- **P3-5 blind_box 概率查询吞异常**：`modules/blind_box.py:131` `logger.debug` → `logger.warning`
+- **文档失真治理**：project_snapshot.md v5.31.1→v5.31.2 + 方法数 159→162 + 防御体系补 6 项 + 删除过时历史；README.md 3 处版本号纠正；AGENTS.md 版本锚点+文档数 21→18；docs/vision+docs/archive 版本号纠正
+- **验证**：6 代码文件 py_compile OK + DB 方法 162 个 + VPS 部署 11 文件成功 + 服务双 active + journalctl 无 ERROR + grep 新代码全部到位
+
+### Loop 监控轮 15 第七轮暗病搜索修复 1 P1+2 P2（2026-06-29 23:00）
+- **P1-2 question_repo 4 方法半静默失败**：`update_question_reply`/`increment_faq_hit`/`update_faq_knowledge`/`delete_faq_knowledge` 返回值改为 `-> bool`（成功 True/失败 False），调用方 4 处不检查返回值故向后兼容
+- **P2-1 TOCTOU 余额检查（3 处）**：`modules/redpacket.py` / `blind_box.py` / `tip.py` 的"先查后扣"两步改为原子 SQL `UPDATE user_levels SET points = points - ? WHERE uid = ? AND points >= ?`，rowcount=0 即余额不足，防并发下积分变负
+- **P2-4 redpacket 半提交不一致**：`modules/redpacket.py:185-198` 锁内 commit 领取记录后锁外 add_points 加分，改为三步（领取记录+加分+commit）全进 `with _db_lock:` 块内原子完成，失败 rollback
+- **验证**：4 文件 py_compile OK + DB 方法注册 162 个无缺失 + VPS 部署成功 + 服务双 active + journalctl 无错误 + token_usage 21 条 + task_log 39 条
+
+## v5.31.1 [2026-06-27] [Puzan-OS]
+### 四层智能体联排防御体系：根治 _REPO_METHOD_MAP 漏注册沉默失败
+
+**问题**：连续 3 次同类故障（v5.30.1 漏 4 个方法、v5.30.3 漏 30 个方法、v5.31.0 漏 1 个 release_task），每次都是新增 Repo 方法后忘记在 `_REPO_METHOD_MAP` 注册，导致 AttributeError 被 except 静默吞掉，用户可见功能全灭但无告警。
+
+**四层防御**：
+- **L1 启动自检**：`core/database.py` 新增 `_self_check_repo_methods()`，DB 初始化时正向扫描 9 个 Repo 的 158 个 public 方法全部必须在 `_REPO_METHOD_MAP` 注册，反向检查孤儿注册，任一缺失直接 RuntimeError 启动失败
+- **L2 __getattr__ 加固**：未注册方法访问时不再静默抛 AttributeError（会被各层 except Exception 吞掉），改为 log CRITICAL + 调用栈 + 明确异常信息后 re-raise
+- **L3 部署前验证脚本**：`scripts/verify_db_methods.py` 静态扫描所有 Repo 类方法比对 `_REPO_METHOD_MAP`，输出缺失/孤儿清单 + 自动修复代码片段，部署前必跑
+- **L4 调度健康监控**：`core/scheduler_monitor.py` 新增 `_CRITICAL_JOBS`（早安/午安/晚安/4个播报 共7个关键任务），`check_critical_jobs_health()` 每 30 分钟检查关键任务是否在 deadline 前成功执行，未执行则 log CRITICAL 告警
+
+**变更文件**：
+- `core/database.py` — 新增 `_self_check_repo_methods()` 启动自检 + `__getattr__` CRITICAL 日志加固 + `_REPO_ATTR_MAP`
+- `core/scheduler_monitor.py` — 新增 `_CRITICAL_JOBS` 定义 + `check_critical_jobs_health()` 健康检查
+- `modules/auto_tasks.py` — 注册 `critical_jobs_health_check` 每 30 分钟任务
+- `scripts/verify_db_methods.py` — 新增部署前独立验证脚本
+- `version.py` / `VERSION.md` / `CHANGELOG.md` / `AI_DEBUG_HISTORY.md` / `project_snapshot.md` — 六件套同步
+
+## v5.31.0 [2026-06-27] [Puzan-OS]
+### 定点播报+早晚午晚安问候全灭彻底修复（4 P0 + 多联排支持）
+
+**触发**：用户反馈"播报没有了。早晚午安晚安都没了"。3 个智能体并行诊断（SSH 服务器日志收集 + 本地代码审查 + git 历史定位）发现 4 个 P0 根因 + 1 个组件格式问题。
+
+**P0 致命修复**：
+- `core/db_repos/config_repo.py` 缺失 `release_task` 方法 — `modules/scheduled_broadcast.py` 第 315/349/383/396/448/495 行共 6 处调用 `db.release_task(task_key)` 全部抛 `AttributeError` 被 `except Exception` 静默吞掉，发送失败时 task_log 残留导致后续重试被 `claim_task` 永久拦截。已新增方法 + `core/database.py` `_REPO_METHOD_MAP` 注册（避免 v5.30.3 同款漏注册踩坑系统性复发）
+- `modules/auto_tasks.py:_job_scheduled_broadcast` 外层 `TaskTransactionManager` 用 `broadcast_{broadcast_id}`（无日期后缀）做 claim，task_log 残留后每天 `claim_task` 都返回 `rowcount=0 result=False`，内层 `execute_scheduled_broadcast` 从未执行。已移除外层 TaskTransactionManager，只依赖内层 claim（task_key 带 chat_id + 日期后缀）
+- `modules/scheduled_broadcast.py` task_key 未带 chat_id + 日期后缀；`modules/auto_tasks.py` 三个 greeting 函数 task_key 同样无日期后缀（如 `greeting_morning`）。已全部改为 `f"..._{today}"` 或 `f"..._{chat_id}_{today}"`
+- 多群支持未实现 — `_job_greeting_*` 和 `_job_scheduled_broadcast` 只发到 `GROUP_ID` 单值。已新增 `_get_all_group_ids(GROUP_ID + MANAGED_GROUPS 合并去重)`，三个 greeting 函数和 `_job_scheduled_broadcast` 全部改多群遍历
+
+**组件格式问题**：
+- `core/telebot_compat.py:_html_to_rich_components` 生成的组件格式触发 Telegram API 400 "object expected as rich message"。已 `rich_enabled = False` 等组件格式根本修复后再启用
+
+**变更文件**：
+- `core/db_repos/config_repo.py` — 新增 `release_task` 方法（DELETE FROM task_log WHERE task_key=? AND exec_date=今天）
+- `core/database.py` — `_REPO_METHOD_MAP` 注册 `release_task`
+- `modules/auto_tasks.py` — 新增 `_get_all_group_ids`；三个 greeting 函数多群遍历 + task_key 加日期后缀；`_job_scheduled_broadcast` 移除外层 TaskTransactionManager 改多群遍历
+- `modules/scheduled_broadcast.py` — task_key 加 chat_id 后缀；Rich Message 暂禁用
+- `version.py` / `VERSION.md` / `CHANGELOG.md` / `AI_DEBUG_HISTORY.md` / `project_snapshot.md` — 六件套同步
+
+**服务器侧**：
+- `mory.db` task_log 表清理 6 行 `broadcast_*` / `greeting_*` 残留记录
+- 4 个文件 SFTP 上传 + 远程 py_compile OK + 服务重启 active
+
+**验证**：
+- `release_task` 在 `_REPO_METHOD_MAP` 中（True）
+- 4 个 broadcast + 3 个 greeting 全部 APScheduler 注册成功（cron 时间正确）
+- 手动触发 `morning_nudge` 发送成功：`channel_tracking` 新增 id=400, message_id=54957；task_log 新增 `scheduled_broadcast_morning_nudge_-1003004701688_2026-06-27`；无 400 Bad Request 错误
+- 服务双 active；22:30 night_whisper + 23:05 greeting_evening 将自动触发作为生产验证
+
+---
+
+## v5.30.3 [2026-06-27] [Puzan-OS]
+### 多智能体协作诊断+彻底修复（4 P0 + 1 P1）
+
+**P0 致命修复**：
+- `_REPO_METHOD_MAP` 漏注册 30 个方法（v5.30.1 同款踩坑系统性复发）— ab_test_repo 整个 repo 17 个方法 + user_repo 扩展 8 个方法 + social_repo 购物车挽回 5 个方法全部漏注册，导致 A/B 测试持久化、增长遥测、用户画像写入、购物车恢复任务全部静默失效。`core/database.py` 已补全注册（共 158 个方法）
+- 服务器 `.env` 的 `VPS_HOST` 错指向 TokenLab VPS（43.159.168.175），`VPS_USER` 错为 ubuntu — 已修正为 `VPS_HOST=43.153.23.115` + `VPS_USER=root`
+- 服务器 `config.json` 属主错为 root:root — 已 `chown ubuntu:ubuntu`（同时修复 .env 属主）
+- `query_final.py` / `query_extra.py` 硬编码 SSH root 密码明文（凭据泄露）— 已删除两个文件
+
+**P1 代码质量**：
+- `core/ai_engine.py` 7 处 `except Exception: pass` 静默吞错（熔断器/成本记录/AB 指标/错误体读取等辅助路径）— 全部改为 `logger.debug(f"...: {e}")`
+
+**变更文件**：
+- `core/database.py` — `_REPO_METHOD_MAP` 补注册 30 个方法
+- `core/ai_engine.py` — 7 处静默吞错改为日志记录
+- `version.py` / `VERSION.md` / `CHANGELOG.md` / `AI_DEBUG_HISTORY.md` / `project_snapshot.md` — 六件套同步
+- 删除：`query_final.py`、`query_extra.py`
+- 服务器侧：`.env` 修正 `VPS_HOST`/`VPS_USER`；`config.json`/`.env` 属主改回 ubuntu
+
+**验证**：双服务 active；`/api/health` 200 返回 `{"status":"ok","version":"v5.30.1"}`（注：服务端版本号下次部署时会刷为 v5.30.3）；`_REPO_METHOD_MAP` 30 方法全部注册（远程 `python3 -c` 验证）；DB 初始化无报错；DB 完整性 ok；message_snapshots 32 行；mory-assistant + mory-dashboard 重启后 30 秒稳定性通过。
+
+---
+
+## v5.30.2 [2026-06-26] [opencode]
+### 新成员入群头像OCR+BIO广告检测 + 删除消息能力验证
+
+**新增功能**：
+- 新成员入群时自动检测头像图片中的广告文字（OCR识别"看我简介""点我主页"等视觉广告）
+- 新成员入群时自动检测 BIO 简介中的引流链接和广告话术
+- 任一检测命中 → `enforce_ad_user()` 统一处置
+
+**修复**：
+- Bot Token 失效时所有 API 调用返回 401，之前误判为"消息不存在"
+- 新增排查铁律：删除失败时第一步必须验证 Token 有效性（`getMe`）
+
+**变更文件**：
+- `modules/group_mgr.py` — 新增头像OCR + BIO检测
+- `AI_DEBUG_HISTORY.md` — 新增 v5.30.2 Bot Token 失效排查记录
+- `docs/technical/ad-detection.md` — 新增第八/九节
+
+---
+
+## v5.30.1 [2026-06-26] [Puzan-OS]
+### 致命修复：message_snapshots 快照机制 30+ 版本未工作根因
+
+**触发**：排查发现所有备份库中 message_snapshots 表均为空（0行），广告删除后的历史消息追溯清理从未生效。
+
+**根因**：`core/database.py` 的 `_REPO_METHOD_MAP` 自 v5.15.3 引入 message_snapshots 以来，
+**漏注册了 4 个关键方法**：`snapshot_message` / `mark_message_deleted` / `get_user_messages` / `get_user_undeleted_messages`。
+导致所有调用抛出 `AttributeError` 并被 `except` 静默吞掉。
+
+**影响范围**（30+ 版本、跨越 v5.15.3 ~ v5.30.0）：
+- `message_dispatcher.py` 群消息入口 → 快照写入失败 → `message_snapshots` 永远空表
+- `ad_enforcement.py` 广告处置 → 查不到历史消息 → 清理 0 条
+- `auto_tasks.py` 启动追溯 job → 查不到消息 → 永不清理
+- `business_handlers.py` Business 消息删除同步 → 永久失效
+
+**修复**：
+- `core/database.py` 第 1383 行新增 4 行注册：
+  ```python
+  'snapshot_message': 'groups',
+  'mark_message_deleted': 'groups',
+  'get_user_messages': 'groups',
+  'get_user_undeleted_messages': 'groups',
+  ```
+
+**部署**：需执行 `python deploy_vps.py`（自动清理远端缓存后重启双服务）
+
+---
+
+## v5.28.3 [2026-06-26] [Puzan-OS]
+### 广告检测关键词覆盖漏洞修复
+
+**触发**：用户截图反馈广告用户"蜜桃成熟时"进群后没有被拦截，广告消息也没有被删除。
+
+**修复内容**：
+- `modules/ad_patterns_encoded.py`：ADULT_PATTERNS 增加 SM/母狗/淫素/过夜/出+年龄等 10 个关键词和组合模式
+- `modules/ad_patterns_encoded.py`：BIO_PATTERNS 增加 SM+交友/母狗+交友/过夜+服务/出+年龄等 10 个组合检测
+- `modules/ad_detector.py`：新增"出+年龄+色情词+可以过夜"等 4 个组合检测逻辑
+- `scripts/emergency_ban_ad_user.py`：新增紧急处置脚本，支持批量拉黑+标记消息删除
+
+**验证**：
+- `python -m py_compile modules/ad_patterns_encoded.py modules/ad_detector.py` 通过
+- 本地测试"出23岁淫素，可以过夜"被正确识别为广告
+
+**部署**：需执行 `python deploy_vps.py` 后 `sudo systemctl restart mory-assistant`
+
+---
+
+## v5.30.0 [2026-06-25] [Trae CN]
+### 项目清理+人设回调+功能真实验证
+
+**触发**：用户要求保留绿茶风、核查已添加功能是否真的集成、清理老旧无用内容、项目规范整洁。
+
+**修复内容**：
+- **人设回调**：恢复绿茶风表达，嘛/啦/哦语气词按群聊/私聊比例约束使用，小暧昧小撒娇转化话术自然不生硬；修正persona_adapter四模型家族适配策略，不再禁止绿茶风，只约束使用比例；i18n/欢迎消息/主动搭讪/定时播报/价格表/图片水印全链路统一绿茶+傲娇混合风格
+- **内容恢复**：原味/定制/深度变现等合理商业表达完整恢复，KNOWLEDGE、SLANG_DICT、欢迎消息、价格表描述中保留直接清晰的产品说明
+- **死代码清理**：删除6个零引用废弃模块（cache_manager.py/migrate.py/monitoring.py/rate_limiter.py/router_statistics.py/predictive_patrol.py）+1个错位临时文档；ai_reply_core.py和旧ai_handlers.handle_ai_reply标记DEPRECATED但保留有用FAQ/彩蛋/成就函数
+- **功能真实验证**：逐一验证growth_optimizer/intent_router/profile_learner/proactive_engage全部真集成到主链路；冷场破冰、夜间高意向暗示触发器默认开启（保守参数避免骚扰）；4条定时播报、主动搭讪、用户画像、A/B测试、归因报表、质量评估全部默认开启
+- **部署规范**：deploy_vps.py新增DEAD_REMOTE_FILES死代码列表，每次部署自动清理服务器上已删除的文件，保持服务器和本地完全一致整洁
+
+**验证**：
+- 262个Python文件`py_compile`全部通过
+- 交叉验证无任何文件引用已删除模块
+- config.json.example JSON格式合法
+
+---
+
+## v5.29.0 [2026-06-24] [Trae CN]
+### 全链路人设统一审查（中间版本，已被v5.30.0修正回调）
+
+---
+
+## v5.28.2 [2026-06-23] [Codex]
+### 广告黑名单旧入口加固 + 入群资料检测回归
+
+**触发**：用户反馈截图中的广告账号进群后没有在入群阶段被黑名单拦截，且发出短消息后只看到单条处理，不符合“发消息就清掉该用户所有可追踪消息”的广告治理要求。
+
+**修复内容**：
+- `core/handlers/security_handlers.py`：旧 `check_blacklist()` 不再只 `return True`，命中黑名单后统一调用 `modules/ad_enforcement.py:enforce_ad_user()`，执行删除当前消息、重试清理 `message_snapshots` 中该用户历史消息、永久禁言、写 `global_blacklist` + 本地 `blacklist`。
+- `core/handlers/relay_handler.py`：管理员回复私聊中继消息输入 `拉黑` / `黑名单` / `/block` / `/blacklist` 时，直接把原用户写入本地黑名单，不再把该指令转发给用户。
+- `core/message_dispatcher.py`、`core/handlers/media_handlers.py`、`core/handlers/callback_handlers.py`：黑名单用户的私聊文本、媒体、语音、附件和按钮回调全部短路拦截，不再转发管理员、不触发 AI 自动回复。
+- `config.json`：打开 `FAQ_TRACKING_ENABLED=true` 和 `FAQ_AUTO_REPLY_ENABLED=true`，私聊/群聊进入 P10 后会记录 `user_questions`，命中 FAQ 知识库时优先使用已审核预设模板回复。
+- `dashboard/api/config_api.py`、`dashboard/templates/html_page.py`：允许 Dashboard 修改 FAQ 追踪、FAQ 模板自动回复、蒸馏间隔和最低频次，并在配置页显示 FAQ 开关。
+- `tests/unit/test_security_blacklist_enforcement.py`：新增 P1 黑名单旧入口回归测试，确认当前消息和历史消息都会删除。
+- `tests/unit/test_private_blacklist_block.py`、`tests/unit/test_relay_handler.py`：新增私聊黑名单拦截和管理员中继拉黑回归测试。
+- `tests/unit/test_ad_profile_status.py`：新增截图类 Bio 用例（`t.me` 进群了解 + 打底收益话术），确认资料层入群检测可直接判广告。
+
+**验证**：
+- `python -m pytest tests\unit\test_relay_handler.py tests\unit\test_private_blacklist_block.py tests\unit\test_security_blacklist_enforcement.py tests\unit\test_ad_profile_status.py tests\unit\test_ad_enforcement.py tests\unit\test_ad_enforcement_cleanup.py -q` → 17 passed。
+- `python -m pytest tests\unit\test_relay_handler.py tests\unit\test_growth_optimizer.py -q` → 9 passed。
+- `python -m py_compile core\handlers\relay_handler.py core\message_dispatcher.py core\handlers\media_handlers.py core\handlers\callback_handlers.py core\handlers\security_handlers.py modules\ad_enforcement.py version.py` → 通过。
+
+## v5.28.1 [2026-06-22] [OpenCode]
+### 紧急热修：AI引擎KeyError崩溃 + 配置补全
+
+**触发**：用户反馈 /start 私聊无响应、AI自动会话不触发、管理员收不到AI回复。VPS日志显示 `body_language` KeyError 导致分发器内部异常。
+
+**修复内容**：
+- `core/ai_engine.py`：修复 `_DEFAULT_PERSONA_FRAGMENTS["body_language"]` KeyError（v5.18.6 删除了 body_language 字段但 fallback 仍直接访问）→ 改为 `.get("body_language", [])` 安全取值，2处修复
+- `config.json`：补全 7 项缺失配置（PERSONA_ENGINE_ENABLED / MODEL_ROUTER_ENABLED / MODEL_POOL_PREMIUM / MODEL_POOL_STANDARD / MODEL_POOL_LIGHT / EMOTION_BUCKETS / EMOTION_TRIGGERS）
+- 全量验证：py_compile 4 核心文件通过，config.json JSON 格式验证通过
+
+**根因分析**：v5.18.6 去萌化时删除了 `_DEFAULT_PERSONA_FRAGMENTS` 中的 `body_language` 字段，但 `_get_dynamic_fragments()` 和 `_get_context_aware_fragments()` 仍用 `self._DEFAULT_PERSONA_FRAGMENTS["body_language"]` 做 fallback → KeyError → AI引擎崩溃 → ai.ask() 返回 None → 用户无回复 → 管理员无转发
+
+**验证证据**：
+1. ai_engine.py:929 和 1142 行 → `.get("body_language", [])` 安全取值 ✅
+2. config.json → 7 个缺失 key 已补全，JSON 格式验证通过 ✅
+3. /start 私聊流程 → is_priv=True 强制触发 AI 回复 → RELAY_MODE_ENABLED=true 转发管理员 ✅
+4. py_compile 4 文件全部通过 ✅
+
+**部署**：需在 VPS 执行 `python deploy_vps.py` 或手动同步 ai_engine.py + config.json 后 `sudo systemctl restart mory-assistant`
+
 ## v5.28.0 [2026-06-19] [Codex]
 ### 10 项增长优化上线并启用护栏
 

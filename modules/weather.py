@@ -43,12 +43,12 @@ def handle_weather_query(bot, m, config, db, city: str):
     city = city.strip()
 
     try:
-        import requests
+        from core.http_client import get_http_client, HTTPRequestError
+        client = get_http_client()
 
         # 和风天气API - 先查询城市ID
-        lookup_url = f"https://geoapi.qweather.com/v2/city/lookup?location={city}&key={api_key}"
-        resp = requests.get(lookup_url, timeout=5)
-        data = resp.json()
+        lookup_url = "https://geoapi.qweather.com/v2/city/lookup"
+        data = client.get(lookup_url, params={"location": city, "key": api_key}, timeout=5)
 
         if data.get("code") != "200" or not data.get("location"):
             bot.reply_to(m, f"❌ 未找到城市「{city}」")
@@ -59,9 +59,8 @@ def handle_weather_query(bot, m, config, db, city: str):
         loc_name = loc["name"]
 
         # 查询实时天气
-        weather_url = f"https://devapi.qweather.com/v7/weather/now?location={loc_id}&key={api_key}"
-        resp = requests.get(weather_url, timeout=5)
-        wdata = resp.json()
+        weather_url = "https://devapi.qweather.com/v7/weather/now"
+        wdata = client.get(weather_url, params={"location": loc_id, "key": api_key}, timeout=5)
 
         if wdata.get("code") != "200":
             bot.reply_to(m, "❌ 天气查询失败，API返回异常")
@@ -93,12 +92,9 @@ def handle_weather_query(bot, m, config, db, city: str):
 
         bot.reply_to(m, text)
 
-    except requests.Timeout:
-        logger.warning(f"天气查询超时: city={city}")
-        bot.reply_to(m, "❌ 天气查询超时，请稍后再试")
-    except requests.RequestException as e:
-        logger.error(f"天气查询网络异常: {e}")
-        bot.reply_to(m, "❌ 天气查询网络异常，请稍后再试")
+    except HTTPRequestError as e:
+        logger.error(f"天气查询失败: {e}")
+        bot.reply_to(m, "❌ 天气查询失败，请稍后再试")
     except Exception as e:
         logger.error(f"天气查询异常: {e}")
         bot.reply_to(m, "❌ 天气查询失败，请稍后再试")

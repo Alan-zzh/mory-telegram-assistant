@@ -1,12 +1,12 @@
 {
-  "welcome_message": "欢迎加入 {group_name}！我是小助理，有任何问题随时问我哦～",
-  "welcome_verify": "请先完成验证，才能开始聊天哦～",
-  "goodbye_message": "再见啦，期待下次见面～",
-  "error_generic": "哎呀，出了点小问题，请稍后再试～",
-  "error_permission": "抱歉，你没有权限执行此操作哦～",
-  "error_rate_limit": "操作太频繁啦，请稍后再试～",
-  "points_earned": "太棒了！你获得了 {points} 积分，当前等级：{level}",
-  "level_up": "恭喜升级！你现在是 {level} 级啦～",
-  "admin_ban": "已对 {user} 执行永久禁言处理。",
-  "admin_unban": "已解除 {user} 的禁言。"
+  "welcome_message": "{group_name}，欢迎呀～",
+  "welcome_verify": "先完成验证再说话哦。",
+  "goodbye_message": "走啦，下次再来玩。",
+  "error_generic": "哎呀出问题了，等下再试好不好？",
+  "error_permission": "这个你不能用啦。",
+  "error_rate_limit": "太频繁啦，等会再试嘛。",
+  "points_earned": "+{points}积分，现在{level}级啦～",
+  "level_up": "升级啦！{level}级，厉害哦。",
+  "admin_ban": "已经把 {user} 禁言啦。",
+  "admin_unban": "已经解除 {user} 禁言了哦。"
 }

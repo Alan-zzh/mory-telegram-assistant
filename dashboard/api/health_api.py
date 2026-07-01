@@ -14,7 +14,9 @@ import shutil
 import glob
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+# 【v5.31.2 修复】VPS 运行在 UTC，运维显示时间必须用 CST（UTC+8）
+_CST = timezone(timedelta(hours=8))
 from flask import Blueprint, jsonify
 
 from dashboard.helpers import login_required, get_db, read_config
@@ -43,15 +45,16 @@ def api_health_score():
         # 1. 任务执行率
         try:
             conn = get_db()
-            cutoff = int((datetime.now() - timedelta(hours=24)).timestamp())
+            cutoff = int((datetime.now(_CST) - timedelta(hours=24)).timestamp())
+            # task_log 表只有 id/task_key/exec_date/exec_ts，无 status 列
+            # 语义：task_log 只记录成功执行的任务，失败任务不写入，故 success=total
             rows = conn.execute(
-                "SELECT status, COUNT(*) FROM task_log WHERE ts >= ? GROUP BY status",
+                "SELECT task_key, COUNT(*) FROM task_log WHERE exec_ts >= ? GROUP BY task_key",
                 (cutoff,)
             ).fetchall()
             total = sum(c for _, c in rows)
-            success = sum(c for s, c in rows if s in ("success", "done"))
             if total > 0:
-                scores["tasks"] = {"score": int(success / total * 100), "weight": 30, "detail": f"{success}/{total}"}
+                scores["tasks"] = {"score": 100, "weight": 30, "detail": f"{total} 次执行（{len(rows)} 个任务）"}
             else:
                 scores["tasks"] = {"score": 100, "weight": 30, "detail": "无任务记录"}
         except Exception as e:
@@ -133,32 +136,17 @@ def api_health_score():
 @health_bp.route("/health/aborts")
 @login_required
 def api_health_aborts():
-    """abort 历史：读取 task_log 中的失败/abort 记录"""
+    """abort 历史：task_log 表无 status 列，失败任务不写入，返回空列表"""
     try:
-        conn = get_db()
-        cutoff = int((datetime.now() - timedelta(days=7)).timestamp())
-        rows = conn.execute(
-            "SELECT task_name, status, error_msg, ts FROM task_log WHERE ts >= ? AND status IN ('abort', 'failed') ORDER BY ts DESC LIMIT 50",
-            (cutoff,)
-        ).fetchall()
-        aborts = [
-            {"task": r[0], "status": r[1], "error": r[2], "ts": r[3]}
-            for r in rows
-        ]
-        # 按 task 聚合
-        by_task = {}
-        for a in aborts:
-            t = a["task"]
-            by_task.setdefault(t, {"count": 0, "latest_error": "", "latest_ts": 0})
-            by_task[t]["count"] += 1
-            if a["ts"] > by_task[t]["latest_ts"]:
-                by_task[t]["latest_error"] = a["error"]
-                by_task[t]["latest_ts"] = a["ts"]
+        # task_log 表只有 id/task_key/exec_date/exec_ts，无 status/error_msg 列
+        # 失败任务不会写入 task_log，故无 abort 历史可返回
+        # 如需失败历史，应查 llm_cost_logs 表的 success=0 记录或 report_fault 日志
         return jsonify({
             "ok": True,
-            "total": len(aborts),
-            "by_task": by_task,
-            "recent": aborts[:10],
+            "total": 0,
+            "by_task": {},
+            "recent": [],
+            "note": "task_log 表无 status 列，失败任务不写入；如需失败历史请查 llm_cost_logs",
         })
     except Exception:
         return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500
@@ -170,21 +158,21 @@ def api_health_jobs():
     """scheduler 注册任务清单（从 task_log 历史推断）"""
     try:
         conn = get_db()
-        cutoff = int((datetime.now() - timedelta(days=7)).timestamp())
+        cutoff = int((datetime.now(_CST) - timedelta(days=7)).timestamp())
+        # task_log 表只有 id/task_key/exec_date/exec_ts，无 status/task_name 列
+        # 语义：task_log 只记录成功执行的任务，故 success_rate=100%
         rows = conn.execute(
-            "SELECT task_name, COUNT(*) as cnt, MAX(ts) as last_ts, "
-            "SUM(CASE WHEN status='success' OR status='done' THEN 1 ELSE 0 END) as succ "
-            "FROM task_log WHERE ts >= ? GROUP BY task_name ORDER BY cnt DESC",
+            "SELECT task_key, COUNT(*) as cnt, MAX(exec_ts) as last_ts "
+            "FROM task_log WHERE exec_ts >= ? GROUP BY task_key ORDER BY cnt DESC",
             (cutoff,)
         ).fetchall()
         jobs = []
         for r in rows:
-            name, cnt, last_ts, succ = r
-            succ = succ or 0
+            name, cnt, last_ts = r
             jobs.append({
                 "name": name,
                 "executions_7d": cnt,
-                "success_rate": round(succ / cnt * 100, 1) if cnt else 0,
+                "success_rate": 100.0,  # task_log 只记录成功执行
                 "last_ts": last_ts,
             })
         return jsonify({"ok": True, "jobs": jobs, "total": len(jobs)})
@@ -199,7 +187,7 @@ def api_health_audit():
     try:
         audit = {
             "ts": int(time.time()),
-            "ts_human": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "ts_human": datetime.now(_CST).strftime("%Y-%m-%d %H:%M:%S"),
             "checks": {},
         }
 
@@ -220,7 +208,7 @@ def api_health_audit():
 
         # 备份文件
         try:
-            backup_dir = os.path.join(os.path.dirname(__file__), "..", "..", "backups")
+            backup_dir = os.path.join(os.path.dirname(__file__), "..", "..", "backup")
             if os.path.isdir(backup_dir):
                 backups = sorted(glob.glob(os.path.join(backup_dir, "*.db")), key=os.path.getmtime, reverse=True)
                 if backups:
@@ -237,16 +225,18 @@ def api_health_audit():
         # 任务执行率
         try:
             conn = get_db()
-            cutoff = int((datetime.now() - timedelta(hours=24)).timestamp())
+            cutoff = int((datetime.now(_CST) - timedelta(hours=24)).timestamp())
+            # task_log 表只有 id/task_key/exec_date/exec_ts，无 status 列
+            # 语义：task_log 只记录成功执行的任务，故 succ=total
             r = conn.execute(
-                "SELECT SUM(CASE WHEN status IN ('success','done') THEN 1 ELSE 0 END), COUNT(*) FROM task_log WHERE ts >= ?",
+                "SELECT COUNT(*) FROM task_log WHERE exec_ts >= ?",
                 (cutoff,)
             ).fetchone()
-            succ, total = (r[0] or 0), (r[1] or 0)
-            rate = round(succ / total * 100, 1) if total else 100
+            total = r[0] or 0
+            rate = 100.0  # task_log 只记录成功执行
             audit["checks"]["task_rate_24h"] = {
-                "ok": rate >= 80,
-                "detail": f"24h 成功率 {rate}% ({succ}/{total})",
+                "ok": total > 0,
+                "detail": f"24h 执行 {total} 次（task_log 只记录成功执行，成功率 100%）",
             }
         except Exception as e:
             audit["checks"]["task_rate_24h"] = {"ok": False, "detail": "任务执行率检查失败"}

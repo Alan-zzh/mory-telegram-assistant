@@ -11,6 +11,9 @@
 ║    简易映射表覆盖常见穿帮词，不追求全字符覆盖。                             ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 内置简易拼音映射表（覆盖穿帮检测所需的高频字）
 # 不追求完整，只覆盖"我是人工智能/作为AI模型/助手/程序/机器人"等穿帮场景
@@ -77,8 +80,8 @@ def text_to_pinyin_silent(text: str) -> str:
         try:
             parts = lazy_pinyin(text, style=Style.NORMAL)
             return " ".join(parts)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"pypinyin 转换失败，回退到简易映射表: {e}")
 
     # 回退：内置简易映射表
     result = []

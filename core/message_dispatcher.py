@@ -15,7 +15,7 @@ core/message_dispatcher.py  ·  消息分发器
 
 import os, time, random, traceback, threading
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from threading import Lock
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,6 +37,9 @@ from core.handlers.ai_reply_handler import (
 
 logger = get_logger("message_dispatcher")
 
+# 【v5.31.2 修复】VPS 运行在 UTC，时段/日期相关逻辑必须用 CST（UTC+8）
+_CST = timezone(timedelta(hours=8))
+
 # ── 连续对话追踪（内存字典 + 线程安全）────────────────────────────
 # key=uid, value={"count": int, "last_time": float}
 # 用于：绿茶风反问（保持对话）+ 连续对话后的转化引导植入
@@ -54,7 +57,10 @@ _RADAR_COOLDOWN = 3600  # 1小时冷却时间
 _radar_last_cleanup = 0  # 上次清理时间戳
 
 # ── 追加线程池（连续对话追加AI回复用）──
-_append_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="append")
+# 【v5.31.2 修复】移除死代码：此 _append_pool 创建后从未被使用（实际使用的在
+# core/handlers/ai_reply_handler.py），仅浪费 2 个空线程。concurrent.futures
+# import 保留以备未来使用。
+# _append_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="append")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -143,7 +149,7 @@ def _calc_humanized_delay(text: str, is_priv: bool, conv_count: int = 0, config:
     if is_priv:
         base *= 1.2
 
-    hour = datetime.now().hour
+    hour = datetime.now(_CST).hour
     if 0 <= hour < 5:
         base += random.uniform(2.0, 4.0)
 
@@ -345,6 +351,15 @@ def _get_function_tools():
 def get_function_tools():
     """返回AI可用的工具列表（OpenAI function calling格式）【公开导出】"""
     return _get_function_tools()
+
+
+def _is_admin_uid(config: dict, uid: int) -> bool:
+    """判断用户是否为管理员。"""
+    admin_ids = set((config or {}).get("ADMIN_IDS", []) or [])
+    admin_id = (config or {}).get("ADMIN_ID", 0)
+    if admin_id:
+        admin_ids.add(admin_id)
+    return uid in admin_ids
 
 
 def _handle_tool_calls(message: dict, bot, m, config: dict, db) -> str | None:
@@ -676,6 +691,10 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
         except Exception as e:
             logger.debug(f"snapshot_message 失败: uid={uid} mid={getattr(dctx.msg, 'message_id', '?')}: {e}")
 
+    # ── P0-：转发即删除（私聊中转发群消息到 Bot，自动删除原消息）──
+    if _dispatch_forward_delete(dctx):
+        return
+
     # ── P0：新人入群 ──
     if _dispatch_p0_member(dctx):
         return
@@ -711,6 +730,50 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
 #  P0：新人入群处理
 # ═══════════════════════════════════════════════════════════════════════
 
+def _dispatch_forward_delete(dctx: DispatchContext) -> bool:
+    """P0-：转发即删除。私聊中收到被转发的群消息时，自动从原群删除原消息。
+    触发条件：
+    - 私聊消息
+    - 消息有 forward_from_chat（从群组转发而来）
+    - 消息有 forward_from_message_id（原消息 msg_id）
+    - 原消息发送时间在 48 小时内（Telegram API 限制）
+    """
+    m = dctx.msg
+    ctx = dctx.ctx
+    bot = ctx.bot
+
+    # 仅处理私聊中的转发消息
+    if not dctx.is_priv:
+        return False
+    if not hasattr(m, "forward_from_chat") or not m.forward_from_chat:
+        return False
+    if not hasattr(m, "forward_from_message_id") or not m.forward_from_message_id:
+        return False
+
+    original_chat_id = m.forward_from_chat.id
+    original_msg_id = m.forward_from_message_id
+
+    try:
+        bot.delete_message(original_chat_id, original_msg_id)
+        logger.info(f"[转发即删除] 成功删除 chat={original_chat_id} msg_id={original_msg_id}")
+        # 回复用户告知删除成功
+        try:
+            bot.reply_to(m, "✅ 已从群中删除该消息")
+        except Exception as e:
+            logger.debug(f"reply_to 删除成功提示失败: {e}")
+        clear_logging_context()
+        return True
+    except Exception as e:
+        logger.warning(f"[转发即删除] 删除失败 chat={original_chat_id} msg_id={original_msg_id}: {e}")
+        # 失败时告知用户原因
+        try:
+            bot.reply_to(m, f"❌ 删除失败（消息可能已超过48小时或 Bot 权限不足）")
+        except Exception:
+            pass
+        # 不阻断消息继续处理（交给后续 relay 等）
+        return False
+
+
 def _dispatch_p0_member(dctx: DispatchContext) -> bool:
     """P0 新人入群 + 验证码 + 远程连接"""
     m = dctx.msg
@@ -724,6 +787,16 @@ def _dispatch_p0_member(dctx: DispatchContext) -> bool:
         _handle_new_chat_members(bot, m, CONFIG, db, ctx)
         clear_logging_context()
         return True
+
+    # P0.45：私聊黑名单优先拦截，避免进入中继、远程连接或 AI 回复。
+    if dctx.is_priv and not _is_admin_uid(CONFIG, dctx.uid):
+        try:
+            if db.is_blacklisted(dctx.uid):
+                logger.info(f"🚫 [P0] 黑名单私聊拦截: uid={dctx.uid} name={dctx.uname} text='{dctx.text[:30]}'")
+                clear_logging_context()
+                return True
+        except Exception as e:
+            logger.debug(f"私聊黑名单检查失败 uid={dctx.uid}: {e}")
 
     # P0.5：验证码回答检查
     if dctx.is_group:
@@ -759,8 +832,7 @@ def _dispatch_p0_member(dctx: DispatchContext) -> bool:
                 clear_logging_context()
                 return True
             # 用户私聊消息即时转发给管理员（不等AI回复，管理员可立即回复）
-            admin_id = CONFIG.get("ADMIN_ID", 0)
-            if admin_id and dctx.uid != admin_id and dctx.text:
+            if dctx.text and not _is_admin_uid(CONFIG, dctx.uid):
                 handle_user_to_admin(bot, db, CONFIG, dctx.uid, dctx.uname, dctx.text, dctx.chat_id, source_type='private')
         except Exception as e:
             logger.debug(f"P0.75中继处理异常（静默）：{e}")
@@ -984,6 +1056,10 @@ def _dispatch_p1_p3_security(dctx: DispatchContext) -> bool:
     # P1：黑名单用户 → 永久禁言 + 删除消息 + 同步黑名单 + 写日志
     # [Codex] 2026-06-12 策略纠正：广告/黑名单链路不踢人，留群但彻底禁言
     if db.is_blacklisted(uid):
+        if not is_group:
+            logger.info(f"🚫 [P1] 黑名单非群聊拦截: uid={uid} name={uname} chat={chat_id} text='{msg[:30]}'")
+            clear_logging_context()
+            return True
         from modules.ad_enforcement import enforce_ad_user
         enforce_ad_user(
             bot=bot,

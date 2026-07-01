@@ -82,29 +82,29 @@ TONE_POOL = {
 # ── 黑话软植入模板（不直白说价格/购买）─────────────────────────────────────
 SLANG_TEMPLATES = {
     "门槛": [
-        "有些人已经跨过那个门槛了，里面的世界不太一样",
-        "关于那个门槛的事，私聊说更方便",
-        "门槛不高，但里面的东西绝对超值",
+        "有些人已经进来了。",
+        "那个坎，过了就知道。",
+        "想知道私聊。",
     ],
     "至臻": [
-        "有些片段只放在至臻那边，群里不太方便发",
-        "至臻系列刚更新了一些新内容",
-        "想体验最完整的我，至臻那边有",
+        "那边东西多一点。",
+        "完整版在那边。",
+        "有些这边不放。",
     ],
     "全享": [
-        "全享的用户能看到更多独家内容",
-        "有些特权只有全享才有，你懂的",
-        "全享那边刚上了新东西，性价比很高",
+        "年费档什么都有。",
+        "全享那边更全。",
+        "一次到位的选这个。",
     ],
     "原味": [
-        "有些贴身的小物件，每件都是独一无二的",
-        "刚整理了一些特别的收藏，数量有限",
-        "有些东西只有我能给你，别的地方看不到",
+        "有些东西...不好说。",
+        "穿过的，私聊。",
+        "贴身的，懂的都懂。",
     ],
     "定制": [
-        "刚收到一个定制请求，有点兴奋",
-        "如果你想看什么特定的，可以私聊我写剧本",
-        "定制的内容只属于你一个人",
+        "单独的，私聊。",
+        "定制只给你一个人。",
+        "想拍什么私聊说。",
     ],
 }
 
@@ -112,45 +112,45 @@ SLANG_TEMPLATES = {
 # ── 图片关键词暗示模板 ──────────────────────────────────────────────────────
 PHOTO_HINT_TEMPLATES = {
     "照片": [
-        "刚整理了一些照片，但有些不太适合发在群里",
-        "有些照片只放在那边，想看的来找我",
-        "照片太多了，有些私密的只给特定的人看",
+        "有些照片这边不放。",
+        "刚拍了点东西。",
+        "照片在那边。",
     ],
     "福利": [
-        "今天有点小福利，但只给主动的人",
-        "福利这种事，私聊说比较方便",
-        "有些福利不能公开说，你懂的",
+        "今天有更新。",
+        "新的，私聊。",
+        "有些东西只发给主动的人。",
     ],
     "自拍": [
-        "刚拍了几张自拍，但有点太私人了",
-        "有些自拍只放在私密空间",
-        "自拍太多了，有些只给特别的人看",
+        "拍了几张。",
+        "新自拍在那边。",
+        "有些不适合发群里。",
     ],
     "视频": [
-        "刚录了点视频，但内容有点敏感",
-        "有些视频不太适合公开，私聊给你看",
-        "视频内容太丰富了，有些只给VIP看",
+        "录了点东西。",
+        "视频这边不发。",
+        "想看私聊。",
     ],
     "看图": [
-        "想看图的话，那边有更多选择",
-        "有些图不能发在这里，来私聊我",
-        "看图这种事，还是私聊比较方便",
+        "图在那边。",
+        "想看图来找我。",
+        "图不发群里。",
     ],
 }
 
 
 # ── 转化引导模板（底部折叠区/按钮）─────────────────────────────────────────
 CONVERSION_TEMPLATES = [
-    "有些事私聊说更方便",
-    "来 @MorychannelBot 找我聊",
-    "那边有更多内容",
-    "主动的人能看到更多",
-    "有些话群里不方便说",
-    "想知道更多？来找我呀",
-    "详情私聊我说",
-    "有些内容只给主动的人",
-    "来解锁更多特权",
-    "有些惊喜只给特定的人",
+    "有些事私聊说更方便。",
+    "来 @MorychannelBot 找我聊。",
+    "那边有更多内容。",
+    "主动的人先看到。",
+    "群里不方便说。",
+    "有事私聊。",
+    "找我。",
+    "那边自己看。",
+    "想知道私聊。",
+    "来了就知道。",
 ]
 
 
@@ -181,10 +181,7 @@ def get_daily_theme(period: str, date: datetime = None, item_id: str = "") -> di
     rng = _seeded_random(seed)
 
     pool = THEME_POOL.get(period, THEME_POOL["morning"])
-    # 按星期轮换，同一天同一时段主题固定
-    day_index = date.weekday()  # 0=周一, 6=周日
-    theme_index = day_index % len(pool)
-    return pool[theme_index]
+    return rng.choice(pool)
 
 
 def get_daily_tone(period: str, date: datetime = None, item_id: str = "") -> dict:
@@ -201,9 +198,7 @@ def get_daily_tone(period: str, date: datetime = None, item_id: str = "") -> dic
 
     pool = TONE_POOL.get(period, TONE_POOL["morning"])
     tone_keys = list(pool.keys())
-    # 按日期+时段选择语气
-    tone_index = (date.day + date.hour) % len(tone_keys)
-    tone_key = tone_keys[tone_index]
+    tone_key = rng.choice(tone_keys)
     return {tone_key: pool[tone_key]}
 
 
@@ -275,14 +270,12 @@ def build_broadcast_context(period: str, date: datetime = None, item_id: str = "
     theme = get_daily_theme(period, date, item_id)
     tone = get_daily_tone(period, date, item_id)
 
-    # 黑话和图片关键词按时段选择
     slang_keys = list(SLANG_TEMPLATES.keys())
     photo_keys = list(PHOTO_HINT_TEMPLATES.keys())
 
     seed = _get_seed(date, period, item_id)
     rng = _seeded_random(seed)
 
-    # 早安/午后用轻度黑话，晚间/深夜用暗示性强的
     if period in ("morning", "afternoon"):
         slang_key = rng.choice(["门槛", "至臻"])
         photo_key = rng.choice(["照片", "福利"])

@@ -151,18 +151,18 @@ def get_vps_status():
     if _vps_cache["data"] and (now - _vps_cache["updated_at"]) < _VPS_CACHE_TTL:
         return _vps_cache["data"]
     results = {"bot_running": False, "bot_pid": None, "bot_memory": "N/A", "uptime": "N/A", "error": None}
+    mode = os.environ.get("DASHBOARD_MODE", "main")
+    import paramiko
+    from core.vps_config import get_ssh_policy
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(get_ssh_policy())
     try:
-        mode = os.environ.get("DASHBOARD_MODE", "main")
-        import paramiko
-        from core.vps_config import get_ssh_policy
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(get_ssh_policy())
         client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, password=VPS_PASS, timeout=10)
         # 根据模式选择查询哪个 Bot
         if mode == "media":
-            ps_cmd = "ps -ef | grep '/home/ubuntu/mory_assistant/main.py' | grep -v grep | grep mory_media | head -1"
+            ps_cmd = f"ps -ef | grep '{VPS_PATH}/main.py' | grep -v grep | grep mory_media | head -1"
         else:
-            ps_cmd = "ps -ef | grep '/home/ubuntu/mory_assistant/main.py' | grep -v grep | grep -v mory_media | head -1"
+            ps_cmd = f"ps -ef | grep '{VPS_PATH}/main.py' | grep -v grep | grep -v mory_media | head -1"
         stdin, stdout, stderr = client.exec_command(ps_cmd, timeout=5)
         ps_line = stdout.read().decode("utf-8", errors="replace").strip()
         if ps_line:
@@ -176,9 +176,13 @@ def get_vps_status():
                 results["bot_memory"] = f"{int(mem)//1024} MB"
         stdin, stdout, stderr = client.exec_command("uptime -p 2>/dev/null || uptime", timeout=5)
         results["uptime"] = stdout.read().decode("utf-8", errors="replace").strip()
-        client.close()
     except Exception as e:
         results["error"] = str(e)[:100]
+    finally:
+        try:
+            client.close()
+        except Exception as e:
+            logger.debug(f"SSH client.close 失败: {e}")
     _vps_cache["data"] = results
     _vps_cache["updated_at"] = time.time()
     return results

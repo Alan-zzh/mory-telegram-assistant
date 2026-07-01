@@ -1,6 +1,6 @@
 # Mory小助理 · 运营型商业 AI 转化机器人
 
-> **当前版本**：v5.28.0（2026-06-19，10项增长优化上线）
+> **当前版本**：v5.31.2（2026-06-30，Token 消耗暗病排查 + Loop 1-20 多智能体联排 84 处修复 + LLMCostGuard 成本熔断器 + RLock 防死锁 + 原子 UPDATE 防 TOCTOU + _CST 时区常量全域覆盖，已部署）
 > **项目核心**：**不是普通群管机器人**——是带人设的**运营型商业 AI 转化机器人**
 > **业务目标**：通过人设对话 + 商业引导，引导用户通过 `@MorychannelBot` 自助下单
 > **业务红线**（六条不可触碰）：
@@ -111,6 +111,8 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | **llm_standard**（标准池·对话） | 8 | `normal` / `tarot` / `treehole` / `dream` / `rules` / `convert` / `cart_recovery` / `tarot_interpret` |
 | **llm_premium**（旗舰池·资讯） | 6 | `news` / `afternoon_news` / `evening_news` / `trendradar_morning_news` / `trendradar_noon_news` / `trendradar_evening_news`（后 3 个仅兼容旧调用，已并入统一新闻主流程） |
 
+> 注：当前 `config.json.example` 与 `core/ai_engine.py` 实际将 6 个资讯 mode 路由到 `llm_standard`，`llm_premium` 在 `MODE_ROUTING` 中暂无直接分配。若需按设计意图使用旗舰池跑资讯，请开启 `MODEL_ROUTER_ENABLED=true` 或调整 `MODE_ROUTING`。
+
 ### 1.7 9 个模型池键名（`config.json.example:L77-L111`）
 
 `MODEL_POOLS` 含 9 个键名，**4 个有模型 + 5 个占位**：
@@ -127,9 +129,9 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | `voice_asr` | ⚪ 占位 | `[]` | 语音识别（未启用） |
 | `embedding` | ⚪ 占位 | `[]` | 向量化模型（未启用） |
 
-### 1.8 95+35 个模块 9 大类（`ls modules/` + `ls core/` 实测）
+### 1.8 87+48 个模块 9 大类（`ls modules/` + `ls core/` 实测）
 
-**实测 95 个业务模块 + 35 个核心框架文件**（v5.28.0 更新，不含 `__init__.py`）。**9 大类分组**（A-H 为业务模块，I 为系统基建）：
+**实测 87 个业务模块 + 48 个核心框架文件**（v5.31.2 更新，不含 `__init__.py`），合计 135 个。**9 大类分组**（A-H 为业务模块，I 为系统基建）：
 
 #### A 核心群管（17 个）
 
@@ -226,7 +228,7 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 
 | 模块 | 功能 |
 |------|------|
-| [auto_tasks.py](modules/auto_tasks.py) | 自动任务（**52 个** `_job_*` 函数） |
+| [auto_tasks.py](modules/auto_tasks.py) | 自动任务（**53 个** `_job_*` 函数） |
 | [scheduled_broadcast.py](modules/scheduled_broadcast.py) | 定时群播报（`SCHEDULED_BROADCASTS`） |
 | [scheduled_msg.py](modules/scheduled_msg.py) | 定时消息（个人 / 群） |
 
@@ -298,11 +300,11 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 | [user_lifecycle.py](core/user_lifecycle.py) | 用户生命周期管理 |
 | [write_queue.py](core/write_queue.py) | SQLite 单线程写入队列（queue.Queue + daemon Worker） |
 
-> **实际统计**：A=18 + B=7 + C=5 + D=12 + E=6 + F=13 + G=3 + H=23 + I=35 = **122**（含跨类归类微调，**实测 95+35 = 130 个** 文件，差异来自部分文件未在分类中逐行列全）
+> **实际统计**：`modules/` 87 个 + `core/` 48 个 = **135 个**（不含 `__init__.py`）。以下分类清单基于 v5.31.2，部分文件跨类或仅列关键项，子类小计与总计可能存在差异，以目录实测为准。
 
 ### 1.9 Dashboard 156 API 端点 + 8 类设置面板
 
-`dashboard/api/` 22 个文件，**共 156 个路由**（实测 grep `@.*\.route\(`）：
+`dashboard/api/` 21 个文件（不含 `__init__.py`），**共 156 个路由**（实测 grep `@.*\.route\(`）：
 
 | 文件 | 端点数 | 职责 |
 |------|--------|------|
@@ -977,7 +979,7 @@ python main.py
 
 ### 12.1 当前版本
 
-**v5.28.0**（2026-06-19）— 10项增长优化上线：意图路由、A/B、归因报表、质量评估串入 AI 回复链路；Dashboard 新增增长优化汇总；质量评估低采样开启，LLM 意图精分保持关闭。
+**v5.31.2**（2026-06-30）— Token 消耗暗病排查 + Loop 1-20 多智能体联排 84 处修复：高频任务 task_log 死锁、LLMCostGuard 成本熔断器启用、token_usage 记录、WriteQueue rowcount 丢失、RLock 防死锁、原子 UPDATE 防 TOCTOU、腾讯云 Lighthouse 监控接入、独立看门狗、_CST 时区常量全域覆盖、shop.py P0 SQL 列名错误修复、health_api.py 时区残留修复、12 处静默吞异常升级、shop.py TOCTOU 漏洞修复、emergency_ban 时区+类型不一致修复、bot_initializer/pinyin_util 静默吞异常修复、dashboard/app.py finally 修复、文档失真治理 16 处纠正。
 
 ### 12.2 版本演进
 
@@ -985,6 +987,9 @@ python main.py
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| v5.31.2 | 2026-06-30 | Token 暗病排查+Loop 1-20 联排84处修复：task_log死锁/LLMCostGuard/RLock防死锁/原子UPDATE防TOCTOU/腾讯云监控/独立看门狗/_CST时区常量/shop.py P0+TOCTOU/health_api时区/静默吞异常升级/dashboard finally/文档失真治理 |
+| v5.31.1 | 2026-06-27 | 四层防御体系根治 _REPO_METHOD_MAP 漏注册沉默失败：启动自检+__getattr__加固+部署前验证+调度健康监控 |
+| v5.30.3 | 2026-06-25 | 多智能体协作诊断+彻底修复：补注册30方法/VPS_HOST修正/属主修复/删除硬编码密码/7处静默吞错改日志 |
 | v5.28.0 | 2026-06-19 | 10项增长优化上线：增长优化编排层、AI回复前stage_hint、回复后归因/遥测、Dashboard增长汇总、低采样质量评估 |
 | v5.27.0-RC1 | 2026-06-18 | 稳定化候选：requirements.lock 真实生成，Dashboard/迁移可启动，RBAC 安全测试不再跳过，metrics 防重复虚高，CI targeted flake8/mypy/pytest/interrogate 通过 |
 | v5.26.0 | 2026-06-17 | 10大优化方向全量执行（LLM成本熔断+压测+级联告警+人设一致性+A/B测试+记忆归因+DB迁移监控+多Bot路由+归因回放+RBAC审批流） |

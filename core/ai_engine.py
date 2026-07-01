@@ -2005,20 +2005,22 @@ def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
         }
 
         try:
-            resp = requests.post(
+            from core.http_client import get_http_client, HTTPRequestError
+            client = get_http_client()
+            data = client.post(
                 f"{base_url}/chat/completions",
+                json_data=payload,
                 headers=headers,
-                json=payload,
                 timeout=30
             )
-
-            if resp.status_code == 200:
-                data = resp.json()
-                if "choices" in data and data["choices"]:
-                    content = data["choices"][0]["message"].get("content", "")
-                    logger.info(f"✅ 图片分析成功: {model_name}")
-                    return content
-            logger.warning(f"⚠️ 图片分析API失败({model_name}): {resp.status_code} - {resp.text[:200]}")
+            if "choices" in data and data["choices"]:
+                content = data["choices"][0]["message"].get("content", "")
+                logger.info(f"✅ 图片分析成功: {model_name}")
+                return content
+            logger.warning(f"⚠️ 图片分析API返回异常({model_name}): {str(data)[:200]}")
+        except HTTPRequestError as e:
+            logger.warning(f"⚠️ 图片分析API失败({model_name}): {e}，尝试下一个模型")
+            continue
         except Exception as e:
             logger.warning(f"⚠️ 图片分析异常({model_name}): {type(e).__name__}，尝试下一个模型")
             continue

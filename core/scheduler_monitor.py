@@ -68,8 +68,8 @@ def attach_to_scheduler(scheduler):
                         scheduled_ts = event.scheduled_time.timestamp()
                         duration = now_ts - int(scheduled_ts)
                         job_info["last_duration"] = duration
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"计算 last_duration 失败: {e}")
                 job_info["last_run"] = now_ts
                 logger.debug(f"[Scheduler] 任务成功: {job_id}")
 
@@ -196,3 +196,84 @@ def sync_metrics_to_db(db) -> int:
     except Exception as e:
         logger.debug(f"调度指标落盘失败: {e}")
         return 0
+
+
+# 【v5.31.1 第四层防御】关键用户可感知任务的预期执行时间表
+# 格式：job_id 前缀 → {latest_hour, latest_minute, description}
+# 监控逻辑：如果当前时间 > (latest_hour:latest_minute + 30min 宽限)，且该 job 今天未成功执行 → CRITICAL 告警
+# 注：broadcast_* 和 greeting_* 的具体时间由 config.json 决定，这里只设一个保守的"当日必须执行"截止时间
+_CRITICAL_JOBS = {
+    # 问候：早安 8:05 / 午安 12:35 / 晚安 23:05 — 所有问候最晚 23:35 前应执行至少一次（如果开启）
+    "greeting_morning": {"deadline_hour": 9, "deadline_minute": 0, "desc": "早安问候(8:05)"},
+    "greeting_afternoon": {"deadline_hour": 13, "deadline_minute": 30, "desc": "午安问候(12:35)"},
+    "greeting_evening": {"deadline_hour": 23, "deadline_minute": 40, "desc": "晚安问候(23:05)"},
+    # 播报：早 10:00 / 午 14:30 / 晚 19:00 / 夜 22:30 — 所有播报最晚 23:00 前应执行
+    "broadcast_morning_nudge": {"deadline_hour": 11, "deadline_minute": 0, "desc": "晨间播报(10:00)"},
+    "broadcast_afternoon_tea": {"deadline_hour": 15, "deadline_minute": 30, "desc": "下午茶播报(14:30)"},
+    "broadcast_evening_wind": {"deadline_hour": 20, "deadline_minute": 0, "desc": "傍晚播报(19:00)"},
+    "broadcast_night_whisper": {"deadline_hour": 23, "deadline_minute": 30, "desc": "夜间播报(22:30)"},
+}
+
+# 已告警的 job（避免每 30 分钟重复告警，每天重置一次）
+_alerted_jobs = set()
+_alerted_date = None
+
+
+def check_critical_jobs_health(scheduler=None, config=None):
+    """【v5.31.1 第四层防御】检查关键用户可感知任务是否按时执行
+
+    监控逻辑：
+    1. 遍历 _CRITICAL_JOBS 中定义的关键任务
+    2. 如果当前时间已超过该任务的截止时间（含宽限），检查今天是否成功执行过
+    3. 如果今天未成功执行 → CRITICAL 日志告警（触发告警 bot 通知，如果已配置）
+    4. 用 _alerted_jobs 防重复告警（每天重置）
+
+    Args:
+        scheduler: APScheduler 实例（可选，用于获取 job 的 next_run_time）
+        config: 配置 dict（可选，用于检查开关状态）
+    """
+    global _alerted_jobs, _alerted_date
+    now = datetime.now(_CST)
+    today_str = now.strftime("%Y-%m-%d")
+
+    # 每天重置告警状态
+    if _alerted_date != today_str:
+        _alerted_jobs = set()
+        _alerted_date = today_str
+
+    with _metrics_lock:
+        jobs_snapshot = {jid: dict(info) for jid, info in _metrics["jobs"].items()}
+
+    alerts = []
+    all_ok = True
+
+    for job_id, spec in _CRITICAL_JOBS.items():
+        if job_id in _alerted_jobs:
+            continue
+
+        deadline = now.replace(hour=spec["deadline_hour"], minute=spec["deadline_minute"], second=0, microsecond=0)
+        if now < deadline:
+            continue  # 还没到截止时间，不检查
+
+        # 检查该 job 今天是否成功执行过
+        job_info = jobs_snapshot.get(job_id, {})
+        last_run = job_info.get("last_run", 0)
+        last_status = job_info.get("last_status", "")
+
+        if last_run > 0:
+            last_run_dt = datetime.fromtimestamp(last_run, tz=_CST)
+            if last_run_dt.strftime("%Y-%m-%d") == today_str and last_status == "success":
+                continue  # 今天已成功执行，正常
+
+        # 没执行过或执行失败 → 告警
+        alerts.append(f"🚨 关键任务未执行: {spec['desc']} (job_id={job_id}, 截止={spec['deadline_hour']:02d}:{spec['deadline_minute']:02d}, last_status={last_status})")
+        _alerted_jobs.add(job_id)
+        all_ok = False
+
+    if alerts:
+        for a in alerts:
+            logger.critical(a)
+    elif now.hour >= 0 and now.minute >= 0:  # 每次检查都记录正常状态（debug 级别）
+        logger.debug("✅ 关键任务健康检查通过：所有到点任务均已执行")
+
+    return all_ok

@@ -1317,6 +1317,6 @@ def apply_pending_value(bot, chat_id, user_id, value, config):
             bot.send_message(chat_id, f"✅ {label} 已设为 {value}")
             logger.info(f"⚙️ 设置面板：{path} 设为 {value}")
 
-    # 清除等待会话
-    del _pending_value_sessions[session_key]
+    # 清除等待会话（并发安全：用 pop 避免 del KeyError）
+    _pending_value_sessions.pop(session_key, None)
     return True

@@ -94,13 +94,15 @@ def handle_translate(bot, m, config, db):
         bot.reply_to(m, "⚠️ 文本过长，已截取前500字符翻译")
 
     try:
-        import requests
-        from urllib.parse import quote
+        from core.http_client import get_http_client, HTTPRequestError
+        client = get_http_client()
 
-        encoded_text = quote(query_text)
-        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair=auto|{target_lang}"
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
+        url = "https://api.mymemory.translated.net/get"
+        params = {
+            "q": query_text,
+            "langpair": f"auto|{target_lang}"
+        }
+        data = client.get(url, params=params, timeout=10)
 
         if data.get("responseStatus") == 200 or data.get("responseData", {}).get("translatedText"):
             translated = data["responseData"]["translatedText"]
@@ -118,12 +120,9 @@ def handle_translate(bot, m, config, db):
             error_msg = data.get("responseData", {}).get("translatedText", "未知错误")
             bot.reply_to(m, f"❌ 翻译失败：{error_msg}")
 
-    except requests.Timeout:
-        logger.warning(f"翻译请求超时: lang={target_lang}")
-        bot.reply_to(m, "❌ 翻译请求超时，请稍后再试")
-    except requests.RequestException as e:
-        logger.error(f"翻译网络异常: {e}")
-        bot.reply_to(m, "❌ 翻译服务网络异常，请稍后再试")
+    except HTTPRequestError as e:
+        logger.error(f"翻译失败: {e}")
+        bot.reply_to(m, "❌ 翻译失败，请稍后再试")
     except Exception as e:
         logger.error(f"翻译异常: {e}")
         bot.reply_to(m, "❌ 翻译失败，请稍后再试")

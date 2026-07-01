@@ -16,7 +16,10 @@
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 【v5.31.2 修复】VPS 运行在 UTC，显示给用户的时间必须用 CST（UTC+8）
+_CST = timezone(timedelta(hours=8))
 from core.logging_util import get_logger
 
 logger = get_logger("natural_cmd")
@@ -1670,7 +1673,7 @@ def _handle_persona_teaching(msg: str, config: dict, bot, m, save_config_fn, mor
         mory_bot.reply_and_track(m, "⚠️ 风格追加已经很长了，请先用「撤销调教」清理一下再调教～")
         return True
 
-    timestamp = datetime.now().strftime('%m/%d %H:%M')
+    timestamp = datetime.now(_CST).strftime('%m/%d %H:%M')
     instruction = f"\n【{timestamp}调教指令】：{msg_clean}。严格执行此调整直到主人再次修改。"
     config["STYLE_APPEND"] = style + instruction
     save_config_fn()
@@ -1704,7 +1707,7 @@ def _add_teaching_log(config: dict, instruction: str, save_config_fn):
     log = config.get("TEACHING_LOG", [])
     if not isinstance(log, list):
         log = []
-    log.append(f"[{datetime.now().strftime('%m/%d %H:%M')}] {instruction}")
+    log.append(f"[{datetime.now(_CST).strftime('%m/%d %H:%M')}] {instruction}")
     if len(log) > 20:
         log = log[-20:]
     config["TEACHING_LOG"] = log

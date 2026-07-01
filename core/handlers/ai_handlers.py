@@ -322,11 +322,12 @@ def _try_faq_match(db, CONFIG, ai, msg: str, mode: str, analysis: dict) -> tuple
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  P10：AI回复主逻辑（入口函数）
+#  P10：AI回复主逻辑（入口函数）【DEPRECATED 旧版，新版见 ai_reply_handler.py】
 # ═══════════════════════════════════════════════════════════════════════
 
 def handle_ai_reply(dctx, analysis: dict = None):
-    """P10 AI回复主逻辑
+    """⚠️ DEPRECATED 旧版P10入口，已被 ai_reply_handler._dispatch_p10_ai 替代。
+    保留仅为兼容，新代码请勿调用。
 
     包含：人格模式选择、Function Calling、连续对话追踪、
     递进引导、拟人化延迟、私聊分段发送、深夜警告等

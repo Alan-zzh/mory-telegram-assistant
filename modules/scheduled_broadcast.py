@@ -20,6 +20,7 @@
 ══════════════════════════════════════════════════════════════════════════╝
 """
 
+import os
 import random
 from datetime import datetime, timezone, timedelta
 from telebot import types
@@ -33,82 +34,93 @@ logger = get_logger("scheduled_broadcast")
 _CST = timezone(timedelta(hours=8))
 
 
+def _extract_send_error(e: Exception) -> tuple:
+    """从发送异常中提取类型、状态码和摘要，用于结构化日志。"""
+    exc_type = type(e).__name__
+    status_code = None
+    # pyTelegramBotAPI 的 ApiException 通常有 error_code
+    if hasattr(e, "error_code"):
+        try:
+            status_code = int(e.error_code)
+        except Exception:
+            status_code = None
+    err_summary = str(e)[:200]
+    return exc_type, status_code, err_summary
+
+
+def _looks_like_local_path(s: str) -> bool:
+    """粗略判断字符串是否像本地文件路径（而非 Telegram file_id）。"""
+    if not s:
+        return False
+    lowered = s.lower()
+    has_separator = ("/" in s) or ("\\" in s) or (os.path.sep in s)
+    has_image_ext = lowered.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))
+    return has_separator or has_image_ext
+
+
 _SOFT_TEMPLATE_VARIANTS = {
+    "default": [
+        "刚忙完，歇一会儿。",
+        "今天状态还行。",
+        "有点走神，不知道想什么呢。",
+        "刚喝了点水，润润嗓子。",
+        "外面天气一般，懒得动。",
+        "突然想到一个事，等会跟你说。",
+        "今天过得挺快的。",
+        "刚整理了一下东西，舒服多了。",
+    ],
     "morning": [
-        "今天换了个开场，从天气聊起～",
-        "这条从一句反问开始，看看有没有人回～",
-        "今天试试先说结论再补场景",
-        "用了个新的小习惯：早安前先伸个懒腰",
-        "今天想试试更短的句子，看看效果",
-        "今天醒来心情还行，说话带点随意",
-        "有点没睡醒，语气懒懒的",
-        "刚遇到一件顺心的事，整个人都轻松了",
-        "今天状态还行，说话带点小自信",
-        "有些人已经跨过那个门槛了，里面的世界不太一样",
-        "刚整理了一些照片，但有些不太适合发在群里",
-        "关于那个门槛的事，私聊说更方便",
-        "有些片段只放在至臻那边，群里不太方便发",
+        "今天阳光不错。",
+        "刚醒，还在赖床。",
+        "咖啡刚冲好，闻着很香。",
+        "窗外鸟叫挺吵的，吵醒我了。",
+        "今天有点凉，加了件外套。",
+        "刚刷完牙，精神多了。",
+        "早餐随便吃了点三明治。",
+        "今天闹钟响了两遍才爬起来，好困。",
+        "刚醒，头发乱糟糟的。",
+        "今天醒得比闹钟早，难得。",
     ],
     "afternoon": [
-        "午后这条想试试先问个问题",
-        "今天午后想换个角度，从一个小细节说起",
-        "这条午后提醒加了点生活气息",
-        "想看看午后用更随意的语气会怎样",
-        "今天午后想试试倒叙，先说结果再说过程",
-        "刚喝完咖啡，精神还行",
-        "有点犯困，但跟你聊着聊着就清醒了",
-        "刚吃完东西，心情还行",
-        "突然有点想发呆，不知道为什么",
-        "今天有点小福利，但只给主动的人",
-        "有些照片只放在那边，想看的来找我",
-        "福利这种事，私聊说比较方便",
-        "至臻系列刚更新了一些新内容",
+        "刚喝完咖啡，精神还行。",
+        "有点犯困，但跟你聊着聊着就清醒了。",
+        "刚吃完东西，心情不错。",
+        "突然有点想发呆，不知道为什么。",
+        "刚喝完下午茶。",
+        "有点困，想眯一会。",
+        "窗外阳光很好，晒着暖洋洋的。",
+        "今天风挺大的，窗户都响。",
+        "刚站起来活动了一下，坐久了腰有点酸。",
+        "肚子有点饿了，等会吃点东西。",
+        "空调开得有点冷，披了件衣服。",
+        "刚接了杯温水。",
     ],
     "evening": [
-        "晚间想试试更走心的表达",
-        "今天晚间从一个小观察开始",
-        "这条晚间播报想加点故事感",
-        "晚间想试试先说感受再说场景",
-        "今天晚间想用一个悬念收尾",
-        "刚听了一首歌，整个人都放松了",
-        "今天状态有点高冷，别介意",
-        "刚忙完，脑子还有点转",
-        "心情像过山车，刚才还开心现在想发呆",
-        "今天特别想聊天，谁来都接",
-        "全享的用户能看到更多独家内容",
-        "刚拍了几张自拍，但有点太私人了",
-        "有些自拍只放在私密空间",
-        "有些特权只有全享才有，你懂的",
+        "刚听了一首歌，整个人都放松了。",
+        "今天状态有点高冷，别介意呀。",
+        "刚忙完，脑子还有点转不过来。",
+        "心情像过山车，刚才还开心现在想发呆。",
+        "今天特别想聊天，谁来都接。",
+        "刚忙完一天，好累。",
+        "天暗下来了，路灯都亮了。",
+        "今天有点累，不想动。",
+        "晚饭刚吃完，有点撑。",
+        "外面路灯亮了，天色很好看。",
+        "刚洗了个澡，舒服多了。",
+        "今天过得挺快的，一晃就晚上了。",
+        "窝在沙发上不想动，好懒。",
     ],
     "night": [
-        "深夜想试试更私密的语气",
-        "今天深夜想从一个小小的情绪开始",
-        "这条深夜播报想加点氛围感",
-        "深夜想试试更慢的节奏",
-        "今天深夜想用一个反问结尾",
-        "刚喝了杯东西，精神得不行",
-        "有点犯困，但跟你聊着聊着就清醒了",
-        "刚吃完东西，心情还行",
-        "突然有点想发呆，不知道为什么",
-        "有些贴身的小物件，每件都是独一无二的",
-        "刚录了点视频，但内容有点敏感",
-        "有些视频不太适合公开，私聊给你看",
-        "如果你想看什么特定的，可以私聊我写剧本",
-        "定制的内容只属于你一个人",
-    ],
-    "default": [
-        "今天想试试换个开场方式",
-        "这条想加点小变化，看看反应",
-        "保留核心，只调整表达方式",
-        "今天想试试更口语化的说法",
-        "旧瓶装新酒，意思不变，说法微调",
-        "刚喝了杯东西，精神还行",
-        "有点犯困，但跟你聊着聊着就清醒了",
-        "刚吃完东西，心情还行",
-        "突然有点想发呆，不知道为什么",
-        "有些事私聊说更方便",
-        "来 @MorychannelBot 找我聊",
-        "主动的人能看到更多",
+        "深夜了，还没睡呀？",
+        "今天忙到现在才歇下来。",
+        "刚洗完澡，头发还没干。",
+        "窝在床上刷手机呢。",
+        "今天有点失眠，睡不着。",
+        "夜深了，安静得有点舒服。",
+        "刚敷完面膜，脸滑滑的。",
+        "今天有点emo，不想说话但又想找人聊。",
+        "肚子有点饿，在纠结要不要吃宵夜。",
+        "被窝里好暖和，不想出来。",
     ],
 }
 
@@ -209,10 +221,12 @@ def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict =
 
     # 使用多样性引擎构建播报上下文
     theme_enabled = bool((config or {}).get("BROADCAST_THEME_ENABLED", True))
+    soft_variant = _pick_soft_template_variant(item, config)
+    footer = _merge_footer_with_variant(footer, soft_variant)
+
     if theme_enabled and period:
         try:
             ctx = build_broadcast_context(period=period, item_id=broadcast_id)
-            # 将黑话暗示和图片暗示融入折叠区
             theme_hints = []
             if ctx.get("slang_hint"):
                 theme_hints.append(ctx["slang_hint"])
@@ -222,15 +236,10 @@ def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict =
                 theme_hints.append(ctx["conversion_hint"])
 
             if theme_hints:
-                theme_footer = "\n\n".join(theme_hints)
-                footer = _merge_footer_with_variant(footer, theme_footer)
-            else:
-                footer = _merge_footer_with_variant(footer, _pick_soft_template_variant(item, config))
+                selected_hint = random.choice(theme_hints)
+                footer = _merge_footer_with_variant(footer, selected_hint)
         except Exception as e:
             logger.debug(f"多样性引擎异常（已忽略，回退默认）: {e}")
-            footer = _merge_footer_with_variant(footer, _pick_soft_template_variant(item, config))
-    else:
-        footer = _merge_footer_with_variant(footer, _pick_soft_template_variant(item, config))
 
     # 使用 v5.0 富文本排版（支持用户画像个性化）
     return build_rich_broadcast_html(
@@ -249,7 +258,9 @@ def _send_formatted_text(bot, chat_id, text: str, parse_mode, config: dict, **kw
     """按配置优先发送 Rich Message，失败时回退 HTML。"""
     cfg = config or {}
     format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
-    rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
+    # 【v5.31.0 修复 Bug B】暂时禁用 Rich Message：_html_to_rich_components 生成的组件格式
+    # 触发 Telegram API 400 "object expected as rich message"。等修复组件格式后再启用。
+    rich_enabled = False  # bool(cfg.get("RICH_MESSAGE_ENABLED", False))
 
     if rich_enabled and parse_mode == "HTML" and format_version in ("rich", "auto"):
         try:
@@ -291,17 +302,17 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
         if target_broadcast_id and broadcast_id != target_broadcast_id:
             continue
 
-        # 检查今天是否已执行（防重复）
+        # 检查今天是否已执行（防重复，每群独立 claim）
         if db:
             from datetime import datetime, timezone, timedelta
             _CST = timezone(timedelta(hours=8))
             today = datetime.now(_CST).strftime("%Y-%m-%d")
-            task_key = f"scheduled_broadcast_{broadcast_id}_{today}"
+            task_key = f"scheduled_broadcast_{broadcast_id}_{chat_id}_{today}"
             if db.is_task_executed_today(task_key):
-                logger.debug(f"⏭️ 播报 {broadcast_id} 今日已执行，跳过")
+                logger.debug(f"⏭️ 播报 {broadcast_id} 群{chat_id} 今日已执行，跳过")
                 continue
             if not db.claim_task(task_key):
-                logger.debug(f"️ 播报 {broadcast_id} 被其他进程抢占，跳过")
+                logger.debug(f"️ 播报 {broadcast_id} 群{chat_id} 被其他进程抢占，跳过")
                 continue
 
         # 执行播报
@@ -317,6 +328,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
         suggested_post_parameters = bc.get("suggested_post_parameters")
 
         if content_type == "rich_message" or bc.get("rich_message"):
+            logger.info(f"[broadcast] 准备发送 {broadcast_id} 到 chat={chat_id}, type=rich_message")
             try:
                 msg = send_rich_message_compat(
                     bot,
@@ -329,23 +341,29 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     direct_messages_topic_id=direct_messages_topic_id,
                     suggested_post_parameters=suggested_post_parameters,
                 )
-                logger.info(f"📢 定点播报(Rich Message): {broadcast_id}")
+                logger.info(f"[broadcast] 发送成功 {broadcast_id}, chat={chat_id}, msg_id={msg.message_id}")
                 if db:
                     db.track_channel_message(chat_id, msg.message_id, "rich_message")
                     # [v5.23.0 P1-4] 记录归因事件：播报触达
                     _log_broadcast_attribution(db, chat_id, broadcast_id, "rich_message")
             except Exception as e:
-                logger.warning(f"定点播报发送失败(Rich Message) {broadcast_id}: {e}")
+                exc_type, status_code, err_summary = _extract_send_error(e)
+                logger.warning(
+                    f"[broadcast] 发送失败 {broadcast_id}, chat={chat_id}, type=rich_message, "
+                    f"exc={exc_type}, status={status_code}, err={err_summary}"
+                )
                 if db:
                     try:
                         db.release_task(task_key)
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
+                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
             continue
 
         if content_type == "text":
             try:
                 text, parse_mode = _render_broadcast_text(bc, user_profile=user_profile, config=config)
+                logger.info(f"[broadcast] 准备发送 {broadcast_id} 到 chat={chat_id}, type=text")
                 msg = _send_formatted_text(
                     bot,
                     chat_id,
@@ -364,27 +382,40 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     direct_messages_topic_id=direct_messages_topic_id,
                     suggested_post_parameters=suggested_post_parameters,
                 )
-                logger.info(f" 定点播报: {broadcast_id}")
+                logger.info(f"[broadcast] 发送成功 {broadcast_id}, chat={chat_id}, msg_id={msg.message_id}")
                 # 追踪消息
                 if db:
                     db.track_channel_message(chat_id, msg.message_id, "text")
             except Exception as e:
-                logger.warning(f"定点播报发送失败 {broadcast_id}: {e}")
+                exc_type, status_code, err_summary = _extract_send_error(e)
+                logger.warning(
+                    f"[broadcast] 发送失败 {broadcast_id}, chat={chat_id}, type=text, "
+                    f"exc={exc_type}, status={status_code}, err={err_summary}"
+                )
                 if db:
                     try:
                         db.release_task(task_key)
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
+                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
         elif content_type == "image":
             # content 可以是 file_id 或 URL
+            caption = normalize_text(bc.get("caption", ""))
+            caption_mode = None
+            if caption:
+                temp_item = dict(bc)
+                temp_item["content"] = caption
+                temp_item["title"] = temp_item.get("title", "图片播报")
+                caption, caption_mode = _render_broadcast_text(temp_item, user_profile=user_profile, config=config)
+
+            is_url = bool(content) and str(content).lower().startswith(("http://", "https://"))
+            looks_local = _looks_like_local_path(content)
+            is_local_path = looks_local and os.path.isfile(content)
+            if content and not is_url and looks_local and not is_local_path:
+                logger.warning(f"[broadcast] 图片本地路径不存在 {broadcast_id}: {content}")
+
+            logger.info(f"[broadcast] 准备发送 {broadcast_id} 到 chat={chat_id}, type=image")
             try:
-                caption = normalize_text(bc.get("caption", ""))
-                caption_mode = None
-                if caption:
-                    temp_item = dict(bc)
-                    temp_item["content"] = caption
-                    temp_item["title"] = temp_item.get("title", "图片播报")
-                    caption, caption_mode = _render_broadcast_text(temp_item, user_profile=user_profile, config=config)
                 msg = send_photo_compat(
                     bot,
                     chat_id,
@@ -399,16 +430,53 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     message_effect_id=message_effect_id,
                     direct_messages_topic_id=direct_messages_topic_id,
                 )
-                logger.info(f"📢 定点播报(图片): {broadcast_id}")
+                logger.info(f"[broadcast] 发送成功 {broadcast_id}, chat={chat_id}, msg_id={msg.message_id}")
                 if db:
                     db.track_channel_message(chat_id, msg.message_id, "image")
             except Exception as e:
-                logger.warning(f"定点播报发送失败(图片) {broadcast_id}: {e}")
+                exc_type, status_code, err_summary = _extract_send_error(e)
+                logger.warning(
+                    f"[broadcast] 发送失败 {broadcast_id}, chat={chat_id}, type=image, "
+                    f"exc={exc_type}, status={status_code}, err={err_summary}"
+                )
+                # 失败时尝试用 caption/文案回退到文本播报
+                if caption:
+                    logger.info(f"[broadcast] 图片发送失败，回退到文本播报 {broadcast_id}, chat={chat_id}")
+                    try:
+                        fallback_msg = _send_formatted_text(
+                            bot,
+                            chat_id,
+                            caption,
+                            caption_mode,
+                            config,
+                            disable_notification=disable_notification,
+                            protect_content=protect_content,
+                            reply_markup=reply_markup,
+                            disable_web_page_preview=disable_preview,
+                            link_preview_options={"is_disabled": disable_preview} if disable_preview else None,
+                            allow_paid_broadcast=allow_paid_broadcast,
+                            message_effect_id=message_effect_id,
+                            direct_messages_topic_id=direct_messages_topic_id,
+                            suggested_post_parameters=suggested_post_parameters,
+                        )
+                        logger.info(
+                            f"[broadcast] 文本回退发送成功 {broadcast_id}, chat={chat_id}, "
+                            f"msg_id={fallback_msg.message_id}"
+                        )
+                        if db:
+                            db.track_channel_message(chat_id, fallback_msg.message_id, "text")
+                    except Exception as fallback_err:
+                        exc_type2, status_code2, err_summary2 = _extract_send_error(fallback_err)
+                        logger.warning(
+                            f"[broadcast] 文本回退发送失败 {broadcast_id}, chat={chat_id}, "
+                            f"exc={exc_type2}, status={status_code2}, err={err_summary2}"
+                        )
                 if db:
                     try:
                         db.release_task(task_key)
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
+                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
         elif content_type == "voice":
             try:
                 msg = bot.send_voice(chat_id, content)
@@ -421,7 +489,8 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     try:
                         db.release_task(task_key)
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
+                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
         elif content_type == "poll":
             try:
                 question = str(bc.get("question") or content or "").strip()
@@ -473,7 +542,8 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     try:
                         db.release_task(task_key)
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
+                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
         elif content_type == "checklist":
             try:
                 business_connection_id = (
@@ -520,7 +590,8 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     try:
                         db.release_task(task_key)
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
+                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
 def get_broadcast_schedule(config: dict):
     """获取播报时间表（用于定时任务注册）"""
     broadcasts = config.get("SCHEDULED_BROADCASTS", [])
@@ -555,10 +626,18 @@ def _log_broadcast_attribution(db, chat_id: int, broadcast_id: str, content_type
     campaign_id 格式为 {broadcast_id}_{YYYYMMDD}，便于后续归因分析。
 
     注意：此函数不抛异常，失败只记日志（不影响播报主流程）。
+
+    【v5.31.2 修复】INSERT 引用 source/campaign_id 字段但 conversion_events
+    建表时只有 5 个字段（id/uid/event/ts/mode），需先调用 _ensure_conversion_columns
+    加列，否则会抛 OperationalError 被静默吞掉，归因数据悄悄丢失。
     """
     try:
         from datetime import datetime
-        campaign_id = f"{broadcast_id}_{datetime.now().strftime('%Y%m%d')}"
+        from core.growth_optimizer import _ensure_conversion_columns
+        # 先确保 source/campaign_id 等扩展列存在（与 growth_optimizer._insert_conversion 一致）
+        _ensure_conversion_columns(db.conn)
+
+        campaign_id = f"{broadcast_id}_{datetime.now(_CST).strftime('%Y%m%d')}"
         # 群播报无法确定具体 uid，用 chat_id 的负数作为占位（群 chat_id 本身就是负数）
         # 真正的归因在用户私聊点击 Bot 时通过 /start?start=track_bc_xxx 完成
         placeholder_uid = abs(chat_id)  # 用群ID正数作为占位，避免与真实uid冲突

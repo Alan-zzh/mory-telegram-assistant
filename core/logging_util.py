@@ -130,10 +130,18 @@ def configure_logging(
 
     # 控制台处理器
     if console_output:
-        # 检查是否在后台运行（通过 nohup 或其他重定向）
-        # 如果标准输出被重定向到文件，则不添加控制台处理器，避免重复日志
-        if not sys.stdout.isatty():
-            # 非终端环境（如 nohup 后台运行），不添加控制台处理器
+        # 【v5.31.2 修复】systemd 环境下强制输出到 stdout，让 journalctl 能捕获日志
+        # 之前仅在 tty 时输出，导致 systemd 服务运行时 journalctl 完全无 Python 日志，
+        # 服务挂死等问题无法从 journalctl 排查。
+        # systemd 环境检测：INVOCATION_ID 是 systemd 给每个服务实例分配的唯一 ID
+        is_systemd = bool(os.environ.get("INVOCATION_ID"))
+        if is_systemd:
+            # systemd 环境：强制输出 stdout，由 journalctl 捕获
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(formatter)
+            root_logger.addHandler(console_handler)
+        elif not sys.stdout.isatty():
+            # 非 systemd 的非终端环境（如 nohup 后台运行），不添加控制台处理器，避免重复日志
             pass
         else:
             console_handler = logging.StreamHandler(sys.stdout)

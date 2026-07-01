@@ -47,6 +47,12 @@ reload_flag
 data/
 💾 备份/
 
+# 根目录临时输出文件
+tmp_*.txt
+test_out.txt
+test*.txt
+=
+
 # ── 依赖 ─────────────────────────────────────────────────────────────────
 node_modules/
 venv/

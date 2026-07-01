@@ -39,20 +39,17 @@ logger = get_logger("model_router")
 
 _DEFAULT_TIER_CONFIG = {
     "llm_premium": {
-        # 高端模型：角色扮演对话（mode=chat/tarot/fortune/persona）
-        "model_name": "qwen-max",
+        "model_name": "glm-5.2",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "PREMIUM_MODEL_API_KEY",
     },
     "llm_standard": {
-        # 标准模型：内容审核 / 广告检测
-        "model_name": "qwen-plus",
+        "model_name": "qwen3.7-max-preview",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "STANDARD_MODEL_API_KEY",
     },
     "llm_light": {
-        # 廉价模型：记忆摘要 / 简单分类
-        "model_name": "qwen-flash",
+        "model_name": "qwen3.6-flash-2026-04-16",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "LIGHT_MODEL_API_KEY",
     },

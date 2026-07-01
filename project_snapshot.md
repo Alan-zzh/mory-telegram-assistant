@@ -1,7 +1,7 @@
-# Mory小助理 项目快照 v5.28.0
+# Mory小助理 项目快照 v5.31.2
 
-> 新AI会话必读：本文件 + `AGENTS.md`（项目规则+老坑铁律） + `AI_DEBUG_HISTORY.md`
-> 最后更新：2026-06-20（v5.28.0 [Trae CN] 文档全面复核修正：数量失真校准、目录列表补全）
+> 新AI会话必读：本文件 + `AGENTS.md`（项目规则+老坑铁律）+ `AI_DEBUG_HISTORY.md`
+> 最后更新：2026-07-01（生产 Loop 继续监控：cart_recovery 旧表兼容恢复、reactivate 私聊候选过滤；00:25 真实召回发送成功，00:35 空候选正常跳过）
 
 ---
 
@@ -10,17 +10,17 @@
 | 项目 | 值 |
 |------|-----|
 | 名称 | Mory小助理 - 运营型商业 AI 转化机器人 |
-| 版本 | v5.28.0 |
+| 版本 | v5.31.2 |
+| 部署状态 | 2026-07-01 起 `scripts/puzan_loop_monitor.py` 本地无限 LOOP 持续监控（间隔 300s，日志 `logs/puzan_loop_monitor_live_20260630.log`，PID 43284）；VPS `43.153.23.115` RUNNING；`scripts/vps_watchdog.py` 由 root cron 每 2min 检查 health；`mory-assistant` / `mory-dashboard` 双 active；✅ verify_db_methods 162 方法无缺失无孤儿；✅ /api/health 返回 200 且 version=v5.31.2；L4 已按真实 schema 统计 task/token/成本；2026-07-01 00:25 真实 `cart_recovery` 旧表兼容修复后成功发送 1 条并终态，00:35 空候选正常跳过且无事务异常；注意 `WatchdogUSec=0`，当前依赖外部 watchdog 而非 systemd watchdog |
+| 防御体系 | v5.31.1 四层防御：L1启动自检(_self_check_repo_methods) + L2__getattr__ CRITICAL+re-raise + L3 scripts/verify_db_methods.py 部署前门禁 + L4 core/scheduler_monitor.py:check_critical_jobs_health 调度健康监控。v5.31.2 新增：① LLMCostGuard 成本熔断器（用户1h $1.0，全局1h $5.0，data/router_usage.db 12列schema记录token_usage）② 腾讯云 Lighthouse API 监控（实例 lhins-4ney4np5，IP 43.153.23.115）③ Loop 多智能体暗病搜索机制 ④ RLock 替代 Lock 解决 add_points 重入死锁 ⑤ 原子 UPDATE 防止 TOCTOU 余额检查竞态 ⑥ 独立看门狗 scripts/vps_watchdog.py（每2min检查health，连续3次失败自动重启，已去重日志）⑦ _CST 时区常量全域覆盖（累计修复 40+ 处 datetime.now() 时区错位）⑧ WriteQueue 停机 drain，降低重启尾部写丢失风险 |
 | 技术栈 | Python3 + pyTelegramBotAPI + SQLite(WAL+busy_timeout=30s+单线程写入队列+连接代理全量化+背压Fail-Fast+Alembic迁移) + Flask + gunicorn+gevent + structlog + diskcache |
 | 部署 | VPS（systemd作为唯一进程管理）+ GitHub Actions CI/CD（待启用Secrets） |
 | 存储 | `mory.db`(SQLite) + `config.json`(业务配置) + `.env`(敏感凭据) + `requirements.lock`(锁定依赖) |
 | 红线 | 绝对不能因报错导致程序卡死崩溃 |
-| 广告治理 | [Codex] 不踢人：永久禁言 + 删除消息 + 双黑名单 + 历史消息追踪清理 + Premium emoji 状态 OCR + 新版反应/付费媒体权限禁用 |
-| 人设引擎 | [Trae Solo CN] v5.21.0 4桶反模板(cold/savage/soft/common)+动态LLM参数矩阵(亲密度×场景×时段21组) + 12条去AI痕迹铁律（默认开启 `PERSONA_ENGINE_ENABLED=true`） |
-| 安全加固 | [TRAE SOLO CN] v5.22.0 全量审计修复 + v5.24.0 RBAC before_request默认拒绝守卫 + 自动化渗透测试6用例 + v5.25.0 RBAC DB驱动动态权限 + v5.26.0 RBAC权限变更审批流 |
-| 架构优化 | [TRAE SOLO CN] v5.26.0 10大优化：①LLM成本熔断器 ②Locust三档梯度压测 ③级联告警故障注入测试 ④人设跨模型一致性 ⑤多模型A/B测试分流 ⑥记忆摘要转化率归因 ⑦DB迁移指标监控 ⑧多Bot任务分工 ⑨归因模型离线回放 ⑩RBAC动态权限审批流 |
-| v5.27.0-RC1 稳定化候选 | 20项优化方向已进入可验证候选态：requirements.lock 已真实生成；VPS 端锁文件安装与 pip check 通过；Dashboard create_app smoke 166 routes；Alembic history smoke 通过；RBAC 安全测试 6/6 通过；Prometheus 派生指标改为 Gauge/set 防重复虚高；腾讯云硅谷二区 VPS 双服务 active + health 200 |
-| v5.28.0 增长优化 | [Codex] 10项增长优化进入主链路：`growth_optimizer` 串联意图路由、A/B、归因、质量评估；回复前注入增长 stage_hint，回复后写入 conversion_events / telemetry_events / conversation_telemetry；Dashboard 归因页新增增长优化汇总；质量评估低采样启用 |
+| 广告治理 | v5.30.1 修复 _REPO_METHOD_MAP 注册缺失（snapshot_message/mark_message_deleted/get_user_messages/get_user_undeleted_messages），message_snapshots 30+ 版本空表根因消除。不踢人：永久禁言 + 删除消息 + 双黑名单 + 历史消息追踪清理 + Premium emoji 状态 OCR + 新版反应/付费媒体权限禁用；管理员可在私聊中继回复 `拉黑` 手动拉黑原用户 |
+| 人设引擎 | v5.21.0 4桶反模板(cold/savage/soft/common)+动态LLM参数矩阵(亲密度×场景×时段21组) + 12条去AI痕迹铁律（默认开启 `PERSONA_ENGINE_ENABLED=true`） |
+| 安全加固 | v5.22.0 全量审计修复 + v5.24.0 RBAC before_request默认拒绝守卫 + 自动化渗透测试6用例 + v5.25.0 RBAC DB驱动动态权限 + v5.26.0 RBAC权限变更审批流 |
+| 架构优化 | v5.26.0 10大优化：①LLM成本熔断器 ②Locust三档梯度压测 ③级联告警故障注入测试 ④人设跨模型一致性 ⑤多模型A/B测试分流 ⑥记忆摘要转化率归因 ⑦DB迁移指标监控 ⑧多Bot任务分工 ⑨归因模型离线回放 ⑩RBAC动态权限审批流 |
 
 ---
 
@@ -105,9 +105,9 @@ mory_assistant/
 │       ├── config_repo.py  # 系统配置/关键词/定时消息
 │       ├── social_repo.py  # AFK/邀请/验证/联邦
 │       └── question_repo.py # 【v5.15.0新增】问题追踪/FAQ匹配/蒸馏/候选审核
-├── modules/                # 88 个模块 .py + triggers/ 4 个（详见 README.md §1.8 模块能力矩阵）
+├── modules/                # 87 个模块 .py（含 triggers/ 4 个），详见 README.md §1.8 模块能力矩阵
 │   ├── __init__.py
-│   ├── auto_tasks.py       # 定时任务（52个_job_*函数）
+│   ├── auto_tasks.py       # 定时任务（53个_job_*函数）
 │   ├── ... 86 个模块文件（完整列表见 README.md §1.8）
 │   └── triggers/           # 场景触发器子目录
 │       ├── __init__.py
@@ -142,7 +142,7 @@ mory_assistant/
 │   │   ├── funnel_api.py   # 【v5.27.0-RC1】转化漏斗可视化API
 │   │   ├── metrics_api.py  # 【v5.27.0-RC1】Prometheus 指标端点
 │   │   └── quality_api.py  # 【v5.27.0-RC1】内容质量评分API
-│   │   # 共 22 个 API 文件 / 156 条路由（实测 grep @.*.route(），见 README.md §1.9
+│   │   # 共 21 个 API 文件（不含 __init__.py）/ 156 条路由（实测 grep @.*.route(），见 README.md §1.9
 │   ├── audit.py            # 【v5.23.0】RBAC权限+审计日志（三角色admin/operator/viewer+permission_required装饰器）
 │   ├── rbac_approval.py    # 【v5.26.0】RBAC权限变更审批流（permission_change_requests表+6核心函数）
 │   └── templates/
@@ -163,6 +163,8 @@ mory_assistant/
 │   ├── auto_rollback.py    # 【v5.27.0-RC1】不健康时自动回滚
 │   ├── rollback_config.json # 【v5.27.0-RC1】回滚策略配置
 │   ├── code_quality_scan.py # 【v5.27.0-RC1】vulture+radon 代码扫描
+│   ├── puzan_loop_monitor.py # 【v5.31.2】Puzan OS 6层LOOP持续监控（L1 VPS/L2 服务/L3 应用/L4 业务/L5 调度/L6 看门狗+腾讯云Lighthouse）
+│   ├── vps_watchdog.py     # 【v5.31.2】VPS端独立看门狗，每2分钟检查 /api/health，连续3次失败自动 systemctl restart
 │   └── README.md           # 工具说明
 ├── backups/                # 自动备份（保留最近2个server_pull备份）
 ├── tests/                  # 测试目录
@@ -197,25 +199,6 @@ mory_assistant/
 ├── CHANGELOG.md            # 变更日志
 ├── VERSION.md              # 版本号
 └── README.md               # 项目入口文档
-
----
-
-## 9. v5.28.0 增长优化状态
-
-**当前阶段**：10项增长优化代码已接入主链路；`GROWTH_OPTIMIZER_ENABLED` / `INTENT_ROUTING_ENABLED` / `AB_TEST_ENABLED` / `ATTRIBUTION_REPORT_ENABLED` / `QUALITY_EVAL_ENABLED` 已配置为开启，质量评估低采样护栏启用，`INTENT_LLM_ENABLED=false` 控制成本。
-
-| 阵列 | 状态 | 说明 |
-|------|------|------|
-| P0 基建骨干 | verified_local | Alembic / Settings / requirements.lock / CI 已能本地 smoke；生产仍需 stamp baseline |
-| P1 并发加速与业务闭环 | partially_integrated | pytest / lifecycle / Prometheus / anomaly_detector 已接入；diskcache 暂未挂强实时安全路径 |
-| P2 看板与类型保障 | verified_local | Swagger 可降级、Dashboard smoke 通过、mypy/interrogate 通过；追踪默认关闭 |
-| P3 锦上添花 | guarded_on | LLM质量评估已低采样开启；自动回滚 / i18n 等仍按风险启用 |
-
-**下一步关键动作**：
-1. 生产环境执行 `python scripts/db_migrate.py stamp_baseline` 标记 Alembic 基线
-2. 配置 GitHub Secrets 后启用 `.github/workflows/ci.yml` 部署段
-3. 逐步将业务代码从 `config['KEY']` 迁移到 `settings.KEY`
-4. 观察增长优化样本量与质量评分，确认是否提高 `QUALITY_EVAL_SAMPLE_RATE` 或开启 `INTENT_LLM_ENABLED`
 
 ---
 
@@ -423,6 +406,10 @@ mory_assistant/
 
 | 版本 | 关键内容 |
 |------|---------|
+| v5.31.2 | Token 消耗暗病排查 + Loop 监控轮 1-20 多智能体联排暗病搜索 84 处修复：① 高频任务 task_log 死锁（task_key 加时间窗口后缀）② LLMCostGuard 成本熔断器启用（用户1h $1.0/全局1h $5.0）③ token_usage 记录到 data/router_usage.db（12列schema）④ WriteQueue rowcount 丢失导致所有定时任务失效 ⑤ LLMCostGuard flush_to_db 从未被调用修复 ⑥ RLock 替代 Lock 解决 add_points 重入死锁 ⑦ get_user_profile 重复定义重命名为 get_user_persona_profile ⑧ 原子 UPDATE 防止 TOCTOU 余额检查竞态 ⑨ 腾讯云 Lighthouse 监控接入 ⑩ 独立看门狗 scripts/vps_watchdog.py ⑪ _CST 时区常量全域覆盖（累计修复 40+ 处 datetime.now() 时区错位）⑫ shop.py:126 P0 SQL 列名错误修复（兑换功能 100% 失败）⑬ health_api.py 3 处 datetime.now(_CST) 残留修复 ⑭ 12 处静默吞异常升级日志级别 ⑮ 3 处幂等添加列加注释 ⑯ shop.py TOCTOU 漏洞修复（原子 SQL + rowcount 检查防积分负数）⑰ emergency_ban_ad_user.py 时区+类型不一致修复 ⑱ bot_initializer/pinyin_util 静默吞异常修复 ⑲ dashboard/app.py sqlite3.connect finally 修复。162 委托方法远程验证注册成功 |
+| v5.31.1 | 四层智能体联排防御体系根治 _REPO_METHOD_MAP 漏注册沉默失败：L1启动自检(_self_check_repo_methods) + L2__getattr__ CRITICAL+re-raise + L3 scripts/verify_db_methods.py 部署前门禁 + L4 core/scheduler_monitor.py:check_critical_jobs_health 调度健康监控。162 委托方法注册验证 |
+| v5.30.3 | 多智能体协作诊断+彻底修复：① `core/database.py` `_REPO_METHOD_MAP` 补注册 30 方法（ab_test 17+user 8+social 5，消除 A/B 测试持久化/增长遥测/用户画像/购物车恢复静默失效）② 服务器 `.env` `VPS_HOST` 错指 TokenLab VPS 修正 ③ `config.json` 属主修复 ④ 删除硬编码密码文件 `query_final.py` / `query_extra.py` ⑤ `core/ai_engine.py` 7 处 `except: pass` 静默吞错改 `logger.debug`。共 158 方法远程验证注册成功 |
+| v5.30.1 | 修复 `_REPO_METHOD_MAP` 注册缺失（snapshot_message/mark_message_deleted/get_user_messages/get_user_undeleted_messages 4 方法），message_snapshots 30+ 版本空表根因消除 |
 | v5.28.0 | 10项增长优化上线：意图路由/A-B/归因/质量评估串入AI回复链路；Dashboard增长优化汇总；质量评估低采样开启；LLM意图精分保持关闭 |
 | v5.27.0-RC1 | 稳定化候选：requirements.lock 真实生成；VPS 端锁文件安装和 pip check 通过；远端缓存/pyc/reload_flag 清零；Dashboard/迁移 smoke 通过；RBAC 安全测试 6/6；metrics 改 Gauge/set 防重复虚高；双服务 active + health 200；高风险能力默认关闭 |
 | v5.26.0 | 10大优化：LLM成本熔断器+Locust压测+级联告警测试+人设跨模型一致性+多模型A/B测试+记忆归因+DB迁移监控+多Bot路由+归因回放+RBAC审批流 |

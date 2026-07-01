@@ -1,0 +1,103 @@
+"""
+tasks/support/task_config.py - 任务相关配置解析
+
+集中管理 auto_tasks 中散落的时间配置解析逻辑，避免各任务模块重复实现。
+"""
+
+from typing import Tuple
+
+
+def parse_hhmm(value, default_hour: int, default_minute: int) -> Tuple[int, int]:
+    """解析 HH:MM 配置，异常时回落默认时间。"""
+    try:
+        if isinstance(value, str) and ":" in value:
+            hour, minute = value.split(":", 1)
+            hour_i = int(hour)
+            minute_i = int(minute)
+            if 0 <= hour_i <= 23 and 0 <= minute_i <= 59:
+                return hour_i, minute_i
+        if isinstance(value, int) and 0 <= value <= 23:
+            return value, default_minute
+    except Exception:
+        pass
+    return default_hour, default_minute
+
+
+def get_greeting_time(config: dict, period: str) -> Tuple[int, int]:
+    """问候时间读取配置，兼容老键。"""
+    cfg = config.get("GREETING_CONFIG", {}) if isinstance(config, dict) else {}
+    defaults = {
+        "morning": (8, 5, "morning_time", "GREETING_HOUR"),
+        "afternoon": (12, 35, "afternoon_time", "AFTERNOON_GREETING_HOUR"),
+        "evening": (23, 5, "evening_time", "GOODNIGHT_HOUR"),
+    }
+    default_hour, default_minute, time_key, legacy_hour_key = defaults.get(period, defaults["morning"])
+    if time_key in cfg:
+        return parse_hhmm(cfg.get(time_key), default_hour, default_minute)
+    if legacy_hour_key in config:
+        return parse_hhmm(config.get(legacy_hour_key), default_hour, default_minute)
+    return default_hour, default_minute
+
+
+def is_greeting_enabled(config: dict, period: str) -> bool:
+    """早午晚问候分别读取开关，兼容 AUTO_GREETING / AUTO_GOODNIGHT。"""
+    cfg = config.get("GREETING_CONFIG", {}) if isinstance(config, dict) else {}
+    key_map = {
+        "morning": "morning_enabled",
+        "afternoon": "afternoon_enabled",
+        "evening": "evening_enabled",
+    }
+    if key_map.get(period) in cfg:
+        return bool(cfg.get(key_map[period]))
+    if period == "evening":
+        return bool(config.get("AUTO_GOODNIGHT", config.get("AUTO_GREETING", False)))
+    return bool(config.get("AUTO_GREETING", False))
+
+
+def get_news_time(config: dict, period: str) -> Tuple[int, int]:
+    """新闻播报时间读取配置，兼容旧小时键。"""
+    cfg = config.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
+    defaults = {
+        "morning": (9, 5, "morning_time", "NEWS_HOUR_MORNING"),
+        "afternoon": (13, 5, "afternoon_time", "NEWS_HOUR_AFTERNOON"),
+        "evening": (20, 35, "evening_time", "NEWS_HOUR_EVENING"),
+    }
+    default_hour, default_minute, time_key, legacy_hour_key = defaults.get(period, defaults["morning"])
+    if time_key in cfg:
+        return parse_hhmm(cfg.get(time_key), default_hour, default_minute)
+    if legacy_hour_key in config:
+        return parse_hhmm(config.get(legacy_hour_key), default_hour, default_minute)
+    return default_hour, default_minute
+
+
+def get_news_source_strategy(config: dict) -> str:
+    """新闻源优先级：默认真实源优先，TrendRadar 兜底。"""
+    cfg = config.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
+    strategy = str(cfg.get("preferred_source", "real_first")).strip().lower()
+    if strategy in {"real_first", "trendradar_first"}:
+        return strategy
+    return "real_first"
+
+
+def get_all_group_ids(config: dict) -> list:
+    """
+    获取所有管理群组（GROUP_ID + MANAGED_GROUPS 合并去重）。
+
+    Returns:
+        群 ID 列表（int），去重后保留顺序。
+    """
+    group_ids = []
+    gid = config.get("GROUP_ID", 0)
+    if gid:
+        group_ids.append(gid)
+    try:
+        mg = config.get("MANAGED_GROUPS", [])
+        if isinstance(mg, int):
+            mg = [mg]
+        if mg:
+            for g in mg:
+                if g and g not in group_ids:
+                    group_ids.append(g)
+    except Exception:
+        pass
+    return group_ids

@@ -9,11 +9,14 @@ import sqlite3
 import threading
 import os
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+# CST 时区常量（VPS 为 UTC，统一使用 CST 避免时间错位）
+_CST = timezone(timedelta(hours=8))
 
 
 class RouterDatabase:
@@ -112,7 +115,7 @@ class RouterDatabase:
         success: bool = True,
         error_message: Optional[str] = None
     ) -> Optional[int]:
-        timestamp = datetime.now().isoformat()
+        timestamp = datetime.now(_CST).isoformat()
         total_tokens = input_tokens + output_tokens
 
         insert_sql = """

@@ -104,10 +104,17 @@ class UserRepo:
             return c.fetchall()
 
     def get_inactive_users(self, before_ts: int, exclude_uid: int):
-        """获取before_ts之前未活跃的用户（醋意挽回用）"""
+        """获取before_ts之前未活跃且可私聊的用户（醋意挽回用）。
+
+        Telegram Bot 只能主动私聊曾经打开过私聊的用户。过滤 private_messages=0
+        可以避免对群成员直接发私信导致 403，同时避免先生成 LLM 文案再失败。
+        """
         with self.lock:
             c = self.conn.cursor()
-            c.execute("SELECT uid, name FROM users WHERE last_active<? AND uid!=?",
+            c.execute(
+                "SELECT uid, name FROM users "
+                "WHERE last_active<? AND uid!=? AND private_messages>0 "
+                "ORDER BY last_active ASC",
                       (before_ts, exclude_uid))
             return c.fetchall()
 
@@ -282,8 +289,13 @@ class UserRepo:
                 logger.warning(f"delete_user失败 uid={uid}: {e}")
 
     # ─────────────────────────────── 用户画像（v5.18.0） ────────────────────────────────
-    def get_user_profile(self, user_id: int) -> dict | None:
-        """获取用户画像。"""
+    def get_user_persona_profile(self, user_id: int) -> dict | None:
+        """获取用户画像（persona 版本，来自 user_profiles 表）。
+
+        注意：本方法与 line 176 的 get_user_profile 同名冲突已修复（Python 后定义覆盖前定义）。
+        期望 users 表聚合字段的调用方请用 get_user_profile；期望 user_profiles 表 persona
+        字段（tags/interests/activity_score/flirt_affinity/memory_summary 等）的调用方用本方法。
+        """
         import json
         with self.lock:
             c = self.conn.cursor()
@@ -344,11 +356,8 @@ class UserRepo:
             # [TRAE SOLO CN v5.24.0 阶段3-B] memory_summary 字段支持
             # 未传（None）时不覆盖已有值（COALESCE），传值时写入新摘要
             memory_summary = profile.get("memory_summary")
-            # 防御旧表：幂等补列
-            try:
-                c.execute("ALTER TABLE user_profiles ADD COLUMN memory_summary TEXT DEFAULT ''")
-            except Exception:
-                pass  # 列已存在
+            # 防御旧表：幂等补列（避免 WriteQueue 反复报错 duplicate column）
+            self._db._safe_add_column(c, "user_profiles", "memory_summary", "TEXT DEFAULT ''")
             # [TRAE SOLO CN] v5.19.0 扩展写入：6 个新画像列
             # [TRAE SOLO CN v5.24.0 阶段3-B] 增加 memory_summary 列（COALESCE 保留已有值，幂等不覆盖）
             c.execute("""INSERT INTO user_profiles

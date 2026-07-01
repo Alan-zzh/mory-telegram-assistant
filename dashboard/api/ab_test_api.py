@@ -211,7 +211,7 @@ def get_profile(user_id: int):
     if not db:
         return jsonify({"ok": False, "msg": "数据库不可用"}), 500
     try:
-        profile = db.get_user_profile(user_id)
+        profile = db.get_user_persona_profile(user_id)
         return jsonify({"ok": True, "data": profile})
     except Exception as e:
         logger.warning(f"获取用户画像失败: {e}")

@@ -106,10 +106,18 @@ def handle_exchange(bot, m, config, db, item_name):
                 bot.reply_to(m, f"❌ 「{name}」已售罄")
                 return
 
-            # 扣积分（直接SQL，避免二次获取锁导致死锁）
-            db.conn.execute(
-                "UPDATE user_levels SET points=points-? WHERE uid=?", (cost, uid)
+            # 扣积分（原子操作：WHERE points >= ? 防止并发下积分变负数）
+            # 注意：redpacket/blind_box/tip 用 db.lock 原子扣分，与 shop._db_lock 不同锁
+            # 必须用原子 SQL 防止"锁外检查通过→他线程扣分→锁内扣分变负数"
+            cur = db.conn.execute(
+                "UPDATE user_levels SET points=points-? WHERE uid=? AND points >= ?",
+                (cost, uid, cost)
             )
+            if cur.rowcount == 0:
+                # 并发下积分已被其他线程扣光（如红包/盲盒/打赏原子扣减）
+                db.conn.rollback()
+                bot.reply_to(m, f"❌ 积分不足！兑换失败（并发竞争，请重试）")
+                return
 
             # 扣库存
             if current_stock and current_stock[0] > 0:
@@ -121,10 +129,11 @@ def handle_exchange(bot, m, config, db, item_name):
                 (uid, item_id, name, cost, now_ts, "pending")
             )
 
-            # 记录积分日志
+            # 记录积分日志（points_log schema: id, uid, change_amount, balance_after, source, ts）
+            balance_after = db.get_user_points(uid) or 0
             db.conn.execute(
-                "INSERT INTO points_log (uid, delta, reason, ts) VALUES (?,?,?,?)",
-                (uid, -cost, f"兑换:{name}", now_ts)
+                "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                (uid, -cost, balance_after, f"兑换:{name}", now_ts)
             )
             db.conn.commit()
 

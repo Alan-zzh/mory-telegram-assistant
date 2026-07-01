@@ -157,9 +157,11 @@ def create_app():
         _db_path = os.path.join(_mory_root, _db_name)
         if os.path.exists(_db_path):
             _init_conn = sqlite3.connect(_db_path, timeout=30.0)
-            _init_conn.row_factory = sqlite3.Row
-            ensure_role_permissions_table(_init_conn)
-            _init_conn.close()
+            try:
+                _init_conn.row_factory = sqlite3.Row
+                ensure_role_permissions_table(_init_conn)
+            finally:
+                _init_conn.close()
     except Exception as _e:
         # 初始化失败不阻断启动，运行时回退到硬编码字典
         print(f"[Dashboard] role_permissions 表初始化失败（非致命）：{_e}")

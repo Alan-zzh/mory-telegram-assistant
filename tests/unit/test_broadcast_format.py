@@ -53,6 +53,38 @@ A > B 的测试结果"""
     print("✅ HTML转义测试通过")
 
 
+def test_news_html_source_badge():
+    """新闻富文本展示多源筛选角标。"""
+    news = """社会新闻一条
+财经新闻一条
+文娱新闻一条
+生活新闻一条
+国际新闻一条
+今晚信息面比较散，先看确定的"""
+    result = build_rich_news_html("晚间", news, source_name="fallback")
+    assert "多源汇总 · 均衡筛选" in result
+    assert "<blockquote expandable><i>" in result
+
+
+def test_news_balanced_selection_caps_tech():
+    """多源新闻挑选不会被科技/AI类目占满。"""
+    from core.trendradar_news import _select_balanced_news
+
+    items = [
+        {"source": "36氪快讯", "title": "AI公司发布大模型新品", "category": "科技"},
+        {"source": "36氪快讯", "title": "芯片企业公布新一轮融资", "category": "科技"},
+        {"source": "36氪快讯", "title": "机器人公司推出新方案", "category": "科技"},
+        {"source": "澎湃新闻", "title": "多地优化地铁换乘服务", "category": "社会"},
+        {"source": "今日头条", "title": "央行公开市场操作受到关注", "category": "财经"},
+        {"source": "微博热搜", "title": "热门电影票房继续走高", "category": "文娱"},
+        {"source": "抖音热点", "title": "暑期旅行目的地热度上升", "category": "生活"},
+    ]
+    selected = _select_balanced_news(items, limit=5)
+    assert len(selected) == 5
+    assert sum("【科技" in line for line in selected) <= 2
+    assert len({line.split("】", 1)[0].lstrip("【").split("·", 1)[0] for line in selected}) >= 3
+
+
 if __name__ == "__main__":
     # 手动导入
     from core.broadcast_formatter import escape_html_text

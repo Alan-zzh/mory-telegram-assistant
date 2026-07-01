@@ -241,7 +241,9 @@ class GroupRepo:
                 )
                 self.conn.commit()
             return True
-        except Exception:
+        except Exception as e:
+            # 【v5.31.2 修复】广告治理关键路径，失败必须告警，否则下游 mark_message_deleted 拿不到 msg_id
+            logger.warning(f"snapshot_message 失败 chat_id={chat_id} msg_id={msg_id}: {e}")
             return False
 
     def mark_message_deleted(self, chat_id: int, msg_id: int) -> bool:
@@ -254,7 +256,9 @@ class GroupRepo:
                 )
                 self.conn.commit()
             return True
-        except Exception:
+        except Exception as e:
+            # 【v5.31.2 修复】广告治理审计路径，失败必须告警
+            logger.warning(f"mark_message_deleted 失败 chat_id={chat_id} msg_id={msg_id}: {e}")
             return False
 
     def get_user_messages(self, user_id: int, chat_id: int = None, limit: int = 100) -> list:
@@ -272,7 +276,9 @@ class GroupRepo:
                         (user_id, limit)
                     ).fetchall()
             return [{"chat_id": r[0], "msg_id": r[1], "text": r[2], "ts": r[3], "deleted": r[4]} for r in rows]
-        except Exception:
+        except Exception as e:
+            # 【v5.31.2 修复】追溯删除路径，失败必须告警，否则广告消息残留无人感知
+            logger.warning(f"get_user_messages 失败 user_id={user_id} chat_id={chat_id}: {e}")
             return []
 
     def get_user_undeleted_messages(self, user_id: int, chat_id: int = None, limit: int = 2000) -> list:

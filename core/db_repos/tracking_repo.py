@@ -511,7 +511,8 @@ class TrackingRepo:
             c.execute("SELECT COUNT(*) FROM proactive_engage_log")
             total = c.fetchone()[0]
             # 今日（按本地CST 0点为分界）
-            today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+            # 【v5.31.2 修复】原 datetime.now() 无 tz 返回 UTC，CST 0:00-8:00 漏算今日搭讪
+            today_start = int(datetime.now(_CST).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
             c.execute("SELECT COUNT(*) FROM proactive_engage_log WHERE ts>=?", (today_start,))
             today = c.fetchone()[0]
             # 转化数（24h内下单的搭讪用户）

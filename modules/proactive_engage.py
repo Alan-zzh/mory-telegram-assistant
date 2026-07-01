@@ -9,47 +9,52 @@ import threading
 import traceback
 import random
 from typing import Tuple
+from datetime import datetime, timezone, timedelta
 
 from core.logging_util import get_logger
 from core.helpers import format_user_mention
 
 logger = get_logger("proactive_engage")
 
-# A/B 群搭讪话术模板（防重复感，30-50字+私聊引导）
+# 【v5.31.2 修复】VPS 运行在 UTC，每日搭讪限额按 CST 重置（原 UTC 导致 CST 0:00-8:00 仍算昨日）
+_CST = timezone(timedelta(hours=8))
+
+# A/B 群搭讪话术模板（防重复感，30-50字+私聊引导，绿茶自然语气）
 _FALLBACK_TEMPLATES = [
-    "{uname}~订阅的话不同档位权益不一样哦，想看具体的细节私聊我跟你慢慢说～",
-    "嗯嗯，关于{uname}问的这个～群里不太方便细说，私聊我呀，把完整对比发你～",
-    "{uname}～这个我看一眼~想知道详情可以私聊我，免得群里刷屏啦～",
-    "关于{uname}问的这个~ 内容比较多，私聊我给你单独发一份清单好不好呀～",
+    "{uname}，这个群里说不太方便啦。",
+    "一句话说不清楚，你私聊我好不好？",
+    "群里人多不好意思说这些，来私聊嘛。",
+    "这个私聊我给你细说呀～",
 ]
 
 _FALLBACK_BY_INTENT = {
     "price": [
-        "{uname}～价格我可以给你按档位捋清楚，群里容易刷屏，私聊我发你完整对比～",
-        "这个看你想要月/季/年哪种呀，{uname}私聊我，我按适合你的方式说清楚～",
+        "{uname}，价格私聊给你，群里不说价的啦。",
+        "群里不方便报价，私聊我给你发完整价格表哦。",
     ],
     "rights": [
-        "{uname}问到权益啦～不同档位差别不小，私聊我我给你列一版好懂的～",
-        "权益这块一句话说不全，{uname}私聊我，我把适合你的那档单独讲～",
+        "权益区别讲起来有点多，私聊给你慢慢说。",
+        "区别挺大的，私聊发你对比表嘛。",
     ],
     "trial": [
-        "{uname}想先看看感觉对不对吧～私聊我，我发你能公开说的预览和说明～",
-        "可以先别急着下单，{uname}私聊我，我帮你判断哪种更合适～",
+        "想先看看？私我给你发预览呀～",
+        "别急着下单嘛，先私聊我看看喜不喜欢。",
     ],
     "payment": [
-        "{uname}下单不用在群里操作，私聊我我把自助入口和步骤发你～",
-        "支付这块群里不展开啦，{uname}私聊我，我把自助下单路径给你～",
+        "直接找 @MorychannelBot 下单就好，不用在群里操作的。",
+        "下单走Bot哦，群里不方便说这个。",
     ],
     "repeat": [
-        "{uname}我记得你刚才也问过类似的，我这次直接给你整理重点，私聊我～",
-        "你这个问题和前面有点连着，{uname}私聊我，我按你的情况接着说～",
+        "你刚才问过啦，私聊我给你说过了哦。",
+        "这个刚才说过了嘛，看私聊就好啦。",
     ],
 }
 
-# 私聊引导话术模板（含 @MorychannelBot 自助下单提示）
+# 私聊引导话术模板（含 @MorychannelBot 自助下单提示，绿茶风自然）
 _PRIVATE_TEMPLATES = [
-    "💌 嘿，{uname}～\n刚才群里你说的那个我看到了～\n想了解具体细节的话，私聊我聊就行～\n\n@MorychannelBot 那边有自助下单链接，按提示操作就OK～",
-    "💌 {uname}～\n群里我没细说怕打扰别人\n想看具体权益对比的话，私聊我就行～\n\n@MorychannelBot 可以自助下单，价格透明",
+    "刚才群里看到你问啦～\n想知道什么直接问我就好，别不好意思。\n\n自助下单找 @MorychannelBot，不明白再问我。",
+    "群里没细说，这边给你慢慢讲。\n\n想看什么/问什么直接说，下单也找 @MorychannelBot 就好啦。",
+    "来啦来啦，群里人多不方便说，这边都可以问。\n\n下单直接走 @MorychannelBot，很简单的。",
 ]
 
 
@@ -252,7 +257,7 @@ class ProactiveEngage:
                     f"用户咨询阶段：{stage_hint}；问题类型：{intent}。\n"
                     f"请用30-50字回复，先简短回应他，再自然引导他私聊。\n"
                     f"要求：温柔不直白营销、不称'老板'、不重复固定模板、\n"
-                    f"末尾可加一句'私聊我呀～'或'详情私聊我说'，但不要每句都加。\n"
+                    f"自然结束，不要每次都加引导句，保持清冷。\n"
                     f"绝对不要使用'老板'称谓。\n"
                 )
                 sys_prompt = self.config.get("PROMPT_TEMPLATES", {}).get(
@@ -412,7 +417,7 @@ class ProactiveEngage:
             if persisted > 0:
                 return persisted
             from datetime import datetime
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = datetime.now(_CST).strftime("%Y-%m-%d")
             with self._cooldown_lock:
                 entry = self._daily_count_dict.get(uid)
                 if not entry or entry[0] != today:
@@ -427,9 +432,9 @@ class ProactiveEngage:
             if not uid or not getattr(self.db, "conn", None):
                 return 0
             from datetime import datetime
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = datetime.now(_CST).strftime("%Y-%m-%d")
             row = self.db.conn.execute(
-                "SELECT COUNT(*) FROM proactive_engage_log WHERE uid=? AND date(ts, 'unixepoch', 'localtime')=?",
+                "SELECT COUNT(*) FROM proactive_engage_log WHERE uid=? AND date(ts, 'unixepoch', '+8 hours')=?",
                 (uid, today),
             ).fetchone()
             return int(row[0] or 0) if row else 0
@@ -440,7 +445,7 @@ class ProactiveEngage:
         """用户今日搭讪计数+1（需在 _cooldown_lock 内调用）"""
         try:
             from datetime import datetime
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = datetime.now(_CST).strftime("%Y-%m-%d")
             entry = self._daily_count_dict.get(uid)
             if not entry or entry[0] != today:
                 self._daily_count_dict[uid] = (today, 1)
@@ -462,7 +467,7 @@ class ProactiveEngage:
                     del self._cooldown_dict[uid]
                 # 清理昨日计数
                 from datetime import datetime
-                today = datetime.now().strftime("%Y-%m-%d")
+                today = datetime.now(_CST).strftime("%Y-%m-%d")
                 stale = [uid for uid, entry in self._daily_count_dict.items() if entry[0] != today]
                 for uid in stale:
                     del self._daily_count_dict[uid]

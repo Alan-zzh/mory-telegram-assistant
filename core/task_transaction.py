@@ -88,6 +88,12 @@ class TaskTransactionManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._release_resource_locks()
 
+        # 【v5.31.2 P0 修复】claimed=False 时不设置内存锁
+        # 之前即使 claim_task 失败（claimed=False），只要 with 块无异常就会调用 _confirm_task_done，
+        # 导致内存锁被错误设置，可能影响后续任务调度。
+        if not self._claimed:
+            return False
+
         if exc_type is None:
             self._confirm_task_done()
         else:
@@ -155,7 +161,8 @@ class TaskTransactionManager:
             try:
                 lock.release()
             except Exception as e:
-                logger.debug(f"操作异常: {e}")
+                # 【v5.31.2 修复】资源锁释放失败会导致其他任务长期饥饿，必须 warning 可见
+                logger.warning(f"🔓 [{self.task_name}] 资源锁释放失败: {e}")
         if self._acquired_locks:
             logger.debug(f"🔓 [{self.task_name}] 已释放资源锁")
         self._acquired_locks.clear()
@@ -167,15 +174,49 @@ class TaskTransactionManager:
         logger.info(f"🔒 [{self.task_name}] 内存锁已设置，时间戳={now}")
 
     def _release_task(self):
+        """【v5.31.2 修复】释放数据库任务锁
+
+        之前直接走 self.db.conn.execute + commit，绕过 Repo 层的锁管理，
+        在 WriteQueueConnectionProxy 下会出现 'cannot commit - no transaction is active'
+        导致 DELETE 没生效，task_log 残留锁，后续重试被 claim_task 拦截。
+
+        修复方案：
+        1. 走 Repo 层 self.db.release_task（已注册，自带 thread lock）
+        2. 失败时回退到直接 SQL，但用独立的 raw connection 避开 WriteQueue
+        3. 都失败则记录 CRITICAL 让上层感知
+        """
         today = datetime.now(_CST).strftime("%Y-%m-%d")
+        released = False
+
+        # 方案 1：走 Repo 层
+        try:
+            released = self.db.release_task(self.task_name)
+            if released:
+                logger.info(f"🔓 [{self.task_name}] 数据库锁已释放（Repo层），允许重试")
+                return
+        except Exception as e:
+            logger.warning(f"⚠️ [{self.task_name}] release_task(Repo层)异常: {e}")
+
+        # 方案 2：直接 SQL 兜底（绕过 WriteQueue，用底层真实连接）
+        # WriteQueueConnectionProxy 下 self.db.conn.execute 的 DELETE 可能因队列满静默丢弃，
+        # 因此取 _real_conn 直接执行，保证 DELETE 真正落库。
         try:
             from core.database import _db_lock as db_lock
+            real_conn = getattr(self.db, '_real_conn', None) or getattr(self.db, 'conn', None)
             with db_lock:
-                self.db.conn.execute(
+                cur = real_conn.execute(
                     "DELETE FROM task_log WHERE task_key=? AND exec_date=?",
                     (self.task_name, today),
                 )
-                self.db.conn.commit()
-            logger.info(f"🔓 [{self.task_name}] 数据库锁已释放，允许重试")
+                real_conn.commit()
+                if cur.rowcount > 0:
+                    released = True
+            if released:
+                logger.info(f"🔓 [{self.task_name}] 数据库锁已释放（直连兜底），允许重试")
+            else:
+                logger.warning(f"⚠️ [{self.task_name}] 直连兜底未删除任何行（可能已被其他流程清理）")
         except Exception as e:
-            logger.warning(f"⚠️ [{self.task_name}] 释放数据库锁失败: {e}")
+            logger.critical(
+                f"🚨 [{self.task_name}] 释放数据库锁完全失败，task_log 可能残留: {e}。"
+                f"需手动 DELETE FROM task_log WHERE task_key='{self.task_name}' AND exec_date='{today}'"
+            )

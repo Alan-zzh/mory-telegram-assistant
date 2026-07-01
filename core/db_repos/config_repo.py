@@ -204,6 +204,34 @@ class ConfigRepo:
                 logger.warning(f"📋 [DB] is_task_executed_today({task_key}) 失败: {e}")
                 return False
 
+    def release_task(self, task_key: str) -> bool:
+        """【v5.31.0 修复 Bug A】释放数据库任务锁，允许重试
+
+        之前 scheduled_broadcast.py 6 处调用 db.release_task(task_key) 全部失效，
+        因为 DB.__getattr__ 抛 AttributeError 被静默吞掉，导致发送失败时
+        task_log 残留，后续重试被 claim_task 拦截。
+
+        实现：DELETE FROM task_log WHERE task_key=? AND exec_date=今天
+        与 TaskTransactionManager._release_task 逻辑一致，但走 Repo 层委托。
+
+        Returns:
+            True 表示删除了至少 1 行，False 表示无删除或异常
+        """
+        today = datetime.now(_CST).strftime("%Y-%m-%d")
+        with self.lock:
+            try:
+                cur = self.conn.execute(
+                    "DELETE FROM task_log WHERE task_key=? AND exec_date=?",
+                    (task_key, today)
+                )
+                self.conn.commit()
+                deleted = cur.rowcount > 0
+                logger.info(f"📋 [DB] release_task({task_key}, {today}) deleted={cur.rowcount}")
+                return deleted
+            except Exception as e:
+                logger.warning(f"📋 [DB] release_task({task_key}) 失败: {e}")
+                return False
+
     def cleanup_old_task_log(self, days: int = 7):
         """清理超过N天的任务执行记录"""
         cutoff = (datetime.now(_CST) - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -215,3 +243,62 @@ class ConfigRepo:
                     logger.info(f"🧹 清理{cur.rowcount}条过期task_log记录(>{days}天)")
             except Exception as e:
                 logger.warning(f"cleanup_old_task_log失败: {e}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 【v5.31.2 新增】健康审计支持方法（_job_proactive_audit / _compute_health_score 调用）
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def check_integrity(self) -> str:
+        """执行 PRAGMA integrity_check，返回完整性检查结果字符串
+
+        PRAGMA 在 WriteQueueConnectionProxy 中被识别为读操作，直接执行不走队列。
+
+        Returns:
+            "ok" 表示完整性正常；否则返回错误描述字符串；异常时返回 "error: ..."
+        """
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("PRAGMA integrity_check")
+                row = c.fetchone()
+                result = row[0] if row else "unknown"
+                logger.debug(f"📋 [DB] check_integrity() = {result}")
+                return result
+            except Exception as e:
+                logger.warning(f"📋 [DB] check_integrity 失败: {e}")
+                return f"error: {e}"
+
+    def get_recent_task_logs(self, hours: int = 24) -> list:
+        """获取最近 N 小时的任务执行记录
+
+        task_log 表记录已抢占的任务：失败的会被 release_task 删除，
+        因此留存的记录代表已成功执行的任务（status 标记为 "success"）。
+
+        Args:
+            hours: 查询时间窗口（小时），默认 24
+
+        Returns:
+            [{"task_key": str, "exec_date": str, "exec_ts": float, "status": "success"}]
+            异常时返回空列表
+        """
+        cutoff = time.time() - hours * 3600
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute(
+                    "SELECT task_key, exec_date, exec_ts FROM task_log WHERE exec_ts >= ? ORDER BY exec_ts DESC",
+                    (cutoff,)
+                )
+                rows = c.fetchall()
+                return [
+                    {
+                        "task_key": r[0],
+                        "exec_date": r[1],
+                        "exec_ts": r[2],
+                        "status": "success",
+                    }
+                    for r in rows
+                ]
+            except Exception as e:
+                logger.warning(f"📋 [DB] get_recent_task_logs(hours={hours}) 失败: {e}")
+                return []

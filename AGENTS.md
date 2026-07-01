@@ -1,6 +1,6 @@
 # Mory小助理 项目规则
 
-> v5.27.0-RC1 | 本文件是项目规则唯一入口，技术细节指向 `docs/technical/`
+> v5.31.2 | 本文件是项目规则唯一入口，技术细节指向 `docs/technical/`
 
 ---
 
@@ -119,6 +119,7 @@
 - 改 schema 必须同步 migration，部署后验证表结构
 - 新增 SQL 操作必须 `CREATE TABLE IF NOT EXISTS`
 - 代码未部署 = 修改未生效
+- ⚠️ **Repo 方法注册铁律**：新增任何 Repo 类（`core/db_repos/*.py`）的 public 方法，必须同步在 `core/database.py` 的 `_REPO_METHOD_MAP` 和 `_REPO_ATTR_MAP` 中添加映射。部署前必须运行 `python scripts/verify_db_methods.py`，输出 "✅ DB 方法注册验证通过" 才可上线。v5.31.1 四层防御（启动自检+__getattr__加固+部署前验证+调度健康监控）已就位，漏注册会导致启动直接失败，不可绕过。
 
 ### 凭据
 - 唯一存 `.env`，代码用 `os.environ["KEY"]`
@@ -154,7 +155,7 @@
 
 ## 9. 技术文档索引
 
-详细技术说明见 `docs/technical/` 目录（共 21 篇文档，按主题命名）。常用入口：
+详细技术说明见 `docs/technical/` 目录（共 18 篇文档，按主题命名）。常用入口：
 
 - `capability-matrix.md` - 能力矩阵
 - `ad-detection.md` - 广告检测 5 层

@@ -19,6 +19,27 @@ logger = get_logger("media_handlers")
 def register_media_handlers(bot, ctx):
     """注册媒体与频道处理器到bot实例"""
 
+    def _is_private_blacklisted(m) -> bool:
+        """私聊黑名单用户的媒体消息不再中继或触发 AI。"""
+        if getattr(getattr(m, "chat", None), "type", "") != "private":
+            return False
+        uid = getattr(getattr(m, "from_user", None), "id", 0) or 0
+        if not uid or not getattr(ctx, "db", None):
+            return False
+        try:
+            admin_ids = set((ctx.config or {}).get("ADMIN_IDS", []) or [])
+            admin_id = (ctx.config or {}).get("ADMIN_ID", 0)
+            if admin_id:
+                admin_ids.add(admin_id)
+            if uid in admin_ids:
+                return False
+            if ctx.db.is_blacklisted(uid):
+                logger.info(f"🚫 黑名单私聊媒体拦截: uid={uid} type={getattr(m, 'content_type', '')}")
+                return True
+        except Exception as e:
+            logger.debug(f"私聊媒体黑名单检查失败 uid={uid}: {e}")
+        return False
+
     def _relay_private_media(m, note: str) -> bool:
         """私聊媒体消息立即转给管理员，便于管理员直接回复。"""
         if m.chat.type != "private" or not ctx.config.get("RELAY_MODE_ENABLED", False):
@@ -36,6 +57,8 @@ def register_media_handlers(bot, ctx):
     @bot.message_handler(content_types=["photo"])
     def on_photo(m):
         try:
+            if _is_private_blacklisted(m):
+                return
             _relay_private_media(m, "🖼️ 私聊图片")
             from modules.content import handle_photo
             handle_photo(bot, m, ctx.config, ctx.mory_bot, ctx.ai)
@@ -46,6 +69,8 @@ def register_media_handlers(bot, ctx):
     @bot.message_handler(content_types=["voice"])
     def on_voice(m):
         try:
+            if _is_private_blacklisted(m):
+                return
             uid = m.from_user.id
             uname = m.from_user.first_name or "神秘人"
             chat_id = m.chat.id
@@ -86,6 +111,8 @@ def register_media_handlers(bot, ctx):
     def on_private_media(m):
         """私聊常见附件直接中继给管理员，保持双线对话完整。"""
         try:
+            if _is_private_blacklisted(m):
+                return
             note_map = {
                 "video": "🎬 私聊视频",
                 "document": "📎 私聊文件",

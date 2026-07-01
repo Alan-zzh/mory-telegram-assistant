@@ -628,7 +628,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             user_count = db.get_user_count() if hasattr(db, 'get_user_count') else '?'
             lines.append(f"👥 用户总数：{user_count}")
         except Exception as e:
-            logger.debug(f"操作异常: {e}")
+            logger.warning(f"健康检查-用户总数查询失败: {e}")
         try:
             today = datetime.now(_CST).strftime("%Y-%m-%d")
             today_tasks = 0
@@ -637,10 +637,10 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
                     row = db.conn.execute("SELECT COUNT(DISTINCT task_key) FROM task_log WHERE exec_date=?", (today,)).fetchone()
                     today_tasks = row[0] if row else 0
                 except Exception as e:
-                    logger.debug(f"操作异常: {e}")
+                    logger.warning(f"健康检查-今日任务查询失败: {e}")
             lines.append(f"📋 今日任务：{today_tasks}项已完成")
         except Exception as e:
-            logger.debug(f"操作异常: {e}")
+            logger.warning(f"健康检查-任务统计失败: {e}")
         lines.append("━" * 20)
         issues = []
         if bl_count > 3:
@@ -657,7 +657,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             elif days_left <= 7:
                 issues.append(f"⚠️ 当前模型{days_left}天后到期")
         except Exception as e:
-            logger.debug(f"操作异常: {e}")
+            logger.warning(f"健康检查-模型到期检查失败: {e}")
         if reply_chance == 0:
             issues.append("⚠️ 回复概率为0，Bot不会主动回复")
         if not issues:
@@ -856,7 +856,8 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             # ── 验证 monkey-patch 是否生效 ──
             try:
                 patch_test = "✅ MoryBot 追踪正常" if hasattr(bot, '_mory_bot_instance') else "⚠️ MoryBot 未挂载"
-            except Exception:
+            except Exception as e:
+                logger.warning(f"健康检查-monkey-patch 检测失败: {e}")
                 patch_test = "⚠️ 无法检测"
 
             # 用已有的方法查询
@@ -942,7 +943,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             if len(style) > 3000:
                 mory_bot.reply_and_track(m, "⚠️ 风格追加已经很长了，请先用「进化 重置风格」清理一下再调教～")
                 return True
-            style_instruction = f"\n【{datetime.now().strftime('%m/%d %H:%M')}风格调整】：从现在开始，说话风格调整为：{style_desc}。保持这个调整直到主人再次修改。"
+            style_instruction = f"\n【{datetime.now(_CST).strftime('%m/%d %H:%M')}风格调整】：从现在开始，说话风格调整为：{style_desc}。保持这个调整直到主人再次修改。"
             config["STYLE_APPEND"] = style + style_instruction
             save_config_fn()
             mory_bot.reply_and_track(m, f"✅ 风格已调整为：「{style_desc[:40]}」\n下次对话立刻见效～")
@@ -1146,7 +1147,7 @@ def handle_admin(bot, mory_bot, m, config: dict, db, ai, save_config_fn) -> bool
             if len(style) > 3000:
                 mory_bot.reply_and_track(m, "⚠️ 风格追加已经很长了，请先用「进化 重置风格」清理一下再调教～")
                 return True
-            evo_text = f"\n【进化指令-{datetime.now().strftime('%m/%d %H:%M')}】：{evo_cmd}"
+            evo_text = f"\n【进化指令-{datetime.now(_CST).strftime('%m/%d %H:%M')}】：{evo_cmd}"
             config["STYLE_APPEND"] = style + evo_text
             save_config_fn()
             mory_bot.reply_and_track(m, f"🧬 已进化：「{evo_cmd[:60]}{'...' if len(evo_cmd)>60 else ''}」\n下次对话立刻生效")
@@ -1229,7 +1230,7 @@ def _send_report(bot, chat_id: int, config: dict, db):
     report = (
         f"╔═══════════════════════════════════╗\n"
         f"║  📊 {config['BOT_NAME']} 私域运营日报\n"
-        f"║  {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        f"║  {datetime.now(_CST).strftime('%Y-%m-%d %H:%M')}\n"
         f"╚═══════════════════════════════════╝\n"
         f"\n"
         f"👥 人员概览\n"

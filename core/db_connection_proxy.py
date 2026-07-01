@@ -194,10 +194,16 @@ class WriteQueueConnectionProxy:
         try:
             self._real.rollback()
         except Exception as e:
-            logger.debug(f"proxy rollback 异常: {e}")
+            logger.warning(f"proxy rollback 异常: {e}")
 
     def close(self):
         self._real.close()
+
+    def __enter__(self):
+        return self._real.__enter__()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self._real.__exit__(exc_type, exc_val, exc_tb)
 
     def __getattr__(self, name):
         """其他属性/方法透传到真实连接"""

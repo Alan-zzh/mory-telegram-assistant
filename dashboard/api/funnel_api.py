@@ -6,8 +6,12 @@
   GET /api/analytics/funnel/trend - 返回转化趋势（按天）
 """
 import time
+from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 from dashboard.helpers import login_required, get_db
+
+# 【Loop 16】CST 时区，避免 VPS(UTC) 下漏斗显示日期错位 8 小时
+_CST = timezone(timedelta(hours=8))
 
 funnel_bp = Blueprint('funnel', __name__, url_prefix='/api/analytics')
 
@@ -76,8 +80,7 @@ def get_funnel():
             prev_count = count
 
         # 计算时间范围
-        from datetime import datetime, timedelta
-        end_date = datetime.now()
+        end_date = datetime.now(_CST)
         start_date = end_date - timedelta(days=days)
 
         return jsonify({

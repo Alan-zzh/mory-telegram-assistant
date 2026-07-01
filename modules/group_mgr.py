@@ -44,7 +44,9 @@ from core.keyword_manager import (
     _DEFAULT_CONVERT_WORD,
 )
 from modules.ad_detector import check_username_suspicious
-from modules.avatar_detector import check_and_ban_if_porn_avatar
+from modules.avatar_detector import check_and_ban_if_porn_avatar, check_avatar_ocr_text
+from modules.ad_profile_signals import detect_profile_ad_signal
+from modules.ad_patterns_encoded import BIO_PATTERNS
 
 logger = get_logger("group_mgr")
 
@@ -103,13 +105,67 @@ def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
         except Exception as e:
             logger.warning(f"头像检测失败 {user_display}: {e}")
 
-        if matched_keyword or is_suspicious or avatar_banned:
+        # ── v5.30.2 新增：头像OCR文字检测（"看我简介"类视觉广告） ──
+        avatar_ocr_hit = False
+        avatar_ocr_text = ""
+        avatar_ocr_score = 0
+        try:
+            avatar_ocr_hit, avatar_ocr_text, avatar_ocr_score = check_avatar_ocr_text(
+                bot, user.id, config
+            )
+            if avatar_ocr_hit:
+                logger.warning(
+                    f"🚫 头像OCR命中广告: {user_display}({user.id}) "
+                    f"文字={avatar_ocr_text[:50]} 评分={avatar_ocr_score}"
+                )
+        except Exception as e:
+            logger.warning(f"头像OCR检测失败 {user_display}: {e}")
+
+        # ── v5.30.2 新增：BIO简介广告检测 ──
+        bio_hit = False
+        bio_text = ""
+        try:
+            chat_info = bot.get_chat(user.id)
+            bio_text = getattr(chat_info, "bio", "") or ""
+            if bio_text:
+                # 直接用 BIO_PATTERNS 做正则匹配（零TOKEN消耗）
+                for pattern in BIO_PATTERNS:
+                    try:
+                        if re.search(pattern, bio_text, re.IGNORECASE):
+                            bio_hit = True
+                            logger.warning(
+                                f"🚫 BIO命中广告规则: {user_display}({user.id}) "
+                                f"bio={bio_text[:50]} pattern={pattern[:30]}"
+                            )
+                            break
+                    except re.error:
+                        continue
+                # 也调用 detect_profile_ad_signal 做完整检测（含emoji状态）
+                if not bio_hit:
+                    profile_result = detect_profile_ad_signal(bot, user, bio_text, config)
+                    if profile_result.get("is_ad"):
+                        bio_hit = True
+                        logger.warning(
+                            f"🚫 资料信号命中广告: {user_display}({user.id}) "
+                            f"reason={profile_result.get('reason', '')}"
+                        )
+        except Exception as e:
+            logger.debug(f"BIO检测失败 {user_display}: {e}")
+
+        # ── 综合判断：任一检测命中 → 广告处置 ──
+        if matched_keyword or is_suspicious or avatar_banned or avatar_ocr_hit or bio_hit:
             if matched_keyword:
                 logger.warning(f"🚫 已加黑名单：{user_display} 命中关键词={matched_keyword}")
                 notify_reason = f"🔑 命中关键词：{matched_keyword}"
             elif avatar_banned:
                 logger.warning(f"🚫 已加黑名单：{user_display} 原因=头像检测违规")
                 notify_reason = f"🔑 原因：头像检测违规"
+            elif avatar_ocr_hit:
+                logger.warning(f"🚫 已加黑名单：{user_display} 原因=头像OCR广告文字")
+                notify_reason = f"🔑 原因：头像包含广告文字（OCR识别）文字={avatar_ocr_text[:30]}"
+            elif bio_hit:
+                logger.warning(f"🚫 已加黑名单：{user_display} 原因=BIO简介广告")
+                notify_reason = f"🔑 原因：简介/BIO包含广告内容 bio={bio_text[:30]}"
             else:
                 logger.warning(f"🚫 已加黑名单：{user_display} 原因={suspicious_reason}")
                 notify_reason = f"🔑 原因：{suspicious_reason}"
@@ -129,48 +185,39 @@ def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
         db.upsert_user(user.id, user.first_name or "新人", "group")
         db.add_points(user.id, 0)
 
-        welcome = f"""👋 欢迎 {user.first_name or '亲爱的'} 加入！
+        welcome = f"""👋 {user.first_name or '你'}，欢迎呀～
 
-🎞 【视觉之窗 · 免费预览】
-👉 @moryselect (先看诚意，再谈定力)
+🎞 免费预览 → @moryselect
+🤖 自助下单 → @MorychannelBot（完整版/无遮挡）
+💎 海外渠道 → https://fansone.co/m0i3i4
 
-🤖 【自助入 VIP · 深夜补给】
-👉 @MorychannelBot (4K母版/全量免遮/一键解锁)
-💎 海外用户(Fansone)：https://fansone.co/m0i3i4
+🔞 有些东西群里不方便说啦，私聊问我或者找Bot都可以。
+原味/定制这种私密的东西，别在群里问哦～
 
-🔞 【独占特权 · 深度变现】
-👕 [原味私藏]：带着体温的内衣/丝袜，顺丰包邮，把我的味道带回家。
-📽 [私人定制]：你的剧本，我的身体，1v1 拍摄，满足最脏的幻想。
-📞 [私密联系]：仅限付费 VIP 解锁个人联系方式，非诚勿扰。
-
-📢 【咨询与反馈】
-有问题请 @小助理或 @Moryfansbot 寻求帮助。
-
-🌐 唯一官网 https://Mory.life
-未成年禁入 | 理智消费 | 这里只欢迎有体面的成年人。"""
+📢 有问题 @小助理
+🌐 https://Mory.life
+未成年禁入哦。"""
 
         bot.send_message(m.chat.id, welcome)
 
-        # 黑话/行话新人提示（10%概率触发，避免每次都发）
-        if random.random() < 0.1:
+        # 黑话/行话新人提示（15%概率触发，避免每次都发）
+        if random.random() < 0.15:
             slang_dict = config.get("SLANG_DICT", {})
             if slang_dict:
-                sample = random.sample(list(slang_dict.items()), min(3, len(slang_dict)))
+                sample = random.sample(list(slang_dict.items()), min(2, len(slang_dict)))
                 slang_text = "\n".join([f"  💡 {k}：{v}" for k, v in sample])
                 try:
                     bot.send_message(m.chat.id,
-                        f"📖 新人小贴士：本群有一些专属术语哦～\n{slang_text}\n"
-                        f"听不懂随时问小助理～")
+                        f"刚进来有些词听不懂？没关系啦，直接问我就好～\n{slang_text}")
                 except Exception as e:
                     logger.warning(f"发送新人术语提示失败：{e}")
 
         # 私聊发送完整介绍
-        intro = (f"嗨～ 我是{config['BOT_NAME']}的小助理！\n\n"
-                 f"你已加入{config['BOT_NAME']}的专属私域社群 🎉\n\n"
-                 f"想了解完整价格和服务？\n"
-                 f"发「价格表」给我，所有付费项目一目了然～\n"
-                 f"也可以直接 @MorychannelBot 自助下单 🛒\n\n"
-                 f"有问题随时问我哦～")
+        intro = ("欢迎呀～\n\n"
+                 "想知道价格发「价格表」就好啦。\n"
+                 "下单直接找 @MorychannelBot，按提示操作很简单的。\n"
+                 "至臻/全享/图集/原味/定制都在那边，\n"
+                 "有什么不懂的直接问我嘛。")
         try:
             bot.send_message(user.id, intro)
         except Exception as e:

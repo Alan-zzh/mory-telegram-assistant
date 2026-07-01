@@ -27,7 +27,7 @@
 
 import sqlite3
 import time
-from threading import Lock
+from threading import RLock
 from datetime import datetime, timedelta, timezone
 
 # 【修复v21.47】统一使用北京时间，避免时区混乱导致每日重置错误
@@ -36,8 +36,8 @@ from core.logging_util import get_logger
 
 logger = get_logger("database")
 
-# 全局互斥锁，确保并发写入安全
-_db_lock = Lock()
+# 全局互斥锁，确保并发写入安全（RLock 可重入，避免 redpacket/lucky_wheel 锁内调用 add_points 死锁）
+_db_lock = RLock()
 
 
 class DB:
@@ -77,27 +77,39 @@ class DB:
         self.relay = RelayRepo(self)
         self.ab_test = ABTestRepo(self)
 
+        # 【v5.31.1 第一层防御：启动自检】扫描所有 Repo 实例的 public 方法，
+        # 验证每个方法都在 _REPO_METHOD_MAP 中注册。缺失则直接启动失败，
+        # 杜绝"方法漏注册→AttributeError→静默吞错→生产全灭"模式（v5.30.1/v5.30.3/v5.31.0 同坑复发 3 次）。
+        self._self_check_repo_methods()
+
     # 【v4.3.2修复F-05】添加close()方法，确保SQLite连接正确关闭
+    # 【v5.31.2 修复】移除 getattr(self, '_logger', logger)，会触发 __getattr__ 委托机制
+    # 输出 CRITICAL 日志"DB 方法不存在：'_logger' 未在 _REPO_METHOD_MAP 注册"
+    # 【v5.31.2 二次修复】close() 和 __del__() 用 self.__dict__.get('conn') 避免触发 __getattr__
+    # 当 DB 实例被 GC 时 __dict__ 可能已被清空，self.conn 会 fallthrough 到 __getattr__ 委托机制
     def close(self):
         """关闭数据库连接，释放资源"""
         with _db_lock:
             try:
-                if self.conn:
-                    self.conn.close()
-                    _logger = getattr(self, '_logger', logger)
-                    _logger.info("✅ 数据库连接已关闭")
+                conn = self.__dict__.get('conn')
+                if conn:
+                    conn.close()
+                    logger.info("✅ 数据库连接已关闭")
             except Exception as e:
-                _logger = getattr(self, '_logger', logger)
-                _logger.warning(f"数据库关闭异常：{e}")
+                logger.warning(f"数据库关闭异常：{e}")
 
     def __del__(self):
-        """析构时自动关闭连接（安全版本：不引用模块级logger，避免shutdown时None）"""
+        """析构时自动关闭连接（安全版本：用 __dict__.get 避免触发 __getattr__ 委托机制）"""
         try:
-            if self.conn:
+            conn = self.__dict__.get('conn')
+            if conn:
                 with _db_lock:
-                    self.conn.close()
+                    conn.close()
         except Exception as e:
-            logger.debug(f"操作异常: {e}")
+            try:
+                logger.debug(f"操作异常: {e}")
+            except Exception:
+                pass
     # ──────────────────────────── 异常处理辅助 ──────────────────────────
     def _log_db_error(self, operation: str, error: Exception, level: str = "warning", context: str = ""):
         """
@@ -459,7 +471,13 @@ class DB:
                 )""")
                 c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_task_log_unique ON task_log(task_key, exec_date)")
             except Exception as e:
-                logger.debug(f"task_log唯一索引迁移: {e}")
+                # [v5.31.2 P0-2 加固] 索引创建失败会导致 claim_task 防重机制失效，不能静默吞掉
+                logger.error(f"🚨 task_log UNIQUE 索引创建失败，防重机制可能失效: {e}")
+                try:
+                    from modules.auto_tasks import report_fault
+                    report_fault("task_log 索引异常", f"UNIQUE 索引创建失败: {e}", "🚨")
+                except Exception:
+                    pass  # report_fault 不可用时不上报，但不阻塞启动
 
             c.execute("""CREATE TABLE IF NOT EXISTS reply_feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -668,11 +686,8 @@ class DB:
                 UNIQUE(uid, date)
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_lucky_wheel_uid_date ON lucky_wheel_results(uid, date)")
-            # 兼容旧表：添加 spin_count 列
-            try:
-                c.execute("ALTER TABLE lucky_wheel_results ADD COLUMN spin_count INTEGER NOT NULL DEFAULT 1")
-            except Exception as e:
-                self._log_db_error("ALTER TABLE lucky_wheel_results ADD COLUMN spin_count", e, "warning", "表结构迁移")
+            # 兼容旧表：幂等添加 spin_count 列（避免 duplicate column 反复报错）
+            self._safe_add_column(c, "lucky_wheel_results", "spin_count", "INTEGER NOT NULL DEFAULT 1")
 
             # ── 【v4.16新增】高级群管功能表 ──────
             c.execute("""CREATE TABLE IF NOT EXISTS warnings (
@@ -1371,6 +1386,7 @@ class DB:
         'add_keyword': 'users', 'get_active_users': 'users', 'get_inactive_users': 'users',
         'reset_last_active': 'users', 'update_last_active': 'users', 'earn_badge': 'users', 'get_user_badges': 'users',
         'get_all_badges_leaderboard': 'users', 'get_user_profile': 'users',
+        'get_user_persona_profile': 'users',
         'get_all_user_profiles': 'users', 'delete_user': 'users',
         # group_repo
         'record_group_join': 'groups', 'record_group_left': 'groups',
@@ -1381,6 +1397,11 @@ class DB:
         'mute_user': 'groups', 'is_muted': 'groups',
         'blacklist_add': 'groups', 'blacklist_remove': 'groups', 'is_blacklisted': 'groups',
         'check_spam': 'groups',
+        # [v5.28.3 新增] 以下 4 个方法一直漏注册导致 message_snapshots 全为空
+        'snapshot_message': 'groups',
+        'mark_message_deleted': 'groups',
+        'get_user_messages': 'groups',
+        'get_user_undeleted_messages': 'groups',
         'record_channel_member_snapshot': 'groups', 'get_channel_member_changes': 'groups',
         'get_channel_weekly_member_changes': 'groups', 'get_channel_monthly_member_changes': 'groups',
         'upsert_group_member': 'groups', 'remove_group_member': 'groups',
@@ -1420,7 +1441,10 @@ class DB:
         'delete_keyword_trigger': 'config', 'update_keyword_trigger': 'config',
         'match_keyword_trigger': 'config',
         'claim_task': 'config', 'is_task_executed_today': 'config',
+        'release_task': 'config',  # [v5.31.0 修复 Bug A] 之前漏注册，scheduled_broadcast.py 6 处调用全部静默失效
         'cleanup_old_task_log': 'config',
+        # [v5.31.2 修复] 健康审计方法漏注册，导致 _job_proactive_audit / _compute_health_score CRITICAL 告警
+        'check_integrity': 'config', 'get_recent_task_logs': 'config',
         # social_repo
         'set_wake_up': 'social', 'get_all_wake_ups': 'social',
         'inc_puzzle_score': 'social', '_calc_consecutive_days': 'social',
@@ -1440,10 +1464,125 @@ class DB:
         'distill_candidates': 'questions',
         # relay_repo
         'save_session': 'relay', 'find_by_admin_msg': 'relay', 'clean_expired': 'relay',
+        # ab_test_repo [v5.30.3 修复] 之前整个 repo 17 个方法漏注册，导致 A/B 测试持久化和增长遥测全部静默失效
+        'create_experiment': 'ab_test', 'get_experiment': 'ab_test',
+        'list_experiments': 'ab_test', 'update_experiment_status': 'ab_test',
+        'assign_user_variant': 'ab_test', 'get_user_variant': 'ab_test',
+        'get_assignment_stats': 'ab_test',
+        'log_telemetry': 'ab_test', 'log_conversation_telemetry': 'ab_test',
+        'get_conversion_funnel': 'ab_test', 'get_daily_kpi_series': 'ab_test',
+        'get_top_features': 'ab_test',
+        'log_guardian_alert': 'ab_test', 'get_recent_guardian_alerts': 'ab_test',
+        'save_weekly_report': 'ab_test', 'get_weekly_reports': 'ab_test',
+        # user_repo 扩展 [v5.30.3 修复] 画像/AB统计/按钮统计 8 个方法漏注册
+        'upsert_user_profile': 'users', 'list_user_profiles': 'users',
+        'record_ab_test_sent': 'users', 'record_ab_test_conversion': 'users',
+        'get_ab_test_stats': 'users',
+        'record_button_impression': 'users', 'record_button_click': 'users',
+        'get_button_stats': 'users',
+        # social_repo 扩展 [v5.30.3 修复] 购物车挽回 5 个方法漏注册
+        'init_cart_recovery': 'social', 'advance_recovery_stage': 'social',
+        'get_pending_cart_recoveries': 'social', 'cancel_cart_recovery': 'social',
+        'log_paid': 'social',
     }
+
+    # ──────────────────────────── v5.31.1 第一层防御：启动自检 ──────────────────────────
+    # Repo 属性名 → _REPO_METHOD_MAP 中注册的 repo key 的映射
+    _REPO_ATTR_MAP = {
+        'users': 'users', 'groups': 'groups', 'points': 'points',
+        'tracking': 'tracking', 'config': 'config', 'social': 'social',
+        'questions': 'questions', 'relay': 'relay', 'ab_test': 'ab_test',
+    }
+
+    def _self_check_repo_methods(self):
+        """启动时自检：扫描所有 Repo 实例的 public 方法，验证每个方法都在 _REPO_METHOD_MAP 中注册。
+
+        杜绝 v5.30.1/v5.30.3/v5.31.0 同坑复发 3 次：
+        - v5.30.1 漏 4 个方法 → message_snapshots 30+ 版本空表
+        - v5.30.3 漏 30 个方法 → 增长/A-B/画像全失效
+        - v5.31.0 漏 1 个方法 → 播报全灭
+
+        自检逻辑：
+        1. 遍历所有 Repo 实例（users/groups/points/tracking/config/social/questions/relay/ab_test）
+        2. 收集每个 Repo 的所有 public 方法（不以 _ 开头、callable、非 class/property）
+        3. 排除 __init__/close 等 DB 自有方法和不应暴露的内部方法
+        4. 检查每个方法是否在 _REPO_METHOD_MAP 中且映射到正确的 repo
+        5. 同时反向检查：_REPO_METHOD_MAP 中注册的方法是否在对应 Repo 中真实存在（防拼写错误）
+        6. 任何不匹配 → RuntimeError 阻止启动
+        """
+        import inspect
+
+        missing = []  # Repo 中存在但 _REPO_METHOD_MAP 未注册的方法
+        orphaned = []  # _REPO_METHOD_MAP 中注册但 Repo 中不存在的方法（拼写错误/已删除）
+
+        # 正向检查：Repo 方法 → _REPO_METHOD_MAP
+        for attr_name, repo_key in self._REPO_ATTR_MAP.items():
+            repo_instance = getattr(self, attr_name, None)
+            if repo_instance is None:
+                continue
+            for method_name in dir(repo_instance):
+                if method_name.startswith('_'):
+                    continue
+                attr = getattr(repo_instance, method_name, None)
+                if not callable(attr):
+                    continue
+                # 排除继承自 object 的方法
+                if method_name in ('conn', 'lock', 'db_file'):
+                    continue
+                # 检查是否在 MAP 中
+                mapped_repo = self._REPO_METHOD_MAP.get(method_name)
+                if mapped_repo is None:
+                    missing.append(f"{attr_name}.{method_name}()")
+                elif mapped_repo != repo_key:
+                    missing.append(f"{attr_name}.{method_name}() → mapped to '{mapped_repo}' but should be '{repo_key}'")
+
+        # 反向检查：_REPO_METHOD_MAP → Repo 方法是否真实存在
+        repo_instances = {
+            'users': self.users, 'groups': self.groups, 'points': self.points,
+            'tracking': self.tracking, 'config': self.config, 'social': self.social,
+            'questions': self.questions, 'relay': self.relay, 'ab_test': self.ab_test,
+        }
+        for method_name, repo_key in self._REPO_METHOD_MAP.items():
+            repo_instance = repo_instances.get(repo_key)
+            if repo_instance is None:
+                orphaned.append(f"{method_name}() → repo '{repo_key}' not found")
+                continue
+            if not hasattr(repo_instance, method_name):
+                orphaned.append(f"{method_name}() → registered to '{repo_key}' but method does not exist")
+
+        errors = []
+        if missing:
+            errors.append(f"❌ DB 启动自检失败：{len(missing)} 个 Repo 方法未在 _REPO_METHOD_MAP 注册（将导致 AttributeError + 静默吞错）:\n  " +
+                         "\n  ".join(missing))
+        if orphaned:
+            errors.append(f"⚠️ DB 启动自检警告：{len(orphaned)} 个 _REPO_METHOD_MAP 注册项在 Repo 中不存在（拼写错误或方法已删除）:\n  " +
+                         "\n  ".join(orphaned))
+
+        if errors:
+            for e in errors:
+                logger.critical(e)
+            # missing 是致命错误，阻止启动；orphaned 是警告但也阻止启动防止拼写错误
+            raise RuntimeError(
+                f"DB _REPO_METHOD_MAP 自检失败：{len(missing)} missing, {len(orphaned)} orphaned。"
+                f"请检查 core/database.py _REPO_METHOD_MAP 注册。\n缺失: {missing}\n孤儿: {orphaned}"
+            )
+
+        total_methods = sum(
+            len([m for m in dir(getattr(self, a)) if not m.startswith('_') and callable(getattr(getattr(self, a), m, None))])
+            for a in self._REPO_ATTR_MAP
+        )
+        logger.info(f"✅ DB 启动自检通过：{len(self._REPO_METHOD_MAP)} 个委托方法映射到 9 个 Repo，共 {total_methods} public 方法全覆盖")
 
     def __getattr__(self, name):
         repo_name = self._REPO_METHOD_MAP.get(name)
         if repo_name:
             return getattr(getattr(self, repo_name), name)
-        raise AttributeError(f"'DB' object has no attribute '{name}'")
+        # 【v5.31.1 第二层防御】方法不存在时输出 CRITICAL 日志含调用栈，
+        # 即使被 except Exception 吞掉，日志中也有明确记录（杜绝静默失败）
+        import traceback
+        stack = traceback.format_stack()[-5:-1]  # 取最近4层调用栈（不含自身）
+        logger.critical(
+            f"🚨 DB 方法不存在：'{name}' 未在 _REPO_METHOD_MAP 注册！\n"
+            f"调用栈:\n{''.join(stack)}"
+        )
+        raise AttributeError(f"'DB' object has no attribute '{name}' (not registered in _REPO_METHOD_MAP; check core/database.py)")

@@ -98,6 +98,14 @@ class UserLifecycleManager:
     def lock(self):
         return self._db.lock
 
+    def _safe_add_lifecycle_column(self, c):
+        """幂等添加 lifecycle_stage 列（避免 duplicate column 反复报错）"""
+        c.execute("PRAGMA table_info(user_profiles)")
+        existing = {row[1] for row in c.fetchall()}
+        if "lifecycle_stage" not in existing:
+            c.execute("ALTER TABLE user_profiles ADD COLUMN lifecycle_stage TEXT DEFAULT 'New'")
+            logger.info("✅ 列已添加: user_profiles.lifecycle_stage")
+
     def sync_lifecycle_buckets(self) -> dict:
         """
         扫描 user_profiles 表，更新每个用户的 lifecycle_stage 标签。
@@ -111,10 +119,7 @@ class UserLifecycleManager:
         with self.lock:
             c = self.conn.cursor()
             # 幂等补列（防御旧库）
-            try:
-                c.execute("ALTER TABLE user_profiles ADD COLUMN lifecycle_stage TEXT DEFAULT 'New'")
-            except Exception:
-                pass  # 列已存在
+            self._safe_add_lifecycle_column(c)
 
             c.execute("SELECT user_id, created_at, last_interaction FROM user_profiles")
             rows = c.fetchall()
@@ -156,10 +161,7 @@ class UserLifecycleManager:
         with self.lock:
             c = self.conn.cursor()
             # 幂等补列
-            try:
-                c.execute("ALTER TABLE user_profiles ADD COLUMN lifecycle_stage TEXT DEFAULT 'New'")
-            except Exception:
-                pass
+            self._safe_add_lifecycle_column(c)
 
             c.execute(
                 "SELECT user_id, last_interaction, lifecycle_stage FROM user_profiles "
@@ -187,10 +189,7 @@ class UserLifecycleManager:
         with self.lock:
             c = self.conn.cursor()
             # 幂等补列
-            try:
-                c.execute("ALTER TABLE user_profiles ADD COLUMN lifecycle_stage TEXT DEFAULT 'New'")
-            except Exception:
-                pass
+            self._safe_add_lifecycle_column(c)
 
             c.execute(
                 "SELECT lifecycle_stage, COUNT(*) FROM user_profiles GROUP BY lifecycle_stage"

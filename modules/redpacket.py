@@ -52,17 +52,26 @@ def handle_send_redpacket(bot, m, config, db, args):
             bot.reply_to(m, "❌ 参数无效（金额>0，数量1-100）")
             return
 
-        # 检查管理员积分
-        admin_points = db.get_user_points(uid)
-        if admin_points is None or admin_points < total:
-            current = admin_points if admin_points is not None else 0
-            bot.reply_to(m, f"❌ 积分不足！当前：{current}，需要：{total}")
-            return
-
         now_ts = int(time.time())
         with _db_lock:
-            # 在事务内扣积分和创建红包记录，保证原子性
-            db.add_points(uid, -total)
+            # [TRAE SOLO CN] 原子扣款：UPDATE ... WHERE uid=? AND points>=?，避免 TOCTOU 竞态
+            cur = db.conn.execute(
+                "UPDATE user_levels SET points = points - ? WHERE uid = ? AND points >= ?",
+                (total, uid, total)
+            )
+            if cur.rowcount == 0:
+                db.conn.rollback()
+                current = db.get_user_points(uid) or 0
+                bot.reply_to(m, f"❌ 积分不足！当前：{current}，需要：{total}")
+                return
+            # 记录积分日志
+            try:
+                db.conn.execute(
+                    "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                    (uid, -total, db.get_user_points(uid), "redpacket", now_ts)
+                )
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
             cursor = db.conn.execute(
                 "INSERT INTO redpackets (sender_id, chat_id, total_points, count, remaining, mode, expired, ts) VALUES (?,?,?,?,?,?,?,?)",
                 (uid, chat_id, total, count, count, mode, 0, now_ts)
@@ -182,18 +191,20 @@ def handle_claim_redpacket(bot, call, config, db):
                 bot.answer_callback_query(call.id, text="你已经抢过了！", show_alert=True)
                 return True
 
-            db.conn.execute(
-                "INSERT INTO redpacket_claims (redpacket_id, uid, amount, ts) VALUES (?,?,?,?)",
-                (rp_id, uid, amount, now_ts)
-            )
-            db.conn.execute(
-                "UPDATE redpackets SET remaining=remaining-1 WHERE id=?",
-                (rp_id,)
-            )
-            db.conn.commit()
-
-        # 积分入账（add_points内部有锁）
-        _lv_result = db.add_points(uid, amount)
+            try:
+                db.conn.execute(
+                    "INSERT INTO redpacket_claims (redpacket_id, uid, amount, ts) VALUES (?,?,?,?)",
+                    (rp_id, uid, amount, now_ts)
+                )
+                db.conn.execute(
+                    "UPDATE redpackets SET remaining=remaining-1 WHERE id=?",
+                    (rp_id,)
+                )
+                # 积分入账与领取记录原子提交（add_points内部RLock可重入，会一并commit领取记录）
+                _lv_result = db.add_points(uid, amount)
+            except Exception:
+                db.conn.rollback()
+                raise
 
         bot.answer_callback_query(call.id, text=f"🧧 抢到 {amount} 积分！")
 
@@ -268,8 +279,8 @@ def check_expired_redpackets(bot, config, db):
                         "UPDATE user_levels SET points=points+? WHERE uid=?", (remaining, sender_id)
                     )
                     db.conn.execute(
-                        "INSERT INTO points_log (uid, delta, reason, ts) VALUES (?,?,?,?)",
-                        (sender_id, remaining, f"红包过期退回:rp={rp_id}", int(time.time()))
+                        "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                        (sender_id, remaining, db.get_user_points(sender_id), f"红包过期退回:rp={rp_id}", int(time.time()))
                     )
                 db.conn.commit()
 

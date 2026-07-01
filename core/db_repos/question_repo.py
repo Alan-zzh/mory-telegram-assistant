@@ -62,13 +62,16 @@ class QuestionRepo:
                 logger.error(f"记录用户提问失败：{e}")
                 return 0
 
-    def update_question_reply(self, question_id, ai_reply_summary, faq_hit_id=0):
+    def update_question_reply(self, question_id, ai_reply_summary, faq_hit_id=0) -> bool:
         """更新问题的AI回复摘要和FAQ命中ID
 
         Args:
             question_id: 问题记录ID
             ai_reply_summary: AI回复摘要（截断到200字符）
             faq_hit_id: 命中的FAQ知识库ID
+
+        Returns:
+            True=成功，False=失败
         """
         with self.lock:
             try:
@@ -79,8 +82,10 @@ class QuestionRepo:
                     (str(ai_reply_summary)[:200], int(faq_hit_id), int(question_id)),
                 )
                 self.conn.commit()
+                return True
             except Exception as e:
                 logger.error(f"更新问题回复摘要失败：{e}")
+                return False
 
     def get_question_stats(self):
         """获取问题统计概览
@@ -307,8 +312,12 @@ class QuestionRepo:
             logger.error(f"搜索FAQ失败：{e}")
             return []
 
-    def increment_faq_hit(self, faq_id):
-        """增加FAQ条目的命中计数"""
+    def increment_faq_hit(self, faq_id) -> bool:
+        """增加FAQ条目的命中计数
+
+        Returns:
+            True=成功，False=失败
+        """
         with self.lock:
             try:
                 self.conn.execute(
@@ -316,8 +325,10 @@ class QuestionRepo:
                     (int(faq_id),),
                 )
                 self.conn.commit()
+                return True
             except Exception as e:
                 logger.error(f"增加FAQ命中计数失败：{e}")
+                return False
 
     def get_faq_knowledge(self, limit=50, offset=0, category='', status='approved'):
         """获取FAQ知识库列表
@@ -399,17 +410,20 @@ class QuestionRepo:
                 logger.error(f"新增FAQ知识库失败：{e}")
                 return 0
 
-    def update_faq_knowledge(self, faq_id, **kwargs):
+    def update_faq_knowledge(self, faq_id, **kwargs) -> bool:
         """更新FAQ知识库条目的指定字段
 
         支持更新的字段：answer_template, ai_polish, match_mode, priority,
                        status, question_pattern, question_category
+
+        Returns:
+            True=成功，False=失败（含无可更新字段的情况）
         """
         allowed = {'answer_template', 'ai_polish', 'match_mode', 'priority',
                    'status', 'question_pattern', 'question_category'}
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
-            return
+            return False
         with self.lock:
             try:
                 updates['updated_at'] = int(time.time())
@@ -419,17 +433,25 @@ class QuestionRepo:
                     f"UPDATE faq_knowledge SET {set_clause} WHERE id=?", values,
                 )
                 self.conn.commit()
+                return True
             except Exception as e:
                 logger.error(f"更新FAQ知识库失败：{e}")
+                return False
 
-    def delete_faq_knowledge(self, faq_id):
-        """删除FAQ知识库条目"""
+    def delete_faq_knowledge(self, faq_id) -> bool:
+        """删除FAQ知识库条目
+
+        Returns:
+            True=成功，False=失败
+        """
         with self.lock:
             try:
                 self.conn.execute("DELETE FROM faq_knowledge WHERE id=?", (int(faq_id),))
                 self.conn.commit()
+                return True
             except Exception as e:
                 logger.error(f"删除FAQ知识库失败：{e}")
+                return False
 
     # ─────────────────────────────── FAQ候选 ────────────────────────────
 

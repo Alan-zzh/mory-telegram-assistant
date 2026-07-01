@@ -13,12 +13,15 @@ modules/report.py · 举报/标记系统
 """
 
 import time
+import threading
 from core.logging_util import get_logger
 
 logger = get_logger("report")
 
 # 内存冷却字典：{uid: last_report_timestamp}
 _report_cooldown = {}
+# 【v5.31.2 修复】Bot 50 线程并发处理消息，无锁会导致 TOCTOU 绕过冷却 + eviction del KeyError
+_report_cooldown_lock = threading.Lock()
 
 # 冷却时间（秒）
 _COOLDOWN_SECONDS = 300  # 5分钟
@@ -62,22 +65,23 @@ def handle_report(bot, m, config, db):
     uid = reporter.id
     now = time.time()
 
-    # 冷却检查
-    last_time = _report_cooldown.get(uid, 0)
-    if now - last_time < _COOLDOWN_SECONDS:
-        bot.reply_to(m, "举报冷却中，请5分钟后再试")
-        return
+    # 冷却检查（加锁避免 TOCTOU 绕过）
+    with _report_cooldown_lock:
+        last_time = _report_cooldown.get(uid, 0)
+        if now - last_time < _COOLDOWN_SECONDS:
+            bot.reply_to(m, "举报冷却中，请5分钟后再试")
+            return
 
-    # 更新冷却时间
-    _report_cooldown[uid] = now
+        # 更新冷却时间
+        _report_cooldown[uid] = now
 
-    # 防内存泄漏：超出最大条目数时移除最早的1/3条目
-    if len(_report_cooldown) > _MAX_COOLDOWN_ENTRIES:
-        sorted_items = sorted(_report_cooldown.items(), key=lambda x: x[1])
-        evict_count = len(sorted_items) // 3
-        for evict_uid, _ in sorted_items[:evict_count]:
-            del _report_cooldown[evict_uid]
-        logger.info(f"🧹 举报冷却字典超出上限，已清理 {evict_count} 条旧记录")
+        # 防内存泄漏：超出最大条目数时移除最早的1/3条目
+        if len(_report_cooldown) > _MAX_COOLDOWN_ENTRIES:
+            sorted_items = sorted(_report_cooldown.items(), key=lambda x: x[1])
+            evict_count = len(sorted_items) // 3
+            for evict_uid, _ in sorted_items[:evict_count]:
+                _report_cooldown.pop(evict_uid, None)  # 并发安全删除
+            logger.info(f"🧹 举报冷却字典超出上限，已清理 {evict_count} 条旧记录")
 
     # 收集管理员ID
     admin_id = config.get("ADMIN_ID", 0)

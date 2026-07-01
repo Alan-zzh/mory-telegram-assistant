@@ -35,14 +35,16 @@ class ColdGroupTrigger(TriggerBase):
         cooldown_cutoff = now - cooldown_min * 60
 
         # 复用 message_snapshots 表查最近消息
+        # 【v5.31.2 修复】rm.db.execute/commit 未在 _REPO_METHOD_MAP 注册，
+        # 会触发 __getattr__ CRITICAL 被静默吞掉，改用 rm.db.conn 直接操作
         try:
-            rows = rm.db.execute(
+            rows = rm.db.conn.execute(
                 "SELECT chat_id, MAX(ts) as last_ts FROM message_snapshots "
                 "WHERE ts > ? GROUP BY chat_id",
                 (cooldown_cutoff,)
             ).fetchall()
         except Exception as e:
-            logger.debug(f"冷场检测查询失败: {e}")
+            logger.warning(f"冷场检测查询失败: {e}")
             return False
 
         cold_chats = []
@@ -51,14 +53,14 @@ class ColdGroupTrigger(TriggerBase):
             if last_ts and last_ts < cutoff:
                 # 排除冷却期内已破冰的群（查 broadcast_tracking）
                 try:
-                    recent = rm.db.execute(
+                    recent = rm.db.conn.execute(
                         "SELECT ts FROM broadcast_tracking WHERE chat_id=? AND category='cold_breaker' AND ts > ?",
                         (chat_id, cooldown_cutoff)
                     ).fetchone()
                     if recent:
                         continue  # 冷却期内已破冰，跳过
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"冷场冷却检查失败 chat={chat_id}: {e}")
                 cold_chats.append((chat_id, last_ts))
 
         if not cold_chats:
@@ -81,13 +83,13 @@ class ColdGroupTrigger(TriggerBase):
                     rm.bot.send_message(chat_id, reply)
                     # 记录到 broadcast_tracking 防短时重复
                     try:
-                        rm.db.execute(
+                        rm.db.conn.execute(
                             "INSERT OR REPLACE INTO broadcast_tracking (chat_id, category, msg_id, ts) VALUES (?, ?, ?, ?)",
                             (chat_id, "cold_breaker", 0, int(time.time()))
                         )
-                        rm.db.commit()
+                        rm.db.conn.commit()
                     except Exception as e:
-                        logger.debug(f"冷场破冰记录失败 chat={chat_id}: {e}")
+                        logger.warning(f"冷场破冰记录失败 chat={chat_id}: {e}")
                     logger.info(f"❄️ 冷场破冰已发送 chat={chat_id}")
             except Exception as e:
                 logger.warning(f"冷场破冰发送失败 chat={chat_id}: {e}")

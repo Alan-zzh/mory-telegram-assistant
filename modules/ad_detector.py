@@ -616,7 +616,43 @@ class AdDetector:
             logger.debug(f"[AD] 拼音检测异常: {e}")
             return 0
 
-    def detect(self, username: str, msg: str, user_id: int = None, bot=None, bio: str = None, message_meta: dict = None, chat_id=None) -> dict:
+    @staticmethod
+    def extract_message_ad_text(message, base_text: str = "") -> str:
+        """从消息对象中提取可用于广告检测的文本。
+
+        补充来源：
+        - caption（图片/视频/媒体组配文）
+        - link preview / web_page（标题、描述、站点名、URL）
+        - sticker（emoji、set_name）
+        """
+        if message is None:
+            return str(base_text or "").strip()
+        parts = [str(base_text or "").strip()]
+
+        caption = getattr(message, "caption", None)
+        if caption:
+            parts.append(str(caption).strip())
+
+        web_page = getattr(message, "web_page", None)
+        if web_page is None:
+            # 部分 SDK 版本使用 link_preview 字段
+            web_page = getattr(message, "link_preview", None)
+        if web_page:
+            for field in ("title", "description", "site_name", "url"):
+                value = getattr(web_page, field, None)
+                if value:
+                    parts.append(str(value).strip())
+
+        sticker = getattr(message, "sticker", None)
+        if sticker:
+            for field in ("emoji", "set_name"):
+                value = getattr(sticker, field, None)
+                if value:
+                    parts.append(str(value).strip())
+
+        return "\n".join(p for p in parts if p)
+
+    def detect(self, username: str, msg: str, user_id: int = None, bot=None, bio: str = None, message_meta: dict = None, chat_id=None, message=None) -> dict:
         """
         核心检测函数
 
@@ -626,10 +662,11 @@ class AdDetector:
             user_id: 用户ID（可选，用于获取更详细的用户信息）
             bot: TeleBot实例（可选，用于获取用户完整信息）
             bio: 用户资料简介/bio（可选，Telegram Bot API get_chat获取）
+            message: Telegram Message 对象（可选，用于提取 caption / link preview / sticker 等文本）
 
-        返回: {is_ad: bool, score: int, action: str, matched_rules: [str], reason: str}
+        返回: {is_ad: bool, score: int, action: str, matched_rules: [str], reason: str, ad_text: str}
         """
-        msg_raw = (msg or "").strip()
+        msg_raw = self.extract_message_ad_text(message, (msg or "")).strip()
         uname_raw = (username or "").strip()
         bio_raw = (bio or "").strip()
 
@@ -794,6 +831,29 @@ class AdDetector:
                     logger.info(f"[AD] 明确招募话术兜底命中: {msg_clean[:80]}")
                     break
 
+        # [Puzan-OS] v5.28.3 兜底：色情引流组合模式检测
+        # 典型模式："出+年龄+色情词+可以过夜"（如"出23岁淫素，可以过夜"）
+        if not is_ad:
+            adult_combo_patterns = [
+                # 出+年龄+色情词（核心模式）
+                r"\u51fa[\s\S]{0,3}[0-9]+\u5c81[\s\S]{0,5}[\u6deb\u8272\u60c5\u7ea6\u670d\u52a1\u6bcd\u72d7SM]",
+                # 年龄+可以+过夜/约
+                r"[0-9]+\u5c81[\s\S]{0,5}\u53ef\u4ee5[\s\S]{0,3}[\u8fc7\u591c\u7ea6\u670d\u52a1]",
+                # 出+年龄+过夜
+                r"\u51fa[\s\S]{0,3}[0-9]+\u5c81[\s\S]{0,5}\u8fc7\u591c",
+                # 色情词+交友信息+链接
+                r"[\u6deb\u8272\u60c5\u7ea6\u670d\u52a1\u6bcd\u72d7SM][\s\S]{0,10}\u4ea4\u53cb[\s\S]{0,5}https?://",
+            ]
+            for pat in adult_combo_patterns:
+                if re.search(pat, msg_clean, re.IGNORECASE):
+                    is_ad = True
+                    action = "ban"
+                    total_score += 4  # 组合模式高权重
+                    matched_rules.append("色情引流组合模式")
+                    reasons.append(f"内容命中: 色情引流组合模式(+4)")
+                    logger.info(f"[AD] 色情引流组合模式命中: {msg_clean[:80]}")
+                    break
+
         if total_score >= threshold:
             is_ad = True
             if action != "ban":
@@ -849,6 +909,8 @@ class AdDetector:
             "action": action,
             "matched_rules": matched_rules,
             "reason": reason_str,
+            # 供调用方获取实际被检测的完整文本（含 caption / link preview 等）
+            "ad_text": msg_clean[:500],
             # [TRAE SOLO CN] v5.7.5 新增：供 security_handlers 头像检测触发条件使用
             "bio_score": bio_score,
             "username_anomaly_score": uname_anomaly_score,

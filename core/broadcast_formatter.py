@@ -9,7 +9,7 @@
 
 正文（自然段落，不整段斜体）
 
-<blockquote expandable><i>折叠补充（自然转化引导）</i></blockquote>
+<blockquote expandable>折叠补充（自然转化引导）</blockquote>
 
 设计原则：
 1. 简洁清晰，不过度装饰
@@ -26,8 +26,8 @@ import re
 # ── 时段样式映射 ─────────────────────────────────────────────────────────────
 PERIOD_STYLES = {
     "morning":   {"emoji": "☀️", "greeting": "早"},
-    "afternoon": {"emoji": "🍃", "greeting": "午安"},
-    "evening":   {"emoji": "🌆", "greeting": "晚上好"},
+    "afternoon": {"emoji": "🍵", "greeting": "午安"},
+    "evening":   {"emoji": "🌆", "greeting": "晚"},
     "night":     {"emoji": "🌙", "greeting": "晚安"},
 }
 
@@ -107,7 +107,7 @@ def build_card_html(
     <空行>
     正文内容
     <空行>
-    <blockquote expandable><i>折叠补充</i></blockquote>
+    <blockquote expandable>折叠补充</blockquote>
 
     参数：
         title: 标题文字（如 "早"、"午后碎碎念"）
@@ -129,7 +129,7 @@ def build_card_html(
     footer_html = ""
     if footer:
         safe_footer = escape_html_text(footer)
-        footer_html = f"<blockquote expandable><i>{safe_footer}</i></blockquote>"
+        footer_html = f"<blockquote expandable>{safe_footer}</blockquote>"
 
     parts = [head]
     if badge_line:
@@ -149,6 +149,7 @@ def build_greeting_html(
     period: str,
     body: str,
     footer: str = "",
+    badge: str = "",
     user_profile: dict = None,
 ) -> str:
     """
@@ -178,7 +179,7 @@ def build_greeting_html(
         title=greeting,
         body=body,
         footer=footer,
-        badge="Mory来报到啦",
+        badge=badge,
         emoji=emoji,
     )
 
@@ -222,6 +223,7 @@ def build_broadcast_html(
 def build_news_html(
     time_desc: str,
     news_content: str,
+    source_name: str = "",
 ) -> str:
     """
     新闻播报卡片。
@@ -238,13 +240,24 @@ def build_news_html(
     <b><i>自然引导</i></b>
     """
     period_emojis = {
-        "早间": "",
-        "午间": "️",
+        "早间": "☀️",
+        "午间": "🍵",
         "晚间": "🌙",
     }
     emoji = period_emojis.get(time_desc, "📰")
 
     title = f"<b><i>{emoji} {time_desc}新闻</i></b>"
+    source_badge = ""
+    if source_name:
+        source_label_map = {
+            "fallback": "多源汇总 · 均衡筛选",
+            "real_first": "多源汇总 · 均衡筛选",
+            "trendradar": "TrendRadar · 热点混合",
+            "none": "",
+        }
+        source_label = source_label_map.get(source_name, source_name)
+        if source_label:
+            source_badge = f"<i>{escape_html_text(source_label)}</i>"
 
     safe_body = escape_html_text(normalize_text(news_content))
 
@@ -268,9 +281,12 @@ def build_news_html(
     formatted_body = "\n".join(formatted_lines)
 
     # 底部自然引导（不用分隔线，用折叠区）
-    footer = "<i>想看更多？来 @MorychannelBot 找我聊～</i>"
+    footer = "<i>@MorychannelBot</i>"
 
-    parts = [title, "", formatted_body, "", footer]
+    parts = [title]
+    if source_badge:
+        parts.extend(["", source_badge])
+    parts.extend(["", formatted_body, "", footer])
     return "\n".join(parts)
 
 
@@ -295,10 +311,14 @@ def build_rich_greeting_html(
         period=period,
         body=body,
         footer=footer,
+        badge=kwargs.get("badge", ""),
         user_profile=kwargs.get("user_profile"),
     )
 
 
-def build_rich_news_html(time_desc: str, news_content: str, **kwargs) -> str:
-    """兼容旧接口，转发到 build_news_html。"""
-    return build_news_html(time_desc=time_desc, news_content=news_content)
+def build_rich_news_html(time_desc: str, news_content: str, source_name: str = "", **kwargs) -> str:
+    """兼容旧接口，转发到 build_news_html。
+
+    source_name 仅用于兼容旧调用方，当前排版不展示来源。
+    """
+    return build_news_html(time_desc=time_desc, news_content=news_content, source_name=source_name)

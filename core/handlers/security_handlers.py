@@ -28,6 +28,23 @@ def check_blacklist(dctx) -> bool:
     uid = dctx.uid
 
     if db.is_blacklisted(uid):
+        if getattr(dctx, "is_group", False):
+            try:
+                from modules.ad_enforcement import enforce_ad_user
+                enforce_ad_user(
+                    bot=dctx.ctx.bot,
+                    db=db,
+                    config=dctx.ctx.config,
+                    chat_id=dctx.chat_id,
+                    uid=uid,
+                    uname=dctx.uname,
+                    reason=f"黑名单拦截:{dctx.uname}",
+                    message=dctx.msg,
+                    current_msg_id=getattr(dctx.msg, "message_id", 0),
+                    notify_admin=False,
+                )
+            except Exception as e:
+                logger.warning(f"P1黑名单统一处置失败: uid={uid} err={e}")
         clear_logging_context()
         return True
     return False
@@ -106,7 +123,10 @@ def check_ad_detection(dctx) -> bool:
         return False
 
     msg = dctx.text
-    if not msg:
+    m = dctx.msg
+    from modules.ad_detector import AdDetector
+    ad_text = AdDetector.extract_message_ad_text(m, msg)
+    if not ad_text:
         return False
 
     # 跳过 Bot 命令，避免误封 /start@Bot 等正常指令
@@ -118,7 +138,6 @@ def check_ad_detection(dctx) -> bool:
     from modules.group_mgr import check_ad_content
 
     bot = dctx.ctx.bot
-    m = dctx.msg
     ctx = dctx.ctx
     CONFIG = ctx.config
     db = ctx.db
@@ -157,7 +176,7 @@ def check_ad_detection(dctx) -> bool:
     except Exception as e:
         logger.debug(f"[AD] 资料层广告检测异常: uid={uid} err={e}")
 
-    if len(msg) < 2:
+    if len(ad_text) < 2:
         return False
 
     # [TRAE SOLO CN] v5.8.2 追踪群消息发送者到 group_members 表（渐进式构建完整成员列表）
@@ -221,6 +240,12 @@ def check_ad_detection(dctx) -> bool:
                 message_meta["forward_from_channel"] = True
         if hasattr(m, 'photo') and m.photo:
             message_meta["has_photo"] = True
+        if hasattr(m, 'sticker') and m.sticker:
+            message_meta["has_sticker"] = True
+        if getattr(m, 'media_group_id', None):
+            message_meta["is_media_group"] = True
+        if getattr(m, 'web_page', None):
+            message_meta["has_link_preview"] = True
         if hasattr(m, 'entities') and m.entities:
             url_count = sum(1 for e in m.entities if e.type == "url")
             if url_count > 0:
@@ -246,10 +271,10 @@ def check_ad_detection(dctx) -> bool:
     # [Trae] v5.3.1 优化：传递user_id和bot参数，确保显示名称被正确捕获
     # [TRAE SOLO CN] v5.7.5 新增：传入bio进行联合检测
     # [TRAE SOLO CN] v5.8.0 新增：传入message_meta进行元数据辅助检测
-    ad_result = ad_detector.detect(username=username, msg=msg, user_id=uid, bot=bot, bio=user_bio, message_meta=message_meta if message_meta else None, chat_id=chat_id)
+    ad_result = ad_detector.detect(username=username, msg=msg, user_id=uid, bot=bot, bio=user_bio, message_meta=message_meta if message_meta else None, chat_id=chat_id, message=m)
 
     # emoji面具检测（消息内容藏广告词）
-    emoji_suspicious, emoji_reason = check_emoji_mask_in_message(msg, CONFIG)
+    emoji_suspicious, emoji_reason = check_emoji_mask_in_message(ad_text, CONFIG)
     if emoji_suspicious:
         logger.warning(f"🎭 消息emoji面具检测: uid={uid} reason={emoji_reason}")
         ad_result["is_ad"] = True
@@ -356,7 +381,7 @@ def check_ad_detection(dctx) -> bool:
         user_id=uid,
         msg_id=m.message_id,
         chat_id=chat_id,
-        text=msg,
+        text=ad_result.get("ad_text", msg) or msg,
         score=content_score
     )
     if track_result["action"] == "ban":

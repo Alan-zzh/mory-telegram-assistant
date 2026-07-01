@@ -108,28 +108,48 @@ def _update_llm_cost():
         guard = get_guard()
         if guard:
             stats = guard.get_stats()
-            total_cost = stats.get("total_cost_cents", 0)
-            llm_cost_cents.labels(model_name="default", task_type="general").set(total_cost)
+            # 【v5.31.2 修复】LLMCostGuard.get_stats() 返回 total_cost（美元），
+            # 之前读取 total_cost_cents 字段不存在，导致 Prometheus 指标永远为 0
+            total_cost_usd = stats.get("total_cost", 0.0)
+            total_cost_cents = int(total_cost_usd * 100)
+            llm_cost_cents.labels(model_name="default", task_type="general").set(total_cost_cents)
     except Exception as e:
         logger.debug(f"LLM 成本指标采集失败（非致命）: {e}")
 
 
 def _update_conversion_total():
-    """从 conversion_events 表统计最近转化事件"""
+    """从 conversion_events 表统计最近转化事件
+
+    【v5.31.2 修复】两个暗病：
+    1. 原调用 dashboard.helpers.get_db() 使用 Flask 'g' 对象，在 Bot 进程 APScheduler
+       任务中无 Flask 上下文会抛 RuntimeError，导致指标永远不被采集
+    2. 原 SQL 查询 bot_id 字段，但 conversion_events 表只有 id/uid/event/ts/mode 五个字段，
+       会抛 OperationalError
+    修复：改用直接 sqlite3 连接 + SQL 去掉 bot_id，标签 bot_id 固定为 'default'
+    """
+    import sqlite3
+    import os
     try:
-        from dashboard.helpers import get_db
-        conn = get_db()
-        if conn:
+        # 定位 mory.db 路径（core/ 的上一级目录）
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mory.db")
+        if not os.path.exists(db_path):
+            logger.debug(f"转化事件指标采集跳过：数据库不存在 {db_path}")
+            return
+
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        try:
             rows = conn.execute(
-                "SELECT event, bot_id, COUNT(*) as cnt "
+                "SELECT event, COUNT(*) as cnt "
                 "FROM conversion_events "
-                "GROUP BY event, bot_id"
+                "GROUP BY event"
             ).fetchall()
 
-            for event_type, bot_id, count in rows:
+            for event_type, count in rows:
                 conversion_total.labels(
                     event_type=event_type or "unknown",
-                    bot_id=bot_id or "default"
+                    bot_id="default"
                 ).set(count)
+        finally:
+            conn.close()
     except Exception as e:
         logger.debug(f"转化事件指标采集失败（非致命）: {e}")

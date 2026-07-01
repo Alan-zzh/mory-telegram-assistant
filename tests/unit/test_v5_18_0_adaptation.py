@@ -81,7 +81,7 @@ class TestProfileLearner(unittest.TestCase):
     def test_profile_learner_enabled(self):
         """开启时学习画像。"""
         db = MagicMock()
-        db.get_user_profile = MagicMock(return_value={
+        db.get_user_persona_profile = MagicMock(return_value={
             "user_id": 123, "tags": [], "level": 0, "interests": [], "conversation_rounds": 0,
         })
         learner = ProfileLearner(db, config={"USER_PROFILE_ENABLED": True})
