@@ -2,7 +2,78 @@
 
 > **本文件专门写给AI自己看**
 > 新会话开始时，AI 必须先读 `AGENTS.md`（项目规则+老坑铁律）+ `project_snapshot.md` + 本文件
-> **最后更新**：2026-07-01（部署 v5.31.2 Loop 审计改动；修复 deploy_vps.py 未上传 tasks/ 导致 Bot 崩溃；服务已恢复双 active）
+> **最后更新**：2026-07-01（生产截图异常闭环修复 + 全功能只读核对；补修 Dashboard 登录 RBAC 豁免和调度监控跨进程回退；服务双 active）
+
+---
+
+## v5.31.2 生产截图异常闭环修复 [2026-07-01]
+
+### 触发
+老板发生产 Telegram 截图，要求开启 loop 模式、查看日志、以服务器生产环境为准持续修复。截图中同时出现：
+- `分发器内部异常 'body_language'`
+- `任务健康检查` 报午安问候、早/午间新闻、晚间新闻、每日日报未执行
+- 广告账号处置仍在运行，说明 Bot 不是整体离线，而是部分任务路径异常
+
+### 现象
+- 生产 `journalctl -u mory-assistant` 在 2026-07-01 20:30-22:10 CST 多次出现 `news_evening` / `news_afternoon` / `greeting_afternoon` 释放锁后重试。
+- 根异常是 `_build_persona()` 读取 `PERSONA_FRAGMENTS.body_language` 抛 `KeyError`，任务被 `TaskTransactionManager` 当异常释放 `task_log` 锁，导致后续继续重试。
+- `scheduler_metrics` 显示 job success，但业务任务内部 catch 后调度器仍认为 executed successfully，不能作为业务成功证明。
+- 健康检查任务使用硬编码清单和前缀匹配，遇到晚间任务、动态定时播报、分群播报时会误报或漏报。
+- `LLMCostGuard` 虽然每 5 分钟 flush，但重启后滑动窗口只存在内存中，未从 `llm_cost_logs` 回灌历史，生产重启会让 24h 熔断依据变薄。
+- 首次 `deploy_vps.py` 卡住期间 dashboard 短暂 inactive，已人工通过 systemd 恢复；后续改用 SFTP 精确上传代码文件，未覆盖 `config.json` 或 `mory.db`。
+
+### 根因
+1. `core/ai_engine.py` 默认人设片段缺少 `body_language`，且读取路径直接索引字典；生产配置为空或缺字段时会崩。
+2. `tasks/monitoring/health_check_task.py` 仍使用旧硬编码 `_CRITICAL_TASKS`，没有按 `NEWS_BROADCAST_CONFIG`、问候配置、`SCHEDULED_BROADCASTS` 和真实 task_key 动态判断。
+3. 空候选任务（如 `cart_recovery` 无可私聊目标）属于正常业务状态，但公共 `TaskAbort` 没有预期中止标记，事务层只能按 warning 记录。
+4. `core/llm_cost_guard.py` 仅维护内存滑动窗口，刷库失败时也缺少可靠回队列机制；重启后历史成本不会进入熔断窗口。
+
+### 修复
+- `core/ai_engine.py`：补 `body_language` 默认片段；新增 `_get_persona_fragment_list()`，所有动态/上下文人设片段统一安全 fallback。
+- `modules/auto_tasks.py` + `tasks/monitoring/health_check_task.py`：健康检查按生产配置动态构造任务清单；晚间增加 23:45 检查；定时播报按每个目标群精确检查 `scheduled_broadcast_{id}_{group}_{date}`。
+- `core/task_transaction.py` + `tasks/support/common.py` + `tasks/interaction/*` + `tasks/broadcast/tarot_task.py`：`TaskAbort(expected=True)` 表示正常跳过，事务日志降为 info；真实失败仍 warning。
+- `core/llm_cost_guard.py` + `main.py`：启动时从 `llm_cost_logs` 回灌最近 24h；`flush_to_db()` 使用短连接批量写入，失败时按原顺序放回待写队列。
+- 生产部署只上传代码文件，不上传 `config.json` / `mory.db`；远端重启走 systemd。
+
+### 验证
+- 本地：`PYTHONUTF8=1 python -m py_compile core/ai_engine.py core/task_transaction.py core/llm_cost_guard.py modules/auto_tasks.py tasks/monitoring/health_check_task.py tasks/support/common.py tasks/interaction/cart_recovery_task.py tasks/interaction/reactivate_task.py tasks/interaction/leak_task.py tasks/broadcast/tarot_task.py` 通过。
+- 本地：`PYTHONUTF8=1 python scripts/verify_db_methods.py` 通过，162 个委托方法无缺失、无孤儿；不加 `PYTHONUTF8=1` 会触发 Windows GBK emoji 输出假失败。
+- 本地：`pytest tests/unit/test_scheduled_broadcast_rich.py -q` 通过，19 passed / 2 skipped。
+- VPS：远端同批文件 `py_compile` 通过；`PYTHONUTF8=1 python3 scripts/verify_db_methods.py` 通过；`mory-assistant` / `mory-dashboard` 双 active；`curl localhost:6616/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`。
+- VPS：启动日志显示 `health_check_late` 已注册，调度任务总数 49；`LLMCostGuard 已从 llm_cost_logs 回灌最近 24h 成本记录 11 条`。
+- VPS：重启后观察窗口内未再出现 `body_language`、`flush_to_db`、`database is locked`、Traceback；watchdog 22:42/22:44/22:46 均健康。
+- VPS：2026-07-01 22:50 `cart_recovery_2026-07-01_2250` 无候选时日志为 `任务正常中止，已释放数据库锁: 无发送目标`，不再是 `事务异常`。
+
+### 经验教训
+1. Telegram 截图里的业务异常必须回到生产 journal 和数据库验证，不能只看 scheduler success。
+2. 人设/配置类字段必须有代码级默认值；生产配置缺字段时不能让播报主链路崩。
+3. 健康检查不能硬编码旧任务表，必须从当前配置和真实 `task_log.task_key` 推导。
+4. 空候选、概率跳过、条件不满足是正常业务状态；真实失败和正常跳过必须在日志级别上分开，否则会淹没真正事故。
+5. `deploy_vps.py` 卡住时不要继续等待到服务长期不可用；先查 systemd 和 health，必要时精确上传代码文件恢复生产。
+
+### 全功能只读核对追加发现 [2026-07-01 23:20-23:24 CST]
+
+#### 发现
+- 本地功能面 smoke：Dashboard、设置面板、RBAC、安全渗透、广告检测、私聊黑名单共 64 个测试通过。
+- VPS 生产清单：`dashboard.create_app()` 可创建，路由 167 条；`TaskScheduler` 可发现 44 个任务类、49 个 schedule job，无重复 job_id，`health_check_late` / `update_prometheus_metrics` / `sync_scheduler_metrics` / `cart_recovery` 等关键任务均存在。
+- VPS 生产 DB：`PRAGMA quick_check=ok`，`journal_mode=wal`，116 张表；近 24h `task_log` 118 条；`scheduler_metrics` 无 fail/miss 行。
+- 新发现 1：生产 `/api/login` 返回 401 `未登录`，而不是密码错误/登录成功，说明 RBAC 守卫先于 auth 把登录写接口拦截。
+- 新发现 2：生产 `/api/scheduler/jobs` 返回 503 `调度器未初始化`，`/api/scheduler/stats` 返回空统计。根因是 Dashboard 和 Bot 分进程运行，Dashboard 进程不能直接读取 Bot 进程内 `_scheduler_instance`。
+
+#### 修复
+- `dashboard/rbac_guard.py`：`_EXEMPT_PREFIXES` 增加 `/api/login`，登录接口交回 `dashboard/auth.py` 自己处理。
+- `dashboard/api/scheduler_api.py`：调度 stats/jobs 优先读内存；若 Dashboard 进程无调度器，则从 `scheduler_metrics` 表回退生成统计和任务列表。
+- 测试补充：`tests/security/test_rbac_pentest.py` 增加 `/api/login` 不被 RBAC 拦截用例；`tests/unit/test_dashboard_app_smoke.py` 增加 scheduler API DB fallback 用例。
+
+#### 验证
+- 本地：`pytest tests/security/test_rbac_pentest.py tests/unit/test_rbac_core.py tests/unit/test_dashboard_app_smoke.py -q` 通过，33 passed；补 scheduler fallback 后相关用例 10 passed。
+- VPS：只上传 `dashboard/rbac_guard.py`、`dashboard/api/scheduler_api.py`，重启 `mory-dashboard`，Bot 未重启，未上传配置/数据库。
+- VPS：`/api/login` 错误密码返回 `密码错误`，真实密码返回 200 且 `role=admin`；`/api/health/score`、`/api/health/jobs`、`/api/health/audit`、`/api/v1/metrics` 均 200。
+- VPS：`/api/scheduler/stats` 返回 200，`job_count=36`；`/api/scheduler/jobs` 返回 200，`count=36`，`source=scheduler_metrics`。
+- VPS：2026-07-01 23:24 CST `mory-assistant` / `mory-dashboard` 双 active，`/api/health` v5.31.2；重启完成后日志筛选为空；watchdog 23:24 健康。
+
+#### 边界
+本轮没有主动触发会对真实用户产生副作用的动作，例如发送 Telegram 消息、删除消息、禁言、拉黑、扣积分、发券、群设置修改。此类功能通过代码测试、配置/路由/DB/日志/历史任务记录验证，不能算“逐个真实执行过”。
 
 ---
 
@@ -3869,3 +3940,30 @@ config:   ORPHAN_CLEANUP_ENABLED=true (已合并到 VPS)
 - `scripts/emergency_ban_ad_user.py` - 紧急处置脚本（新增）
 - `core/handlers/security_handlers.py` - 安全处理器
 - `modules/ad_enforcement.py` - 广告处置入口
+
+## v5.31.2 监控系统误报消除 [2026-07-02]
+
+### 触发
+Loop Monitor 50+ 轮持续报告 L2 errors_10min=yes 和 L5 WARN=journalctl_has_fail_logs，但 [EXCEPTION] none，实际服务正常。
+
+### 根因
+1. core/http_client.py 第285行：HTTP重试日志用 logger.warning() 写入，每次外部网站抓取重试都触发 journalctl 告警
+2. scripts/puzan_loop_monitor.py L2/L5：grep 过滤规则未排除 "HTTP请求失败"（业务抓取重试日志）和 "CriticalJobsHealthTask"（正常调度任务名含critical）
+3. task_log 表无 status 列（设计决策：只记成功执行），监控显示 "N/A" 看起来像异常
+
+### 修复
+- core/http_client.py：重试日志从 warning 降级为 debug，只在最终失败时打 error
+- scripts/puzan_loop_monitor.py L2：grep -viE 排除项追加 "HTTP请求失败|HTTP请求成功|CriticalJobsHealth|Running job|executed successfully|Added job"
+- scripts/puzan_loop_monitor.py L5：同步优化 fail_log 过滤规则
+- scripts/puzan_loop_monitor.py L4/L5：task_log 无 status 列的显示从 "N/A" 改为 "INFO(task_log只记成功,失败通过journalctl检测)"
+
+### 验证
+- 部署 http_client.py 到 VPS，重启 mory-assistant
+- 运行 puzan_loop_monitor.py --once 验证：
+  - L2 errors_10min=none（之前 yes）
+  - L5 fail_log_10min=(none)（之前有误报）
+  - L5 failed_1h=INFO(...)（之前 N/A）
+  - [EXCEPTION] none，[RECOMMEND] all normal
+
+### 教训
+监控脚本的 journalctl grep 过滤规则必须区分"系统错误"和"业务日志"。外部网站抓取失败是正常业务行为，不应触发系统级告警。重试日志应使用 debug 级别，只有最终失败才用 warning/error。

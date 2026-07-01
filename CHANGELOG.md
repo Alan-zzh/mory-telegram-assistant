@@ -1,5 +1,15 @@
 ## v5.31.2 [2026-06-30] [Puzan-OS]
+- **修复监控系统持续误报**：http_client.py HTTP重试日志从 warning 降级为 debug，避免污染 journalctl；puzan_loop_monitor.py L2/L5 过滤规则优化，排除业务抓取重试日志和正常调度事件名误匹配；task_log 无 status 列显示从 N/A 改为 INFO 标注。部署后监控恢复 errors_10min=none + fail_log_10min=(none) + all normal。
+
 ### Token 消耗暗病排查 + 多智能体联排根治 10 项问题
+
+### Hotfix [2026-07-01] 生产截图异常闭环修复（body_language + 健康检查 + 成本熔断）
+- 修复生产截图中的 `分发器内部异常 'body_language'`：`PERSONA_FRAGMENTS` 缺少 `body_language` 时，早/午/晚问候和新闻 AI 播报会在 `_build_persona()` 抛 `KeyError`，导致任务释放锁并重试；现已补默认动作片段，并统一通过安全 helper 读取人设片段，生产空配置也可正常 fallback。
+- 修复任务健康检查误报/漏报：`tasks/monitoring/health_check_task.py` 不再使用硬编码任务清单，改为按真实配置动态生成问候、新闻、日报和定时播报检查项；按 `task_log.task_key` 精确匹配，不再用前缀把某个群成功误判成全部成功；新增 23:45 `health_check_late` 覆盖晚间新闻/晚安后置检查。
+- 修复空候选任务假告警：`TaskAbort` 新增 `expected` 标记，`cart_recovery` / `reactivate` 无发送目标、`leak` 条件不满足、`tarot` 概率跳过/无活跃用户等正常跳过只记 info，真实失败仍保留 warning。
+- 修复 LLMCostGuard 重启后历史窗口丢失和刷库失败风险：启动时从 `llm_cost_logs` 回灌最近 24h 成本记录；`flush_to_db()` 改为短连接批量写入、失败回队列，避免主连接/WriteQueue 交叉导致成本记录丢失。
+- 全功能生产只读核对时补修 Dashboard 两个真实问题：`/api/login` 被 RBAC 守卫误拦截，现已把 `/api/login` 加入豁免；`/api/scheduler/jobs` / `/api/scheduler/stats` 不能跨进程读取 Bot 内存调度器，现已回退读取 `scheduler_metrics` 表，生产接口返回 200 和 36 个落盘任务指标。
+- VPS 已按生产真相验证：远端 `py_compile`、`PYTHONUTF8=1 python3 scripts/verify_db_methods.py` 通过；`mory-assistant` / `mory-dashboard` 双 active；`/api/health` 返回 v5.31.2；重启后 `body_language`、`flush_to_db`、SQLite 锁错误未复发；22:50 真实 `cart_recovery` 空候选已记录为“任务正常中止”。
 
 ### Hotfix [2026-07-01] 代码与文档失真纠正（Loop 审计）
 - **修复 `core/ai_engine.py:1979-1984` 缩进语法错误**：`try/except` 块缩进错位导致整个模块无法 import，`verify_db_methods.py` 与生产启动均失败；已对齐缩进并通过 `py_compile`。
