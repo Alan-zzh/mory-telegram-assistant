@@ -53,6 +53,15 @@ test_out.txt
 test*.txt
 =
 
+# 临时诊断/运维脚本（含硬编码VPS路径/Token/群ID，不提交）
+scripts/vps_*.py
+scripts/bruteforce_delete.py
+scripts/clean_restart.py
+scripts/emergency_ban_ad_user.py
+scripts/probe_msg_ids.py
+scripts/try_get_old_updates.py
+scripts/upload_and_ban.py
+
 # ── 依赖 ─────────────────────────────────────────────────────────────────
 node_modules/
 venv/
