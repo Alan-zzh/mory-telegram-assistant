@@ -8,6 +8,7 @@
 - 修正 `README.md` / `project_snapshot.md` Dashboard API 文件数：21 个（原 22 个），路由数 156 条保持不变。
 - 修正 `README.md` 资讯 mode 路由说明：当前 `config.json.example` / `core/ai_engine.py` 实际将 6 个新闻 mode 路由到 `llm_standard`，`llm_premium` 在 `MODE_ROUTING` 中暂无直接分配，与设计意图差异已加注释。
 - 修正 `project_snapshot.md` 模块数与 DB 委托方法数：162 个（原 159 个）。
+- **修复 `deploy_vps.py` 未部署 `tasks/` 目录导致生产 Bot 崩溃**：`SCAN_DIRS` 遗漏 `"tasks"`，部署后 `ModuleNotFoundError: No module named 'tasks'` 导致 `mory-assistant` 反复 `status=1/FAILURE`；已追加 `"tasks"` 并重新部署，服务恢复双 active。
 
 ### Hotfix [2026-06-30] [Codex] 生产监控闭环与长期稳定性
 - 真实生产巡检确认：VPS `43.153.23.115` RUNNING，`mory-assistant` / `mory-dashboard` 双 active，`/api/health` 返回 v5.31.2，watchdog 持续健康，本地 `puzan_loop_monitor` 已开启 loop 模式。

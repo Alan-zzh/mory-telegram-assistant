@@ -2,7 +2,32 @@
 
 > **本文件专门写给AI自己看**
 > 新会话开始时，AI 必须先读 `AGENTS.md`（项目规则+老坑铁律）+ `project_snapshot.md` + 本文件
-> **最后更新**：2026-07-01（生产 Loop 继续监控：修复 cart_recovery 旧表未同步导致调度绿但业务无对象；reactivate 过滤不可私聊用户；00:25 真实召回发送成功，00:35 空候选正常跳过）
+> **最后更新**：2026-07-01（部署 v5.31.2 Loop 审计改动；修复 deploy_vps.py 未上传 tasks/ 导致 Bot 崩溃；服务已恢复双 active）
+
+---
+
+## v5.31.2 部署 tasks/ 模块缺失导致 Bot 崩溃 [2026-07-01]
+
+### 触发
+提交 Loop 审计全部改动后执行 `python deploy_vps.py` 部署，脚本报告成功，但 Bot 反复崩溃重启。
+
+### 现象
+- `systemctl status mory-assistant` 显示 `activating (auto-restart)`，`status=1/FAILURE`
+- `journalctl -u mory-assistant`：反复出现 `ModuleNotFoundError: No module named 'tasks'`
+- `mory-dashboard` 正常，health API 在 Bot 启动瞬间可用，随后随崩溃不可用
+- Loop Monitor Round 12-15 报告 L2 service not active、L3 health_not_ok
+
+### 根因
+`deploy_vps.py` 的 `SCAN_DIRS = ["core", "modules", "dashboard", "scripts"]` 未包含 `"tasks"`。新代码 `modules/auto_tasks.py:_start_with_task_scheduler()` 已迁移到 `tasks.task_scheduler.create_scheduler()`，但部署时未上传该目录，导致 import 失败。
+
+### 修复
+- `deploy_vps.py` 第 55 行：`SCAN_DIRS` 追加 `"tasks"`
+- 重新执行 `python deploy_vps.py`，上传 322 个文件（含 tasks/ 43 个模块）
+- 部署后 `mory-assistant` + `mory-dashboard` 双 active，`/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`
+- Loop Monitor Round 16 恢复 `all normal`
+
+### 教训
+新增顶层代码目录后必须同步 `deploy_vps.py:SCAN_DIRS`，否则部署脚本显示成功但运行时缺模块。部署后必须验 `systemctl status` + health API + `journalctl` 无 ERROR，不能只看部署脚本输出。
 
 ---
 
