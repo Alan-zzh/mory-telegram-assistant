@@ -52,7 +52,7 @@ DEAD_REMOTE_FILES = [
 ]
 
 # 需要动态扫描的目录（递归收集所有 .py 文件）
-SCAN_DIRS = ["core", "modules", "dashboard", "scripts"]  # [v5.12.4] 修复：scripts/ 不在 SCAN_DIRS 导致 force_orphan_cleanup.py 未自动部署
+SCAN_DIRS = ["core", "modules", "dashboard", "scripts", "tasks"]  # [v5.31.2] 修复：tasks/ 任务调度器模块必须同步部署
 
 # 根目录下需要上传的文件
 ROOT_FILES = ["main.py", "version.py", "windows_helper.py", "start_dashboard.py"]
