@@ -259,13 +259,13 @@ def l2_service_check(client):
         details["mory-assistant_status"] = sa
         details["mory-dashboard_status"] = sd
 
-        # journalctl 错误过滤（注意：grep "ERROR" 会误匹配 EXECUTED/ERROR/MISSED，需排除）
-        # 用 grep -E "error|critical|exception|traceback" -i，再排除 EXECUTED/MISSED 这种正常调度事件
+        # journalctl 错误过滤：排除业务抓取重试日志和正常调度事件
+        # 排除项：HTTP请求失败(业务抓取重试)、CriticalJobsHealthTask(任务名含critical)、Running job/executed(正常调度)
         err_a, _, _ = ssh_run(
             client,
             r'journalctl -u mory-assistant --since "10 minutes ago" --no-pager '
             r'| grep -iE "error|critical|exception|traceback" '
-            r'| grep -viE "EXECUTED|ERROR.*MISSED|EVENT_JOB_|scheduler_monitor.*EVENT|_job_critical|critical_jobs_health" '
+            r'| grep -viE "EXECUTED|ERROR.*MISSED|EVENT_JOB_|scheduler_monitor.*EVENT|_job_critical|critical_jobs_health|CriticalJobsHealth|HTTP请求失败|HTTP请求成功|Running job|executed successfully|Added job" '
             r'| tail -20',
             timeout=15,
         )
@@ -341,7 +341,7 @@ def l3_app_check(client):
 # ============ L4 业务指标层 ============
 def l4_biz_check(client):
     """schema 参考 core/database.py + AI_DEBUG_HISTORY.md Loop 13/6：
-      - task_log: id, task_key, exec_date, exec_ts(REAL, 秒级 Unix 时间) - 无 status 列（只记成功执行）
+      - task_log: id, task_key, exec_date, exec_ts(REAL, 秒级 Unix 时间) - 设计决策：只记成功执行，失败通过 journalctl 检测
       - token_usage（router_usage.db）: timestamp(TEXT, datetime isoformat) - 非 created_at
       - llm_cost_logs（mory.db）: timestamp(REAL/INTEGER, 秒级 Unix 时间)，成本熔断器刷盘日志
       - conversion_events: ts(REAL, 毫秒)
@@ -448,11 +448,12 @@ def l5_scheduler_check(client):
         details["recent_scheduled_tasks"] = recent if not er else f"ERR: {er}"
 
         # 失败任务：通过 journalctl 检测（task_log 无 status 列）
+        # 排除业务抓取重试日志和正常调度事件
         fail_log, _, _ = ssh_run(
             client,
             r'journalctl -u mory-assistant --since "10 minutes ago" --no-pager '
             r'| grep -iE "fail|exception|error" '
-            r'| grep -viE "EXECUTED|ERROR.*MISSED|EVENT_JOB_|scheduler_monitor.*EVENT|no such|operationalerror|_job_critical|critical_jobs_health" '
+            r'| grep -viE "EXECUTED|ERROR.*MISSED|EVENT_JOB_|scheduler_monitor.*EVENT|no such|operationalerror|_job_critical|critical_jobs_health|CriticalJobsHealth|HTTP请求失败|HTTP请求成功|Running job|executed successfully|Added job" '
             r'| tail -15',
             timeout=15,
         )
@@ -461,8 +462,8 @@ def l5_scheduler_check(client):
             status = "WARN"
             details["_warn"] = details.get("_warn", "") + "journalctl_has_fail_logs; "
 
-        # task_log 无 status 列 - 标记为 N/A（病历已确认）
-        details["failed_1h"] = "N/A(task_log无status列,见Loop13病历)"
+        # task_log 无 status 列 - 设计决策：只记成功执行，失败通过 journalctl 检测
+        details["failed_1h"] = "INFO(task_log只记成功,失败通过journalctl检测)"
 
         # WatchdogSec 检查（已知未配置，参考 AI_DEBUG_HISTORY Loop 5）
         ws, _, _ = ssh_run(

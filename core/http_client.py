@@ -280,9 +280,10 @@ class HTTPClient:
                 return response
             except Exception as e:
                 last_error = e
-                # 记录警告日志
+                # 重试中的日志降级为 debug，避免污染 journalctl 触发监控误报
+                # 只有最终失败才在下方打 error
                 if self.config["enable_logging"]:
-                    logger.warning(
+                    logger.debug(
                         f"HTTP请求失败 (尝试 {attempt + 1}/{retry_times + 1}): "
                         f"{method} {url} - {str(e)[:100]}"
                     )
