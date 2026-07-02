@@ -218,6 +218,14 @@ class AIEngine:
             "…你懂的～",
             "…嗯，没什么",
         ],
+        "body_language": [
+            "*歪头看你*",
+            "*伸了个懒腰*",
+            "*托着下巴想了想*",
+            "*轻轻挑眉*",
+            "*把手机拿近一点*",
+            "*假装没听见又忍不住看你*",
+        ],
     }
 
     # ── 情绪状态机（按时段切换情绪底色）── [TRAE SOLO CN]
@@ -613,6 +621,11 @@ class AIEngine:
             "llm_standard": ["llm_light"],
             "llm_light": [],
         }
+        self._tier_escalation = {
+            "llm_light": ["llm_standard", "llm_premium"],
+            "llm_standard": ["llm_premium"],
+            "llm_premium": [],
+        }
 
         self._slow_models = {}
         self._response_times = {}
@@ -705,14 +718,33 @@ class AIEngine:
         if not expire_str:
             return False
         try:
-            expire_date = datetime.strptime(expire_str, "%Y-%m-%d")
-            now = datetime.now()
-            if expire_date < now:
+            expire_date = datetime.strptime(expire_str, "%Y-%m-%d").date()
+            today = datetime.now().date()
+            if expire_date < today:
                 logger.info(f"⏰ 模型 {model_info['name']} 已过期 ({expire_str})，将跳过")
                 return True
         except Exception as e:
             logger.debug(f"操作异常: {e}")
         return False
+
+    def _retry_tiers_for(self, tier: str) -> list[str]:
+        """当前层级失败时的重试层级链：先原层，再降级/升级找可用模型。"""
+        ordered = [tier] + self._tier_fallback.get(tier, []) + self._tier_escalation.get(tier, [])
+        result = []
+        for tier_name in ordered:
+            if tier_name in self._tier_pools and tier_name not in result:
+                result.append(tier_name)
+        return result
+
+    def _retry_model_count_for(self, tier: str) -> int:
+        """计算本轮可能尝试的去重模型数，用于避免 5 次上限卡死在单一小池。"""
+        names = set()
+        for tier_name in self._retry_tiers_for(tier):
+            for model in self._tier_pools.get(tier_name, []):
+                name = model.get("name")
+                if name:
+                    names.add(name)
+        return len(names)
 
     def _get_tier_for_mode(self, mode: str) -> str:
         """根据mode获取对应的模型池层级"""
@@ -729,17 +761,35 @@ class AIEngine:
                     break
         return tier
 
-    def _get_tier_model(self, tier: str) -> str:
+    def _get_tier_model(self, tier: str, require_circuit: bool = False) -> str:
         """获取指定层级池的当前模型名"""
         pool = self._tier_pools.get(tier, [])
         idx = self._tier_indices.get(tier, 0)
         if pool and idx < len(pool):
-            model_name = pool[idx]["name"]
-            if self._is_blacklisted(model_name):
-                return None
-            if self._is_model_expired(pool[idx]):
-                return None
-            return model_name
+            total = len(pool)
+            for offset in range(total):
+                candidate_idx = (idx + offset) % total
+                model_info = pool[candidate_idx]
+                model_name = model_info["name"]
+                if self._is_blacklisted(model_name):
+                    continue
+                if self._is_model_expired(model_info):
+                    continue
+                with self._perf_lock:
+                    is_slow = model_name in self._slow_models
+                if is_slow:
+                    continue
+                if require_circuit:
+                    try:
+                        opt = _get_optimizer()
+                        if opt and opt.enabled and not opt.circuit.is_available(model_name):
+                            continue
+                    except Exception as opt_err:
+                        logger.debug(f"熔断可用性检查跳过（非致命）：{opt_err}")
+                if candidate_idx != idx:
+                    self._tier_indices[tier] = candidate_idx
+                    logger.warning(f"🔄 [{tier}] 模型切换 → {model_name}")
+                return model_name
         return None
 
     def _next_tier_model(self, tier: str):
@@ -909,6 +959,16 @@ class AIEngine:
                 return f"\n【当前情绪：{mood}】{prompt}"
         return ""
 
+    def _get_persona_fragment_list(self, fragments_cfg: dict, key: str) -> list:
+        """读取人设片段列表；生产配置缺字段时回退默认值，避免任务级 KeyError。"""
+        if not isinstance(fragments_cfg, dict):
+            fragments_cfg = {}
+        value = fragments_cfg.get(key)
+        if isinstance(value, list) and value:
+            return value
+        default_value = self._DEFAULT_PERSONA_FRAGMENTS.get(key, [])
+        return default_value if isinstance(default_value, list) else []
+
     def _get_dynamic_fragments(self, seed: int = 0) -> str:
         """随机抽取人格碎片，拼成动态追加文本"""
         fragments_cfg = self.config.get("PERSONA_FRAGMENTS", {}) or self._DEFAULT_PERSONA_FRAGMENTS
@@ -916,17 +976,17 @@ class AIEngine:
         parts = []
 
         # 随机抽取1个心情表达
-        mood_list = fragments_cfg.get("mood_expressions", self._DEFAULT_PERSONA_FRAGMENTS["mood_expressions"])
+        mood_list = self._get_persona_fragment_list(fragments_cfg, "mood_expressions")
         if mood_list:
             parts.append(f"此刻状态：{rng.choice(mood_list)}")
 
         # 随机抽取1个反应风格
-        react_list = fragments_cfg.get("reaction_styles", self._DEFAULT_PERSONA_FRAGMENTS["reaction_styles"])
+        react_list = self._get_persona_fragment_list(fragments_cfg, "reaction_styles")
         if react_list:
             parts.append(f"反应倾向：{rng.choice(react_list)}")
 
         # 随机抽取1-2个肢体语言（可选，30%概率出现）
-        body_list = fragments_cfg.get("body_language", self._DEFAULT_PERSONA_FRAGMENTS["body_language"])
+        body_list = self._get_persona_fragment_list(fragments_cfg, "body_language")
         if body_list and rng.random() < 0.3:
             parts.append(rng.choice(body_list))
 
@@ -1112,7 +1172,7 @@ class AIEngine:
         preferred_moods = intent_mood_map.get(intent, [])
 
         # 心情表达
-        mood_list = fragments_cfg.get("mood_expressions", self._DEFAULT_PERSONA_FRAGMENTS["mood_expressions"])
+        mood_list = self._get_persona_fragment_list(fragments_cfg, "mood_expressions")
         if preferred_moods:
             # 70%概率从偏好池选，30%从全池选（保持随机性）
             if rng.random() < 0.7 and preferred_moods:
@@ -1132,14 +1192,14 @@ class AIEngine:
             "chat":      [],
         }
         preferred_reacts = intent_react_map.get(intent, [])
-        react_list = fragments_cfg.get("reaction_styles", self._DEFAULT_PERSONA_FRAGMENTS["reaction_styles"])
+        react_list = self._get_persona_fragment_list(fragments_cfg, "reaction_styles")
         if preferred_reacts and rng.random() < 0.7:
             parts.append(f"反应倾向：{rng.choice(preferred_reacts)}")
         elif react_list:
             parts.append(f"反应倾向：{rng.choice(react_list)}")
 
         # 肢体语言（30%概率）
-        body_list = fragments_cfg.get("body_language", self._DEFAULT_PERSONA_FRAGMENTS["body_language"])
+        body_list = self._get_persona_fragment_list(fragments_cfg, "body_language")
         if body_list and rng.random() < 0.3:
             parts.append(rng.choice(body_list))
 
@@ -1560,11 +1620,24 @@ class AIEngine:
             return mode
         return "chat"
 
+    @staticmethod
+    def _final_fallback_reply(mode: str, is_priv: bool = False, attempts: int = 0) -> str:
+        """所有模型都失败时的统一兜底回复（避免调用方拿到 None）。"""
+        if mode in ("convert", "contact_mory"):
+            return "咨询入口这会儿卡住了～先不要急，等我恢复一下再来完整回应你。"
+        if mode in ("tarot", "fortune"):
+            return "占卜/运势这会儿抓不到牌位，先放一会儿，我再给你更准的答复～"
+        if mode in ("dream", "treehole"):
+            return "这段情绪我先没接上，先停一下，等我恢复后继续陪你聊。"
+
+        base = "Mory 这会儿被路况卡住了，暂时没法稳定接上模型，稍等一下我再回你。"
+        return base
+
     def ask(self, question: str, mode: str = "normal", retry: int = 3, seed: int = 0,
             tools: list = None, tool_choice: str = "auto", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, news_content: str = "") -> str | None:
         """
         调用AI，失败时自动重试并切换模型。
-        返回字符串，失败返回 None。
+        返回字符串；失败会返回兜底文案，不会返回 None。
         
         内置优化（v21.25+）：
         - 语义缓存：相同问题1小时内直接返回，省API费
@@ -1591,6 +1664,8 @@ class AIEngine:
         # ── 三层智能路由：根据mode选择对应层级模型池 ──
         use_tier_routing = bool(self._tier_pools)
         tier = self._get_tier_for_mode(mode) if use_tier_routing else "llm"
+        route_tiers = self._retry_tiers_for(tier) if use_tier_routing else []
+        attempted_by_tier = {}
         _upgrade_attempted = False
         active_model = self.current_model
 
@@ -1611,36 +1686,67 @@ class AIEngine:
             # 优化引擎异常不影响主流程
             logger.debug(f"优化层跳过（非致命）：{opt_err}")
         
-        # 【修复】：限制最大重试次数为 5 次，防止线程黑洞卡死（10次×8秒退避=80秒太长）
-        max_attempts = min(5, retry * len(self.model_pool))
+        # 限制最大重试次数，同时按三层路由的实际候选模型数放宽上限。
+        # 之前固定最多 5 次，轻量池两个模型超时后还没机会切到 glm/标准/旗舰池就误报“全部失败”。
+        if use_tier_routing:
+            candidate_count = max(1, self._retry_model_count_for(tier))
+            max_attempts = min(12, max(5, retry * candidate_count))
+            max_iterations = max_attempts + candidate_count + len(self.model_pool) + 6
+        else:
+            candidate_count = max(1, len(self.model_pool))
+            max_attempts = min(8, max(1, retry * candidate_count))
+            max_iterations = max_attempts + candidate_count + 4
         
         # 确保当前模型可用
         self._ensure_valid_model()
+
+        def _advance_tier_if_exhausted(failed_tier: str, failed_model: str):
+            """同一次 ask 内，当前层级每个可用模型都失败过一次后，立即切到下一层。"""
+            nonlocal tier
+            if not use_tier_routing or not failed_tier or not failed_model:
+                return
+            attempted = attempted_by_tier.setdefault(failed_tier, set())
+            attempted.add(failed_model)
+            tier_pool = self._tier_pools.get(failed_tier, [])
+            candidate_names = [
+                model.get("name")
+                for model in tier_pool
+                if model.get("name")
+                and not self._is_blacklisted(model.get("name"))
+                and not self._is_model_expired(model)
+            ]
+            if candidate_names and not set(candidate_names).issubset(attempted):
+                return
+            if failed_tier not in route_tiers:
+                return
+            for next_tier in route_tiers[route_tiers.index(failed_tier) + 1:]:
+                next_model = self._get_tier_model(next_tier, require_circuit=True)
+                if next_model:
+                    logger.warning(f"⬆️ [{failed_tier}] 本轮候选均失败，升级到 {next_tier}: {next_model}")
+                    tier = next_tier
+                    return
         
-        for attempt in range(max_attempts):
+        api_attempts = 0
+        for _iteration in range(max_iterations):
+            if api_attempts >= max_attempts:
+                break
             # ── 三层路由：获取当前层级模型 ──
             if use_tier_routing:
                 self._ensure_tier_model(tier)
-                current_tier_model = self._get_tier_model(tier)
+                current_tier_model = self._get_tier_model(tier, require_circuit=True)
                 if current_tier_model is None:
-                    fallback_tiers = self._tier_fallback.get(tier, [])
                     degraded = False
-                    for fb_tier in fallback_tiers:
+                    for fb_tier in self._retry_tiers_for(tier)[1:]:
                         self._ensure_tier_model(fb_tier)
-                        fb_model = self._get_tier_model(fb_tier)
+                        fb_model = self._get_tier_model(fb_tier, require_circuit=True)
                         if fb_model is not None:
-                            logger.warning(f"⬇️ [{tier}] 无可用模型，降级到 {fb_tier}: {fb_model}")
+                            logger.warning(f"🔁 [{tier}] 无可用模型，切换到备用层级 {fb_tier}: {fb_model}")
                             tier = fb_tier
                             current_tier_model = fb_model
                             degraded = True
                             break
                     if not degraded:
-                        logger.error(f"🚫 所有层级模型均不可用，回退到原llm池")
-                        try:
-                            from modules.auto_tasks import report_fault
-                            report_fault("三层路由全失败", "所有层级模型均不可用，已回退原llm池", "🚨")
-                        except Exception as e:
-                            logger.debug(f"操作异常: {e}")
+                        logger.warning(f"🚫 所有层级模型均不可用，回退到原llm池继续尝试")
                         use_tier_routing = False
                 if use_tier_routing and current_tier_model:
                     active_model = current_tier_model
@@ -1667,14 +1773,14 @@ class AIEngine:
                 opt = _get_optimizer()
                 if opt and opt.enabled and not opt.limiter.acquire(timeout=3.0):
                     # 限流超时，本次尝试跳过
-                    logger.warning(f"⚠️ 令牌桶限流，第{attempt+1}次尝试被跳过")
+                    logger.warning(f"⚠️ 令牌桶限流，第{api_attempts+1}次尝试被跳过")
                     continue
             except Exception as e:
                 logger.debug(f"令牌桶限流异常: {e}")  # 令牌桶异常不阻塞主流程
             
             # 【修复】active_model为空时跳过本次尝试（Bug 2）
             if not active_model:
-                logger.warning(f"⚠️ active_model为空，跳过本次尝试(attempt={attempt+1})")
+                logger.warning(f"⚠️ active_model为空，跳过本次尝试(attempt={api_attempts+1})")
                 time.sleep(2)
                 continue
 
@@ -1774,6 +1880,8 @@ class AIEngine:
                 payload["tool_choice"] = tool_choice
 
             try:
+                api_attempts += 1
+                attempt_no = api_attempts
                 _req_start = time.time()
                 resp = requests.post(req_url, json=payload,
                                      headers=headers, timeout=25)
@@ -1794,6 +1902,20 @@ class AIEngine:
                             return message
                         
                         result_text = message.get("content")
+                        if not result_text or not str(result_text).strip():
+                            logger.warning(f"⚠️ 模型{active_model}返回空content，切换模型重试")
+                            try:
+                                opt = _get_optimizer()
+                                if opt:
+                                    opt.circuit.record_failure(active_model)
+                            except Exception as e:
+                                logger.debug(f"操作异常: {e}")
+                            if use_tier_routing:
+                                self._next_tier_model(tier)
+                                _advance_tier_if_exhausted(tier, active_model)
+                            else:
+                                self._next_available_model()
+                            continue
                         
                         _req_elapsed = time.time() - _req_start
                         self._record_response_time(active_model, _req_elapsed)
@@ -1863,7 +1985,18 @@ class AIEngine:
                             except Exception:
                                 pass
                         return sanitized
-                    logger.warning(f"⚠️ 模型{active_model}返回空choices")
+                    logger.warning(f"⚠️ 模型{active_model}返回空choices，切换模型重试")
+                    try:
+                        opt = _get_optimizer()
+                        if opt:
+                            opt.circuit.record_failure(active_model)
+                    except Exception as e:
+                        logger.debug(f"操作异常: {e}")
+                    if use_tier_routing:
+                        self._next_tier_model(tier)
+                        _advance_tier_if_exhausted(tier, active_model)
+                    else:
+                        self._next_available_model()
                 elif resp.status_code in (429, 402, 403):
                     model_name = active_model
                     logger.warning(f"⚠️ 模型{model_name}额度/权限异常({resp.status_code})，自动拉黑")
@@ -1879,7 +2012,7 @@ class AIEngine:
                     else:
                         self._next_available_model()
                     if not self.model_pool:
-                        return None
+                        return self._final_fallback_reply(mode=mode, is_priv=is_priv, attempts=attempt_no)
                 else:
                     try:
                         opt = _get_optimizer()
@@ -1887,30 +2020,52 @@ class AIEngine:
                             opt.circuit.record_failure(active_model)
                     except Exception as e:
                         logger.debug(f"操作异常: {e}")
-                    logger.warning(f"⚠️ HTTP {resp.status_code}，重试({attempt+1})")
+                    logger.warning(f"⚠️ HTTP {resp.status_code}，重试({attempt_no})")
+                    if use_tier_routing:
+                        self._next_tier_model(tier)
+                        _advance_tier_if_exhausted(tier, active_model)
+                    else:
+                        self._next_available_model()
             except requests.exceptions.Timeout:
-                logger.warning(f"⚠️ 超时，重试({attempt+1})")
+                logger.warning(f"⚠️ 超时，重试({api_attempts})")
                 try:
                     opt = _get_optimizer()
                     if opt:
                         opt.circuit.record_failure(active_model)
                 except Exception as e:
                     logger.debug(f"操作异常: {e}")
+                if use_tier_routing:
+                    self._next_tier_model(tier)
+                    _advance_tier_if_exhausted(tier, active_model)
+                else:
+                    self._next_available_model()
             except Exception as e:
                 logger.error(f"❌ 请求异常：{type(e).__name__}")
+                try:
+                    opt = _get_optimizer()
+                    if opt:
+                        opt.circuit.record_failure(active_model)
+                except Exception as opt_err:
+                    logger.debug(f"操作异常: {opt_err}")
+                if use_tier_routing:
+                    self._next_tier_model(tier)
+                    _advance_tier_if_exhausted(tier, active_model)
+                else:
+                    self._next_available_model()
 
             # 指数退避，最多等8秒
-            wait = min(2 ** (attempt % 3), 8)
+            wait = min(2 ** ((max(api_attempts, 1) - 1) % 3), 8)
             time.sleep(wait)
 
+        attempts_done = max(api_attempts, 1)
         logger.error("❌ AI引擎：所有模型均失败")
         try:
             from modules.auto_tasks import report_fault
-            report_fault("AI模型全部失败", "所有模型均失败，用户消息无法回复", "🚨",
-                         f"尝试模型数: {attempt + 1}")
+            report_fault("AI模型全部失败", "所有模型均失败，已切到降级兜底回复", "🚨",
+                         f"尝试模型数: {attempts_done}")
         except Exception as e:
             logger.debug(f"操作异常: {e}")
-        return None
+        return self._final_fallback_reply(mode=mode, is_priv=is_priv, attempts=attempts_done)
 
 
 def calc_typing_delay(text: str) -> float:
@@ -1943,13 +2098,13 @@ def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
     pools = config.get("MODEL_POOLS", {})
     vision_pool = list(pools.get("vision", []))
     
-    # 如果没有vision池，尝试用llm池（部分模型也支持多模态）
+    # 如果没有vision池，尝试用llm池（仅选择明确支持多模态的模型）
     if not vision_pool:
         llm_pool = pools.get("llm", [])
-        # 筛选支持vision的LLM模型
+        vl_keywords = ["vl", "vision", "omni", "qwen-vl", "qwen2-vl", "glm-4v", "glm-4v-plus", "deepseek-vl"]
         for m in llm_pool:
             name = m.get("name", "").lower()
-            if any(x in name for x in ["vl", "vision", "qwen", "omni", "qwen2"]):
+            if any(kw in name for kw in vl_keywords):
                 vision_pool.append(m)
                 break
     

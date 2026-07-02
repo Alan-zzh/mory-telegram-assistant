@@ -4,6 +4,7 @@ tasks/monitoring/health_check_task.py - 任务健康检查任务
 检查关键任务是否按时执行，并审计数据库 task_log 异常。
 """
 
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
@@ -14,18 +15,23 @@ from tasks.support.task_guard import get_task_guard
 logger = get_logger("tasks.monitoring.health_check")
 
 _CST = timezone(timedelta(hours=8))
+_PROCESS_START_AT = datetime.fromtimestamp(time.time(), _CST)
+_LATE_START_NOTICE_SENT_DATES = set()
 
-# 关键任务清单：(task_key, 描述, 预期小时)
-_CRITICAL_TASKS = [
-    ("greeting_morning", "早安问候", 10),
-    ("greeting_afternoon", "午安问候", 13),
-    ("greeting_evening", "晚安问候", 23),
-    ("news_morning", "早间新闻", 10),
-    ("news_afternoon", "午间新闻", 14),
-    ("news_evening", "晚间新闻", 21),
-    ("daily_report", "每日日报", 10),
-]
 
+def _started_after_deadline(today: str, deadline_hour: int, deadline_minute: int) -> bool:
+    """判断本进程是否在任务当天截止时间后才启动。"""
+    try:
+        deadline = datetime.strptime(today, "%Y-%m-%d").replace(
+            hour=deadline_hour,
+            minute=deadline_minute,
+            second=0,
+            microsecond=0,
+            tzinfo=_CST,
+        )
+    except Exception:
+        return False
+    return _PROCESS_START_AT.date() == deadline.date() and _PROCESS_START_AT > deadline
 
 class HealthCheckTask(BaseTask):
     """任务健康检查（每小时）。"""
@@ -35,18 +41,29 @@ class HealthCheckTask(BaseTask):
         return "health_check"
 
     def schedule(self) -> List[Dict[str, Any]]:
-        return [{
-            "job_id": "health_check",
-            "trigger": "cron",
-            "hour": "10,16,22",
-            "minute": 0,
-            "params": {},
-            "options": {
-                "max_instances": 1,
-                "coalesce": True,
-                "misfire_grace_time": 300,
+        options = {
+            "max_instances": 1,
+            "coalesce": True,
+            "misfire_grace_time": 300,
+        }
+        return [
+            {
+                "job_id": "health_check",
+                "trigger": "cron",
+                "hour": "10,16,22",
+                "minute": 0,
+                "params": {},
+                "options": options,
             },
-        }]
+            {
+                "job_id": "health_check_late",
+                "trigger": "cron",
+                "hour": 23,
+                "minute": 45,
+                "params": {},
+                "options": options,
+            },
+        ]
 
     def execute(self, ctx: TaskContext) -> None:
         try:
@@ -60,14 +77,38 @@ class HealthCheckTask(BaseTask):
 
             logger.info(f"🏥 [health_check] 开始检查，当前时间{current_hour}:00，检查日期{today}")
 
+            from modules.auto_tasks import (
+                _build_critical_tasks,
+                _is_deadline_reached,
+                _missing_task_keys_today,
+            )
+
             missed = []
-            for task_key, task_desc, expected_hour in _CRITICAL_TASKS:
-                if current_hour < expected_hour:
+            late_missed = []
+            for task in _build_critical_tasks(self.rm.config, today):
+                task_desc = task["desc"]
+                deadline_hour = task["deadline_hour"]
+                deadline_minute = task["deadline_minute"]
+                if not _is_deadline_reached(now, deadline_hour, deadline_minute):
                     continue
-                check_key = f"{task_key}_{today}"
-                if not self.rm.db.is_task_executed_today(check_key):
-                    missed.append(f"• {task_desc}（应在{expected_hour}:00前执行）")
-                    logger.info(f"🏥 [health_check] ❌ {task_desc} 今日未执行")
+                missing_keys = _missing_task_keys_today(self.rm.db, task.get("keys", []))
+                if missing_keys:
+                    suffix = ""
+                    if len(missing_keys) <= 3:
+                        suffix = f"：{', '.join(missing_keys)}"
+                    else:
+                        suffix = f"：缺失 {len(missing_keys)} 个目标"
+                    line = f"• {task_desc}（应在{deadline_hour:02d}:{deadline_minute:02d}前执行）{suffix}"
+                    if _started_after_deadline(today, deadline_hour, deadline_minute):
+                        late_missed.append(line)
+                        logger.info(
+                            f"🏥 [health_check] ⏭️ {task_desc} 今日错过触发窗口: "
+                            f"process_start={_PROCESS_START_AT.strftime('%H:%M:%S')} "
+                            f"missing={missing_keys[:5]}"
+                        )
+                    else:
+                        missed.append(line)
+                        logger.info(f"🏥 [health_check] ❌ {task_desc} 今日未执行完整: {missing_keys[:5]}")
                 else:
                     logger.debug(f"🏥 [health_check] ✅ {task_desc} 今日已执行")
 
@@ -76,6 +117,14 @@ class HealthCheckTask(BaseTask):
             parts = []
             if missed:
                 parts.append(f"⚠️ <b>任务未执行</b>\n" + "\n".join(missed))
+            if late_missed and today not in _LATE_START_NOTICE_SENT_DATES:
+                _LATE_START_NOTICE_SENT_DATES.add(today)
+                start_text = _PROCESS_START_AT.strftime("%H:%M:%S")
+                parts.append(
+                    f"ℹ️ <b>任务窗口已错过</b>\n"
+                    f"本进程今日 {start_text} 才启动，以下任务已过当天触发窗口，不会自动补跑：\n"
+                    + "\n".join(late_missed)
+                )
             if anomalies:
                 parts.append(f"🚨 <b>数据库锁异常</b>\n" + "\n".join(anomalies))
 

@@ -2,7 +2,168 @@
 
 > **本文件专门写给AI自己看**
 > 新会话开始时，AI 必须先读 `AGENTS.md`（项目规则+老坑铁律）+ `project_snapshot.md` + 本文件
-> **最后更新**：2026-07-01（生产截图异常闭环修复 + 全功能只读核对；补修 Dashboard 登录 RBAC 豁免和调度监控跨进程回退；服务双 active）
+> **最后更新**：2026-07-02（22:08 AI 复发修复：熔断跳过不再消耗真实尝试次数；晚启动错过任务改为信息告警）
+
+---
+
+## [2026-07-02] 22:08 AI 模型全部失败复发 + 晚启动错过早间任务误判
+
+### 触发
+老板发生产截图：22:00 任务健康检查提示早安问候与 `scheduled_broadcast_morning_nudge_-1003004701688_2026-07-02` 未执行；22:08 又收到 `三层路由全失败` 和 `AI模型全部失败` 告警。
+
+### 现场判断
+- VPS、systemd、Dashboard、`/api/health` 都正常；`scripts/puzan_loop_monitor.py --once` 显示 L1-L6 all normal。
+- 生产进程 `mory-assistant` 当天 18:56:22 才启动，已经晚于早安问候 08:05 和上午定点播报 10:00；APScheduler `misfire_grace_time` 只有 60 秒，不会补跑当天早间任务。因此健康检查报缺失不是调度链路坏，而是部署/重启发生在任务窗口之后。
+- 22:05 `reactivate` 触发 AI 调用，轻量池、标准池、旗舰池连续出现空 content、超时、熔断；22:08:31 回退原 `llm` 池后，多个“已熔断跳过”消耗了剩余循环次数，导致还有候选模型未真实请求就报“所有模型均失败”。
+
+### 根因
+1. `core/ai_engine.py` 用同一个 `for attempt in range(max_attempts)` 统计真实 API 请求和熔断跳过；当大量模型处于 OPEN/HALF_OPEN 时，跳过动作会耗尽 `attempt`，回退池没有足够机会继续请求。
+2. `tasks/monitoring/health_check_task.py` 只按 `task_log` 缺失报“任务未执行”，没有判断本进程是否在当天任务截止时间后才启动，导致部署晚启动场景被描述成执行失败。
+
+### 修复
+- `core/ai_engine.py`：新增 `api_attempts` 与 `max_iterations` 分离。熔断跳过、active_model 为空、令牌桶跳过不再消耗真实 API 尝试次数；只有实际 `requests.post()` 前才递增 `api_attempts`。
+- `core/ai_engine.py`：中间层级池全部不可用时不再发 `三层路由全失败` 管理员故障，只记录 warning 并继续回退原 `llm` 池；空 `choices`、普通请求异常也会记录失败并切换模型，避免原地空转。
+- `tasks/monitoring/health_check_task.py`：记录 `_PROCESS_START_AT`，新增 `_started_after_deadline()`；健康检查把“进程晚启动导致当天窗口已错过”归入 `任务窗口已错过` 信息段，不再混进 `任务未执行` 故障段。
+- 远端精确上传 2 个文件，不上传 `config.json` / `.env` / `mory.db`；远端备份为 `ai_engine.py.bak.20260702_223745`、`health_check_task.py.bak.20260702_223745`。
+- 二次加固只上传 `core/ai_engine.py`，远端备份为 `ai_engine.py.bak.20260702_225119`。
+
+### 验证
+- 本地：`PYTHONUTF8=1 python -m py_compile core\ai_engine.py tasks\monitoring\health_check_task.py` 通过。
+- 本地：`python -m pytest tests\unit\test_ai_engine_resilience.py -q` 通过，3 passed；覆盖到期日当天不误判过期、空 content 切模型成功、全请求失败返回兜底文案。
+- 本地：`python -m pytest tests\unit\test_v5_19_0_persona_engine.py tests\unit\test_scheduled_broadcast_rich.py -q` 通过，19 passed / 2 skipped。
+- 远端：`python3 -m py_compile core/ai_engine.py tasks/monitoring/health_check_task.py` 通过，`sudo systemctl restart mory-assistant` 成功。
+- 远端：`mory-assistant` / `mory-dashboard` 均 active，`curl localhost:6616/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`。
+- 远端真实 AI smoke：`AIEngine.ask('只回复两个字：早安', mode='morning', retry=1)` 经轻量池空回复/多次超时后升级到标准池，最终返回 `早安`，证明不会再因熔断跳过提前耗尽循环。
+- 远端二次 smoke：`AIEngine.ask('只回复一句十二字以内的早安', mode='morning', retry=1)` 经轻量池多次超时后升级到标准池并返回正常文案；22:51 后日志无 `三层路由全失败` / `AI模型全部失败` / `所有模型均失败` / `Traceback` / `CRITICAL`。
+- 远端健康辅助验证：18:56 启动会被识别为错过 09:35 截止，23:45 截止不会误判。
+- 修复后 `scripts/puzan_loop_monitor.py --once`：L1-L6 OK，`errors_10min=none`，`fail_log_10min=(none)`，`[EXCEPTION] none`，`[RECOMMEND] all normal`。
+
+### 经验教训
+1. AI 重试预算要区分“真实请求次数”和“本地跳过次数”；熔断跳过不能当作已经尝试过一个模型。
+2. 健康检查要解释任务为什么缺失。进程晚启动、配置禁用、无候选目标、真实执行失败是四种不同状态，不能都叫“未执行”。
+3. 调度缺失先看服务启动时间与任务触发时间，再看 `task_log`，否则部署后错过窗口会被误判为任务链路故障。
+
+---
+
+## [2026-07-02] AI 模型全部失败：轻量池卡死 + 空 content 误判成功 + 过期日提前拉黑
+
+### 触发
+老板发生产告警：`🚨 AI模型全部失败 / 所有模型均失败，用户消息无法回复 / 尝试模型数: 5 / 2026-07-02 08:07:19`，要求判断根因并彻底修复。
+
+### 现象
+- 生产 `journalctl` 08:05 早安任务开始后，`qwen3.6-flash-2026-04-16` 连续超时并触发熔断，随后 `qwen3.5-plus-2026-04-20` 继续超时，08:07:19 报 `AI引擎：所有模型均失败`。
+- 同一任务随后走话术池兜底，08:07:21 已向群发送早安文案，说明 Bot 没整体宕机，但 AI 生成链路失败。
+- 远端配置里 `BLACKLISTED_MODELS=['qwen3.6-plus-2026-04-02']`，启动时曾因 `expire=2026-07-02` 在当天被提前判过期拉黑。
+- 直接打百炼接口时 `qwen3.6-flash-2026-04-16` 可返回 200；但通过 `AIEngine.ask()` 时遇到 200 且 `content=""`、只有 `reasoning_content` 的响应，旧逻辑把空串当成功返回或继续在轻量池内消耗重试。
+
+### 根因
+1. **重试上限与路由链不匹配**：`max_attempts = min(5, retry * len(self.model_pool))` 固定最多 5 次，`morning` 路由到 `llm_light` 后，轻量池模型超时就把 5 次耗完，没有机会升级到 `llm_standard` / `llm_premium`。
+2. **超时后只记失败，不立即换模型**：`requests.exceptions.Timeout` 分支只 `record_failure(active_model)`，要等熔断器累计到 3 次才跳过同模型，导致单个慢模型拖住整轮调用。
+3. **空 content 被误判**：部分推理模型返回 200 但 `message.content` 为空、`reasoning_content` 非空。旧逻辑没有把空 content 当失败切换，可能返回空字符串或浪费后续重试。
+4. **过期日判断提前一天失效**：`datetime.strptime(expire, "%Y-%m-%d") < datetime.now()` 会在 `2026-07-02 00:00:01` 把 `expire=2026-07-02` 判为过期；配置语义应是“到期日当天仍可尝试，次日才过期”。
+
+### 修复
+- `core/ai_engine.py`：
+  - `_is_model_expired()` 改成 date-to-date 比较：只有 `expire_date < today` 才过期。
+  - 增加 `_retry_tiers_for()` / `_retry_model_count_for()`，轻量池失败链包含 `llm_light → llm_standard → llm_premium`。
+  - `_get_tier_model(require_circuit=True)` 会跳过黑名单、过期、慢速和已熔断模型，并在同池内找下一个可用模型。
+  - `ask()` 的重试次数按实际候选模型数计算；同一轮当前 tier 的可用候选都失败过一次后，立即升级到下一层。
+  - 超时、HTTP 非成功、空 content 都会切换模型；空 content 不再返回给业务层。
+
+### 验证
+- 本地：`.venv\Scripts\python.exe -m py_compile core\ai_engine.py` 通过。
+- VPS：远端备份 `core/ai_engine.py` 为 `/home/ubuntu/mory_assistant/backups/ai_engine.py.bak.20260702_184004`，远端 `python3 -m py_compile core/ai_engine.py` 通过。
+- VPS：`mory-assistant` / `mory-dashboard` 双 active，`curl localhost:6616/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`。
+- 真实 LLM 烟测：远端直接调用 `AIEngine.ask('只回复两个字：早安', mode='morning', retry=1)`，轻量池多模型超时/空 content 后升级到标准池，最终返回非空 `早安`。
+- 生产日志：18:40 后无 `AI模型全部失败`、无 `所有模型均失败`、无 `Traceback`、无 `CRITICAL`。
+
+### 经验教训
+1. **“有模型池”不等于“能走完整模型池”**：必须用真实调用链验证 fallback，而不是只看 `MODEL_POOLS` 配置。
+2. **200 响应也可能业务失败**：LLM 返回空 `content` 要按失败处理；不能把空串交给业务层。
+3. **到期日字段要明确定义边界**：日期型 `expire` 应按自然日处理，避免当天凌晨误拉黑。
+4. **调度成功不等于 AI 成功**：早安任务最后用兜底话术发送成功，但 AI 生成链路仍失败，必须看 journal 中模型切换和 `AIEngine.ask()` 真实返回。
+
+---
+
+## [2026-07-02] emoji 状态贴纸 OCR 漏检：RapidOCR 本地部署 + fallback 修复
+
+### 触发
+用户发现群里有个广告号，名字旁边 Premium emoji 状态贴纸写"看我简介"，发消息"1"探活，但广告检测没拦截。用户要求：进来就应该判断，名字后面有"看我简介"就应该封禁。
+
+### 根因
+1. **vision 模型池为空**：v5.31.2 时为"避免误用图像理解模型处理文本任务"清空了 `MODEL_POOLS.vision`，之后未恢复。导致 `analyze_image()` 无视觉模型可用。
+2. **analyze_image fallback 逻辑缺陷**：旧代码从 llm 池找名字含 "qwen" 的模型当视觉模型用，但 qwen3.6-plus / qwen3.7-max 是纯文本模型不支持多模态，调用后静默失败返回 None。
+3. **OCR 静默失败无降级**：`_ocr_sticker_texts()` 调 `analyze_image()` 返回 None 时不做任何处理，emoji 状态贴纸上的"看我简介"文字完全检测不到。
+4. **短消息跳过资料检测**：广告号发"1"等单字符消息时，`len(msg) < 2` 直接 return False，资料层信号没机会运行（v5.16.4 已修但仅 is_ad=True 时才处置，score 信号被忽略）。
+
+### 修复
+1. **部署 RapidOCR 本地 CPU OCR 引擎**：VPS 安装 `rapidocr-onnxruntime 1.4.4`（基于 PaddleOCR ONNX 版本，模型约 9MB，CPU 推理 0.3-0.4 秒/张）。
+2. **新增 `_local_ocr()` 函数**：`modules/ad_profile_signals.py` 中新增，用 RapidOCR 在 CPU 上识别图片文字。未安装时返回空不影响运行。
+3. **修改 `_ocr_sticker_texts()` fallback 链**：API 视觉模型 → 本地 RapidOCR → 评分累计降级。
+4. **修复 `analyze_image()` fallback 逻辑**：`core/ai_engine.py` 中 fallback 关键词从 `["vl", "vision", "qwen", "omni", "qwen2"]` 改为 `["vl", "vision", "omni", "qwen-vl", "qwen2-vl", "glm-4v", "deepseek-vl"]`，不再误用纯文本 qwen 模型。
+5. **短消息+资料层信号不跳过**：`core/handlers/security_handlers.py` 中 `profile_score > 0` 时不跳过后续检测，profile_score 累加到追踪评分。
+
+### 验证
+- VPS 实测 RapidOCR 识别"看我简介""看我主页""进群了解"准确率 100%，CPU 耗时 0.3-0.4 秒。
+- py_compile 4 文件通过 + 11 个单元测试全部通过。
+- 服务 active + health ok + 启动日志无错误。
+
+### 教训
+- **vision 模型池清空后要有降级方案**：清空 vision 池解决了误用问题，但也让所有 OCR 功能失效。本地 OCR 引擎作为 fallback 是必要的。
+- **fallback 关键词不能太宽泛**：旧代码用 "qwen" 关键词匹配视觉模型，但 qwen 系列大部分是纯文本模型。必须用 vl/vision/omni 等明确标识。
+- **OCR 失败不能静默**：`analyze_image()` 返回 None 时应该有日志或降级方案，不能让广告检测链路悄悄断掉。
+
+---
+
+## v5.31.2 proactive_audit 缺 import json + 7 类任务未执行根因排查 [2026-07-02]
+
+### 触发
+老板发生产截图，自审计报告显示 `🟡 [P1] 配置检查失败: name 'json' is not defined`，同时任务健康检查报 7 类任务（午/晚安问候、早/午/晚间新闻、每日日报、night_whisper 定点播报）2026-07-01 全部"今日未执行"。
+
+### 现象
+- 2026-07-02 03:30 proactive_audit 任务执行后报告"健康度=93 问题=1"，唯一问题就是 `name 'json' is not defined`。
+- task_log 表 2026-07-01 完全没有 greeting_afternoon/greeting_evening/news_*/daily_report/night_whisper 的执行记录（最后一条是 06-30）。
+- 同时段 reactivate（每小时）、cart_recovery（每 5 分钟）、scheduled_broadcast_evening_wind（19:00 傍晚播报）等任务正常执行。
+- scheduler_metrics 显示 proactive_audit `last_status=success`（任务函数没崩，只是 catch 抓到了 NameError）。
+
+### 根因
+1. **`tasks/monitoring/proactive_audit_task.py` 顶部 imports 缺 `import json`**。代码第 114 行 `example = json.load(f)` 引发 `NameError: name 'json' is not defined`，被第 118 行 `except Exception as e` 捕获后写入 `issues`，最终拼成"P1 配置检查失败"上报。`modules/auto_tasks.py` 老版本的同名函数本身有 `import json`（第 33 行），新迁移到 `tasks/monitoring/` 子模块时漏抄一行。
+2. **7 类任务 2026-07-01 未执行的直接根因是旧进程跑旧代码**：
+   - 2026-07-01 20:00 PID 4271 重试 `greeting_afternoon` 时报 `事务异常: 'body_language'` —— 这就是 v5.31.2 上一次 hotfix 已修复的 `PERSONA_FRAGMENTS.body_language` KeyError 问题，但服务器进程仍在跑修复前的旧代码。
+   - 2026-07-02 03:22:19 systemd 停止旧进程 PID 521756，03:24:01 启动新进程 PID 703740/705488，新进程注册了全部 8 个关键任务（greeting_morning/afternoon/evening、news_morning/afternoon/evening、daily_report、broadcast_night_whisper）。
+   - 任务未执行 → 不是调度器故障、不是任务注册失败、不是 task_key 模板问题，**纯粹是旧进程没加载 v5.31.2 修复代码**。
+3. **`_build_critical_tasks` 中 news_morning/afternoon/evening 和 daily_report 的 task_key 没带日期后缀**（与 `AI_DEBUG_HISTORY` "task_key 必须带日期后缀" 铁律相悖）。当前因 task_log 主键是自增 id 而不是 (task_key, exec_date) 唯一约束，没有直接触发 INSERT 冲突，但属于潜在隐患。
+
+### 修复
+- `tasks/monitoring/proactive_audit_task.py`：顶部 imports 追加 `import json`（第 8 行）。
+- 部署：SFTP 上传单文件 + 服务器旧文件备份为 `proactive_audit_task.py.bak.20260702_035614` + `sudo systemctl restart mory-assistant`。
+- 不修改 news/daily_report 的 task_key 模板（最小修改原则；当前无 INSERT 冲突，避免引入跨天回归风险）。
+
+### 验证
+- 本地：`python -m py_compile tasks/monitoring/proactive_audit_task.py` 通过。
+- VPS：远端 `python3 -m py_compile` 通过；`grep -n "^import json"` 命中第 8 行。
+- VPS：重启后 `mory-assistant` / `mory-dashboard` 双 active；`/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`。
+- VPS：`journalctl -u mory-assistant --since '2 minutes ago'` 显示新进程 PID 728200 完整注册了 49 个任务，关键任务全部在列：
+  - `greeting_morning (cron {'hour': 8, 'minute': 5})`
+  - `greeting_afternoon (cron {'hour': 12, 'minute': 35})`
+  - `greeting_evening (cron {'hour': 23, 'minute': 5})`
+  - `news_morning (cron {'hour': 9, 'minute': 5})`
+  - `news_afternoon (cron {'hour': 13, 'minute': 5})`
+  - `news_evening (cron {'hour': 20, 'minute': 35})`
+  - `daily_report (cron {'hour': 9, 'minute': 10})`
+  - `broadcast_night_whisper (cron {'hour': 22, 'minute': 30})`
+  - `proactive_audit (cron {'hour': 3, 'minute': 30})` ← 明天 03:30 将用新代码执行，不再报 json NameError
+
+### 经验教训
+1. **模块迁移时必须 diff 检查 imports**：从 `modules/auto_tasks.py` 拆函数到 `tasks/monitoring/proactive_audit_task.py` 时，只复制了函数体，漏抄顶部 `import json`。新模块的 py_compile 不会报错（json 只在运行时才被引用），单测也难覆盖（需要触发配置检查路径）。**预防**：迁移后必须跑一次真实路径的 dry-run，或加 `python -c "import ast; ast.parse(open(f).read())"` + 显式 import 检查。
+2. **任务"未执行"≠ 调度器故障**：先看 task_log 是否有当天记录、再看 journalctl 该任务的执行尝试、最后看进程启动时间是否早于任务触发时间。本次根因是旧进程跑旧代码（修复未部署/未重启），不是调度器或 task_key 模板问题。
+3. **`scheduler_metrics.last_status=success` 不能作为业务成功的证据**：任务函数内部 catch 异常后不会让调度器感知到失败，proactive_audit 报错 1 条但仍被记为 success。业务成功必须看 `task_log` 或 issues 列表。
+4. **重启服务是有效的"代码刷新"手段**：03:24 重启后所有任务正常注册，03:56 二次重启加载 import json 修复。systemd 重启 + 健康检查 + 任务注册日志三件套是验证部署的最小闭环。
+
+### 边界
+- 本次只修复 import json 一行 + 验证任务注册。未修改 news/daily_report task_key 模板，未触发对真实用户的副作用（未发消息/未禁言/未扣积分）。
+- 7 类任务今天（2026-07-02）的执行要等到 8:05 起的 cron 触发后才能在生产验证，本次只验证"任务已注册"。
+- `ai_engine` 启动日志显示 `模型 qwen3.6-plus-2026-04-02 已过期 (2026-07-02)` 被拉黑，是潜在问题但不在本次修复范围。
 
 ---
 

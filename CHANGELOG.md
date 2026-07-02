@@ -1,6 +1,27 @@
 ## v5.31.2 [2026-06-30] [Puzan-OS]
 - **修复监控系统持续误报**：http_client.py HTTP重试日志从 warning 降级为 debug，避免污染 journalctl；puzan_loop_monitor.py L2/L5 过滤规则优化，排除业务抓取重试日志和正常调度事件名误匹配；task_log 无 status 列显示从 N/A 改为 INFO 标注。部署后监控恢复 errors_10min=none + fail_log_10min=(none) + all normal。
 
+### Hotfix [2026-07-02] 22:08 AI 复发 + 晚启动任务误判修复
+- 修复 `core/ai_engine.py` AI 重试预算：熔断跳过、空模型、限流跳过不再消耗真实 API 尝试次数，只有实际 `requests.post()` 才计入 `api_attempts`；避免 22:08 场景中回退原 `llm` 池后因跳过 OPEN 模型耗尽循环，导致候选模型未请求就误报“所有模型均失败”。
+- AI 中间层级池不可用时不再发送 `三层路由全失败` 管理员故障，改为 warning 并继续回退原 `llm` 池；空 `choices` 与普通请求异常也会记录失败并切换模型。
+- 修复 `tasks/monitoring/health_check_task.py` 晚启动误判：记录进程启动时间，若本进程在当天任务截止时间后才启动，健康检查改归类到“任务窗口已错过”，不再混进“任务未执行”故障段。
+- 生产证据：2026-07-02 18:56:22 进程启动晚于 08:05 早安与 10:00 上午播报，APScheduler `misfire_grace_time=60` 不会补跑，故 22:00 早间任务缺失不是调度器故障。
+- VPS 已精确热修部署：远端备份 `ai_engine.py.bak.20260702_223745`、`health_check_task.py.bak.20260702_223745`；二次加固备份 `ai_engine.py.bak.20260702_225119`；远端 `py_compile` 通过；`mory-assistant` / `mory-dashboard` 双 active；`/api/health` 返回 v5.31.2。
+- 真实 `AIEngine.ask(mode=morning)` smoke 经轻量池空回复/多次超时后继续升级，最终返回非空文案；修复后 `scripts/puzan_loop_monitor.py --once` 显示 L1-L6 OK、`errors_10min=none`、`fail_log_10min=(none)`、`all normal`；22:51 后日志无 `三层路由全失败` / `AI模型全部失败` / `Traceback` / `CRITICAL`。
+- 本地新增 `tests/unit/test_ai_engine_resilience.py`，覆盖模型到期边界、空 content 切换、全请求失败返回兜底；新增单测 3 passed，相关播报/人设测试 19 passed / 2 skipped。
+
+### Hotfix [2026-07-02] AI 模型全部失败根治
+- 修复 `core/ai_engine.py` 三层模型路由：轻量池模型超时/空回复时会立即切换；同一轮轻量池候选全部失败后升级到 `llm_standard` / `llm_premium`，不再固定卡在 5 次轻量池尝试后误报“所有模型均失败”。
+- 修复模型过期日期判断：`expire=2026-07-02` 现在按“2026-07-02 当天仍可尝试，2026-07-03 起过期”处理，避免当天 00:00 后被提前拉黑。
+- 修复 200 响应但 `content` 为空的问题：只含 `reasoning_content` 的响应不再当成功空串返回，会记录失败并切换模型重试。
+- VPS 已热修部署：远端备份 `ai_engine.py.bak.20260702_184004`，`python3 -m py_compile core/ai_engine.py` 通过，`mory-assistant` / `mory-dashboard` 双 active，`/api/health` 返回 v5.31.2；真实 `AIEngine.ask(mode=morning)` 烟测最终返回 `早安`，18:40 后未再出现 `AI模型全部失败` / `所有模型均失败` / `Traceback`。
+
+### Hotfix [2026-07-02] proactive_audit 修复 + 7 类任务未执行根因排查
+- 修复自审计报告 `🟡 [P1] 配置检查失败: name 'json' is not defined`：`tasks/monitoring/proactive_audit_task.py` 顶部 imports 漏 `import json`，导致第 114 行 `json.load(f)` 抛 NameError 被 catch 上报为 P1 问题。从 `modules/auto_tasks.py` 拆函数到 `tasks/monitoring/` 子模块时漏抄一行。
+- 排查 2026-07-01 午/晚安问候、早/午/晚间新闻、每日日报、night_whisper 7 类任务全部"今日未执行"根因：旧进程 PID 4271/521756 仍在跑 v5.31.2 body_language 修复前的旧代码，greeting_afternoon 重试时抛 `'body_language'` KeyError 后释放锁；2026-07-02 03:24 systemd 重启新进程后 8 个关键任务（greeting_morning/afternoon/evening、news_morning/afternoon/evening、daily_report、broadcast_night_whisper）已全部正常注册。
+- 部署：SFTP 上传单文件 + 服务器旧文件备份为 `proactive_audit_task.py.bak.20260702_035614` + `sudo systemctl restart mory-assistant`。新进程 PID 728200 注册 49 个任务，`/api/health` 返回 v5.31.2，双服务 active。
+- 已知遗留：`ai_engine` 启动日志显示 `模型 qwen3.6-plus-2026-04-02 已过期 (2026-07-02)` 被拉黑，待后续处理。
+
 ### Token 消耗暗病排查 + 多智能体联排根治 10 项问题
 
 ### Hotfix [2026-07-01] 生产截图异常闭环修复（body_language + 健康检查 + 成本熔断）
