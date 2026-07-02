@@ -23,9 +23,12 @@
 ### 修复
 - `core/ai_engine.py`：新增 `api_attempts` 与 `max_iterations` 分离。熔断跳过、active_model 为空、令牌桶跳过不再消耗真实 API 尝试次数；只有实际 `requests.post()` 前才递增 `api_attempts`。
 - `core/ai_engine.py`：中间层级池全部不可用时不再发 `三层路由全失败` 管理员故障，只记录 warning 并继续回退原 `llm` 池；空 `choices`、普通请求异常也会记录失败并切换模型，避免原地空转。
+- `core/ai_engine.py`：最终全模型失败但已返回兜底文案时，不再发送 `AI模型全部失败` 管理员故障；只有明确 HTTP 402/403 时才发送 `AI模型额度或权限异常`。
+- `core/ai_engine.py`：增加本地连续跳过上限，避免所有模型都处于熔断 OPEN 时在回退池里空转刷日志。
 - `tasks/monitoring/health_check_task.py`：记录 `_PROCESS_START_AT`，新增 `_started_after_deadline()`；健康检查把“进程晚启动导致当天窗口已错过”归入 `任务窗口已错过` 信息段，不再混进 `任务未执行` 故障段。
 - 远端精确上传 2 个文件，不上传 `config.json` / `.env` / `mory.db`；远端备份为 `ai_engine.py.bak.20260702_223745`、`health_check_task.py.bak.20260702_223745`。
 - 二次加固只上传 `core/ai_engine.py`，远端备份为 `ai_engine.py.bak.20260702_225119`。
+- 2026-07-03 03:06 最终告警加固只上传 `core/ai_engine.py`，远端备份为 `ai_engine.py.bak.20260703_030627`。
 
 ### 验证
 - 本地：`PYTHONUTF8=1 python -m py_compile core\ai_engine.py tasks\monitoring\health_check_task.py` 通过。
@@ -35,6 +38,8 @@
 - 远端：`mory-assistant` / `mory-dashboard` 均 active，`curl localhost:6616/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`。
 - 远端真实 AI smoke：`AIEngine.ask('只回复两个字：早安', mode='morning', retry=1)` 经轻量池空回复/多次超时后升级到标准池，最终返回 `早安`，证明不会再因熔断跳过提前耗尽循环。
 - 远端二次 smoke：`AIEngine.ask('只回复一句十二字以内的早安', mode='morning', retry=1)` 经轻量池多次超时后升级到标准池并返回正常文案；22:51 后日志无 `三层路由全失败` / `AI模型全部失败` / `所有模型均失败` / `Traceback` / `CRITICAL`。
+- 2026-07-03 03:00-03:03 复发复盘：无 HTTP 402/403/余额/额度日志，只有模型超时与空 content；结论不是整体没额度，而是外部模型慢/空回复叠加内部“兜底仍告警”逻辑。
+- 远端强制失败 smoke：把 `BASE_URL` 临时指向 `127.0.0.1:9`，`AIEngine.ask(mode=normal)` 返回兜底文案 `Mory 这会儿被路况卡住...`，journal 无 `AI模型全部失败` / `三层路由全失败` / `所有模型均失败`。
 - 远端健康辅助验证：18:56 启动会被识别为错过 09:35 截止，23:45 截止不会误判。
 - 修复后 `scripts/puzan_loop_monitor.py --once`：L1-L6 OK，`errors_10min=none`，`fail_log_10min=(none)`，`[EXCEPTION] none`，`[RECOMMEND] all normal`。
 

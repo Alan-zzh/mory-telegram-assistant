@@ -1,7 +1,7 @@
 # Mory小助理 项目快照 v5.31.2
 
 > 新AI会话必读：本文件 + `AGENTS.md`（项目规则+老坑铁律）+ `AI_DEBUG_HISTORY.md`
-> 最后更新：2026-07-02（22:08 AI 复发二次加固；中间层级失败不再告警；真实 AIEngine smoke 返回非空文案）
+> 最后更新：2026-07-03（03:03 AI 兜底仍告警最终修复；无额度耗尽证据；强制失败 smoke 不再发红牌）
 
 ---
 
@@ -11,7 +11,7 @@
 |------|-----|
 | 名称 | Mory小助理 - 运营型商业 AI 转化机器人 |
 | 版本 | v5.31.2 |
-| 部署状态 | 2026-07-01 起 `scripts/puzan_loop_monitor.py` 本地无限 LOOP 持续监控（间隔 300s，日志 `logs/puzan_loop_monitor_live_20260630.log`；当前本地 lock PID 28388）；VPS `43.153.23.115` RUNNING；`scripts/vps_watchdog.py` 由 root cron 每 2min 检查 health；`mory-assistant` / `mory-dashboard` 双 active；✅ verify_db_methods 162 方法无缺失无孤儿；✅ /api/health 返回 200 且 version=v5.31.2；L4 已按真实 schema 统计 task/token/成本；2026-07-02 22:37 AI 复发热修已部署，远端备份 `ai_engine.py.bak.20260702_223745`、`health_check_task.py.bak.20260702_223745`，22:51 二次加固备份 `ai_engine.py.bak.20260702_225119`；真实 `AIEngine.ask(mode=morning)` 在轻量池空 content 与多次超时后继续升级并返回非空文案，中间层级不可用只记 warning 并继续回退，不再发送 `三层路由全失败` 管理员故障；22:41 `scripts/puzan_loop_monitor.py --once` 显示 L1-L6 OK、`errors_10min=none`、`fail_log_10min=(none)`、`all normal`；早间任务缺失已确认是进程 18:56:22 晚于任务窗口启动导致，健康检查已改为“任务窗口已错过”信息归类；注意 `WatchdogUSec=0`，当前依赖外部 watchdog 而非 systemd watchdog |
+| 部署状态 | 2026-07-01 起 `scripts/puzan_loop_monitor.py` 本地无限 LOOP 持续监控（间隔 300s，日志 `logs/puzan_loop_monitor_live_20260630.log`；当前本地 lock PID 28388）；VPS `43.153.23.115` RUNNING；`scripts/vps_watchdog.py` 由 root cron 每 2min 检查 health；`mory-assistant` / `mory-dashboard` 双 active；✅ verify_db_methods 162 方法无缺失无孤儿；✅ /api/health 返回 200 且 version=v5.31.2；L4 已按真实 schema 统计 task/token/成本；2026-07-02 22:37 AI 复发热修已部署，远端备份 `ai_engine.py.bak.20260702_223745`、`health_check_task.py.bak.20260702_223745`，22:51 二次加固备份 `ai_engine.py.bak.20260702_225119`，2026-07-03 03:06 最终告警加固备份 `ai_engine.py.bak.20260703_030627`；03:00-03:03 复盘无 402/403/余额/额度日志，只有超时和空 content，结论不是整体没额度；外部模型全失败但已返回兜底文案时不再发送 `AI模型全部失败` 管理员故障，只有明确 HTTP 402/403 才发送 `AI模型额度或权限异常`；远端强制失败 smoke（临时坏 BASE_URL）返回兜底文案且 journal 无 `AI模型全部失败` / `三层路由全失败`；早间任务缺失已确认是进程晚于任务窗口启动导致，健康检查已改为“任务窗口已错过”信息归类；注意 `WatchdogUSec=0`，当前依赖外部 watchdog 而非 systemd watchdog |
 | 防御体系 | v5.31.1 四层防御：L1启动自检(_self_check_repo_methods) + L2__getattr__ CRITICAL+re-raise + L3 scripts/verify_db_methods.py 部署前门禁 + L4 core/scheduler_monitor.py:check_critical_jobs_health 调度健康监控。v5.31.2 新增：① LLMCostGuard 成本熔断器（用户1h $1.0，全局1h $5.0，data/router_usage.db 12列schema记录token_usage）② 腾讯云 Lighthouse API 监控（实例 lhins-4ney4np5，IP 43.153.23.115）③ Loop 多智能体暗病搜索机制 ④ RLock 替代 Lock 解决 add_points 重入死锁 ⑤ 原子 UPDATE 防止 TOCTOU 余额检查竞态 ⑥ 独立看门狗 scripts/vps_watchdog.py（每2min检查health，连续3次失败自动重启，已去重日志）⑦ _CST 时区常量全域覆盖（累计修复 40+ 处 datetime.now() 时区错位）⑧ WriteQueue 停机 drain，降低重启尾部写丢失风险 |
 | 技术栈 | Python3 + pyTelegramBotAPI + SQLite(WAL+busy_timeout=30s+单线程写入队列+连接代理全量化+背压Fail-Fast+Alembic迁移) + Flask + gunicorn+gevent + structlog + diskcache |
 | 部署 | VPS（systemd作为唯一进程管理）+ GitHub Actions CI/CD（待启用Secrets） |

@@ -1727,6 +1727,9 @@ class AIEngine:
                     return
         
         api_attempts = 0
+        local_skip_streak = 0
+        max_local_skips = max(6, candidate_count + len(self.model_pool) + 3)
+        quota_permission_failures = []
         for _iteration in range(max_iterations):
             if api_attempts >= max_attempts:
                 break
@@ -1760,10 +1763,14 @@ class AIEngine:
                 opt = _get_optimizer()
                 if opt and opt.enabled and not opt.circuit.is_available(active_model):
                     logger.warning(f"⚡ 模型{active_model}已被熔断，本轮跳过并切换")
+                    local_skip_streak += 1
                     if use_tier_routing:
                         self._next_tier_model(tier)
                     else:
                         self._next_available_model()
+                    if local_skip_streak >= max_local_skips:
+                        logger.warning(f"⚠️ 连续跳过{local_skip_streak}个不可用模型，停止本轮空转并返回兜底")
+                        break
                     continue
             except Exception as opt_err:
                 logger.debug(f"熔断检查跳过（非致命）：{opt_err}")
@@ -1781,6 +1788,10 @@ class AIEngine:
             # 【修复】active_model为空时跳过本次尝试（Bug 2）
             if not active_model:
                 logger.warning(f"⚠️ active_model为空，跳过本次尝试(attempt={api_attempts+1})")
+                local_skip_streak += 1
+                if local_skip_streak >= max_local_skips:
+                    logger.warning(f"⚠️ 连续{local_skip_streak}次没有可用模型，停止本轮空转并返回兜底")
+                    break
                 time.sleep(2)
                 continue
 
@@ -1880,6 +1891,7 @@ class AIEngine:
                 payload["tool_choice"] = tool_choice
 
             try:
+                local_skip_streak = 0
                 api_attempts += 1
                 attempt_no = api_attempts
                 _req_start = time.time()
@@ -2000,6 +2012,8 @@ class AIEngine:
                 elif resp.status_code in (429, 402, 403):
                     model_name = active_model
                     logger.warning(f"⚠️ 模型{model_name}额度/权限异常({resp.status_code})，自动拉黑")
+                    if resp.status_code in (402, 403):
+                        quota_permission_failures.append(f"{model_name}:HTTP{resp.status_code}")
                     self._blacklist_model(model_name, f"HTTP {resp.status_code}")
                     try:
                         opt = _get_optimizer()
@@ -2058,13 +2072,18 @@ class AIEngine:
             time.sleep(wait)
 
         attempts_done = max(api_attempts, 1)
-        logger.error("❌ AI引擎：所有模型均失败")
-        try:
-            from modules.auto_tasks import report_fault
-            report_fault("AI模型全部失败", "所有模型均失败，已切到降级兜底回复", "🚨",
-                         f"尝试模型数: {attempts_done}")
-        except Exception as e:
-            logger.debug(f"操作异常: {e}")
+        logger.warning("⚠️ AI引擎：本轮模型调用均未成功，已返回降级兜底")
+        if quota_permission_failures:
+            try:
+                from modules.auto_tasks import report_fault
+                report_fault(
+                    "AI模型额度或权限异常",
+                    "检测到模型返回 402/403，已切到降级兜底回复",
+                    "🚨",
+                    f"尝试模型数: {attempts_done}; {', '.join(quota_permission_failures[:5])}"
+                )
+            except Exception as e:
+                logger.debug(f"操作异常: {e}")
         return self._final_fallback_reply(mode=mode, is_priv=is_priv, attempts=attempts_done)
 
 
