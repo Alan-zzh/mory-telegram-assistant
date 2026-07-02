@@ -148,6 +148,8 @@ def check_ad_detection(dctx) -> bool:
     chat_id = dctx.chat_id
 
     # 短消息也必须先看资料层信号：广告号常用“1”等无意义内容探活。
+    profile_score = 0
+    profile_result = None
     try:
         user_bio = ""
         try:
@@ -157,6 +159,7 @@ def check_ad_detection(dctx) -> bool:
             logger.debug(f"[AD] 短消息资料检测拉取Bio失败: uid={uid} err={e}")
         from modules.ad_profile_signals import detect_profile_ad_signal
         profile_result = detect_profile_ad_signal(bot, m.from_user, user_bio, CONFIG)
+        profile_score = int(profile_result.get("score", 0) or 0)
         if profile_result.get("is_ad"):
             from modules.ad_enforcement import enforce_ad_user
             enforce_ad_user(
@@ -176,7 +179,8 @@ def check_ad_detection(dctx) -> bool:
     except Exception as e:
         logger.debug(f"[AD] 资料层广告检测异常: uid={uid} err={e}")
 
-    if len(ad_text) < 2:
+    # 短消息 + 有资料层可疑信号 → 不跳过，进入后续累计评分
+    if len(ad_text) < 2 and profile_score <= 0:
         return False
 
     # [TRAE SOLO CN] v5.8.2 追踪群消息发送者到 group_members 表（渐进式构建完整成员列表）
@@ -376,13 +380,17 @@ def check_ad_detection(dctx) -> bool:
 
     # 场景B：追踪所有用户消息历史（无论score多少，用于连续消息模式检测）
     # [TRAE SOLO CN] 修复：无条件追踪，避免短广告（如"找人合作"）评分不足漏网
+    # 无视觉模型时 profile_score=2（有emoji状态），加到累计评分中
     content_score = ad_result.get("score", 0)
+    total_score = content_score + profile_score
+    if profile_score > 0:
+        logger.info(f"[AD] 资料层可疑信号: uid={uid} profile_score={profile_score} reason={profile_result.get('reason', '')[:80] if profile_result else ''}")
     track_result = ad_detector.track_suspicious_user(
         user_id=uid,
         msg_id=m.message_id,
         chat_id=chat_id,
         text=ad_result.get("ad_text", msg) or msg,
-        score=content_score
+        score=total_score
     )
     if track_result["action"] == "ban":
         if _handle_delayed_ad_tracking(dctx, track_result):

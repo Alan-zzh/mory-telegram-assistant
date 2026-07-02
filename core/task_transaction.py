@@ -98,7 +98,10 @@ class TaskTransactionManager:
             self._confirm_task_done()
         else:
             self._release_task()
-            logger.warning(f"⚠️ [{self.task_name}] 事务异常，已释放数据库锁: {exc_val}")
+            if getattr(exc_val, "expected", False):
+                logger.info(f"ℹ️ [{self.task_name}] 任务正常中止，已释放数据库锁: {exc_val}")
+            else:
+                logger.warning(f"⚠️ [{self.task_name}] 事务异常，已释放数据库锁: {exc_val}")
 
         return False
 

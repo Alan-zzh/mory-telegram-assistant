@@ -18,6 +18,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
+import os
 import threading
 import time
 import sqlite3
@@ -73,14 +74,15 @@ class LLMCostGuard:
 
         # 内存滑动窗口：deque[(timestamp, cost)]
         # 全局窗口 + 按用户窗口
-        self._global_window = deque(maxlen=10000)  # 全局最近 10000 条
-        self._user_windows: Dict[int, deque] = defaultdict(lambda: deque(maxlen=500))
+        self._global_window = deque()
+        self._user_windows: Dict[int, deque] = defaultdict(deque)
         self._lock = threading.Lock()
+        self._flush_lock = threading.Lock()
 
         # 【v5.31.2 修复】待刷盘的详细日志队列
         # 之前 flush_to_db 只建表不写数据，llm_cost_logs 永远为空，重启后熔断器累计清零
         # 现在 record_cost 缓存详细日志，flush_to_db 批量写入数据库
-        self._pending_logs = deque(maxlen=10000)
+        self._pending_logs = deque()
 
         # 降级状态记录（uid → 降级解除时间戳）
         self._downgraded_users: Dict[int, float] = {}
@@ -99,6 +101,52 @@ class LLMCostGuard:
             f"💰 LLMCostGuard 初始化: enabled={self.enabled}, "
             f"用户1h=${self.user_hourly_limit}, 全局1h=${self.global_hourly_limit}"
         )
+
+    def load_recent_costs_from_db(self, db_path, hours: int = 24) -> int:
+        """从持久化成本表回灌滑动窗口，避免服务重启后熔断累计清零。"""
+        if not self.enabled or not db_path:
+            return 0
+        cutoff = time.time() - max(1, hours) * 3600
+        loaded = 0
+        try:
+            conn = sqlite3.connect(db_path, timeout=30.0)
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT uid, estimated_cost, timestamp
+                    FROM llm_cost_logs
+                    WHERE timestamp >= ?
+                    ORDER BY timestamp ASC
+                    """,
+                    (cutoff,),
+                ).fetchall()
+            finally:
+                conn.close()
+            with self._lock:
+                for uid, cost, ts in rows:
+                    try:
+                        uid_int = int(uid or 0)
+                        cost_float = float(cost or 0.0)
+                        ts_float = float(ts or 0.0)
+                    except (TypeError, ValueError):
+                        continue
+                    self._global_window.append((ts_float, cost_float))
+                    self._user_windows[uid_int].append((ts_float, cost_float))
+                    loaded += 1
+                now = time.time()
+                self._cleanup_expired(now, self._global_window, 86400)
+                for window in self._user_windows.values():
+                    self._cleanup_expired(now, window, 86400)
+            if loaded:
+                logger.info(f"💰 LLMCostGuard 已从 llm_cost_logs 回灌最近 {hours}h 成本记录 {loaded} 条")
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e).lower():
+                logger.info("💰 llm_cost_logs 尚不存在，成本熔断器从空窗口启动")
+            else:
+                logger.warning(f"LLMCostGuard 回灌成本日志失败: {e}")
+        except Exception as e:
+            logger.warning(f"LLMCostGuard 回灌成本日志异常: {e}")
+        return loaded
 
     def _estimate_cost(self, tier: str, input_tokens: int, output_tokens: int) -> float:
         """估算单次调用成本（美元）"""
@@ -270,33 +318,49 @@ class LLMCostGuard:
         if not self.enabled:
             return
 
-        try:
-            db_conn.execute("""
-                CREATE TABLE IF NOT EXISTS llm_cost_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    uid INTEGER, model_name TEXT, task_type TEXT,
-                    input_tokens INTEGER, output_tokens INTEGER,
-                    estimated_cost REAL, tier TEXT, timestamp INTEGER
-                )
-            """)
-
-            # 批量写入待刷盘的详细日志
+        with self._flush_lock:
+            conn = None
+            close_conn = False
+            batch = []
             with self._lock:
                 if not self._pending_logs:
-                    db_conn.commit()
                     return
-                batch = list(self._pending_logs)
-                self._pending_logs.clear()
+                while self._pending_logs:
+                    batch.append(self._pending_logs.popleft())
 
-            db_conn.executemany(
-                "INSERT INTO llm_cost_logs (uid, model_name, task_type, input_tokens, output_tokens, estimated_cost, tier, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                batch
-            )
-            db_conn.commit()
-            logger.debug(f"💰 LLMCostGuard flush_to_db: 写入 {len(batch)} 条成本日志")
-        except Exception as e:
-            # flush 失败应告警，否则成本日志表缺失无人感知
-            logger.warning(f"flush_to_db 异常: {e}")
+            try:
+                if isinstance(db_conn, (str, bytes, os.PathLike)):
+                    conn = sqlite3.connect(db_conn, timeout=30.0)
+                    close_conn = True
+                else:
+                    conn = db_conn
+
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS llm_cost_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uid INTEGER, model_name TEXT, task_type TEXT,
+                        input_tokens INTEGER, output_tokens INTEGER,
+                        estimated_cost REAL, tier TEXT, timestamp INTEGER
+                    )
+                """)
+                conn.executemany(
+                    "INSERT INTO llm_cost_logs (uid, model_name, task_type, input_tokens, output_tokens, estimated_cost, tier, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    batch
+                )
+                conn.commit()
+                logger.debug(f"💰 LLMCostGuard flush_to_db: 写入 {len(batch)} 条成本日志")
+            except Exception as e:
+                with self._lock:
+                    for item in reversed(batch):
+                        self._pending_logs.appendleft(item)
+                # flush 失败应告警，否则成本日志表缺失无人感知
+                logger.warning(f"flush_to_db 异常: {e}")
+            finally:
+                if close_conn and conn is not None:
+                    try:
+                        conn.close()
+                    except Exception as e:
+                        logger.debug(f"flush_to_db 关闭短连接失败: {e}")
 
 
 # ── 模块级单例 ──────────────────────────────────────────────────────
@@ -304,12 +368,14 @@ _guard_instance: Optional[LLMCostGuard] = None
 _guard_lock = threading.Lock()
 
 
-def init_guard(config: dict):
+def init_guard(config: dict, db_path=None):
     """初始化成本熔断器单例（main.py 启动时调用）"""
     global _guard_instance
     with _guard_lock:
         try:
             _guard_instance = LLMCostGuard(config)
+            if db_path:
+                _guard_instance.load_recent_costs_from_db(db_path, hours=24)
         except Exception as e:
             logger.warning(f"⚡ LLMCostGuard 初始化失败: {e}")
             _guard_instance = None

@@ -74,6 +74,45 @@ def _download_sticker_image(bot, sticker) -> bytes:
         return b""
 
 
+def _local_ocr(image_data: bytes) -> str:
+    """本地 OCR fallback，使用 RapidOCR 在 CPU 上识别图片文字。
+    未安装 rapidocr-onnxruntime 时返回空，不影响正常运行。
+    """
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError:
+        return ""
+    try:
+        ocr_engine = RapidOCR()
+        result, _ = ocr_engine(image_data)
+        if not result:
+            return ""
+        texts = [item[1] for item in result if item and len(item) > 1]
+        return " ".join(texts)
+    except Exception as e:
+        logger.debug(f"[AD] 本地OCR失败: {e}")
+        return ""
+
+
+def _has_vision_model(config: dict | None = None) -> bool:
+    """检查是否有可用的视觉模型（用于决定降级策略）。
+    config 为 None 时返回 True（避免测试/未初始化时触发降级）。
+    """
+    if not config:
+        return True
+    pools = config.get("MODEL_POOLS", {})
+    vision_pool = pools.get("vision", [])
+    if vision_pool:
+        return True
+    llm_pool = pools.get("llm", [])
+    vl_keywords = ["vl", "vision", "omni", "qwen-vl", "qwen2-vl", "glm-4v", "deepseek-vl"]
+    for m in llm_pool:
+        name = m.get("name", "").lower()
+        if any(kw in name for kw in vl_keywords):
+            return True
+    return False
+
+
 def _ocr_sticker_texts(bot, status_ids: list, config: dict | None = None) -> list:
     """对自定义 emoji 状态贴纸做 OCR，识别图片里的“看我简介”等文字。"""
     if not config or not bot or not status_ids or not hasattr(bot, "get_custom_emoji_stickers"):
@@ -86,16 +125,27 @@ def _ocr_sticker_texts(bot, status_ids: list, config: dict | None = None) -> lis
 
     results = []
     prompt = "请识别这张贴纸图片中的所有中文和英文文字，只返回文字内容，不要解释。没有文字就返回'无文字'。"
+    has_vl = _has_vision_model(config)
     for sticker in stickers or []:
         image_data = _download_sticker_image(bot, sticker)
         if not image_data:
             continue
-        try:
-            text = analyze_image(image_data, prompt, config)
-            if text and text != "无文字":
-                results.append(str(text))
-        except Exception as e:
-            logger.debug(f"[Codex] emoji状态贴纸OCR失败: err={e}")
+        text = None
+        # 优先用 API 视觉模型 OCR
+        if has_vl:
+            try:
+                text = analyze_image(image_data, prompt, config)
+                if text and text != "无文字":
+                    results.append(str(text))
+                    continue
+            except Exception as e:
+                logger.debug(f"[Codex] emoji状态贴纸API-OCR失败: err={e}")
+        # API 不可用时用本地 OCR fallback
+        if not text or text == "无文字":
+            local_text = _local_ocr(image_data)
+            if local_text:
+                logger.info(f"[AD] 本地OCR识别到文字: {local_text[:80]}")
+                results.append(local_text)
     return results
 
 
@@ -118,14 +168,35 @@ def detect_profile_ad_signal(bot, user, bio: str = "", config: dict | None = Non
     检测用户资料层广告信号。
 
     返回:
-    - is_ad=True：明确命中“看我简介”等强规则，可以直接广告处置
+    - is_ad=True：明确命中"看我简介"等强规则，可以直接广告处置
     - score=1：只有自定义 emoji 状态但没读到文字，只作为后续追踪信号
+
+    注意：必须用 bot.get_chat(uid) 获取 Chat 对象来读取 emoji_status_custom_emoji_id，
+    因为 m.from_user (User 对象) 在 pyTelegramBotAPI 4.34.0 中不保存该字段。
     """
     first_name = getattr(user, "first_name", "") or ""
     last_name = getattr(user, "last_name", "") or ""
     username = getattr(user, "username", "") or ""
+    uid = getattr(user, "id", None) or getattr(user, "uid", None)
     display = f"{first_name}{last_name}".strip()
+
+    # 从 User 对象先尝试拿 emoji 状态
     status_ids = _iter_status_ids(user)
+
+    # User 对象没有时，从 bot.get_chat() 的 Chat 对象拿
+    # （pyTelegramBotAPI 4.34.0 的 User 类不保存 emoji_status，但 Chat 对象有）
+    if not status_ids and uid:
+        try:
+            chat_info = bot.get_chat(uid)
+            status_ids = _iter_status_ids(chat_info)
+            # 同步更新 bio
+            if not bio:
+                chat_bio = getattr(chat_info, "bio", "") or ""
+                if chat_bio:
+                    bio = chat_bio
+        except Exception as e:
+            logger.debug(f"[AD] get_chat获取emoji状态失败: uid={uid} err={e}")
+
     sticker_texts = _sticker_texts(bot, status_ids)
 
     profile_parts = [display, username, bio or ""]
@@ -164,13 +235,23 @@ def detect_profile_ad_signal(bot, user, bio: str = "", config: dict | None = Non
         }
 
     if status_ids:
+        has_vl = _has_vision_model(config)
+        if not has_vl and config is not None:
+            base_score = 2
+            reason = "存在自定义emoji状态，未读到明确广告文字（无视觉模型降级）"
+            no_vl_flag = True
+        else:
+            base_score = 1
+            reason = "存在自定义emoji状态，未读到明确广告文字"
+            no_vl_flag = False
         return {
             "is_ad": False,
-            "score": 1,
-            "reason": "存在自定义emoji状态，未读到明确广告文字",
+            "score": base_score,
+            "reason": reason,
             "status_ids": status_ids,
             "status_text": status_text,
             "ocr_text": ocr_text,
+            "no_vision_model": no_vl_flag,
         }
 
     return {

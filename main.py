@@ -85,7 +85,7 @@ def main():
     #  1.3 初始化 LLM 成本熔断器（v5.26.0 阶段1-A：防刷资金安全红线）
     # ════════════════════════════════════════════════════════════════════
     from core.llm_cost_guard import init_guard
-    init_guard(CONFIG)
+    init_guard(CONFIG, getattr(DB, "db_file", None))
 
     # ════════════════════════════════════════════════════════════════════
     #  1.4 初始化多 Bot 路由器（v5.24.0 阶段3-C：多 Bot 任务分工编排）

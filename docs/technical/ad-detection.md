@@ -60,9 +60,16 @@ SCORE_THRESHOLD = 3
 4. 发言内容为 `1` 等 1 字符时，也必须先跑资料层检测；资料层未命中时才跳过内容评分。
 
 **重要边界**：
-- Telegram Bot API / Sticker 对象没有“图片中文字”的现成字段，不能只依赖元数据。
-- 贴纸图片文字必须下载 thumbnail/file 后用视觉模型 OCR。
+- Telegram Bot API / Sticker 对象没有"图片中文字"的现成字段，不能只依赖元数据。
+- 贴纸图片文字必须下载 thumbnail/file 后用 OCR 识别。
+- OCR 优先级：API 视觉模型 > 本地 RapidOCR（CPU） > 评分累计降级
 - 只有 `emoji_status_custom_emoji_id` 但元数据/OCR 未命中时，只作为低分可疑信号，不单独封禁，避免误封普通 Premium 用户。
+
+**本地 OCR 引擎（RapidOCR）**：
+- VPS 上安装 `rapidocr-onnxruntime`，基于 PaddleOCR 的 ONNX 版本，CPU 推理，模型约 9MB
+- 当 `MODEL_POOLS.vision` 为空（无 API 视觉模型）时，自动 fallback 到本地 OCR
+- 实测识别"看我简介""看我主页""进群了解"等中文文字准确率 100%，CPU 耗时 0.3-0.4 秒
+- 识别出的文字仍需过 `USERNAME_PATTERNS + BIO_PATTERNS` 规则匹配才触发封禁，不会误封
 
 ### 三、9 维度关键词规则集
 
@@ -196,7 +203,7 @@ def retroactive_scan(bot, chat_id, start_msg_id, end_msg_id, admin_id):
 ```
 
 **头像OCR检测**：
-- 下载用户头像图片 → AI视觉模型识别文字
+- 下载用户头像图片 → 优先用 API 视觉模型识别文字，不可用时 fallback 到本地 RapidOCR
 - 命中"看我简介""点我主页""进群了解"等广告关键词 → 评分≥2 直接处置
 - 解决了"看我简介"类视觉广告（emoji/贴纸叠加在头像图片上）无法被文本规则检测的问题
 

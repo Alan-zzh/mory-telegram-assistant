@@ -34,7 +34,7 @@ _WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 
 # 豁免路径前缀（不校验权限）
 _EXEMPT_PREFIXES = (
-    "/login", "/api/health", "/api/auth", "/static/",
+    "/login", "/api/login", "/api/health", "/api/auth", "/static/",
     "/api/scheduler/stats", "/api/scheduler/jobs",  # 监控只读
     "/api/audit/logs", "/api/audit/stats",          # 审计只读
     "/api/attribution/",                             # 归因只读

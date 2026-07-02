@@ -271,19 +271,19 @@ class TarotTask(BaseTask):
                 if not tx.claimed:
                     return
                 if random.random() > 0.30:
-                    raise TaskAbort("30%概率跳过")
+                    raise TaskAbort("30%概率跳过", expected=True)
 
                 gid = self.rm.config.get("GROUP_ID", 0)
                 admin_id = self.rm.config.get("ADMIN_ID", 0)
                 if not gid or not admin_id:
-                    raise TaskAbort("群ID或管理员ID为0")
+                    raise TaskAbort("群ID或管理员ID为0", expected=True)
 
                 logger.info("🎴 触发每日塔罗搭讪任务")
 
                 try:
                     members = self.rm.bot.get_chat_member_count(gid)
                     if members < 5:
-                        raise TaskAbort("群成员太少")
+                        raise TaskAbort("群成员太少", expected=True)
                 except TaskAbort:
                     raise
                 except Exception as e:
@@ -301,7 +301,7 @@ class TarotTask(BaseTask):
                     raise TaskAbort("获取活跃用户失败")
 
                 if not recent_users:
-                    raise TaskAbort("无活跃用户")
+                    raise TaskAbort("无活跃用户", expected=True)
 
                 uid, (uname, user_msg) = random.choice(list(recent_users.items()))
                 logger.info(f"🎴 塔罗搭讪目标: {uname} 说: {user_msg[:30]}")

@@ -50,7 +50,9 @@ logger = get_logger("auto_tasks")
 
 class _TaskAbort(Exception):
     """任务中止（非异常，但不应确认完成，需释放数据库锁）"""
-    pass
+    def __init__(self, message: str, expected: bool = False):
+        super().__init__(message)
+        self.expected = expected
 
 # 尝试导入 APScheduler（可选依赖，未安装则回退到旧版 while True）
 try:
@@ -73,6 +75,11 @@ _AI_FALLBACK_MARKERS = (
     "刚才走神",
     "网络有点卡",
     "刚刚没反应过来",
+    "咨询入口这会儿卡住了",
+    "抓不到牌位",
+    "我这边没接上你的这段情绪",
+    "被路况卡住",
+    "暂时没法稳定接上模型",
 )
 
 _last_task_run = {}
@@ -90,7 +97,7 @@ _LAST_HEARTBEAT_LOCK = threading.Lock()
 _WATCHDOG_TIMEOUT_SEC = 900  # 15 分钟
 
 # 【v5.31.2 修复】移除重复的 _CRITICAL_TASKS 定义（原 4 元组格式，已被 line ~3907 的 3 元组定义覆盖）
-# 健康检查 _job_health_check 实际使用的是 3 元组 (task_key, task_desc, expected_hour) 格式
+# 健康检查按配置动态生成任务清单，条目格式为 (task_key, task_desc, deadline_hour, deadline_minute)
 # 保留 weekly_report/monthly_report 不在此清单内（它们是周/月报，不适合按小时检查）
 
 
@@ -570,10 +577,11 @@ class _FaultReporter:
     - ⚠️ P1(降级)：层级池不可用、Telegram API异常、任务抢占失败
     - 📋 P2(轻微)：非核心功能故障
 
-    防刷机制：同类故障5分钟内不重复通知（持久化到文件，重启不丢失）
+    防刷机制：同类故障默认5分钟内不重复通知；AI模型全部失败改为30分钟窗口（持久化到文件，重启不丢失）
     兜底机制：Telegram通知失败时写入本地 fault_alerts.log，下次成功时补发
     """
     _DEDUP_SEC = 300
+    _AI_FAIL_DEDUP_SEC = 1800
     _ALERT_FILE = "fault_alerts.log"
     _DEDUP_STATE_FILE = "fault_dedup_state.json"
     _MAX_PENDING = 50
@@ -593,9 +601,10 @@ class _FaultReporter:
                     data = json.load(f)
                 now = int(time.time())
                 # 只保留未过期的记录
+                keep_sec = max(self._DEDUP_SEC, self._AI_FAIL_DEDUP_SEC)
                 self._last_alert = {
                     k: v for k, v in data.items()
-                    if now - v < self._DEDUP_SEC
+                    if now - v < keep_sec
                 }
         except Exception as e:
             # 【v5.31.2 修复】加载失败清空去重窗口会导致历史告警重新发送（轰炸），必须 warning
@@ -627,8 +636,9 @@ class _FaultReporter:
         """
         now = int(time.time())
         dedup_key = f"{severity}_{category}"
+        dedup_sec = self._AI_FAIL_DEDUP_SEC if category == "AI模型全部失败" else self._DEDUP_SEC
         with self._lock:
-            if dedup_key in self._last_alert and now - self._last_alert[dedup_key] < self._DEDUP_SEC:
+            if dedup_key in self._last_alert and now - self._last_alert[dedup_key] < dedup_sec:
                 logger.debug(f"[FaultReporter] 去重跳过：{category}")
                 return
             self._last_alert[dedup_key] = now
@@ -1903,7 +1913,7 @@ def _job_reactivate(rm):
                         else:
                             logger.warning(f"醋意挽回发送失败 uid={uid}：{e}")
             if sent_count == 0:
-                raise _TaskAbort("无发送目标")
+                raise _TaskAbort("无发送目标", expected=True)
     except _TaskAbort:
         pass
     except Exception as e:
@@ -2051,7 +2061,7 @@ def _job_cart_recovery(rm):
                         logger.warning(f"购物车挽回发送失败 uid={uid} stage={stage}: {e}")
 
             if sent_count == 0:
-                raise _TaskAbort("无发送目标")
+                raise _TaskAbort("无发送目标", expected=True)
             else:
                 logger.info(f"🛒 购物车挽回本轮发送 {sent_count} 条")
 
@@ -2074,7 +2084,7 @@ def _job_leak(rm):
             last_leak_week = rm.config.get("_LAST_LEAK_WEEK", -1)
 
             if gid == 0 or current_week == last_leak_week or now.weekday() < 2:
-                raise _TaskAbort("条件不满足")
+                raise _TaskAbort("条件不满足", expected=True)
 
             seed = random.randint(100000, 999999)
             scene_hint = random.choice([
@@ -3400,19 +3410,19 @@ def _job_tarot_flirt(rm):
             if not tx.claimed:
                 return
             if random.random() > 0.30:
-                raise _TaskAbort("30%概率跳过")
+                raise _TaskAbort("30%概率跳过", expected=True)
 
             gid = rm.config.get("GROUP_ID", 0)
             admin_id = rm.config.get("ADMIN_ID", 0)
             if not gid or not admin_id:
-                raise _TaskAbort("群ID或管理员ID为0")
+                raise _TaskAbort("群ID或管理员ID为0", expected=True)
 
             logger.info("🎴 触发每日塔罗搭讪任务")
 
             try:
                 members = rm.bot.get_chat_member_count(gid)
                 if members < 5:
-                    raise _TaskAbort("群成员太少")
+                    raise _TaskAbort("群成员太少", expected=True)
             except _TaskAbort:
                 raise
             except Exception as e:
@@ -3429,7 +3439,7 @@ def _job_tarot_flirt(rm):
                 raise _TaskAbort("获取活跃用户失败")
 
             if not recent_users:
-                raise _TaskAbort("无活跃用户")
+                raise _TaskAbort("无活跃用户", expected=True)
 
             uid, (uname, user_msg) = random.choice(list(recent_users.items()))
 
@@ -3969,15 +3979,98 @@ def _job_startup_member_scan(rm):
         logger.error(f"启动成员扫描失败：{e}")
 
 
-_CRITICAL_TASKS = [
-    ("greeting_morning", "早安问候", 10),
-    ("greeting_afternoon", "午安问候", 13),
-    ("greeting_evening", "晚安问候", 23),
-    ("news_morning", "早间新闻", 10),
-    ("news_afternoon", "午间新闻", 14),
-    ("news_evening", "晚间新闻", 21),
-    ("daily_report", "每日日报", 10),
-]
+def _deadline_after(hour: int, minute: int, grace_minutes: int) -> tuple[int, int]:
+    total = hour * 60 + minute + grace_minutes
+    return (total // 60) % 24, total % 60
+
+
+def _is_deadline_reached(now: datetime, deadline_hour: int, deadline_minute: int) -> bool:
+    return (now.hour, now.minute) >= (deadline_hour, deadline_minute)
+
+
+def _is_news_enabled(config: dict) -> bool:
+    cfg = config.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
+    if "enabled" in cfg:
+        return bool(cfg.get("enabled"))
+    return bool(config.get("AUTO_NEWS", False))
+
+
+def _build_critical_tasks(config: dict, today: str) -> list[dict]:
+    """从真实配置生成健康检查任务，避免硬编码 ID/时间造成误报或漏报。"""
+    tasks = []
+
+    for period, desc in (
+        ("morning", "早安问候"),
+        ("afternoon", "午安问候"),
+        ("evening", "晚安问候"),
+    ):
+        if not _is_greeting_enabled(config, period):
+            continue
+        hour, minute = _get_greeting_time(config, period)
+        grace = 90 if period != "evening" else 40
+        deadline_hour, deadline_minute = _deadline_after(hour, minute, grace)
+        tasks.append({
+            "desc": desc,
+            "deadline_hour": deadline_hour,
+            "deadline_minute": deadline_minute,
+            "keys": [f"greeting_{period}_{today}"],
+        })
+
+    if _is_news_enabled(config):
+        for period, task_key, desc in (
+            ("morning", "news_morning", "早间新闻"),
+            ("afternoon", "news_afternoon", "午间新闻"),
+            ("evening", "news_evening", "晚间新闻"),
+        ):
+            hour, minute = _get_news_time(config, period)
+            deadline_hour, deadline_minute = _deadline_after(hour, minute, 60)
+            tasks.append({
+                "desc": desc,
+                "deadline_hour": deadline_hour,
+                "deadline_minute": deadline_minute,
+                "keys": [task_key],
+            })
+
+    tasks.append({
+        "desc": "每日日报",
+        "deadline_hour": 10,
+        "deadline_minute": 0,
+        "keys": ["daily_report"],
+    })
+
+    try:
+        from modules.scheduled_broadcast import get_broadcast_schedule
+        group_ids = _get_all_group_ids(config)
+        for bc in get_broadcast_schedule(config):
+            bc_id = bc.get("id", "")
+            if not bc_id:
+                continue
+            hour = int(bc.get("hour", 0))
+            minute = int(bc.get("minute", 0))
+            deadline_hour, deadline_minute = _deadline_after(hour, minute, 60)
+            keys = [
+                f"scheduled_broadcast_{bc_id}_{gid}_{today}"
+                for gid in group_ids
+            ]
+            tasks.append({
+                "desc": f"定点播报:{bc_id}",
+                "deadline_hour": deadline_hour,
+                "deadline_minute": deadline_minute,
+                "keys": keys,
+            })
+    except Exception as e:
+        logger.warning(f"🏥 [health_check] 动态播报任务生成失败: {e}")
+
+    return tasks
+
+
+def _missing_task_keys_today(db, task_keys: list[str]) -> list[str]:
+    """返回今天缺失的 task_log key；多群播报逐群检查。"""
+    missing = []
+    for key in task_keys:
+        if not db.is_task_executed_today(key):
+            missing.append(key)
+    return missing
 
 
 def _job_health_check(rm):
@@ -3994,14 +4087,22 @@ def _job_health_check(rm):
         logger.info(f"🏥 [health_check] 开始检查，当前时间{current_hour}:00，检查日期{today}")
 
         missed = []
-        for task_key, task_desc, expected_hour in _CRITICAL_TASKS:
-            if current_hour < expected_hour:
-                logger.debug(f"🏥 [health_check] {task_desc} 未到预期时间({expected_hour}:00)，跳过")
+        for task in _build_critical_tasks(rm.config, today):
+            task_desc = task["desc"]
+            deadline_hour = task["deadline_hour"]
+            deadline_minute = task["deadline_minute"]
+            if not _is_deadline_reached(now, deadline_hour, deadline_minute):
+                logger.debug(f"🏥 [health_check] {task_desc} 未到截止时间({deadline_hour:02d}:{deadline_minute:02d})，跳过")
                 continue
-            check_key = f"{task_key}_{today}"
-            if not rm.db.is_task_executed_today(check_key):
-                missed.append(f"• {task_desc}（应在{expected_hour}:00前执行）")
-                logger.info(f"🏥 [health_check] ❌ {task_desc} 今日未执行")
+            missing_keys = _missing_task_keys_today(rm.db, task.get("keys", []))
+            if missing_keys:
+                suffix = ""
+                if len(missing_keys) <= 3:
+                    suffix = f"：{', '.join(missing_keys)}"
+                else:
+                    suffix = f"：缺失 {len(missing_keys)} 个目标"
+                missed.append(f"• {task_desc}（应在{deadline_hour:02d}:{deadline_minute:02d}前执行）{suffix}")
+                logger.info(f"🏥 [health_check] ❌ {task_desc} 今日未执行完整: {missing_keys[:5]}")
             else:
                 logger.debug(f"🏥 [health_check] ✅ {task_desc} 今日已执行")
 
@@ -4528,8 +4629,9 @@ def _start_with_apscheduler(rm):
     # 背刺泄密（每周三0点）
     scheduler.add_job(_job_leak, "cron", day_of_week="wed", hour=0, minute=0, args=[rm], id="leak", max_instances=1, misfire_grace_time=3600)
 
-    # 任务健康检查（每6小时，检查关键任务是否按时执行）
+    # 任务健康检查（含 23:45 覆盖晚安/夜间播报）
     scheduler.add_job(_job_health_check, "cron", hour="10,16,22", minute=0, args=[rm], id="health_check", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_health_check, "cron", hour=23, minute=45, args=[rm], id="health_check_late", max_instances=1, coalesce=True, misfire_grace_time=300)
 
     # 自动清理不活跃用户（每日3点）
     def _job_auto_inactive_clean(rm):
@@ -4581,10 +4683,10 @@ def _start_with_apscheduler(rm):
             from core.llm_cost_guard import get_guard
             guard = get_guard()
             if guard and guard.enabled:
-                # rm.db.conn 可能是 WriteQueueConnectionProxy，用 raw connection 避免 commit 问题
-                raw_conn = getattr(rm.db, '_real_conn', None) or getattr(rm.db, 'conn', None)
-                if raw_conn:
-                    guard.flush_to_db(raw_conn)
+                # 成本日志用短连接写入，避免复用 Bot 主 sqlite 连接造成跨线程/代理异常
+                db_file = getattr(rm.db, "db_file", None)
+                if db_file:
+                    guard.flush_to_db(db_file)
         except Exception as _flush_err:
             logger.debug(f"LLMCostGuard flush_to_db 跳过: {_flush_err}")
     scheduler.add_job(_job_update_prometheus_metrics, "interval", minutes=5, args=[rm], id="update_prometheus_metrics", max_instances=1, coalesce=True, misfire_grace_time=300)

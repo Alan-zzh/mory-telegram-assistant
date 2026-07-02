@@ -5,6 +5,7 @@ tasks/monitoring/proactive_audit_task.py - 预防性自审计任务
 """
 
 import glob
+import json
 import os
 import shutil
 import time

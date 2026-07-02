@@ -2,8 +2,77 @@
 """调度监控 API（v5.23.0 P2-6）"""
 from flask import Blueprint, jsonify
 from dashboard.helpers import login_required, admin_required
+from dashboard.helpers import get_db
 
 scheduler_bp = Blueprint("scheduler_monitor", __name__)
+
+
+def _scheduler_stats_from_db() -> dict:
+    """Dashboard 与 Bot 分进程部署时，从 scheduler_metrics 表读取落盘指标。"""
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT job_id, last_status, success_count, fail_count, miss_count,
+               last_run, last_duration, last_error, synced_at
+        FROM scheduler_metrics
+        ORDER BY last_run DESC
+        """
+    ).fetchall()
+    jobs = {}
+    total_success = 0
+    total_fail = 0
+    total_miss = 0
+    started_at = 0
+    for row in rows:
+        info = dict(row)
+        job_id = info.pop("job_id")
+        total_success += int(info.get("success_count") or 0)
+        total_fail += int(info.get("fail_count") or 0)
+        total_miss += int(info.get("miss_count") or 0)
+        last_run = int(info.get("last_run") or 0)
+        if started_at == 0 or (last_run and last_run < started_at):
+            started_at = last_run
+        jobs[job_id] = info
+    return {
+        "started_at": started_at,
+        "uptime_seconds": 0,
+        "total_success": total_success,
+        "total_fail": total_fail,
+        "total_miss": total_miss,
+        "job_count": len(jobs),
+        "jobs": jobs,
+        "source": "scheduler_metrics",
+    }
+
+
+def _scheduler_jobs_from_db() -> list:
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT job_id, last_status, success_count, fail_count, miss_count,
+               last_run, last_duration, last_error, synced_at
+        FROM scheduler_metrics
+        ORDER BY last_run DESC
+        """
+    ).fetchall()
+    jobs = []
+    for row in rows:
+        info = dict(row)
+        jobs.append({
+            "id": info.get("job_id"),
+            "name": info.get("job_id"),
+            "next_run": "Bot进程内调度，Dashboard读取落盘指标",
+            "trigger": "scheduler_metrics",
+            "max_instances": 1,
+            "coalesce": True,
+            "last_status": info.get("last_status"),
+            "success_count": info.get("success_count") or 0,
+            "fail_count": info.get("fail_count") or 0,
+            "miss_count": info.get("miss_count") or 0,
+            "last_run": info.get("last_run") or 0,
+            "last_error": info.get("last_error") or "",
+        })
+    return jobs
 
 
 @scheduler_bp.route("/api/scheduler/stats", methods=["GET"])
@@ -13,6 +82,8 @@ def api_scheduler_stats():
     try:
         from core.scheduler_monitor import get_scheduler_stats
         stats = get_scheduler_stats()
+        if not stats.get("job_count"):
+            stats = _scheduler_stats_from_db()
         return jsonify({"ok": True, "data": stats})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
@@ -25,9 +96,11 @@ def api_scheduler_jobs():
     try:
         from core.scheduler_monitor import get_job_list
         from modules.auto_tasks import _scheduler_instance
-        if not _scheduler_instance:
-            return jsonify({"ok": False, "msg": "调度器未初始化"}), 503
-        jobs = get_job_list(_scheduler_instance)
-        return jsonify({"ok": True, "data": jobs, "count": len(jobs)})
+        jobs = get_job_list(_scheduler_instance) if _scheduler_instance else []
+        source = "memory"
+        if not jobs:
+            jobs = _scheduler_jobs_from_db()
+            source = "scheduler_metrics"
+        return jsonify({"ok": True, "data": jobs, "count": len(jobs), "source": source})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500

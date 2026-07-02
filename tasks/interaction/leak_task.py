@@ -85,7 +85,7 @@ class LeakTask(BaseTask):
                 last_leak_week = self.rm.config.get("_LAST_LEAK_WEEK", -1)
 
                 if gid == 0 or current_week == last_leak_week or now.weekday() < 2:
-                    raise TaskAbort("条件不满足")
+                    raise TaskAbort("条件不满足", expected=True)
 
                 leak = _generate_leak_text(self.rm)
                 if not leak:

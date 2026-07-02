@@ -38,7 +38,10 @@ _AI_FALLBACK_MARKERS = (
 
 class TaskAbort(Exception):
     """任务中止（非异常，但不应确认完成，需释放数据库锁）。"""
-    pass
+
+    def __init__(self, message: str, expected: bool = False):
+        super().__init__(message)
+        self.expected = expected
 
 
 def record_abort(task_name: str, reason: str):

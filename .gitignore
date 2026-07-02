@@ -44,6 +44,7 @@ __pycache__/
 *.zip
 *.bak
 reload_flag
+fault_dedup_state.json
 data/
 💾 备份/
 

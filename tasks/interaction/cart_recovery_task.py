@@ -155,7 +155,7 @@ class CartRecoveryTask(BaseTask):
                             logger.warning(f"购物车挽回发送失败 uid={uid} stage={stage}: {e}")
 
                 if sent_count == 0:
-                    raise TaskAbort("无发送目标")
+                    raise TaskAbort("无发送目标", expected=True)
                 logger.info(f"🛒 购物车挽回本轮发送 {sent_count} 条")
         except TaskAbort:
             pass

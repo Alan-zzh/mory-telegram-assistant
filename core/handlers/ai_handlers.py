@@ -24,6 +24,17 @@ from core.helpers import format_user_mention
 
 logger = get_logger("ai_handlers")
 
+
+def _final_ai_reply_fallback(mode: str, is_priv: bool = False) -> str:
+    """处理AI失败时给用户的兜底回复（旧版兼容）。"""
+    if mode in ("convert", "contact_mory"):
+        return "咨询入口这会儿卡住了，等我恢复后再给你更完整的路径说明。"
+    if mode in ("tarot", "fortune"):
+        return "占卜/运势这会儿抓不到牌位，先等等，我马上重试给你。"
+    if mode in ("dream", "treehole"):
+        return "我这边没接上你的这段情绪，先别着急，稍后我再认真陪你聊。"
+    return "Mory 这会儿没接上模型服务，先给你个抱歉，稍后我再回。"
+
 # ═══════════════════════════════════════════════════════════════════════
 #  P8：固定彩蛋 + P8.8 成就检测 + P8.85 猜数字
 # ═══════════════════════════════════════════════════════════════════════
@@ -421,9 +432,10 @@ def handle_ai_reply(dctx, analysis: dict = None):
         resp = ai.ask(msg, mode=mode, tools=use_tools, is_priv=is_priv, stage_hint=stage_hint, user_profile=analysis, seed=seed)
 
     if resp is None:
+        resp = _final_ai_reply_fallback(mode, is_priv=is_priv)
         try:
             from modules.auto_tasks import report_fault
-            report_fault("AI引擎故障", f"mode={mode}，用户消息无法回复", "🚨" if mode != "normal" else "⚠️",
+            report_fault("AI引擎故障", f"mode={mode}，AI重试耗尽，已发送降级兜底", "🚨" if mode != "normal" else "⚠️",
                          f"用户消息: {msg[:80]}")
         except Exception as notify_err:
             logger.error(f"故障通知发送失败: {notify_err}")

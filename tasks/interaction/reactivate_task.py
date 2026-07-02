@@ -99,7 +99,7 @@ class ReactivateTask(BaseTask):
                                 logger.warning(f"醋意挽回发送失败 uid={uid}：{e}")
 
                 if sent_count == 0:
-                    raise TaskAbort("无发送目标")
+                    raise TaskAbort("无发送目标", expected=True)
         except TaskAbort:
             pass
         except Exception as e:
