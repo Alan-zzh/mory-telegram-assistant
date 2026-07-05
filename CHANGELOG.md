@@ -9,6 +9,7 @@
 - VPS 已部署并恢复验证：远端 `py_compile` 通过；远端 `PYTHONUTF8=1 python3 scripts/verify_db_methods.py` → 164 个委托方法通过；`grep` 确认 `ad_unban:` 回调和“白名单和群管理员必须在任何资料层检测前放行”已在 `/home/ubuntu/mory_assistant/`；`mory-assistant` / `mory-dashboard` 双 active，`/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`，新进程启动后 journal 过滤无 `traceback/critical/importerror/syntaxerror/failed/exception/error`。
 
 ### Hotfix [2026-07-06] 签到误封根因修复 + 解封指令增强
+- 按老板要求，所有单人禁封管理员通知必须带可点击解封按钮。统一广告处置通知按钮文案改为“一键解封”；编辑消息广告检测通知、全局黑名单入群拦截通知也接入同一个 `ad_unban:<uid>:<chat_id>` 按钮。VPS 备份 `/home/ubuntu/mory_assistant/backups/unban_button_all_ban_notices_20260706_035013`；远端 grep 确认三条通知链均带 `reply_markup=_build_unban_markup(...)`，回调 `ad_unban:` 存在，远端编译、重启、health 均通过。
 - 二次修复“解封不生效”：生产日志确认管理员私聊 `/unban 8383136504` 只进入普通私聊消息流，没有进入解封处理函数；`core/message_dispatcher.py` 新增 P5.6 解封早路由，让 `/unban`、`/解封`、`解封 ...`、`解除封禁...` 在私聊和群聊都优先执行 `handle_unban_command()`。
 - 已额外恢复生产用户 `8383136504` 在主群的 Telegram 发言权限；远端返回 `unrestrict 8383136504 ok`。VPS 精确热修备份 `/home/ubuntu/mory_assistant/backups/unban_private_route_20260706_005029`；远端 `grep` 确认 P5.6 路由存在，`py_compile` 通过，重启后双服务 active，`/api/health` 返回 v5.31.2，新进程启动日志正常。
 - 三次加固解封入口：`main.py` 在兜底 `master_handler` 之前新增解封专用 handler，避免私聊再被 AI/反馈路由抢走；`modules/ad_enforcement.py` 支持真实 `@username` 和唯一显示名解析，显示名同名时回复候选 ID 而不是盲选。线上只读 smoke 确认 `/unban 8383136504` 与 `/unban @mmb3695` 都解析到 `8383136504`，`/unban 萌萌逼` 因两个同名候选返回候选列表。VPS 备份：`/home/ubuntu/mory_assistant/backups/unban_hard_handler_20260706_033008`、`/home/ubuntu/mory_assistant/backups/unban_ambiguous_name_guard_20260706_033608`。

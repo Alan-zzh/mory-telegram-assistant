@@ -116,6 +116,7 @@ def check_edited_message(bot, m, config: dict, db, ai, ad_detector=None) -> bool
         admin_id = config.get("ADMIN_ID", 0)
         if admin_id:
             try:
+                from modules.ad_enforcement import _build_unban_markup
                 bot.send_message(
                     admin_id,
                     f"🚨 编辑消息检测\n"
@@ -123,7 +124,8 @@ def check_edited_message(bot, m, config: dict, db, ai, ad_detector=None) -> bool
                     f"📝 原始：{original_text[:100]}\n"
                     f"✏️ 编辑后：{new_text[:100]}\n"
                     f"🎯 检测结果：广告（{result['score']}分）\n"
-                    f"📋 操作：删除消息 + 加黑名单"
+                    f"📋 操作：删除消息 + 加黑名单",
+                    reply_markup=_build_unban_markup(uid, chat_id),
                 )
             except Exception as e:
                 logger.debug(f"操作异常: {e}")

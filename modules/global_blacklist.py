@@ -194,12 +194,14 @@ def check_global_blacklist(bot, m, config, db):
         admin_id = config.get("ADMIN_ID", 0)
         if admin_id:
             try:
+                from modules.ad_enforcement import _build_unban_markup
                 bot.send_message(
                     admin_id,
                     f"🚫 全局黑名单拦截通知\n"
                     f"👤 用户：{user_display}（ID: {user.id}）\n"
                     f"📍 群组：{chat_id}\n"
-                    f"🔨 操作：已永久禁言"
+                    f"🔨 操作：已永久禁言",
+                    reply_markup=_build_unban_markup(user.id, chat_id),
                 )
             except Exception as e:
                 logger.debug(f"操作异常: {e}")

@@ -1,7 +1,7 @@
 # Mory小助理 项目快照 v5.31.2
 
 > 新AI会话必读：本文件 + `AGENTS.md`（项目规则+老坑铁律）+ `AI_DEBUG_HISTORY.md`
-> 最后更新：2026-07-06（解封硬入口 + 同名账号防误解）
+> 最后更新：2026-07-06（禁封通知一键解封按钮全链路补齐）
 
 ---
 
@@ -29,6 +29,7 @@
 - 2026-07-06：广告资料层误封已止血。`core/handlers/security_handlers.py` 将 `AD_WHITELIST.user_ids` 和群管理员免检前移到 Bio / Premium emoji 状态检测之前；`modules/ad_enforcement.py` 管理员处置通知新增“解封”按钮；`core/handlers/callback_handlers.py` 新增 `ad_unban:` 回调，仅 `ADMIN_ID` / `ADMIN_IDS` 可操作，点击后移除 `blacklist`、`global_blacklist`、`mute_records` 并尝试恢复群内发言权限。本地验证：py_compile 通过，相关单测 17 passed，`verify_db_methods.py` 164 方法通过。VPS 已部署：远端 py_compile 和 DB 方法注册检查通过，`grep` 确认 `ad_unban:` 与免检前移逻辑已在 `/home/ubuntu/mory_assistant/`；双服务 active，`/api/health` 返回 v5.31.2，新进程启动后 journal 错误过滤为空。
 - 2026-07-06：解封指令私聊路由已修复。生产日志确认 `/unban 8383136504` 之前进入普通私聊消息流但没有进入解封函数；`core/message_dispatcher.py` 已新增 P5.6 解封早路由，`/unban`、`/解封`、`解封 ...`、`解除封禁...` 在私聊和群聊都优先进入 `handle_unban_command()`。生产用户 `8383136504` 已额外通过 Telegram API 恢复群权限，返回 `unrestrict 8383136504 ok`。VPS 精确部署备份 `/home/ubuntu/mory_assistant/backups/unban_private_route_20260706_005029`；远端 `grep`、`py_compile`、双服务 active、`/api/health`、启动日志均通过。
 - 2026-07-06：解封入口三次加固。`main.py` 已在兜底 `master_handler` 之前注册解封专用 handler，避免私聊 `/unban` 被 AI/反馈路由吞掉；`modules/ad_enforcement.py` 现在支持数字 ID、真实 `@username`、唯一显示名解析，显示名同名时返回候选 ID 而不自动选择。线上只读 smoke：`/unban 8383136504 => 8383136504`、`/unban @mmb3695 => 8383136504`、`/unban 萌萌逼 => 0` 且列出 `8383136504(@mmb3695)` / `5852515255(@D9710)` 两个候选。VPS 备份 `/home/ubuntu/mory_assistant/backups/unban_hard_handler_20260706_033008`、`/home/ubuntu/mory_assistant/backups/unban_ambiguous_name_guard_20260706_033608`；远端编译、重启、双服务 active、health 均通过。
+- 2026-07-06：单人禁封管理员通知已补齐“一键解封”按钮。`modules/ad_enforcement.py` 统一按钮构造为 `ad_unban:<uid>:<chat_id>`；`modules/edit_detector.py` 编辑广告检测通知、`modules/global_blacklist.py` 全局黑名单入群拦截通知均带同一按钮。VPS 备份 `/home/ubuntu/mory_assistant/backups/unban_button_all_ban_notices_20260706_035013`；远端 grep 确认三条通知链有按钮，回调存在，编译/重启/health 通过。
 - 2026-07-06：签到误封根因已修复。生产日志确认 `uid=8187862648` 因多次正常 `签到` 叠加资料层低置信 `profile_score`，最终触发 `延迟广告累计评分4`；现已新增正常业务动作前置放行，签到/打卡/checkin 不再进入广告资料层和延迟封禁累计，并会清旧追踪分。解封能力增强为回复消息、数字 ID、`@username`、按钮、私聊自助均走统一恢复链，清 `blacklist`、`global_blacklist`、`mute_records`、`ad_suspicious_users`。生产已立即解封 `8187862648`，四项 DB 残留均为 0，Telegram 权限恢复返回 `unrestrict ok`。VPS 精确热修备份 `/home/ubuntu/mory_assistant/backups/unban_checkin_false_positive_20260706_003936`；远端 py_compile / DB 方法检查 / health / journal 错误过滤通过；远端 smoke 确认 `签到`、`/checkin@MoryMateBot` 放行，`签到 看我简介` 不放行。
 - 2026-07-05：AI 真实失败根因已修复。近 2 小时生产日志确认无 402/403 额度/权限证据，主要是慢模型超时和空 content；生产配置已把 `qwen3.5-plus-2026-04-20`、`qwen3.7-max-preview` 加入黑名单，standard 首发 `glm-5.1`，light/premium 首发 `qwen3.7-max-2026-05-17/06-08`，AI 调用预算为 30 秒/2 次。VPS 备份：`/home/ubuntu/mory_assistant/backups/ai_timeout_budget_fix_20260705_134701`、`/home/ubuntu/mory_assistant/backups/ai_model_route_fix_20260705_134956/config.json`；真实 smoke normal 8.52s、morning 25.72s、convert 21.67s。
 - 2026-07-05：AI 失败拟人化兜底已取消。`core/ai_engine.py`、`core/handlers/ai_reply_handler.py`、`core/handlers/ai_handlers.py` 三处统一改为普通/未知/特殊模式失败静默；转化/联系模式失败只给预览群 `@moryselect` 与自助下单 `@MorychannelBot` 固定入口。VPS 精确部署备份：`/home/ubuntu/mory_assistant/backups/no_humanized_ai_fallback_20260705_132757`；远端强制超时 smoke、双服务 active、`/api/health` v5.31.2、journal 过滤均通过。

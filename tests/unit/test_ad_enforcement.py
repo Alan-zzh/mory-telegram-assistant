@@ -118,6 +118,7 @@ def test_enforce_ad_user_mutes_deletes_and_never_kicks_or_bans():
     admin_message = next(call for call in bot.sent if call[0] == 99)
     markup = admin_message[2].get("reply_markup")
     assert markup is not None
+    assert markup.keyboard[0][0].text == "一键解封"
     assert markup.keyboard[0][0].callback_data == "ad_unban:42:-1001"
 
 

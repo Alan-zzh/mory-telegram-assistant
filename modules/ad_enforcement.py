@@ -430,7 +430,7 @@ def _build_unban_markup(uid: int, chat_id: int):
     try:
         from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
         keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("解封", callback_data=f"ad_unban:{uid}:{chat_id}"))
+        keyboard.add(InlineKeyboardButton("一键解封", callback_data=f"ad_unban:{uid}:{chat_id}"))
         return keyboard
     except Exception as e:
         logger.debug(f"构建广告解封按钮失败: uid={uid} err={e}")
