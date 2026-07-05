@@ -11,6 +11,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from modules.group_mgr import _is_convert_message, _CONVERT_KEYWORDS_SUBSTR
+from core.handlers.ai_reply_handler import _direct_access_reply, _is_direct_access_request
 
 
 def test_original_keywords_still_work():
@@ -49,6 +50,9 @@ def test_join_contact_keywords():
     """怎么加入/联系类关键词"""
     assert _is_convert_message("怎么进群") is True
     assert _is_convert_message("怎么加会员群") is True
+    assert _is_convert_message("链接给我") is True
+    assert _is_convert_message("群入口在哪") is True
+    assert _is_convert_message("自助机器人链接发我") is True
     assert _is_convert_message("怎么联系") is True
     assert _is_convert_message("怎么私聊") is True
     print("✓ 怎么加入/联系类关键词识别正常")
@@ -88,6 +92,15 @@ def test_word_boundary_matching():
     # 但单独的"包月"应识别
     assert _is_convert_message("包月划算吗") is True
     print("✓ 全词匹配边界正确")
+
+
+def test_direct_access_request_reply():
+    """明确要入口时直接给预览群和自助下单，不交给LLM闲聊。"""
+    for text in ("链接给我", "怎么加群", "群入口在哪", "自助机器人链接发我"):
+        assert _is_direct_access_request(text) is True
+    reply = _direct_access_reply(is_priv=False)
+    assert "@moryselect" in reply
+    assert "@MorychannelBot" in reply
 
 
 if __name__ == "__main__":

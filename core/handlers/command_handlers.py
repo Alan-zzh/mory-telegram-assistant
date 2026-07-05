@@ -1290,6 +1290,18 @@ def _handle_extended_commands(dctx: DispatchContext) -> bool:
         handle_blocklist_mode(bot, m, CONFIG, db)
         clear_logging_context(); return True
 
+    # 误封解封：支持回复、用户ID、@username
+    if msg and (
+        msg.startswith("/unban")
+        or msg.startswith("/解封")
+        or msg.startswith("解封 ")
+        or msg == "解封"
+        or msg.startswith("解除封禁")
+    ):
+        from modules.ad_enforcement import handle_unban_command
+        handle_unban_command(bot, m, CONFIG, db, ad_detector=getattr(ctx, "ad_detector", None))
+        clear_logging_context(); return True
+
     # 置顶管理
     if msg and msg.startswith("/unpinall"):
         from modules.pin_manage import handle_unpinall

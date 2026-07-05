@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import random
 import concurrent.futures
+import re
 from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
@@ -23,12 +24,47 @@ _append_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_
 def _final_ai_reply_fallback(mode: str, is_priv: bool = False) -> str:
     """处理失败时给用户的兜底回复。"""
     if mode in ("convert", "contact_mory"):
-        return "咨询入口这会儿卡住了，等我恢复后再给你更完整的路径说明。"
-    if mode in ("tarot", "fortune"):
-        return "占卜/运势这会儿抓不到牌位，先等等，我马上重试给你。"
-    if mode in ("dream", "treehole"):
-        return "我这边没接上你的这段情绪，先别着急，稍后我再认真陪你聊。"
-    return "Mory 这会儿没接上模型服务，先给你个抱歉，稍后我再回。"
+        return _direct_access_reply(is_priv=is_priv)
+    return ""
+
+
+_DIRECT_ACCESS_KEYWORDS = (
+    "链接给我", "给链接", "发链接", "发个链接", "链接发我", "链接来一个",
+    "群链接", "群入口", "入口", "地址", "网址",
+    "怎么加群", "怎么进群", "怎么入群", "加群", "进群", "入群",
+    "预览群", "预览链接", "自助下单", "下单链接", "下单入口",
+    "自助机器人", "下单机器人", "订单机器人",
+)
+
+
+def _is_direct_access_request(text: str) -> bool:
+    """用户明确要入口/链接时，直接收口，避免 LLM 继续闲聊跑偏。"""
+    if not text:
+        return False
+    compact = re.sub(r"\s+", "", text.lower())
+    if any(k in compact for k in _DIRECT_ACCESS_KEYWORDS):
+        return True
+    if "链接" in compact and any(k in compact for k in ("给", "发", "要", "有", "哪里", "在哪")):
+        return True
+    if "群" in compact and any(k in compact for k in ("加", "进", "入", "入口", "链接", "在哪", "哪里")):
+        return True
+    if "机器人" in compact and any(k in compact for k in ("自助", "下单", "链接", "入口", "给", "发", "找")):
+        return True
+    return False
+
+
+def _direct_access_reply(is_priv: bool = False) -> str:
+    if is_priv:
+        return (
+            "给你入口啦，别再兜圈。\n"
+            "预览：https://t.me/moryselect\n"
+            "自助下单：https://t.me/MorychannelBot"
+        )
+    return (
+        "入口给你，自己去看就行。\n"
+        "预览群 @moryselect\n"
+        "自助下单 @MorychannelBot"
+    )
 
 
 def _dispatch_p10_ai(dctx: DispatchContext):
@@ -191,6 +227,10 @@ def _dispatch_p10_ai(dctx: DispatchContext):
                 logger.info(f"📋 FAQ自动回复命中 uid={uid} mode={mode} faq_id={_faq_hit_id}")
     except Exception as _faq_err:
         logger.debug(f"📋 FAQ匹配异常(静默跳过): {_faq_err}")
+
+    if resp is None and mode == "convert" and _is_direct_access_request(msg):
+        resp = _direct_access_reply(is_priv=is_priv)
+        logger.info(f"🔗 直接入口回复 uid={uid} mode={mode}")
 
     if resp is None:
         resp = ai.ask(msg, mode=mode, tools=use_tools, is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile)

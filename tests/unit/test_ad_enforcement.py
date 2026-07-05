@@ -115,6 +115,10 @@ def test_enforce_ad_user_mutes_deletes_and_never_kicks_or_bans():
     assert (-1001, 60) in db.marked
     assert (-1001, 61) in db.marked
     assert any(call[0] == 99 for call in bot.sent)
+    admin_message = next(call for call in bot.sent if call[0] == 99)
+    markup = admin_message[2].get("reply_markup")
+    assert markup is not None
+    assert markup.keyboard[0][0].callback_data == "ad_unban:42:-1001"
 
 
 def test_enforce_ad_user_keeps_mute_and_blacklist_when_deletion_disabled():
@@ -163,3 +167,99 @@ def test_enforce_ad_user_reports_reaction_cleanup(monkeypatch):
     )
 
     assert result["data"]["reactions_cleaned"] is True
+
+
+def test_restore_ad_user_removes_blacklists_and_restores_permissions():
+    from modules.ad_enforcement import restore_ad_user
+
+    bot = _FakeBot()
+    db = _FakeDB()
+    ad_detector = type("AdDetector", (), {"cleared": [], "clear_user_tracking": lambda self, uid: self.cleared.append(uid)})()
+
+    result = restore_ad_user(
+        bot=bot,
+        db=db,
+        config={},
+        chat_id=-1001,
+        uid=42,
+        actor_id=99,
+        ad_detector=ad_detector,
+    )
+
+    assert result["code"] == 200
+    executed_sql = [sql for sql, _ in db.conn.executed]
+    assert any("DELETE FROM blacklist" in sql for sql in executed_sql)
+    assert any("DELETE FROM global_blacklist" in sql for sql in executed_sql)
+    assert any("DELETE FROM mute_records" in sql for sql in executed_sql)
+    assert bot.restricted[-1][0:2] == (-1001, 42)
+    permissions = bot.restricted[-1][2]["permissions"]
+    assert permissions["can_send_messages"] is True
+    assert permissions["can_react_to_messages"] is True
+    assert result["data"]["tracking_cleared"] is True
+    assert ad_detector.cleared == [42]
+
+
+class _FetchOneResult:
+    def __init__(self, row):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class _LookupConn(_FakeConn):
+    def execute(self, sql, params=()):
+        self.executed.append((sql, params))
+        if "FROM group_members" in sql and params == ("knownuser",):
+            return _FetchOneResult((4242,))
+        return _FetchOneResult(None)
+
+
+class _LookupDB(_FakeDB):
+    def __init__(self):
+        super().__init__()
+        self.conn = _LookupConn()
+
+
+class _ReplyBot(_FakeBot):
+    def __init__(self):
+        super().__init__()
+        self.replies = []
+
+    def reply_to(self, message, text, **kwargs):
+        self.replies.append(text)
+
+
+def test_handle_unban_command_accepts_numeric_id():
+    from modules.ad_enforcement import handle_unban_command
+
+    bot = _ReplyBot()
+    db = _LookupDB()
+    message = type("Msg", (), {
+        "text": "/unban 42",
+        "from_user": type("User", (), {"id": 99})(),
+        "chat": type("Chat", (), {"id": -1001})(),
+        "reply_to_message": None,
+    })()
+
+    assert handle_unban_command(bot, message, {"ADMIN_ID": 99}, db) is True
+    assert any("已解封" in reply for reply in bot.replies)
+    assert any("DELETE FROM global_blacklist" in sql for sql, _ in db.conn.executed)
+    assert bot.restricted[-1][0:2] == (-1001, 42)
+
+
+def test_handle_unban_command_accepts_username_from_group_member_cache():
+    from modules.ad_enforcement import handle_unban_command
+
+    bot = _ReplyBot()
+    db = _LookupDB()
+    message = type("Msg", (), {
+        "text": "/unban @knownuser",
+        "from_user": type("User", (), {"id": 99})(),
+        "chat": type("Chat", (), {"id": -1001})(),
+        "reply_to_message": None,
+    })()
+
+    assert handle_unban_command(bot, message, {"ADMIN_ID": 99}, db) is True
+    assert any("@knownuser" in reply for reply in bot.replies)
+    assert bot.restricted[-1][0:2] == (-1001, 4242)

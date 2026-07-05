@@ -53,7 +53,7 @@ class GreetingTask(BaseTask):
         try:
             today = ctx.now_str("%Y-%m-%d")
             task_key = f"greeting_{period}_{today}"
-            with TaskTransactionManager(task_key, self.rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+            with TaskTransactionManager(task_key, self.rm.db, resources=None, min_interval_sec=7200) as tx:
                 if not tx.claimed:
                     return
 

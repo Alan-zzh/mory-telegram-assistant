@@ -714,17 +714,20 @@ def initialize_bot() -> BotContext:
     # [TRAE SOLO CN] 启动补清理：处理重启前丢失的定时删除任务
     def _run_startup_cleanup():
         try:
+            from core.helpers import can_orphan_cleanup
             window = 86400
             orphans = db.get_orphan_messages(window)
             if not orphans:
                 logger.info("[启动补清理] 无超时消息需要清理")
                 return
+            if not can_orphan_cleanup(cfg):
+                logger.info(f"[启动补清理] ORPHAN_CLEANUP_ENABLED=False，跳过{len(orphans)}条超时消息")
+                return
             deleted_count = 0
             not_found = 0
             for bot_mid, cid, user_mid in orphans:
                 try:
-                    if cfg.get("ENABLE_MESSAGE_DELETION", False):
-                        bot.delete_message(cid, int(bot_mid))
+                    bot.delete_message(cid, int(bot_mid))
                     deleted_count += 1
                     db.delete_tracked(bot_mid, cid)
                 except Exception as e:

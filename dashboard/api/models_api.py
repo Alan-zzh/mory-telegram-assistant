@@ -91,7 +91,7 @@ def api_tasks_status():
         ("news_evening", "晚间新闻", _get_hhmm(cfg, "NEWS_BROADCAST_CONFIG", "evening_time", "20:35")),
         ("greeting_evening", "晚安问候", _get_hhmm(cfg, "GREETING_CONFIG", "evening_time", "23:05")),
         ("channel_views", "频道浏览量", "每小时"),
-        ("burn_orphan", "孤儿清理", "每10分钟"),
+        ("burn_orphan", "孤儿清理", "每6小时"),
     ]
     tasks = []
     for key, name, schedule in task_defs:

@@ -132,8 +132,14 @@ class _FakeDB:
 
 
 class _FakeAdDetector:
+    def __init__(self):
+        self.cleared = []
+
     def track_suspicious_user(self, *args, **kwargs):
         return {"action": "none", "total_score": 0}
+
+    def clear_user_tracking(self, uid):
+        self.cleared.append(uid)
 
 
 class _FakeShortMessage:
@@ -175,6 +181,69 @@ def test_short_message_still_blocks_profile_status_ad():
     assert check_ad_detection(dctx) is True
     assert bot.deleted == [(-1001, 88)]
     assert bot.restricted[0][0:2] == (-1001, 42)
+
+
+def test_profile_status_ad_does_not_block_whitelisted_user():
+    from core.handlers.security_handlers import check_ad_detection
+
+    bot = _FakeBot([_FakeSticker(set_name="kanwo 看我简介")])
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": _FakeDB(),
+        "config": {"ENABLE_MESSAGE_DELETION": True, "AD_WHITELIST": {"user_ids": [42]}},
+        "ad_detector": _FakeAdDetector(),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": "1",
+        "ctx": ctx,
+        "msg": _FakeShortMessage(),
+        "uid": 42,
+        "uname": "云间藏诗意",
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is False
+    assert bot.requested == []
+    assert bot.deleted == []
+    assert bot.restricted == []
+
+
+def test_checkin_text_bypasses_profile_status_ad_tracking():
+    from core.handlers.security_handlers import check_ad_detection
+
+    bot = _FakeBot([_FakeSticker(set_name="kanwo 看我简介")])
+    bot.deleted = []
+    bot.restricted = []
+    ad_detector = _FakeAdDetector()
+
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": _FakeDB(),
+        "config": {"ENABLE_MESSAGE_DELETION": True},
+        "ad_detector": ad_detector,
+    })()
+    msg = _FakeShortMessage()
+    msg.text = "签到"
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": "签到",
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": "云间藏诗意",
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is False
+    assert bot.requested == []
+    assert ad_detector.cleared == [42]
+    assert bot.deleted == []
+    assert bot.restricted == []
 
 
 # =====================================================================

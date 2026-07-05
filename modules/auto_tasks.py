@@ -1503,7 +1503,7 @@ def _job_greeting_morning(rm):
             logger.info("[Codex] 早安问候未开启，跳过")
             return
         today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with TaskTransactionManager(f"greeting_morning_{today}", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+        with TaskTransactionManager(f"greeting_morning_{today}", rm.db, resources=None, min_interval_sec=7200) as tx:
             if not tx.claimed:
                 return
             group_ids = _get_all_group_ids(rm.config)
@@ -1549,7 +1549,7 @@ def _job_greeting_afternoon(rm):
             logger.info("[Codex] 午安问候未开启，跳过")
             return
         today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with TaskTransactionManager(f"greeting_afternoon_{today}", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+        with TaskTransactionManager(f"greeting_afternoon_{today}", rm.db, resources=None, min_interval_sec=7200) as tx:
             if not tx.claimed:
                 return
             group_ids = _get_all_group_ids(rm.config)
@@ -1595,7 +1595,7 @@ def _job_greeting_evening(rm):
             logger.info("[Codex] 晚安问候未开启，跳过")
             return
         today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with TaskTransactionManager(f"greeting_evening_{today}", rm.db, resources=['ai', 'config'], min_interval_sec=7200) as tx:
+        with TaskTransactionManager(f"greeting_evening_{today}", rm.db, resources=None, min_interval_sec=7200) as tx:
             if not tx.claimed:
                 return
             group_ids = _get_all_group_ids(rm.config)
@@ -1710,10 +1710,10 @@ def _job_clean_relay_sessions(rm):
 
 
 def _job_burn_orphan(rm):
-    """阅后即焚孤儿清理（每10分钟）
+    """阅后即焚清理（每6小时）
 
     两阶段清理：
-    Phase 1: 清理超过30分钟未回复的孤儿消息（直接删除Bot回复）
+    Phase 1: 清理超过30分钟的群聊Bot消息（直接删除Bot回复）
     Phase 2: 探测5-30分钟内的未回复消息，检测用户是否已删原消息
 
     【v5.12.0变更】：
@@ -1726,17 +1726,33 @@ def _job_burn_orphan(rm):
     3. 孤儿清理完全独立于全局消息删除开关
     """
     try:
-        # ── Phase 1: 清理超时孤儿（30分钟窗口，用户决策）──
-        logger.info("🔍 [Phase1] 检查超时孤儿消息（30分钟窗口）...")
+        # ── Phase 1: 清理超时Bot消息（30分钟窗口，用户决策）──
+        logger.info("🔍 [Phase1] 检查超时Bot消息（30分钟窗口）...")
         # [v5.12.4] get_orphan_messages 默认窗口改为 1800（30分钟），不再传 86400
         orphans = rm.db.get_orphan_messages()
-        if orphans:
+        active_messages = []
+        if hasattr(rm.db, "get_expired_channel_messages"):
+            try:
+                active_messages = rm.db.get_expired_channel_messages()
+            except Exception as active_err:
+                logger.warning(f"主动播报追踪查询失败，继续清理reply_tracking: {active_err}")
+        pending = {}
+        for bot_mid, cid, user_mid in orphans:
+            pending[(int(cid), int(bot_mid))] = (int(bot_mid), int(cid), int(user_mid))
+        for bot_mid, cid, user_mid in active_messages:
+            pending.setdefault((int(cid), int(bot_mid)), (int(bot_mid), int(cid), int(user_mid)))
+        targets = list(pending.values())
+
+        if targets:
             # [v5.12.4] 改用独立开关 ORPHAN_CLEANUP_ENABLED（默认 true），不再依赖 ENABLE_MESSAGE_DELETION
             if can_orphan_cleanup(rm.config):
-                logger.info(f"🗑️ 发现{len(orphans)}条超时孤儿（>30分钟未回复），开始清理...")
+                logger.info(
+                    f"🗑️ 发现{len(targets)}条超时Bot消息（>30分钟），"
+                    f"reply={len(orphans)} active={len(active_messages)}，开始清理..."
+                )
                 success_count = 0
                 fail_count = 0
-                for bot_mid, cid, user_mid in orphans:
+                for bot_mid, cid, user_mid in targets:
                     try:
                         with rm.locked('bot'):
                             rm.bot.delete_message(cid, int(bot_mid))
@@ -1744,12 +1760,15 @@ def _job_burn_orphan(rm):
                     except Exception as del_err:
                         fail_count += 1
                         logger.debug(f"  删除失败：bot_mid={bot_mid}, err={del_err}")
-                    rm.db.delete_tracked(bot_mid, cid)
+                    if hasattr(rm.db, "delete_bot_message_records"):
+                        rm.db.delete_bot_message_records(cid, bot_mid)
+                    else:
+                        rm.db.delete_tracked(bot_mid, cid)
                 logger.info(f"✅ Phase1完成：成功{success_count}条，失败{fail_count}条")
                 # [Trae CN v5.12.0] 写入 orphan_cleanup_log
                 try:
                     rm.db.log_orphan_cleanup(
-                        found_count=len(orphans),
+                        found_count=len(targets),
                         deleted_count=success_count,
                         skipped_count=fail_count,
                         trigger="scheduled",
@@ -1758,23 +1777,23 @@ def _job_burn_orphan(rm):
                     logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
             else:
                 # [v5.12.4] 改用独立开关告警（不依赖 ENABLE_MESSAGE_DELETION）
-                _handle_orphan_disabled_alert(rm, len(orphans))
-                logger.info(f"[孤儿清理] ORPHAN_CLEANUP_ENABLED=False, 跳过删除{len(orphans)}条孤儿消息")
+                _handle_orphan_disabled_alert(rm, len(targets))
+                logger.info(f"[孤儿清理] ORPHAN_CLEANUP_ENABLED=False, 跳过删除{len(targets)}条孤儿消息")
                 # [TRAE SOLO CN v5.12.3] 修复：开关关闭时不删追踪记录，保留孤儿信息以便后续开启开关后能清理
                 # 之前的逻辑会删除追踪记录，导致即使后续开启开关也无法再找到这些孤儿消息
                 # [Trae CN v5.12.0] 写入 orphan_cleanup_log 标记 skipped
                 try:
                     rm.db.log_orphan_cleanup(
-                        found_count=len(orphans),
+                        found_count=len(targets),
                         deleted_count=0,
-                        skipped_count=len(orphans),
+                        skipped_count=len(targets),
                         error="ORPHAN_CLEANUP_ENABLED=False",
                         trigger="scheduled",
                     )
                 except Exception as log_err:
                     logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
         else:
-            logger.info("✅ Phase1：无超时孤儿")
+            logger.info("✅ Phase1：无超时Bot消息")
             # [Trae CN v5.12.0] 无孤儿时也写一条空运行日志
             try:
                 rm.db.log_orphan_cleanup(
@@ -1885,7 +1904,7 @@ def _job_reactivate(rm):
         # 高频任务：每小时一个窗口，避免 task_log UNIQUE 索引拦截
         _window = datetime.now(_CST).strftime("%Y-%m-%d_%H")
         task_key = f"reactivate_{_window}"
-        with TaskTransactionManager(task_key, rm.db, resources=['bot', 'config'], min_interval_sec=3600) as tx:
+        with TaskTransactionManager(task_key, rm.db, resources=None, min_interval_sec=3600) as tx:
             if not tx.claimed:
                 return
             ts = int(time.time())
@@ -1901,7 +1920,8 @@ def _job_reactivate(rm):
                 if random.random() < 0.25:
                     try:
                         reactivate_msg = _generate_reactivate_message(uid, rm)
-                        rm.bot.send_message(uid, reactivate_msg)
+                        with rm.locked('bot'):
+                            rm.bot.send_message(uid, reactivate_msg)
                         rm.db.reset_last_active(uid)
                         sent_count += 1
                         logger.info(f"💌 醋意挽回：{uid}")
@@ -2013,7 +2033,7 @@ def _job_cart_recovery(rm):
         # 高频任务：每 5 分钟一个窗口，避免 task_log UNIQUE 索引拦截
         _window = datetime.now(_CST).strftime("%Y-%m-%d_%H%M")
         task_key = f"cart_recovery_{_window}"
-        with TaskTransactionManager(task_key, rm.db, resources=['bot', 'config'],
+        with TaskTransactionManager(task_key, rm.db, resources=None,
                                     min_interval_sec=300) as tx:  # 5分钟间隔
             if not tx.claimed:
                 return
@@ -2031,7 +2051,8 @@ def _job_cart_recovery(rm):
                 try:
                     # 生成对应阶段的挽回消息
                     cart_msg = _generate_cart_recovery_message(uid, rm, stage)
-                    rm.bot.send_message(uid, cart_msg)
+                    with rm.locked('bot'):
+                        rm.bot.send_message(uid, cart_msg)
                     sent_count += 1
 
                     # 推进到下一阶段
@@ -2074,7 +2095,7 @@ def _job_cart_recovery(rm):
 def _job_leak(rm):
     """【v5.9.0】背刺泄密（每周一次）- 使用 TaskTransactionManager"""
     try:
-        with TaskTransactionManager("leak", rm.db, resources=['ai', 'config'], min_interval_sec=86400) as tx:
+        with TaskTransactionManager("leak", rm.db, resources=None, min_interval_sec=86400) as tx:
             if not tx.claimed:
                 return
             now = datetime.now(_CST)
@@ -4580,7 +4601,7 @@ def _start_with_apscheduler(rm):
     # 阅后即焚探测已废弃（v4.5.35），不再调度_job_burn_probe
 
     # 【v4.9.3】每小时任务统一补coalesce=True，防止misfire堆积补发导致record_call误报
-    scheduler.add_job(_job_burn_orphan, "cron", minute="5", args=[rm], id="burn_orphan", max_instances=1, coalesce=True, misfire_grace_time=300)
+    scheduler.add_job(_job_burn_orphan, "cron", hour="*/6", minute=0, args=[rm], id="burn_orphan", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_clean_relay_sessions, "interval", seconds=3600, args=[rm], id="clean_relay_sessions", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_reactivate, "cron", minute=5, args=[rm], id="reactivate", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_cart_recovery, "cron", minute="*/5", args=[rm], id="cart_recovery", max_instances=1, coalesce=True, misfire_grace_time=300)

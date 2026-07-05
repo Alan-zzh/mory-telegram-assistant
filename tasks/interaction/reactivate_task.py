@@ -73,7 +73,7 @@ class ReactivateTask(BaseTask):
         try:
             _window = datetime.now(_CST).strftime("%Y-%m-%d_%H")
             task_key = f"reactivate_{_window}"
-            with TaskTransactionManager(task_key, self.rm.db, resources=['bot', 'config'], min_interval_sec=3600) as tx:
+            with TaskTransactionManager(task_key, self.rm.db, resources=None, min_interval_sec=3600) as tx:
                 if not tx.claimed:
                     return
 
@@ -86,7 +86,8 @@ class ReactivateTask(BaseTask):
                     if random.random() < 0.25:
                         try:
                             reactivate_msg = _generate_reactivate_message(uid, self.rm)
-                            self.rm.bot.send_message(uid, reactivate_msg)
+                            with self.rm.locked('bot'):
+                                self.rm.bot.send_message(uid, reactivate_msg)
                             self.rm.db.reset_last_active(uid)
                             sent_count += 1
                             logger.info(f"💌 醋意挽回：{uid}")

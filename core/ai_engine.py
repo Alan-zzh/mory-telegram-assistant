@@ -527,6 +527,10 @@ class AIEngine:
         self.api_key = config.get("API_KEY", "")
         _register_api_key_for_redaction(self.api_key)
         
+        # 黑名单：没钱/不可用的模型，不再尝试（全局共享）
+        self.blacklisted = set(config.get("BLACKLISTED_MODELS", []))
+        self._lock = threading.Lock()  # 保护config/blacklist的并发写入
+
         # ── 兼容新旧配置结构 ──
         # 新结构：MODEL_POOLS = {llm:[...], vision:[...], ...}
         # 旧结构：MODEL_POOL = [{name, expire}, ...]
@@ -556,12 +560,12 @@ class AIEngine:
             
             omni_sorted = sorted(omni_pool, key=get_sort_key)
             llm_sorted = sorted(llm_pool, key=get_sort_key)
-            combined_pool = omni_sorted + llm_sorted
+            combined_pool = self._filter_runtime_pool(omni_sorted + llm_sorted, "chat")
             self.model_pool = combined_pool
         else:
             # 旧的单池结构 → 自动迁移
             old_pool = config.get("MODEL_POOL", [{"name": "qwen-plus", "expire": "2099-12-31"}])
-            self.model_pool = old_pool
+            self.model_pool = self._filter_runtime_pool(old_pool, "llm")
             self.model_pools = {"llm": old_pool}
         
         primary_text_pool = self.model_pool
@@ -577,10 +581,6 @@ class AIEngine:
             self._pool_indices[name] = 0
         self._pool_indices["chat"] = self.current_idx
             
-        # 黑名单：没钱/不可用的模型，不再尝试（全局共享）
-        self.blacklisted = set(config.get("BLACKLISTED_MODELS", []))
-        self._lock = threading.Lock()  # 保护config/blacklist的并发写入
-
         # ── 三层智能路由（轻量/标准/旗舰）────────────────────────────
         self.mode_routing = config.get("MODE_ROUTING", {})
         self._tier_pools = {}
@@ -598,10 +598,9 @@ class AIEngine:
                     merged_tier_pool.append(m)
                 tier_pool = merged_tier_pool
             if tier_pool:
-                self._tier_pools[tier_name] = tier_pool
-                for m in tier_pool:
-                    if self._is_model_expired(m):
-                        self._blacklist_model(m["name"], f"已过期 {m.get('expire', '')}")
+                filtered_tier_pool = self._filter_runtime_pool(tier_pool, tier_name)
+                if filtered_tier_pool:
+                    self._tier_pools[tier_name] = filtered_tier_pool
 
         self._tier_indices = {tier: 0 for tier in self._tier_pools}
 
@@ -689,6 +688,29 @@ class AIEngine:
         """检查模型是否在黑名单中"""
         return model_name in self.blacklisted
 
+    def _filter_runtime_pool(self, pool: list, pool_name: str) -> list:
+        """过滤运行时不应尝试的模型，避免坏候选反复进入重试链。"""
+        filtered = []
+        seen = set()
+        for model in pool or []:
+            model_name = model.get("name")
+            if not model_name or model_name in seen:
+                continue
+            seen.add(model_name)
+            if model.get("enabled", True) is False:
+                logger.info(f"⏭️ [{pool_name}] 模型 {model_name} 已禁用，跳过")
+                continue
+            if self._is_blacklisted(model_name):
+                logger.info(f"⏭️ [{pool_name}] 模型 {model_name} 已在黑名单，跳过")
+                continue
+            if self._is_model_expired(model):
+                self._blacklist_model(model_name, f"已过期 {model.get('expire', '')}")
+                continue
+            filtered.append(model)
+        if pool and not filtered:
+            logger.warning(f"🚫 [{pool_name}] 运行时无可用模型")
+        return filtered
+
     def _blacklist_model(self, model_name: str, reason: str):
         """拉黑模型（没钱/不可用），保存到config（线程安全）"""
         with self._lock:
@@ -742,7 +764,7 @@ class AIEngine:
         for tier_name in self._retry_tiers_for(tier):
             for model in self._tier_pools.get(tier_name, []):
                 name = model.get("name")
-                if name:
+                if name and not self._is_blacklisted(name) and not self._is_model_expired(model):
                     names.add(name)
         return len(names)
 
@@ -1622,16 +1644,14 @@ class AIEngine:
 
     @staticmethod
     def _final_fallback_reply(mode: str, is_priv: bool = False, attempts: int = 0) -> str:
-        """所有模型都失败时的统一兜底回复（避免调用方拿到 None）。"""
-        if mode in ("convert", "contact_mory"):
-            return "咨询入口这会儿卡住了～先不要急，等我恢复一下再来完整回应你。"
-        if mode in ("tarot", "fortune"):
-            return "占卜/运势这会儿抓不到牌位，先放一会儿，我再给你更准的答复～"
-        if mode in ("dream", "treehole"):
-            return "这段情绪我先没接上，先停一下，等我恢复后继续陪你聊。"
+        """所有模型都失败时的统一兜底回复。
 
-        base = "Mory 这会儿被路况卡住了，暂时没法稳定接上模型，稍等一下我再回你。"
-        return base
+        用户侧不能暴露模型、接口、服务异常等系统细节，也不硬凑拟人化故障文案。
+        普通/未知模式失败直接静默；明确转化场景给固定入口，避免下单链路断掉。
+        """
+        if mode in ("convert", "contact_mory"):
+            return "入口在 @MorychannelBot，预览群 @moryselect。"
+        return ""
 
     def ask(self, question: str, mode: str = "normal", retry: int = 3, seed: int = 0,
             tools: list = None, tool_choice: str = "auto", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, news_content: str = "") -> str | None:
@@ -1688,13 +1708,15 @@ class AIEngine:
         
         # 限制最大重试次数，同时按三层路由的实际候选模型数放宽上限。
         # 之前固定最多 5 次，轻量池两个模型超时后还没机会切到 glm/标准/旗舰池就误报“全部失败”。
+        max_attempt_cap = int(self.config.get("AI_MAX_ATTEMPTS", 3) or 3)
+        max_attempt_cap = max(1, min(8, max_attempt_cap))
         if use_tier_routing:
             candidate_count = max(1, self._retry_model_count_for(tier))
-            max_attempts = min(12, max(5, retry * candidate_count))
+            max_attempts = min(max_attempt_cap, max(2, retry * min(candidate_count, max_attempt_cap)))
             max_iterations = max_attempts + candidate_count + len(self.model_pool) + 6
         else:
             candidate_count = max(1, len(self.model_pool))
-            max_attempts = min(8, max(1, retry * candidate_count))
+            max_attempts = min(max_attempt_cap, max(1, retry * min(candidate_count, max_attempt_cap)))
             max_iterations = max_attempts + candidate_count + 4
         
         # 确保当前模型可用
@@ -1895,8 +1917,10 @@ class AIEngine:
                 api_attempts += 1
                 attempt_no = api_attempts
                 _req_start = time.time()
+                request_timeout = float(self.config.get("AI_REQUEST_TIMEOUT", 15) or 15)
+                request_timeout = max(5.0, min(45.0, request_timeout))
                 resp = requests.post(req_url, json=payload,
-                                     headers=headers, timeout=25)
+                                     headers=headers, timeout=request_timeout)
                 if resp.status_code == 200:
                     data = resp.json()
                     if "choices" in data and data["choices"]:

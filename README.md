@@ -121,7 +121,7 @@ Mory 是一个超有个性的自媒体博主——最有诚意最讲良心。她
 |------|------|----------|------|
 | `llm` | ✅ 有模型 | `qwen3.5-plus` | 通义千问 3.5 Plus（默认对话） |
 | `llm_light` | ✅ 有模型 | `qwen3.6-flash-2026-04-16` | 轻量池·日常（morning/hook/nudge） |
-| `llm_standard` | ✅ 有模型 | `qwen3.5-plus-2026-04-20` | 标准池·对话（normal/tarot/treehole） |
+| `llm_standard` | ✅ 有模型 | `glm-5.1` | 标准池·对话（normal/tarot/treehole） |
 | `llm_premium` | ✅ 有模型 | `qwen3-max` | 旗舰池·资讯（真实源优先新闻主流程 + TrendRadar 兼容兜底） |
 | `vision` | ⚪ 占位 | `[]` | 视觉模型（未启用） |
 | `omni` | ⚪ 占位 | `[]` | 全模态模型（未启用） |

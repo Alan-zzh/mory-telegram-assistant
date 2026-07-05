@@ -1,7 +1,7 @@
 # Mory小助理 项目快照 v5.31.2
 
 > 新AI会话必读：本文件 + `AGENTS.md`（项目规则+老坑铁律）+ `AI_DEBUG_HISTORY.md`
-> 最后更新：2026-07-03（03:03 AI 兜底仍告警最终修复；无额度耗尽证据；强制失败 smoke 不再发红牌）
+> 最后更新：2026-07-06（广告资料层误封止血 + 管理员一键解封按钮）
 
 ---
 
@@ -11,18 +11,26 @@
 |------|-----|
 | 名称 | Mory小助理 - 运营型商业 AI 转化机器人 |
 | 版本 | v5.31.2 |
-| 部署状态 | 2026-07-01 起 `scripts/puzan_loop_monitor.py` 本地无限 LOOP 持续监控（间隔 300s，日志 `logs/puzan_loop_monitor_live_20260630.log`；当前本地 lock PID 28388）；VPS `43.153.23.115` RUNNING；`scripts/vps_watchdog.py` 由 root cron 每 2min 检查 health；`mory-assistant` / `mory-dashboard` 双 active；✅ verify_db_methods 162 方法无缺失无孤儿；✅ /api/health 返回 200 且 version=v5.31.2；L4 已按真实 schema 统计 task/token/成本；2026-07-02 22:37 AI 复发热修已部署，远端备份 `ai_engine.py.bak.20260702_223745`、`health_check_task.py.bak.20260702_223745`，22:51 二次加固备份 `ai_engine.py.bak.20260702_225119`，2026-07-03 03:06 最终告警加固备份 `ai_engine.py.bak.20260703_030627`；03:00-03:03 复盘无 402/403/余额/额度日志，只有超时和空 content，结论不是整体没额度；外部模型全失败但已返回兜底文案时不再发送 `AI模型全部失败` 管理员故障，只有明确 HTTP 402/403 才发送 `AI模型额度或权限异常`；远端强制失败 smoke（临时坏 BASE_URL）返回兜底文案且 journal 无 `AI模型全部失败` / `三层路由全失败`；早间任务缺失已确认是进程晚于任务窗口启动导致，健康检查已改为“任务窗口已错过”信息归类；注意 `WatchdogUSec=0`，当前依赖外部 watchdog 而非 systemd watchdog |
+| 部署状态 | 2026-07-01 起 `scripts/puzan_loop_monitor.py` 本地无限 LOOP 持续监控（间隔 300s，日志 `logs/puzan_loop_monitor_live_20260630.log`；当前本地 lock PID 28388）；VPS `43.153.23.115` RUNNING；`scripts/vps_watchdog.py` 由 root cron 每 2min 检查 health；`mory-assistant` / `mory-dashboard` 双 active；✅ verify_db_methods 164 方法无缺失无孤儿；✅ /api/health 返回 200 且 version=v5.31.2；L4 已按真实 schema 统计 task/token/成本；2026-07-02 22:37 AI 复发热修已部署，远端备份 `ai_engine.py.bak.20260702_223745`、`health_check_task.py.bak.20260702_223745`，22:51 二次加固备份 `ai_engine.py.bak.20260702_225119`，2026-07-03 03:06 最终告警加固备份 `ai_engine.py.bak.20260703_030627`；2026-07-03 09:37 群聊露馅兜底与阅后即焚热修已精确部署，远端备份 `ai_engine.py.bak.20260703_093729`、`ai_reply_handler.py.bak.20260703_093729`、`ai_handlers.py.bak.20260703_093729`、`tracking_repo.py.bak.20260703_093729`、`burn_orphan_task.py.bak.20260703_093729`、`auto_tasks.py.bak.20260703_093729`、`bot_initializer.py.bak.20260703_093729`；2026-07-03 10:06 AI 运行池与后台任务锁二次加固已精确部署，远端备份 `ai_engine.py.bak.20260703_100613`、`greeting_task.py.bak.20260703_100613`、`reactivate_task.py.bak.20260703_100613`、`cart_recovery_task.py.bak.20260703_100613`、`leak_task.py.bak.20260703_100613`、`auto_tasks.py.bak.20260703_100613`；2026-07-04 01:10 主动播报超时清理热修已精确部署，远端备份 `tracking_repo.py.bak.20260704_011055`、`database.py.bak.20260704_011055`、`burn_orphan_task.py.bak.20260704_011055`、`auto_tasks.py.bak.20260704_011055`、`models_api.py.bak.20260704_011055`；生产 47 小时内新闻/问候/定点播报残留已处理，最终 `reply_tracking=0`、`broadcast_tracking_recent=0`、`channel_tracking_recent=0`；`burn_orphan` 继续每 6 小时执行，但现在会合并清理 `reply_tracking` 与 `channel_tracking`，并统一清 `broadcast_tracking` 残留；普通群聊 AI 全失败返回空串不再发模型故障文案，私聊返回短人设兜底；`qwen3.6-plus-2026-04-02`、`glm-5.2` 已从运行时候选池剔除；`greeting` / `reactivate` / `cart_recovery` / `leak` 不再持有 `config` / `ai` / `bot` 锁等待外部模型；真实 AI smoke 返回 `正常`，10:06 后 journal 无 `AI模型全部失败` / `三层路由全失败` / `Traceback` / `CRITICAL` / 锁超时；03:00-03:03 复盘无 402/403/余额/额度日志，只有超时和空 content，结论不是整体没额度；外部模型全失败但已返回兜底文案时不再发送 `AI模型全部失败` 管理员故障，只有明确 HTTP 402/403 才发送 `AI模型额度或权限异常`；远端强制失败 smoke journal 无 `AI模型全部失败` / `三层路由全失败`；早间任务缺失已确认是进程晚于任务窗口启动导致，健康检查已改为“任务窗口已错过”信息归类；注意 `WatchdogUSec=0`，当前依赖外部 watchdog 而非 systemd watchdog |
 | 防御体系 | v5.31.1 四层防御：L1启动自检(_self_check_repo_methods) + L2__getattr__ CRITICAL+re-raise + L3 scripts/verify_db_methods.py 部署前门禁 + L4 core/scheduler_monitor.py:check_critical_jobs_health 调度健康监控。v5.31.2 新增：① LLMCostGuard 成本熔断器（用户1h $1.0，全局1h $5.0，data/router_usage.db 12列schema记录token_usage）② 腾讯云 Lighthouse API 监控（实例 lhins-4ney4np5，IP 43.153.23.115）③ Loop 多智能体暗病搜索机制 ④ RLock 替代 Lock 解决 add_points 重入死锁 ⑤ 原子 UPDATE 防止 TOCTOU 余额检查竞态 ⑥ 独立看门狗 scripts/vps_watchdog.py（每2min检查health，连续3次失败自动重启，已去重日志）⑦ _CST 时区常量全域覆盖（累计修复 40+ 处 datetime.now() 时区错位）⑧ WriteQueue 停机 drain，降低重启尾部写丢失风险 |
 | 技术栈 | Python3 + pyTelegramBotAPI + SQLite(WAL+busy_timeout=30s+单线程写入队列+连接代理全量化+背压Fail-Fast+Alembic迁移) + Flask + gunicorn+gevent + structlog + diskcache |
 | 部署 | VPS（systemd作为唯一进程管理）+ GitHub Actions CI/CD（待启用Secrets） |
 | 存储 | `mory.db`(SQLite) + `config.json`(业务配置) + `.env`(敏感凭据) + `requirements.lock`(锁定依赖) |
 | 红线 | 绝对不能因报错导致程序卡死崩溃 |
-| 广告治理 | v5.30.1 修复 _REPO_METHOD_MAP 注册缺失（snapshot_message/mark_message_deleted/get_user_messages/get_user_undeleted_messages），message_snapshots 30+ 版本空表根因消除。不踢人：永久禁言 + 删除消息 + 双黑名单 + 历史消息追踪清理 + Premium emoji 状态 OCR + 新版反应/付费媒体权限禁用；管理员可在私聊中继回复 `拉黑` 手动拉黑原用户 |
+| 广告治理 | v5.30.1 修复 _REPO_METHOD_MAP 注册缺失（snapshot_message/mark_message_deleted/get_user_messages/get_user_undeleted_messages），message_snapshots 30+ 版本空表根因消除。不踢人：永久禁言 + 删除消息 + 双黑名单 + 历史消息追踪清理 + Premium emoji 状态 OCR + 新版反应/付费媒体权限禁用；v5.31.2 Hotfix 2026-07-06 起白名单/群管理员免检在资料层检测之前执行，签到/打卡/checkin 等正常业务动作不进入广告资料层和延迟封禁累计；管理员广告处置通知带“解封”按钮，`/unban ID`、`/unban @username`、回复 `/unban`、`解封 ID`、私聊自助解封均可清 `blacklist` + `global_blacklist` + `mute_records` + `ad_suspicious_users` 并恢复发言权限；管理员可在私聊中继回复 `拉黑` 手动拉黑原用户 |
 | 人设引擎 | v5.21.0 4桶反模板(cold/savage/soft/common)+动态LLM参数矩阵(亲密度×场景×时段21组) + 12条去AI痕迹铁律（默认开启 `PERSONA_ENGINE_ENABLED=true`） |
 | 安全加固 | v5.22.0 全量审计修复 + v5.24.0 RBAC before_request默认拒绝守卫 + 自动化渗透测试6用例 + v5.25.0 RBAC DB驱动动态权限 + v5.26.0 RBAC权限变更审批流 |
 | 架构优化 | v5.26.0 10大优化：①LLM成本熔断器 ②Locust三档梯度压测 ③级联告警故障注入测试 ④人设跨模型一致性 ⑤多模型A/B测试分流 ⑥记忆摘要转化率归因 ⑦DB迁移指标监控 ⑧多Bot任务分工 ⑨归因模型离线回放 ⑩RBAC动态权限审批流 |
 
 ---
+
+### 1.1 最新生产增量
+
+- 2026-07-06：广告资料层误封已止血。`core/handlers/security_handlers.py` 将 `AD_WHITELIST.user_ids` 和群管理员免检前移到 Bio / Premium emoji 状态检测之前；`modules/ad_enforcement.py` 管理员处置通知新增“解封”按钮；`core/handlers/callback_handlers.py` 新增 `ad_unban:` 回调，仅 `ADMIN_ID` / `ADMIN_IDS` 可操作，点击后移除 `blacklist`、`global_blacklist`、`mute_records` 并尝试恢复群内发言权限。本地验证：py_compile 通过，相关单测 17 passed，`verify_db_methods.py` 164 方法通过。VPS 已部署：远端 py_compile 和 DB 方法注册检查通过，`grep` 确认 `ad_unban:` 与免检前移逻辑已在 `/home/ubuntu/mory_assistant/`；双服务 active，`/api/health` 返回 v5.31.2，新进程启动后 journal 错误过滤为空。
+- 2026-07-06：签到误封根因已修复。生产日志确认 `uid=8187862648` 因多次正常 `签到` 叠加资料层低置信 `profile_score`，最终触发 `延迟广告累计评分4`；现已新增正常业务动作前置放行，签到/打卡/checkin 不再进入广告资料层和延迟封禁累计，并会清旧追踪分。解封能力增强为回复消息、数字 ID、`@username`、按钮、私聊自助均走统一恢复链，清 `blacklist`、`global_blacklist`、`mute_records`、`ad_suspicious_users`。生产已立即解封 `8187862648`，四项 DB 残留均为 0，Telegram 权限恢复返回 `unrestrict ok`。VPS 精确热修备份 `/home/ubuntu/mory_assistant/backups/unban_checkin_false_positive_20260706_003936`；远端 py_compile / DB 方法检查 / health / journal 错误过滤通过；远端 smoke 确认 `签到`、`/checkin@MoryMateBot` 放行，`签到 看我简介` 不放行。
+- 2026-07-05：AI 真实失败根因已修复。近 2 小时生产日志确认无 402/403 额度/权限证据，主要是慢模型超时和空 content；生产配置已把 `qwen3.5-plus-2026-04-20`、`qwen3.7-max-preview` 加入黑名单，standard 首发 `glm-5.1`，light/premium 首发 `qwen3.7-max-2026-05-17/06-08`，AI 调用预算为 30 秒/2 次。VPS 备份：`/home/ubuntu/mory_assistant/backups/ai_timeout_budget_fix_20260705_134701`、`/home/ubuntu/mory_assistant/backups/ai_model_route_fix_20260705_134956/config.json`；真实 smoke normal 8.52s、morning 25.72s、convert 21.67s。
+- 2026-07-05：AI 失败拟人化兜底已取消。`core/ai_engine.py`、`core/handlers/ai_reply_handler.py`、`core/handlers/ai_handlers.py` 三处统一改为普通/未知/特殊模式失败静默；转化/联系模式失败只给预览群 `@moryselect` 与自助下单 `@MorychannelBot` 固定入口。VPS 精确部署备份：`/home/ubuntu/mory_assistant/backups/no_humanized_ai_fallback_20260705_132757`；远端强制超时 smoke、双服务 active、`/api/health` v5.31.2、journal 过滤均通过。
+- 2026-07-05：入口类强转化需求已加硬收口。用户明确说“链接给我 / 怎么加群 / 群入口 / 自助机器人链接”等时，`core/handlers/ai_reply_handler.py` 不再交给 LLM 闲聊，直接回复预览群 `@moryselect` 和自助下单 `@MorychannelBot`；`core/keyword_manager.py` 已补默认商业关键词。VPS 精确部署备份：`/home/ubuntu/mory_assistant/backups/direct_access_reply_20260705_061648`，远端 smoke 确认 4 个样例均 `convert=true` 且 `direct=true`，服务 active，`/api/health` 返回 v5.31.2。
 
 ## 2. 目录结构
 
@@ -343,7 +351,7 @@ mory_assistant/
 | **night_hook** | **22:30** | **同上** |
 | 晚安问候 | 23:05 | 同上 |
 | 频道浏览量 | 每小时 | — |
-| 阅后即焚清理 | 每10分钟 | — |
+| 阅后即焚清理 | 每6小时 | — |
 | **sync_user_lifecycle_buckets** | **每日 02:00** | **v5.27.0-RC1** |
 | **sync_scheduler_metrics / update_prometheus_metrics** | **每5分钟** | **v5.27.0-RC1** |
 | **evaluate_conversation_quality** | **每日 03:00** | **v5.28.0（低采样开启）** |

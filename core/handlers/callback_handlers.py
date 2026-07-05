@@ -23,16 +23,27 @@ logger = get_logger("callback_handlers")
 def register_callback_handlers(bot, ctx):
     """注册所有回调查询处理器到bot实例"""
 
+    def _is_admin(user_id: int) -> bool:
+        try:
+            raw_admin_ids = (ctx.config or {}).get("ADMIN_IDS", []) or []
+            if isinstance(raw_admin_ids, int):
+                raw_admin_ids = [raw_admin_ids]
+            if not isinstance(raw_admin_ids, (list, tuple, set)):
+                raw_admin_ids = []
+            admin_ids = set(raw_admin_ids)
+            admin_id = (ctx.config or {}).get("ADMIN_ID", 0)
+            if admin_id:
+                admin_ids.add(admin_id)
+            return user_id in admin_ids
+        except Exception:
+            return False
+
     def _is_blacklisted_callback(call) -> bool:
         uid = getattr(getattr(call, "from_user", None), "id", 0) or 0
         if not uid:
             return False
         try:
-            admin_ids = set((ctx.config or {}).get("ADMIN_IDS", []) or [])
-            admin_id = (ctx.config or {}).get("ADMIN_ID", 0)
-            if admin_id:
-                admin_ids.add(admin_id)
-            return uid not in admin_ids and bool(ctx.db.is_blacklisted(uid))
+            return not _is_admin(uid) and bool(ctx.db.is_blacklisted(uid))
         except Exception as e:
             logger.debug(f"回调黑名单检查失败 uid={uid}: {e}")
             return False
@@ -44,6 +55,48 @@ def register_callback_handlers(bot, ctx):
             logger.info(f"🚫 黑名单按钮回调拦截: uid={call.from_user.id} data={getattr(call, 'data', '')}")
         except Exception as e:
             logger.debug(f"黑名单按钮回调应答失败: {e}")
+
+    # ── 广告误封解封按钮 ───────────────────────────────────────────
+    @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("ad_unban:"))
+    def on_ad_unban_callback(call):
+        try:
+            operator_id = getattr(getattr(call, "from_user", None), "id", 0) or 0
+            if not _is_admin(operator_id):
+                bot.answer_callback_query(call.id, text="无权限", show_alert=True)
+                return
+            parts = str(call.data or "").split(":")
+            if len(parts) != 3:
+                bot.answer_callback_query(call.id, text="解封参数无效", show_alert=True)
+                return
+            uid = int(parts[1])
+            chat_id = int(parts[2])
+            from modules.ad_enforcement import restore_ad_user
+            result = restore_ad_user(
+                bot=bot,
+                db=ctx.db,
+                config=ctx.config,
+                chat_id=chat_id,
+                uid=uid,
+                actor_id=operator_id,
+                ad_detector=getattr(ctx, "ad_detector", None),
+            )
+            ok = result.get("code") == 200
+            text = "已解封并尝试恢复发言权限" if ok else "解封失败，请看日志"
+            bot.answer_callback_query(call.id, text=text, show_alert=True)
+            try:
+                bot.edit_message_reply_markup(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    reply_markup=None,
+                )
+            except Exception as e:
+                logger.debug(f"移除解封按钮失败: {e}")
+        except Exception as e:
+            logger.error(f"广告解封回调异常：{e}")
+            try:
+                bot.answer_callback_query(call.id, text="解封异常，请看日志", show_alert=True)
+            except Exception:
+                pass
 
     # ── 反馈按钮回调（fb_like / fb_dislike）──────────────────────────
     @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("fb_"))

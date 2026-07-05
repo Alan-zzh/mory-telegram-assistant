@@ -28,12 +28,10 @@ logger = get_logger("ai_handlers")
 def _final_ai_reply_fallback(mode: str, is_priv: bool = False) -> str:
     """处理AI失败时给用户的兜底回复（旧版兼容）。"""
     if mode in ("convert", "contact_mory"):
-        return "咨询入口这会儿卡住了，等我恢复后再给你更完整的路径说明。"
-    if mode in ("tarot", "fortune"):
-        return "占卜/运势这会儿抓不到牌位，先等等，我马上重试给你。"
-    if mode in ("dream", "treehole"):
-        return "我这边没接上你的这段情绪，先别着急，稍后我再认真陪你聊。"
-    return "Mory 这会儿没接上模型服务，先给你个抱歉，稍后我再回。"
+        if is_priv:
+            return "预览：https://t.me/moryselect\n自助下单：https://t.me/MorychannelBot"
+        return "预览群 @moryselect\n自助下单 @MorychannelBot"
+    return ""
 
 # ═══════════════════════════════════════════════════════════════════════
 #  P8：固定彩蛋 + P8.8 成就检测 + P8.85 猜数字
@@ -223,40 +221,40 @@ def _handle_private_feedback(dctx, analysis: dict) -> bool:
 
     gid = CONFIG.get("GROUP_ID", 0)
     unban_success = False
+    tracking_cleared = False
     if gid:
         try:
-            from telebot.types import ChatPermissions
-            bot.restrict_chat_member(
-                gid, uid,
-                permissions=ChatPermissions(
-                    can_send_messages=True,
-                    can_send_media_messages=True,
-                    can_send_other_messages=True,
-                    can_add_web_page_previews=True,
-                )
+            from modules.ad_enforcement import restore_ad_user
+            result = restore_ad_user(
+                bot=bot,
+                db=db,
+                config=CONFIG,
+                chat_id=gid,
+                uid=uid,
+                actor_id=uid,
+                ad_detector=getattr(dctx.ctx, "ad_detector", None),
             )
-            db.blacklist_remove(uid)
-            unban_success = True
+            unban_success = result.get("code") == 200
+            tracking_cleared = bool(result.get("data", {}).get("tracking_cleared"))
             logger.info(f"✅ 私聊自助解封成功: {uname}({uid})")
         except Exception as e:
             logger.warning(f"私聊自助解封失败: {e}")
 
     if unban_success:
         blame = random.choice([
-            "这该死的阿福又误判了！真不好意思啊～",
-            "阿福那个笨蛋又抽风了，害你被封，抱歉抱歉～",
-            "又是阿福的锅！它最近老犯傻，我替它道歉～",
-            "阿福出bug了，把你误封了，真的对不起呀～",
-            "那个笨阿福又搞事了！害你受委屈了～",
+            "这次是系统误判，真的不好意思。",
+            "刚才的封禁不该发生，已经帮你处理好了。",
+            "抱歉让你受影响了，我已经把封禁状态撤掉了。",
         ])
-        feedback_reply = f"已经帮你解封啦～{blame}现在可以回群里正常发言了！以后有任何问题都可以私聊我哦～"
+        tracking_note = "可疑追踪记录也一起清掉了。" if tracking_cleared else "没有发现额外的可疑追踪记录。"
+        feedback_reply = f"已经帮你解封了。{blame}现在可以回群里正常发言，{tracking_note}"
     else:
         blame = random.choice([
-            "这该死的阿福又误判了！",
-            "阿福那个笨蛋又抽风了！",
-            "又是阿福的锅！",
+            "我这边没能自动恢复。",
+            "自动解封没有成功。",
+            "这次需要管理员手动看一下。",
         ])
-        feedback_reply = f"{blame}出了点状况暂时无法解封，我已经通知Mory了，她会尽快来帮你处理的～以后有事直接私聊我就行！"
+        feedback_reply = f"{blame}我已经通知管理员，请稍等一下。"
         # 通知管理员解封失败
         admin_id = CONFIG.get("ADMIN_ID", 0)
         if admin_id:

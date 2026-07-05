@@ -74,7 +74,7 @@ class LeakTask(BaseTask):
 
     def execute(self, ctx: TaskContext) -> None:
         try:
-            with TaskTransactionManager("leak", self.rm.db, resources=['ai', 'config'],
+            with TaskTransactionManager("leak", self.rm.db, resources=None,
                                         min_interval_sec=86400) as tx:
                 if not tx.claimed:
                     return

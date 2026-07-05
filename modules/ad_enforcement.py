@@ -102,6 +102,215 @@ def _write_blacklists(bot, db, uid: int, reason: str) -> bool:
     return ok
 
 
+def _remove_blacklists(db, uid: int) -> bool:
+    """移除广告处置写入的本地/全局黑名单和禁言记录。"""
+    ok = True
+    lock = getattr(db, "lock", None)
+    try:
+        if lock:
+            lock.acquire()
+        db.conn.execute("DELETE FROM blacklist WHERE uid=?", (uid,))
+        db.conn.execute("DELETE FROM global_blacklist WHERE user_id=?", (uid,))
+        db.conn.execute("DELETE FROM mute_records WHERE uid=?", (uid,))
+        db.conn.commit()
+    except Exception as e:
+        ok = False
+        logger.warning(f"移除广告黑名单失败: uid={uid} err={e}")
+    finally:
+        if lock:
+            try:
+                lock.release()
+            except Exception:
+                pass
+    return ok
+
+
+def _restore_chat_permissions(bot, chat_id: int, uid: int) -> bool:
+    """恢复用户在群内的基础发言权限。"""
+    if not chat_id:
+        return False
+    try:
+        restrict_chat_member_compat(
+            bot,
+            chat_id,
+            uid,
+            permissions={
+                "can_send_messages": True,
+                "can_send_audios": True,
+                "can_send_documents": True,
+                "can_send_photos": True,
+                "can_send_videos": True,
+                "can_send_video_notes": True,
+                "can_send_voice_notes": True,
+                "can_send_polls": True,
+                "can_send_other_messages": True,
+                "can_add_web_page_previews": True,
+                "can_send_paid_media": True,
+                "can_react_to_messages": True,
+            },
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"恢复用户发言权限失败: chat={chat_id} uid={uid} err={e}")
+        return False
+
+
+def _clear_ad_tracking(ad_detector, uid: int) -> bool:
+    if not ad_detector or not hasattr(ad_detector, "clear_user_tracking"):
+        return False
+    try:
+        ad_detector.clear_user_tracking(uid)
+        return True
+    except Exception as e:
+        logger.warning(f"清理广告追踪记录失败: uid={uid} err={e}")
+        return False
+
+
+def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int = 0, ad_detector=None) -> dict:
+    """撤销广告误封：移除黑名单并尝试恢复群内发言权限。"""
+    uid = int(uid)
+    chat_id = int(chat_id or 0)
+    removed = _remove_blacklists(db, uid)
+    restored = _restore_chat_permissions(bot, chat_id, uid)
+    tracking_cleared = _clear_ad_tracking(ad_detector, uid)
+    logger.warning(
+        f"广告误封解封完成: uid={uid} chat={chat_id} "
+        f"removed={removed} restored={restored} tracking_cleared={tracking_cleared} actor={actor_id}"
+    )
+    return {
+        "code": 200 if removed else 500,
+        "data": {
+            "uid": uid,
+            "chat_id": chat_id,
+            "blacklist_removed": removed,
+            "permissions_restored": restored,
+            "tracking_cleared": tracking_cleared,
+            "actor_id": actor_id,
+        },
+        "msg": "success" if removed else "remove_blacklist_failed",
+    }
+
+
+def _admin_ids(config: dict) -> set:
+    raw_admin_ids = (config or {}).get("ADMIN_IDS", []) or []
+    if isinstance(raw_admin_ids, int):
+        raw_admin_ids = [raw_admin_ids]
+    if not isinstance(raw_admin_ids, (list, tuple, set)):
+        raw_admin_ids = []
+    admin_ids = set(raw_admin_ids)
+    admin_id = (config or {}).get("ADMIN_ID", 0)
+    if admin_id:
+        admin_ids.add(admin_id)
+    return admin_ids
+
+
+def _extract_unban_token(message) -> str:
+    text = (getattr(message, "text", "") or "").strip()
+    parts = text.split()
+    if len(parts) >= 2:
+        return parts[1].strip()
+    return ""
+
+
+def _resolve_username_from_db(db, username: str) -> int:
+    username = (username or "").lstrip("@").strip().lower()
+    if not username:
+        return 0
+    queries = [
+        ("SELECT uid FROM group_members WHERE lower(username)=? ORDER BY last_checked DESC LIMIT 1", (username,)),
+        ("SELECT uid FROM group_members WHERE lower(username)=? LIMIT 1", (username,)),
+    ]
+    for sql, params in queries:
+        try:
+            row = db.conn.execute(sql, params).fetchone()
+            if row and row[0]:
+                return int(row[0])
+        except Exception as e:
+            logger.debug(f"按username查用户失败: username={username} err={e}")
+    return 0
+
+
+def resolve_unban_target(bot, db, message, token: str = "") -> tuple[int, str]:
+    """从回复消息、数字ID或 @username 解析要解封的用户。"""
+    reply = getattr(message, "reply_to_message", None)
+    reply_user = getattr(reply, "from_user", None)
+    if reply_user and getattr(reply_user, "id", 0):
+        uid = int(reply_user.id)
+        label = getattr(reply_user, "username", "") or getattr(reply_user, "first_name", "") or str(uid)
+        return uid, str(label)
+
+    token = (token or _extract_unban_token(message)).strip()
+    if not token:
+        return 0, ""
+
+    cleaned = token.lstrip("@")
+    if cleaned.lstrip("-").isdigit():
+        return int(cleaned), token
+
+    uid = _resolve_username_from_db(db, cleaned)
+    if uid:
+        return uid, f"@{cleaned}"
+
+    try:
+        chat = bot.get_chat(f"@{cleaned}")
+        uid = int(getattr(chat, "id", 0) or 0)
+        if uid:
+            return uid, f"@{cleaned}"
+    except Exception as e:
+        logger.debug(f"Bot API按username解析失败: username={cleaned} err={e}")
+    return 0, token
+
+
+def handle_unban_command(bot, message, config: dict, db, ad_detector=None) -> bool:
+    """管理员解封指令：支持回复、用户ID、@username。"""
+    actor_id = getattr(getattr(message, "from_user", None), "id", 0) or 0
+    if actor_id not in _admin_ids(config or {}):
+        try:
+            bot.reply_to(message, "只有管理员可以解封。")
+        except Exception:
+            pass
+        return True
+
+    token = _extract_unban_token(message)
+    uid, label = resolve_unban_target(bot, db, message, token)
+    if not uid:
+        try:
+            bot.reply_to(
+                message,
+                "用法：回复被误封用户发送 /unban，或发送 /unban 用户ID / /unban @username，也可以发：解封 用户ID。",
+            )
+        except Exception:
+            pass
+        return True
+
+    chat_id = getattr(getattr(message, "chat", None), "id", 0) or 0
+    if chat_id > 0:
+        chat_id = int((config or {}).get("GROUP_ID", 0) or 0)
+    result = restore_ad_user(
+        bot=bot,
+        db=db,
+        config=config or {},
+        chat_id=chat_id,
+        uid=uid,
+        actor_id=actor_id,
+        ad_detector=ad_detector,
+    )
+    data = result.get("data", {})
+    if result.get("code") == 200:
+        text = (
+            f"已解封 {label or uid}。\n"
+            f"已清理：本地黑名单 / 全局黑名单 / 禁言记录。\n"
+            f"已尝试恢复群内发言权限；广告追踪记录：{'已清理' if data.get('tracking_cleared') else '无记录或无需清理'}。"
+        )
+    else:
+        text = f"解封 {label or uid} 失败，黑名单记录没有完全清掉，请看后台日志。"
+    try:
+        bot.reply_to(message, text)
+    except Exception as e:
+        logger.debug(f"发送解封指令结果失败: uid={uid} err={e}")
+    return True
+
+
 def _cleanup_user_reactions(bot, config: dict, uid: int, chat_id: int) -> bool:
     """删除广告用户在本群留下的反应，Bot API 不支持时静默降级。"""
     if not (config or {}).get("AD_CLEANUP_REACTIONS", True):
@@ -149,7 +358,18 @@ def _cleanup_user_messages(bot, db, config: dict, uid: int, chat_id: int, curren
     return deleted_count
 
 
-def _notify_admin(bot, config: dict, uid: int, uname: str, reason: str, deleted_count: int, muted: bool, reactions_cleaned: bool = False):
+def _build_unban_markup(uid: int, chat_id: int):
+    try:
+        from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("解封", callback_data=f"ad_unban:{uid}:{chat_id}"))
+        return keyboard
+    except Exception as e:
+        logger.debug(f"构建广告解封按钮失败: uid={uid} err={e}")
+        return None
+
+
+def _notify_admin(bot, config: dict, chat_id: int, uid: int, uname: str, reason: str, deleted_count: int, muted: bool, reactions_cleaned: bool = False):
     """通知管理员广告处置结果。"""
     admin_id = config.get("ADMIN_ID", 0)
     if not admin_id:
@@ -165,6 +385,7 @@ def _notify_admin(bot, config: dict, uid: int, uname: str, reason: str, deleted_
             f"🔇 永久禁言：{'成功' if muted else '失败'}\n"
             f"🎯 原因：{reason[:200]}",
             parse_mode="HTML",
+            reply_markup=_build_unban_markup(uid, chat_id),
         )
     except Exception as e:
         logger.debug(f"广告处置通知管理员失败: uid={uid} err={e}")
@@ -191,7 +412,7 @@ def enforce_ad_user(
     reactions_cleaned = _cleanup_user_reactions(bot, config or {}, uid, chat_id)
     blacklisted = _write_blacklists(bot, db, uid, reason)
     if notify_admin:
-        _notify_admin(bot, config or {}, uid, uname or str(uid), reason, deleted_count, muted, reactions_cleaned)
+        _notify_admin(bot, config or {}, chat_id, uid, uname or str(uid), reason, deleted_count, muted, reactions_cleaned)
     logger.warning(
         f"广告账号处置完成: uid={uid} chat={chat_id} "
         f"muted={muted} blacklisted={blacklisted} deleted={deleted_count} reactions_cleaned={reactions_cleaned}"

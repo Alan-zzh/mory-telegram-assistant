@@ -1,7 +1,7 @@
 """
-tasks/maintenance/burn_orphan_task.py - 阅后即焚孤儿清理任务
+tasks/maintenance/burn_orphan_task.py - Bot消息超时清理任务
 
-每 10 分钟清理超过 30 分钟未回复的孤儿消息。
+每 6 小时清理超过 30 分钟的群聊 Bot 回复和主动播报。
 """
 
 import time
@@ -54,7 +54,7 @@ def _handle_orphan_disabled_alert(rm, orphan_count: int):
 
 
 class BurnOrphanTask(BaseTask):
-    """阅后即焚孤儿清理任务（每小时一次）。"""
+    """阅后即焚清理任务（每6小时一次）。"""
 
     @property
     def task_id(self) -> str:
@@ -64,7 +64,8 @@ class BurnOrphanTask(BaseTask):
         return [{
             "job_id": "burn_orphan",
             "trigger": "cron",
-            "minute": 5,
+            "hour": "*/6",
+            "minute": 0,
             "params": {},
             "options": {
                 "max_instances": 1,
@@ -75,14 +76,31 @@ class BurnOrphanTask(BaseTask):
 
     def execute(self, ctx: TaskContext) -> None:
         try:
-            logger.info("🔍 [Phase1] 检查超时孤儿消息（30分钟窗口）...")
+            logger.info("🔍 [Phase1] 检查超时Bot消息（30分钟窗口）...")
             orphans = self.rm.db.get_orphan_messages()
-            if orphans:
+            active_messages = []
+            if hasattr(self.rm.db, "get_expired_channel_messages"):
+                try:
+                    active_messages = self.rm.db.get_expired_channel_messages()
+                except Exception as active_err:
+                    logger.warning(f"主动播报追踪查询失败，继续清理reply_tracking: {active_err}")
+
+            pending = {}
+            for bot_mid, cid, user_mid in orphans:
+                pending[(int(cid), int(bot_mid))] = (int(bot_mid), int(cid), int(user_mid))
+            for bot_mid, cid, user_mid in active_messages:
+                pending.setdefault((int(cid), int(bot_mid)), (int(bot_mid), int(cid), int(user_mid)))
+            targets = list(pending.values())
+
+            if targets:
                 if can_orphan_cleanup(self.rm.config):
-                    logger.info(f"🗑️ 发现{len(orphans)}条超时孤儿（>30分钟未回复），开始清理...")
+                    logger.info(
+                        f"🗑️ 发现{len(targets)}条超时Bot消息（>30分钟），"
+                        f"reply={len(orphans)} active={len(active_messages)}，开始清理..."
+                    )
                     success_count = 0
                     fail_count = 0
-                    for bot_mid, cid, user_mid in orphans:
+                    for bot_mid, cid, user_mid in targets:
                         try:
                             with self.rm.locked('bot'):
                                 self.rm.bot.delete_message(cid, int(bot_mid))
@@ -90,11 +108,14 @@ class BurnOrphanTask(BaseTask):
                         except Exception as del_err:
                             fail_count += 1
                             logger.debug(f"  删除失败：bot_mid={bot_mid}, err={del_err}")
-                        self.rm.db.delete_tracked(bot_mid, cid)
+                        if hasattr(self.rm.db, "delete_bot_message_records"):
+                            self.rm.db.delete_bot_message_records(cid, bot_mid)
+                        else:
+                            self.rm.db.delete_tracked(bot_mid, cid)
                     logger.info(f"✅ Phase1完成：成功{success_count}条，失败{fail_count}条")
                     try:
                         self.rm.db.log_orphan_cleanup(
-                            found_count=len(orphans),
+                            found_count=len(targets),
                             deleted_count=success_count,
                             skipped_count=fail_count,
                             trigger="scheduled",
@@ -102,20 +123,20 @@ class BurnOrphanTask(BaseTask):
                     except Exception as log_err:
                         logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
                 else:
-                    _handle_orphan_disabled_alert(self.rm, len(orphans))
-                    logger.info(f"[孤儿清理] ORPHAN_CLEANUP_ENABLED=False, 跳过删除{len(orphans)}条孤儿消息")
+                    _handle_orphan_disabled_alert(self.rm, len(targets))
+                    logger.info(f"[孤儿清理] ORPHAN_CLEANUP_ENABLED=False, 跳过删除{len(targets)}条孤儿消息")
                     try:
                         self.rm.db.log_orphan_cleanup(
-                            found_count=len(orphans),
+                            found_count=len(targets),
                             deleted_count=0,
-                            skipped_count=len(orphans),
+                            skipped_count=len(targets),
                             error="ORPHAN_CLEANUP_ENABLED=False",
                             trigger="scheduled",
                         )
                     except Exception as log_err:
                         logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
             else:
-                logger.info("✅ Phase1：无超时孤儿")
+                logger.info("✅ Phase1：无超时Bot消息")
                 try:
                     self.rm.db.log_orphan_cleanup(
                         found_count=0, deleted_count=0, skipped_count=0,

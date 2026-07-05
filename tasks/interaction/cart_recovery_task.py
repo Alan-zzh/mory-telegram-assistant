@@ -113,7 +113,7 @@ class CartRecoveryTask(BaseTask):
         try:
             _window = datetime.now(_CST).strftime("%Y-%m-%d_%H%M")
             task_key = f"cart_recovery_{_window}"
-            with TaskTransactionManager(task_key, self.rm.db, resources=['bot', 'config'],
+            with TaskTransactionManager(task_key, self.rm.db, resources=None,
                                         min_interval_sec=300) as tx:
                 if not tx.claimed:
                     return

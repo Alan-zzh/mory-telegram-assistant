@@ -19,6 +19,32 @@ from core.logging_util import get_logger, clear_logging_context
 logger = get_logger("security_handlers")
 
 
+_BENIGN_AD_BYPASS_TEXTS = {
+    "签到",
+    "打卡",
+    "每日签到",
+    "今日签到",
+    "/checkin",
+    "/checkin@",
+    "/sign",
+    "/signin",
+    "/daily",
+}
+
+
+def _is_benign_ad_bypass_text(text: str) -> bool:
+    """明确的正常业务动作不进入广告检测，防止资料层小分累计误封。"""
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in _BENIGN_AD_BYPASS_TEXTS:
+        return True
+    for prefix in ("/checkin@", "/sign@", "/signin@", "/daily@"):
+        if normalized.startswith(prefix):
+            return True
+    return False
+
+
 def check_blacklist(dctx) -> bool:
     """P1 黑名单用户过滤（在活跃度更新之前，避免污染数据）
 
@@ -147,6 +173,29 @@ def check_ad_detection(dctx) -> bool:
     uname = dctx.uname
     chat_id = dctx.chat_id
 
+    if _is_benign_ad_bypass_text(msg):
+        try:
+            if hasattr(ad_detector, "clear_user_tracking"):
+                ad_detector.clear_user_tracking(uid)
+        except Exception as e:
+            logger.debug(f"[AD] 清理正常签到追踪失败: uid={uid} err={e}")
+        logger.debug(f"[AD] 正常业务动作跳过广告检测: uid={uid} msg={msg[:30]}")
+        return False
+
+    # 白名单和群管理员必须在任何资料层检测前放行，避免 Bio/emoji 状态误伤正常用户。
+    whitelist_cfg = CONFIG.get("AD_WHITELIST", {})
+    whitelist_uids = whitelist_cfg.get("user_ids", []) if isinstance(whitelist_cfg, dict) else []
+    if uid in whitelist_uids:
+        logger.debug(f"[AD] 白名单用户免检: uid={uid}")
+        return False
+    try:
+        member = bot.get_chat_member(chat_id, uid)
+        if member and member.status in ("administrator", "creator"):
+            logger.debug(f"[AD] 群管理员免检: uid={uid} status={member.status}")
+            return False
+    except Exception as e:
+        logger.debug(f"操作异常: {e}")
+
     # 短消息也必须先看资料层信号：广告号常用“1”等无意义内容探活。
     profile_score = 0
     profile_result = None
@@ -190,19 +239,6 @@ def check_ad_detection(dctx) -> bool:
             _s_uname = getattr(_su, 'username', '') or ''
             _s_display = (_su.first_name or '') + (_su.last_name or '')
             db.upsert_group_member(_su.id, chat_id, _s_uname, _s_display, '', 'member')
-    except Exception as e:
-        logger.debug(f"操作异常: {e}")
-    # [TRAE SOLO CN] v5.8.0 新增：白名单机制（群管理员/指定用户免检）
-    whitelist_cfg = CONFIG.get("AD_WHITELIST", {})
-    whitelist_uids = whitelist_cfg.get("user_ids", []) if isinstance(whitelist_cfg, dict) else []
-    if uid in whitelist_uids:
-        logger.debug(f"[AD] 白名单用户免检: uid={uid}")
-        return False
-    try:
-        member = bot.get_chat_member(chat_id, uid)
-        if member and member.status in ("administrator", "creator"):
-            logger.debug(f"[AD] 群管理员免检: uid={uid} status={member.status}")
-            return False
     except Exception as e:
         logger.debug(f"操作异常: {e}")
     # 保存消息快照（用于编辑消息检测）

@@ -1,6 +1,63 @@
 ## v5.31.2 [2026-06-30] [Puzan-OS]
 - **修复监控系统持续误报**：http_client.py HTTP重试日志从 warning 降级为 debug，避免污染 journalctl；puzan_loop_monitor.py L2/L5 过滤规则优化，排除业务抓取重试日志和正常调度事件名误匹配；task_log 无 status 列显示从 N/A 改为 INFO 标注。部署后监控恢复 errors_10min=none + fail_log_10min=(none) + all normal。
 
+### Hotfix [2026-07-06] 广告资料层误封止血 + 管理员一键解封按钮
+- 修复误封入口：`core/handlers/security_handlers.py` 将 `AD_WHITELIST.user_ids` 和群管理员免检提前到 Bio / Premium emoji 状态资料层检测之前，避免白名单或管理员被资料层高置信命中直接永久禁言。
+- `modules/ad_enforcement.py` 管理员广告处置通知新增“解封”按钮，callback_data 为 `ad_unban:<uid>:<chat_id>`；点击后复用 `restore_ad_user()` 同时删除 `blacklist`、`global_blacklist`、`mute_records`，并尝试恢复群内发言/媒体/反应权限。
+- `core/handlers/callback_handlers.py` 新增 `ad_unban:` 专用回调，只有 `ADMIN_ID` / `ADMIN_IDS` 可操作；执行成功后移除按钮，防止重复点击。
+- 本地验证：`python -m py_compile modules\ad_enforcement.py core\handlers\callback_handlers.py core\handlers\security_handlers.py` 通过；`python -m pytest tests\unit\test_ad_enforcement.py tests\unit\test_ad_profile_status.py tests\unit\test_security_blacklist_enforcement.py -q` → 17 passed；`PYTHONUTF8=1 python scripts\verify_db_methods.py` → 164 个委托方法通过。
+- VPS 已部署并恢复验证：远端 `py_compile` 通过；远端 `PYTHONUTF8=1 python3 scripts/verify_db_methods.py` → 164 个委托方法通过；`grep` 确认 `ad_unban:` 回调和“白名单和群管理员必须在任何资料层检测前放行”已在 `/home/ubuntu/mory_assistant/`；`mory-assistant` / `mory-dashboard` 双 active，`/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`，新进程启动后 journal 过滤无 `traceback/critical/importerror/syntaxerror/failed/exception/error`。
+
+### Hotfix [2026-07-06] 签到误封根因修复 + 解封指令增强
+- 生产日志确认误封根因：`uid=8187862648` 多次发送正常文本 `签到`，消息本身没有广告内容，但短消息会先触发资料层可疑分；`profile_score` 被写入 `ad_suspicious_users` 延迟追踪，第二次签到累计评分到 4 后触发 `延迟广告累计评分4` 永久禁言。
+- `core/handlers/security_handlers.py` 新增正常业务动作前置放行：`签到`、`打卡`、`每日签到`、`/checkin`、`/signin`、`/daily` 等精确命中时不进入广告资料层/延迟封禁，并清理该用户旧广告追踪记录。
+- `modules/ad_enforcement.py` 增强 `restore_ad_user()`：解封时同步清广告追踪记录；新增 `handle_unban_command()`，管理员可通过回复消息、数字 ID 或 `@username` 解封。
+- `core/handlers/command_handlers.py` 新增 `/unban 用户ID`、`/unban @username`、`解封 用户ID`、回复用户后 `/unban` 路由；`core/handlers/ai_handlers.py` 私聊自助解封也改为同一条完整恢复链。
+- 已立即处理生产误封用户 `8187862648`：远端 `blacklist`、`global_blacklist`、`mute_records`、`ad_suspicious_users` 均清为 0，并通过 Telegram API 恢复群内发言权限。
+- 本地验证：`py_compile` 覆盖广告处置、回调、命令、安全、私聊处理器；相关单测 20 passed；`PYTHONUTF8=1 python scripts\verify_db_methods.py` → 164 个委托方法通过。
+- VPS 精确热修已部署：远端备份 `/home/ubuntu/mory_assistant/backups/unban_checkin_false_positive_20260706_003936`；远端 `py_compile` 与 `verify_db_methods.py` 通过；重启后 `mory-assistant` / `mory-dashboard` 双 active，`/api/health` 返回 v5.31.2；新进程启动后 journal 错误过滤为空。远端 smoke：`签到=True`、`/checkin@MoryMateBot=True`、`签到 看我简介=False`，确认只放行精确正常动作。
+
+### Hotfix [2026-07-05] AI 真实失败根因修复：慢/坏模型剔除 + 调用预算收紧
+- 生产近 2 小时 journal 显示根因不是额度/权限（无 402/403），而是 `qwen3.5-plus-2026-04-20`、`qwen3.7-max-preview` 等候选持续 25 秒超时/空 content，随后熔断，整轮回复拖到数分钟。
+- VPS 逐模型真实 API probe：`qwen3.5-plus-2026-04-20`、`qwen3.7-max-preview` 12 秒超时；完整人设 prompt probe 显示 `glm-5.1` 适合 normal/standard，`qwen3.7-max-2026-05-17/06-08` 适合 light/premium。
+- `core/ai_engine.py` 新增配置化预算：`AI_REQUEST_TIMEOUT` 默认 15 秒、`AI_MAX_ATTEMPTS` 默认 3 次；生产配置设为 30 秒、2 次，避免一次回复拖到 3 分钟。
+- 生产 `config.json` 已调整：standard 首发 `glm-5.1`，light/premium 首发 `qwen3.7-max-2026-05-17/06-08`；黑名单保留 `qwen3.6-plus-2026-04-02`、`glm-5.2`、`qwen3.5-plus-2026-04-20`、`qwen3.7-max-preview`；A/B 模型改为 `qwen3.7-max-2026-05-17` / `glm-5.1`。
+- VPS 备份：代码 `/home/ubuntu/mory_assistant/backups/ai_timeout_budget_fix_20260705_134701`；配置 `/home/ubuntu/mory_assistant/backups/ai_model_route_fix_20260705_134956/config.json`。重启后双服务 active，`/api/health` v5.31.2；真实 smoke：normal 8.52s、morning 25.72s、convert 21.67s。
+
+### Hotfix [2026-07-05] 取消 AI 失败时的尴尬拟人化兜底
+- 修复截图场景中 Bot 反复发送“走神/稍后再接”类拟人化失败文案的问题：`core/ai_engine.py`、`core/handlers/ai_reply_handler.py`、`core/handlers/ai_handlers.py` 统一取消普通/未知/特殊模式的用户侧硬凑兜底，AI 全失败时直接静默。
+- 明确转化/联系类失败不再闲聊解释，改为固定给预览群 `@moryselect` 与自助下单 `@MorychannelBot`，避免用户要下单时断链。
+- 本地验证：`python -m py_compile core\ai_engine.py core\handlers\ai_reply_handler.py core\handlers\ai_handlers.py tests\unit\test_ai_engine_resilience.py` 通过；`python -m pytest tests\unit\test_ai_engine_resilience.py tests\unit\test_convert_keywords.py -q` 16 passed。
+- VPS 已精确部署 3 个源文件，远端备份 `/home/ubuntu/mory_assistant/backups/no_humanized_ai_fallback_20260705_132757`；远端 `py_compile` 通过；强制超时 smoke 确认 normal/tarot/feedback 返回空串、convert 返回入口且不含旧兜底；`mory-assistant` 重启后双服务 active，`/api/health` 返回 v5.31.2，最近 journal 无错误和旧兜底关键词。
+
+### Hotfix [2026-07-05] 明确要链接/加群时直接给预览群和自助下单入口
+- 修复截图场景中用户连续询问“怎么加群 / 链接给我 / 都要”时，AI 仍继续闲聊、猜“微信群”等跑偏问题：`core/handlers/ai_reply_handler.py` 新增直接入口识别，命中 `链接给我`、`怎么加群`、`群入口`、`自助机器人链接` 等明确入口需求时，不再交给 LLM 自由发挥，直接回复预览群 `@moryselect` 与自助下单 `@MorychannelBot`。
+- `core/keyword_manager.py` 补充商业转化默认词：`加群`、`进群`、`群入口`、`群链接`、`预览群`、`入口`、`链接`、`自助下单`、`下单入口`、`自助机器人` 等，避免入口需求在 P9/P10 前被误判为普通聊天。
+- 本地验证：`python -m py_compile core\handlers\ai_reply_handler.py core\keyword_manager.py tests\unit\test_convert_keywords.py` 通过；`python -m pytest tests\unit\test_convert_keywords.py -q` 9 passed；`PYTHONUTF8=1 python scripts\verify_db_methods.py` 通过 164 个委托方法。
+- VPS 已精确部署 2 个源文件，远端备份 `/home/ubuntu/mory_assistant/backups/direct_access_reply_20260705_061648`；远端 `py_compile` 通过；`mory-assistant` 重启后 active，`mory-dashboard` active，`/api/health` 返回 v5.31.2；远端 smoke 确认 4 个样例均 `convert=true` 且 `direct=true`，启动后 journal 无 startup errors。
+
+### Hotfix [2026-07-04] 新闻/问候/定点播报主动消息纳入超时清理
+- 立即清理生产残留：按 `task_log` + `channel_tracking` 匹配 18 条 47 小时内新闻/问候/定点播报消息，9 条 Telegram 确认删除，9 条返回 `message to delete not found`；继续处理剩余 2 条未匹配群主动消息，1 条删除成功，1 条已不存在。清理后最近 47 小时 `reply_tracking=0`、`broadcast_tracking=0`、`channel_tracking=0`。
+- 修复根因：`burn_orphan` 过去只从 `reply_tracking` 取清理目标，新闻/问候/定点播报主要残留在 `channel_tracking` / `broadcast_tracking`，导致群里主动播报超过 30 分钟仍可能留着。
+- `core/db_repos/tracking_repo.py` 新增 `get_expired_channel_messages()` 与 `delete_bot_message_records()`，把超过 30 分钟的群聊主动消息纳入清理，并统一清 `reply_tracking` / `channel_tracking` / `broadcast_tracking` 三张表。
+- `tasks/maintenance/burn_orphan_task.py` 与旧 fallback `modules/auto_tasks.py` 同步：清理时合并 reply 与 active 主动消息，按 `(chat_id, message_id)` 去重后删除；删除后统一清追踪记录。
+- `dashboard/api/models_api.py` 中 `burn_orphan` 显示从“每10分钟”改为“每6小时”，与实际 `hour="*/6", minute=0` 一致。
+- 本地验证：相关文件 `py_compile` 通过；`tests/unit/test_reply_tracking_cleanup.py` 3 passed；`PYTHONUTF8=1 python scripts/verify_db_methods.py` 通过 164 个委托方法。
+- VPS 已精确热修部署：远端备份 `tracking_repo.py.bak.20260704_011055`、`database.py.bak.20260704_011055`、`burn_orphan_task.py.bak.20260704_011055`、`auto_tasks.py.bak.20260704_011055`、`models_api.py.bak.20260704_011055`；远端 `py_compile` 与 `verify_db_methods.py` 通过；双服务 active；`/api/health` 返回 v5.31.2。
+
+### Hotfix [2026-07-03] 群聊 AI 失败露馅文案 + 阅后即焚清理补强
+- 修复 AI 全失败复发的运行池根因：`core/ai_engine.py` 初始化模型池时统一过滤 disabled、黑名单、已过期模型，`qwen3.6-plus-2026-04-02` / `glm-5.2` 不再进入运行时候选链，避免坏候选反复拖长三层路由失败耗时。
+- 修复后台任务持锁等待外部模型的问题：`greeting`、`reactivate`、`cart_recovery`、`leak` 任务不再持有 `config` / `ai` / `bot` 资源锁等待 AI 生成，只在实际发送消息时短暂持有 `bot` 锁，避免模型超时放大成 `config` 锁超时。
+- 修复群聊普通 AI 全失败时把“接不上模型/模型服务”等系统故障文案发到群里：`core/ai_engine.py`、`core/handlers/ai_reply_handler.py`、`core/handlers/ai_handlers.py` 统一改为用户侧不暴露模型细节；普通群聊失败直接静默，私聊/特殊模式只返回短人设兜底。
+- 修复“阅后即焚清理说每 10 分钟但实际每小时跑一次”：`tasks/maintenance/burn_orphan_task.py` 与旧 APScheduler fallback `modules/auto_tasks.py` 均改为 `minute="*/10"`。
+- 按老板最新要求调整：阅后即焚清理频率不再每 10 分钟，改为每 6 小时执行一次；消息 TTL 判断仍是超过 30 分钟才具备清理资格，实际删除会等到最近一次 6 小时清理窗口。
+- 修复用户回复过 Bot 消息后永久豁免导致群里尴尬回复不删除：`core/db_repos/tracking_repo.py:get_orphan_messages()` 现在对用户触发的群聊 Bot 回复超过 30 分钟统一进入清理，不再因 `replied=1` 永久保留。
+- 修复启动补清理仍受 `ENABLE_MESSAGE_DELETION` 影响且可能删追踪不删消息的问题：`core/bot_initializer.py` 改用独立 `ORPHAN_CLEANUP_ENABLED`，关闭时保留追踪记录，开启时直接删除。
+- 本地验证：`py_compile` 相关源文件通过；`tests/unit/test_ai_engine_resilience.py` + `tests/unit/test_reply_tracking_cleanup.py` 共 7 passed；`PYTHONUTF8=1 python scripts/verify_db_methods.py` 通过 162 个委托方法。
+- VPS 已精确热修部署：远端备份 `ai_engine.py.bak.20260703_093729`、`ai_reply_handler.py.bak.20260703_093729`、`ai_handlers.py.bak.20260703_093729`、`tracking_repo.py.bak.20260703_093729`、`burn_orphan_task.py.bak.20260703_093729`、`auto_tasks.py.bak.20260703_093729`、`bot_initializer.py.bak.20260703_093729`；远端 `py_compile` 与 `verify_db_methods.py` 通过；双服务 active；`/api/health` 返回 v5.31.2。
+- VPS 二次 AI 加固已精确部署：远端备份 `ai_engine.py.bak.20260703_100613`、`greeting_task.py.bak.20260703_100613`、`reactivate_task.py.bak.20260703_100613`、`cart_recovery_task.py.bak.20260703_100613`、`leak_task.py.bak.20260703_100613`、`auto_tasks.py.bak.20260703_100613`；远端 `py_compile` 通过，双服务 active，`/api/health` 返回 v5.31.2。
+- 生产证据：强制坏 `BASE_URL` smoke 中 `AIEngine.ask(mode=normal,is_priv=False)` 返回空串，`is_priv=True` 当时返回短人设兜底（已在 2026-07-05 后续热修取消）；真实 AI smoke 返回 `正常`；运行池实测 `qwen3.6-plus-2026-04-02` / `glm-5.2` 已剔除，`llm_standard` 路由链真实候选 7 个；journal 无 `AI模型全部失败` / `三层路由全失败` / `Traceback` / `CRITICAL` / 锁超时；09:40 `burn_orphan` 实际发现并删除 1 条超时 Bot 消息，成功 1 失败 0，后续调度已改为每 6 小时；`scripts/puzan_loop_monitor.py --once` L1-L6 OK、`[EXCEPTION] none`、`[RECOMMEND] all normal`。
+
 ### Hotfix [2026-07-02] 22:08 AI 复发 + 晚启动任务误判修复
 - 修复 `core/ai_engine.py` AI 重试预算：熔断跳过、空模型、限流跳过不再消耗真实 API 尝试次数，只有实际 `requests.post()` 才计入 `api_attempts`；避免 22:08 场景中回退原 `llm` 池后因跳过 OPEN 模型耗尽循环，导致候选模型未请求就误报“所有模型均失败”。
 - AI 中间层级池不可用时不再发送 `三层路由全失败` 管理员故障，改为 warning 并继续回退原 `llm` 池；空 `choices` 与普通请求异常也会记录失败并切换模型。

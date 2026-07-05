@@ -72,7 +72,7 @@ class TrackingRepo:
             logger.error(f"📌 Bot主动消息追踪失败：{e}")
 
     def mark_replied(self, bot_msg_id: int, chat_id: int = 0):
-        """用户回复了机器人的消息，标记为已回复（不自动删除）"""
+        """用户回复了机器人的消息，标记互动状态。"""
         with self.lock:
             if chat_id:
                 self.conn.execute("UPDATE reply_tracking SET replied=1 WHERE bot_msg_id=? AND chat_id=?",
@@ -109,12 +109,11 @@ class TrackingRepo:
             return c.fetchall()
 
     def get_orphan_messages(self, window: int = 1800):
-        """返回超过window秒未被回复的孤儿消息 + 超时的Bot主动消息。
+        """返回超过window秒的群聊Bot消息。
 
         两类消息：
-        1. 用户触发的Bot回复：replied=0且user_msg_id>0 → 用户未回复的孤儿
-        2. Bot主动消息：replied=1且user_msg_id=0 → 超过TTL的定时消息
-        用户回复了机器人的消息(replied=1且user_msg_id>0)获得豁免，不应被清理。
+        1. 用户触发的Bot回复：user_msg_id>0 → 超过TTL后统一清理
+        2. Bot主动消息：user_msg_id=0且replied=1 → 超过TTL的定时消息
 
         【v5.12.4变更】窗口从 86400 缩到 1800（30分钟，用户决策）。
         防止孤儿消息长时间堆积在群中影响体验。
@@ -124,7 +123,7 @@ class TrackingRepo:
             c = self.conn.cursor()
             c.execute("""SELECT bot_msg_id, chat_id, user_msg_id FROM reply_tracking
                          WHERE ts<? AND (
-                             (user_msg_id>0 AND replied=0)
+                             user_msg_id>0
                              OR
                              (user_msg_id=0 AND replied=1)
                          )""", (cutoff,))
@@ -184,6 +183,42 @@ class TrackingRepo:
                 self.conn.execute("DELETE FROM reply_tracking WHERE bot_msg_id=? AND chat_id=?", (bot_msg_id, chat_id))
             else:
                 self.conn.execute("DELETE FROM reply_tracking WHERE bot_msg_id=?", (bot_msg_id,))
+            self.conn.commit()
+
+    def get_expired_channel_messages(self, window: int = 1800, limit: int = 500):
+        """返回超过 TTL 的群聊主动消息。
+
+        `reply_tracking` 用于阅后即焚，`channel_tracking` 用于新闻/问候/定点播报
+        等主动消息浏览追踪；后者也需要进入超时删除，否则群里会残留播报。
+        """
+        cutoff = int(time.time()) - window
+        with self.lock:
+            c = self.conn.cursor()
+            c.execute(
+                """SELECT message_id, chat_id, 0
+                   FROM channel_tracking
+                   WHERE chat_id < 0 AND posted_at < ?
+                   ORDER BY posted_at ASC
+                   LIMIT ?""",
+                (cutoff, limit),
+            )
+            return c.fetchall()
+
+    def delete_bot_message_records(self, chat_id: int, message_id: int):
+        """删除同一条 Bot 消息在各追踪表里的记录。"""
+        with self.lock:
+            self.conn.execute(
+                "DELETE FROM reply_tracking WHERE chat_id=? AND bot_msg_id=?",
+                (chat_id, message_id),
+            )
+            self.conn.execute(
+                "DELETE FROM channel_tracking WHERE chat_id=? AND message_id=?",
+                (chat_id, message_id),
+            )
+            self.conn.execute(
+                "DELETE FROM broadcast_tracking WHERE chat_id=? AND msg_id=?",
+                (chat_id, message_id),
+            )
             self.conn.commit()
 
     def get_tracking_stats(self):
