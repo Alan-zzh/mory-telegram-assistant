@@ -206,12 +206,17 @@ class _FetchOneResult:
     def fetchone(self):
         return self.row
 
+    def fetchall(self):
+        return [self.row] if self.row else []
+
 
 class _LookupConn(_FakeConn):
     def execute(self, sql, params=()):
         self.executed.append((sql, params))
         if "FROM group_members" in sql and params == ("knownuser",):
             return _FetchOneResult((4242,))
+        if "display_name" in sql and params and not str(params[0]).startswith("%"):
+            return _FetchOneResult((8383136504, "mmb3695", "萌萌逼"))
         return _FetchOneResult(None)
 
 
@@ -263,3 +268,64 @@ def test_handle_unban_command_accepts_username_from_group_member_cache():
     assert handle_unban_command(bot, message, {"ADMIN_ID": 99}, db) is True
     assert any("@knownuser" in reply for reply in bot.replies)
     assert bot.restricted[-1][0:2] == (-1001, 4242)
+
+
+def test_handle_unban_command_accepts_display_name_from_group_member_cache():
+    from modules.ad_enforcement import handle_unban_command
+
+    bot = _ReplyBot()
+    db = _LookupDB()
+    message = type("Msg", (), {
+        "text": "/unban 萌萌逼",
+        "from_user": type("User", (), {"id": 99})(),
+        "chat": type("Chat", (), {"id": 8012433255})(),
+        "reply_to_message": None,
+    })()
+
+    assert handle_unban_command(bot, message, {"ADMIN_ID": "99", "GROUP_ID": -1001}, db) is True
+    assert bot.restricted[-1][0:2] == (-1001, 8383136504)
+
+
+class _AmbiguousLookupResult:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return self.rows
+
+
+class _AmbiguousLookupConn(_FakeConn):
+    def execute(self, sql, params=()):
+        self.executed.append((sql, params))
+        if "FROM group_members" in sql and "display_name" in sql:
+            return _AmbiguousLookupResult([
+                (8383136504, "mmb3695", "萌萌逼"),
+                (5852515255, "D9710", "萌萌逼"),
+            ])
+        return _AmbiguousLookupResult([])
+
+
+class _AmbiguousLookupDB(_FakeDB):
+    def __init__(self):
+        super().__init__()
+        self.conn = _AmbiguousLookupConn()
+
+
+def test_handle_unban_command_refuses_ambiguous_display_name():
+    from modules.ad_enforcement import handle_unban_command
+
+    bot = _ReplyBot()
+    db = _AmbiguousLookupDB()
+    message = type("Msg", (), {
+        "text": "/unban 萌萌逼",
+        "from_user": type("User", (), {"id": 99})(),
+        "chat": type("Chat", (), {"id": 8012433255})(),
+        "reply_to_message": None,
+    })()
+
+    assert handle_unban_command(bot, message, {"ADMIN_ID": 99, "GROUP_ID": -1001}, db) is True
+    assert bot.restricted == []
+    assert any("8383136504" in reply and "5852515255" in reply for reply in bot.replies)

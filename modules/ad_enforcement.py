@@ -197,10 +197,18 @@ def _admin_ids(config: dict) -> set:
         raw_admin_ids = [raw_admin_ids]
     if not isinstance(raw_admin_ids, (list, tuple, set)):
         raw_admin_ids = []
-    admin_ids = set(raw_admin_ids)
+    admin_ids = set()
+    for item in raw_admin_ids:
+        try:
+            admin_ids.add(int(item))
+        except Exception:
+            continue
     admin_id = (config or {}).get("ADMIN_ID", 0)
     if admin_id:
-        admin_ids.add(admin_id)
+        try:
+            admin_ids.add(int(admin_id))
+        except Exception:
+            pass
     return admin_ids
 
 
@@ -230,6 +238,55 @@ def _resolve_username_from_db(db, username: str) -> int:
     return 0
 
 
+def _display_name_candidates(db, display_name: str) -> list[tuple[int, str, str]]:
+    display_name = (display_name or "").lstrip("@").strip()
+    if not display_name:
+        return []
+    queries = [
+        (
+            "SELECT DISTINCT uid, username, display_name FROM group_members "
+            "WHERE display_name=? ORDER BY last_checked DESC LIMIT 8",
+            (display_name,),
+        ),
+        (
+            "SELECT DISTINCT uid, username, display_name FROM group_members "
+            "WHERE display_name LIKE ? ORDER BY last_checked DESC LIMIT 8",
+            (f"%{display_name}%",),
+        ),
+    ]
+    for sql, params in queries:
+        try:
+            rows = db.conn.execute(sql, params).fetchall()
+            candidates = [(int(row[0]), str(row[1] or ""), str(row[2] or "")) for row in rows if row and row[0]]
+            if candidates:
+                return candidates
+        except Exception as e:
+            logger.debug(f"按显示名查用户失败: name={display_name} err={e}")
+    return []
+
+
+def _resolve_display_name_from_db(db, display_name: str) -> int:
+    candidates = _display_name_candidates(db, display_name)
+    if not candidates:
+        return 0
+    if len(candidates) == 1:
+        return candidates[0][0]
+
+    logger.info(f"按显示名解封匹配到多人，拒绝自动选择: name={display_name} count={len(candidates)}")
+    return 0
+
+
+def _format_display_name_candidates(db, display_name: str) -> str:
+    candidates = _display_name_candidates(db, display_name)
+    if not candidates:
+        return ""
+    lines = []
+    for uid, username, name in candidates[:5]:
+        account = f"@{username}" if username else "无username"
+        lines.append(f"- {name or display_name}：{uid}（{account}）")
+    return "\n".join(lines)
+
+
 def resolve_unban_target(bot, db, message, token: str = "") -> tuple[int, str]:
     """从回复消息、数字ID或 @username 解析要解封的用户。"""
     reply = getattr(message, "reply_to_message", None)
@@ -251,6 +308,10 @@ def resolve_unban_target(bot, db, message, token: str = "") -> tuple[int, str]:
     if uid:
         return uid, f"@{cleaned}"
 
+    uid = _resolve_display_name_from_db(db, cleaned)
+    if uid:
+        return uid, cleaned
+
     try:
         chat = bot.get_chat(f"@{cleaned}")
         uid = int(getattr(chat, "id", 0) or 0)
@@ -264,6 +325,10 @@ def resolve_unban_target(bot, db, message, token: str = "") -> tuple[int, str]:
 def handle_unban_command(bot, message, config: dict, db, ad_detector=None) -> bool:
     """管理员解封指令：支持回复、用户ID、@username。"""
     actor_id = getattr(getattr(message, "from_user", None), "id", 0) or 0
+    logger.info(
+        f"收到解封指令: actor={actor_id} chat={getattr(getattr(message, 'chat', None), 'id', 0)} "
+        f"text={(getattr(message, 'text', '') or '').strip()[:80]}"
+    )
     if actor_id not in _admin_ids(config or {}):
         try:
             bot.reply_to(message, "只有管理员可以解封。")
@@ -274,10 +339,13 @@ def handle_unban_command(bot, message, config: dict, db, ad_detector=None) -> bo
     token = _extract_unban_token(message)
     uid, label = resolve_unban_target(bot, db, message, token)
     if not uid:
+        candidates_text = _format_display_name_candidates(db, token)
+        extra = f"\n\n我找到多个同名候选，请用 ID 精确解封：\n{candidates_text}" if candidates_text else ""
         try:
             bot.reply_to(
                 message,
-                "用法：回复被误封用户发送 /unban，或发送 /unban 用户ID / /unban @username，也可以发：解封 用户ID。",
+                "没找到要解封的人。请回复被误封用户发送 /unban，或发送 /unban 用户ID / /unban @username / 解封 显示名。重名时请用用户ID。"
+                + extra,
             )
         except Exception:
             pass

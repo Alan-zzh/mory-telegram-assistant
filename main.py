@@ -127,6 +127,31 @@ def main():
     from core.handlers.business_handlers import register_business_handlers
     register_business_handlers(bot, ctx)
 
+    # 管理员救援命令必须早于兜底分发器，避免私聊被 AI/反馈路由吞掉。
+    @bot.message_handler(
+        func=lambda m: bool(
+            getattr(m, "text", "")
+            and (
+                m.text.strip().startswith("/unban")
+                or m.text.strip().startswith("/解封")
+                or m.text.strip() == "解封"
+                or m.text.strip().startswith("解封 ")
+                or m.text.strip().startswith("解除封禁")
+            )
+        ),
+        content_types=["text"],
+    )
+    def on_unban_command(message):
+        from modules.ad_enforcement import handle_unban_command
+
+        handle_unban_command(
+            bot,
+            message,
+            CONFIG,
+            DB,
+            ad_detector=getattr(ctx, "ad_detector", None),
+        )
+
     # ════════════════════════════════════════════════════════════════════
     #  3. 注册主分发器（兜底 handler，必须最后注册）
     # ════════════════════════════════════════════════════════════════════

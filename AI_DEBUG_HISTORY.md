@@ -2,7 +2,7 @@
 
 > **本文件专门写给AI自己看**
 > 新会话开始时，AI 必须先读 `AGENTS.md`（项目规则+老坑铁律）+ `project_snapshot.md` + 本文件
-> **最后更新**：2026-07-06（解封指令私聊路由修复）
+> **最后更新**：2026-07-06（解封硬入口 + 同名账号防误解）
 
 ---
 
@@ -20,18 +20,24 @@
 - `core/message_dispatcher.py`：新增 P5.6 解封早路由，`/unban`、`/解封`、`解封 ...`、`解除封禁...` 在私聊和群聊都优先进入 `handle_unban_command()`。
 - 路由直接传入 `ctx.ad_detector`，确保解封同时清理广告追踪分。
 - 已对 `8383136504` 额外调用 Telegram API 恢复主群发言/媒体/反应权限，远端返回 `unrestrict 8383136504 ok`。
+- 二次加固：`main.py` 在兜底 `master_handler` 之前注册解封专用 handler，确保 `/unban` 不会被 AI 私聊/反馈路由抢走。
+- `modules/ad_enforcement.py` 增强目标解析：管理员 ID 做整数归一；支持生产 `group_members.display_name` 唯一命中；同名显示名不自动选择，回复候选 ID，避免误解封。
 
 ### 验证
 - 本地：`python -m py_compile core\message_dispatcher.py core\handlers\command_handlers.py modules\ad_enforcement.py` 通过。
+- 本地二次验证：`python -m py_compile main.py modules\ad_enforcement.py core\message_dispatcher.py tests\unit\test_ad_enforcement.py` 通过；相关单测 22 passed；`PYTHONUTF8=1 python scripts\verify_db_methods.py` 通过 164 个委托方法。
 - VPS：精确上传 `core/message_dispatcher.py`，远端备份 `/home/ubuntu/mory_assistant/backups/unban_private_route_20260706_005029`。
+- VPS：二次加固上传 `main.py` 与 `modules/ad_enforcement.py`，远端备份 `/home/ubuntu/mory_assistant/backups/unban_hard_handler_20260706_033008`、`/home/ubuntu/mory_assistant/backups/unban_display_name_resolve_20260706_033430`、`/home/ubuntu/mory_assistant/backups/unban_ambiguous_name_guard_20260706_033608`。
 - VPS：`grep` 确认 P5.6 解封早路由已在 `/home/ubuntu/mory_assistant/core/message_dispatcher.py`。
 - VPS：`python3 -m py_compile core/message_dispatcher.py` 通过；重启后 `mory-assistant` / `mory-dashboard` 双 active；`/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`。
 - VPS：新进程启动日志正常，preflight 通过，未见 traceback/import/syntax 启动错误。
+- VPS 只读解析 smoke：`/unban 8383136504 => (8383136504, '8383136504')`；`/unban @mmb3695 => (8383136504, '@mmb3695')`；`/unban 萌萌逼 => (0, '萌萌逼')`，并列出两个候选 `8383136504(@mmb3695)` 与 `5852515255(@D9710)`，确认同名不乱解。
 
 ### 经验教训
 1. 管理员救援类命令必须放在分发早期，不能依赖普通扩展命令链。
 2. “DB 已清零”不等于用户已经能说话，Telegram `restrict_chat_member` 权限也必须恢复。
 3. 以后排查“不生效”先看生产日志是否进入目标处理函数，而不是只看代码是否存在。
+4. 显示名不是账号，生产里会重名；同名时必须让管理员用 ID 或真实 username。
 
 ## [2026-07-06] 签到误封：正常签到被资料层可疑分累计进延迟封禁
 
