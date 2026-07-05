@@ -1425,6 +1425,20 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
                 return True
         except Exception as e:
             logger.debug(f"操作异常: {e}")
+
+    # P5.6：误封解封必须在私聊/群聊都早处理，避免被后续私聊反馈或群功能路由吞掉。
+    if msg and (
+        msg.startswith("/unban")
+        or msg.startswith("/解封")
+        or msg.startswith("解封 ")
+        or msg == "解封"
+        or msg.startswith("解除封禁")
+    ):
+        from modules.ad_enforcement import handle_unban_command
+        handle_unban_command(bot, m, CONFIG, db, ad_detector=getattr(ctx, "ad_detector", None))
+        clear_logging_context()
+        return True
+
     # P6：管理员专属指令
     from modules.admin_cmds import handle_admin
     from modules.natural_cmd import handle_natural_admin

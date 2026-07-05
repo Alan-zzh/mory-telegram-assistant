@@ -9,6 +9,8 @@
 - VPS 已部署并恢复验证：远端 `py_compile` 通过；远端 `PYTHONUTF8=1 python3 scripts/verify_db_methods.py` → 164 个委托方法通过；`grep` 确认 `ad_unban:` 回调和“白名单和群管理员必须在任何资料层检测前放行”已在 `/home/ubuntu/mory_assistant/`；`mory-assistant` / `mory-dashboard` 双 active，`/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`，新进程启动后 journal 过滤无 `traceback/critical/importerror/syntaxerror/failed/exception/error`。
 
 ### Hotfix [2026-07-06] 签到误封根因修复 + 解封指令增强
+- 二次修复“解封不生效”：生产日志确认管理员私聊 `/unban 8383136504` 只进入普通私聊消息流，没有进入解封处理函数；`core/message_dispatcher.py` 新增 P5.6 解封早路由，让 `/unban`、`/解封`、`解封 ...`、`解除封禁...` 在私聊和群聊都优先执行 `handle_unban_command()`。
+- 已额外恢复生产用户 `8383136504` 在主群的 Telegram 发言权限；远端返回 `unrestrict 8383136504 ok`。VPS 精确热修备份 `/home/ubuntu/mory_assistant/backups/unban_private_route_20260706_005029`；远端 `grep` 确认 P5.6 路由存在，`py_compile` 通过，重启后双服务 active，`/api/health` 返回 v5.31.2，新进程启动日志正常。
 - 生产日志确认误封根因：`uid=8187862648` 多次发送正常文本 `签到`，消息本身没有广告内容，但短消息会先触发资料层可疑分；`profile_score` 被写入 `ad_suspicious_users` 延迟追踪，第二次签到累计评分到 4 后触发 `延迟广告累计评分4` 永久禁言。
 - `core/handlers/security_handlers.py` 新增正常业务动作前置放行：`签到`、`打卡`、`每日签到`、`/checkin`、`/signin`、`/daily` 等精确命中时不进入广告资料层/延迟封禁，并清理该用户旧广告追踪记录。
 - `modules/ad_enforcement.py` 增强 `restore_ad_user()`：解封时同步清广告追踪记录；新增 `handle_unban_command()`，管理员可通过回复消息、数字 ID 或 `@username` 解封。

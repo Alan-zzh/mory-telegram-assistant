@@ -2,9 +2,36 @@
 
 > **本文件专门写给AI自己看**
 > 新会话开始时，AI 必须先读 `AGENTS.md`（项目规则+老坑铁律）+ `project_snapshot.md` + 本文件
-> **最后更新**：2026-07-06（广告资料层误封止血 + 管理员一键解封按钮）
+> **最后更新**：2026-07-06（解封指令私聊路由修复）
 
 ---
+
+## [2026-07-06] 解封不生效：私聊 /unban 被反馈/AI 路由吞掉
+
+### 触发
+老板反馈“解封不生效”。生产日志能看到管理员私聊发送 `/unban 萌萌逼`、`/unban @萌萌逼`、`/unban 8383136504`，但没有出现“广告误封解封完成”日志。
+
+### 根因
+1. 解封能力已经在 `modules/ad_enforcement.py` 实装，但入口只挂在 `core/handlers/command_handlers.py` 的扩展命令链。
+2. 私聊消息在 `core/message_dispatcher.py` 的 P5-P9 分发里会先进入私聊反馈/AI 等后续路由，导致 `/unban` 没有稳定进入扩展命令处理。
+3. `8383136504` 的 DB 四项残留已经是 0，但 Telegram 群权限未必恢复；仅删表不能等价于真正解封。
+
+### 修复
+- `core/message_dispatcher.py`：新增 P5.6 解封早路由，`/unban`、`/解封`、`解封 ...`、`解除封禁...` 在私聊和群聊都优先进入 `handle_unban_command()`。
+- 路由直接传入 `ctx.ad_detector`，确保解封同时清理广告追踪分。
+- 已对 `8383136504` 额外调用 Telegram API 恢复主群发言/媒体/反应权限，远端返回 `unrestrict 8383136504 ok`。
+
+### 验证
+- 本地：`python -m py_compile core\message_dispatcher.py core\handlers\command_handlers.py modules\ad_enforcement.py` 通过。
+- VPS：精确上传 `core/message_dispatcher.py`，远端备份 `/home/ubuntu/mory_assistant/backups/unban_private_route_20260706_005029`。
+- VPS：`grep` 确认 P5.6 解封早路由已在 `/home/ubuntu/mory_assistant/core/message_dispatcher.py`。
+- VPS：`python3 -m py_compile core/message_dispatcher.py` 通过；重启后 `mory-assistant` / `mory-dashboard` 双 active；`/api/health` 返回 `{"status":"ok","version":"v5.31.2"}`。
+- VPS：新进程启动日志正常，preflight 通过，未见 traceback/import/syntax 启动错误。
+
+### 经验教训
+1. 管理员救援类命令必须放在分发早期，不能依赖普通扩展命令链。
+2. “DB 已清零”不等于用户已经能说话，Telegram `restrict_chat_member` 权限也必须恢复。
+3. 以后排查“不生效”先看生产日志是否进入目标处理函数，而不是只看代码是否存在。
 
 ## [2026-07-06] 签到误封：正常签到被资料层可疑分累计进延迟封禁
 
