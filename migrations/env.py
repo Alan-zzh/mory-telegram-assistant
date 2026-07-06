@@ -23,14 +23,33 @@ target_metadata = None
 
 
 def get_url():
-    """获取数据库 URL，支持环境变量覆盖"""
-    # 默认使用项目根目录的 mory.db
-    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mory.db")
-    
-    # 支持通过环境变量覆盖（用于测试或不同环境）
-    db_url = os.environ.get("DATABASE_URL", f"sqlite:///{db_path}")
-    
-    return db_url
+    """获取数据库 URL，支持环境变量覆盖
+
+    [P0 修复 Task-04] 优先级链：
+        1. DATABASE_URL（完整 SQLAlchemy URL，最高优先级）
+        2. MORY_DB_PATH（仅 db 文件路径，自动拼接成 sqlite:///<path>）
+        3. 默认项目根目录 mory.db
+
+    避免媒体模式（mory_media.db）或多实例部署时迁移写错库。
+    """
+    # 1. 完整 URL 优先
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        return db_url
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # 2. 仅 db 文件路径（支持相对/绝对路径）
+    mory_db_path = os.environ.get("MORY_DB_PATH")
+    if mory_db_path:
+        # 相对路径基于项目根目录
+        if not os.path.isabs(mory_db_path):
+            mory_db_path = os.path.join(project_root, mory_db_path)
+        return f"sqlite:///{mory_db_path}"
+
+    # 3. 默认 mory.db
+    db_path = os.path.join(project_root, "mory.db")
+    return f"sqlite:///{db_path}"
 
 
 def run_migrations_offline():

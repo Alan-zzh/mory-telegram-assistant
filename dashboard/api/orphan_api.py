@@ -6,10 +6,14 @@
 - GET /api/orphan/cleanup-history - 最近 N 条清理历史（默认 20 条）
 - POST /api/orphan/force-clean - 管理员手动触发一次清理（force trigger）
 """
+import logging
 import time
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, jsonify, request, session
 from dashboard.helpers import login_required, admin_required, get_db, read_config, _CST
+
+# 【v5.31.2 hotfix P1-4】修复 logger 未定义 bug（原代码 line 166/170/185 使用 logger 但未导入）
+logger = logging.getLogger(__name__)
 
 orphan_bp = Blueprint('orphan', __name__, url_prefix='/api/orphan')
 _CST_TZ = timezone(timedelta(hours=8))

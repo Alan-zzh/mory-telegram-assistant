@@ -36,6 +36,9 @@ from dashboard.api.user_lifecycle_api import user_lifecycle_bp  # [v5.26.0] 用�
 from dashboard.api.funnel_api import funnel_bp  # [v5.26.0] 转化漏斗可视化 API
 from dashboard.api.metrics_api import metrics_bp  # [Prometheus] 指标监控 API
 from dashboard.api.quality_api import quality_bp  # [v5.26.0] 内容质量评估 API
+from core.logging_util import get_logger
+
+logger = get_logger("dashboard.app")
 
 
 def create_app():
@@ -43,7 +46,7 @@ def create_app():
     app = Flask(__name__)
     secret = os.environ.get('DASHBOARD_SECRET', '')
     if not secret or len(secret) < 16:
-        print("[ERROR] 致命错误：DASHBOARD_SECRET 环境变量未设置或太短（至少16位）！")
+        logger.error("致命错误：DASHBOARD_SECRET 环境变量未设置或太短（至少16位）！")
         return None
     app.secret_key = secret
 
@@ -164,7 +167,7 @@ def create_app():
                 _init_conn.close()
     except Exception as _e:
         # 初始化失败不阻断启动，运行时回退到硬编码字典
-        print(f"[Dashboard] role_permissions 表初始化失败（非致命）：{_e}")
+        logger.warning(f"role_permissions 表初始化失败（非致命）：{_e}")
 
     # 首页
     @app.route("/")

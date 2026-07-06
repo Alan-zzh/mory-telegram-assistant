@@ -96,12 +96,18 @@ class ABTestRepo:
         with self.lock:
             try:
                 c = self.conn.cursor()
-                extra = ""
-                params = [status, int(time.time()), experiment_id]
+                now_ts = int(time.time())
                 if status == "rolled_back":
-                    extra = ", rolled_back_at=?"
-                    params = [status, int(time.time()), int(time.time()), experiment_id]
-                c.execute(f"UPDATE ab_experiments SET status=?, end_time=?{extra} WHERE id=?", params)
+                    # 消除 f-string 拼接：使用字面量 SQL，全部参数化
+                    c.execute(
+                        "UPDATE ab_experiments SET status=?, end_time=?, rolled_back_at=? WHERE id=?",
+                        (status, now_ts, now_ts, experiment_id)
+                    )
+                else:
+                    c.execute(
+                        "UPDATE ab_experiments SET status=?, end_time=? WHERE id=?",
+                        (status, now_ts, experiment_id)
+                    )
                 self.conn.commit()
                 return c.rowcount > 0
             except Exception as e:

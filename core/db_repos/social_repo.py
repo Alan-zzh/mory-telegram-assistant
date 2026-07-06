@@ -141,6 +141,7 @@ class SocialRepo:
             rows = [r[0] for r in c.fetchall()]
             if rows:
                 rows = rows[:100]
+                # 安全：f-string 仅生成 ? 占位符，实际值通过 rows 参数化绑定，无注入风险
                 self.conn.execute(f"DELETE FROM cart_recovery WHERE uid IN ({','.join('?'*len(rows))})",
                                  rows)
                 self.conn.commit()

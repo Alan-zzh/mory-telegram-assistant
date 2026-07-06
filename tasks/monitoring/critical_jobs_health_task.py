@@ -38,6 +38,6 @@ class CriticalJobsHealthTask(BaseTask):
     def execute(self, ctx: TaskContext) -> None:
         try:
             from core.scheduler_monitor import check_critical_jobs_health
-            check_critical_jobs_health(scheduler=None, config=ctx.config)
+            check_critical_jobs_health(scheduler=None, config=ctx.config, db=ctx.db)
         except Exception as e:
             logger.debug(f"关键任务健康检查异常：{e}")

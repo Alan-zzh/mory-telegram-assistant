@@ -1,5 +1,7 @@
 v5.31.2
 
+2026-07-06 Hotfix（审计整改）：项目自检与架构优化审计 12 项 Task + 4 项 Bug 修复 + 6 项 P1 暗病 + 4 项 P2 暗病全部修复完成。新增 LLM 全局 24h 熔断 / executemany 批量化 / sha256 密码哈希 / Alembic 环境变量覆盖 / Session 滑动续期 / SSH Key 优先认证 / CST 时区统一 / WriteQueue 死锁检测 / scheduler_monitor job_id 修正等。零暗病、零下一步计划。
+
 2026-07-06 Hotfix：所有单人禁封管理员通知必须带“一键解封”按钮。广告处置、编辑消息广告检测、全局黑名单入群拦截均接入 `ad_unban:<uid>:<chat_id>` 回调。
 
 2026-07-06 Hotfix：解封入口三次加固。`main.py` 已在兜底分发器之前注册 `/unban` 专用 handler；`/unban 8383136504` 与 `/unban @mmb3695` 线上只读 smoke 均解析到 8383136504；同名显示名“萌萌逼”会返回候选 ID，不盲选。

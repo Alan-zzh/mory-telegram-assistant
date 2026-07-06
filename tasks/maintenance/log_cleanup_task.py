@@ -68,6 +68,7 @@ class LogCleanupTask(BaseTask):
                     }
                     for table, ts_col in tables_30.items():
                         try:
+                            # 安全：table/ts_col 来自上方硬编码字典字面量，非用户输入，无注入风险
                             db.conn.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff_30,))
                         except Exception as de:
                             logger.debug(f"清理 {table} 跳过: {de}")
@@ -85,6 +86,7 @@ class LogCleanupTask(BaseTask):
                     }
                     for table, ts_col in tables_90.items():
                         try:
+                            # 安全：table/ts_col 来自上方硬编码字典字面量，非用户输入，无注入风险
                             db.conn.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff_90,))
                         except Exception as de:
                             logger.debug(f"清理 {table} 跳过: {de}")

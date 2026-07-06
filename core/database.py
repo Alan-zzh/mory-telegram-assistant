@@ -144,6 +144,8 @@ class DB:
     # ─────────────────────────────── 初始化 ──────────────────────────────
     def _safe_add_column(self, cursor, table: str, column: str, definition: str):
         """[TRAE SOLO CN] v5.19.0 幂等添加列：用 PRAGMA 检查列存在性，避免 ALTER TABLE 重复执行报错"""
+        # 注：PRAGMA/ALTER TABLE 属于 DDL，SQLite 不支持参数化表名/列名。
+        # table/column/definition 由内部 _init_tables() 传入字面量，来源可信，无注入风险。
         cursor.execute(f"PRAGMA table_info({table})")
         existing_cols = {row[1] for row in cursor.fetchall()}
         if column not in existing_cols:
@@ -1419,6 +1421,7 @@ class DB:
         'delete_tracked': 'tracking', 'get_expired_channel_messages': 'tracking',
         'delete_bot_message_records': 'tracking', 'get_tracking_stats': 'tracking',
         'cleanup_old_records': 'tracking',
+        'cleanup_channel_tracking_orphan': 'tracking',  # [Bug-03 修复] channel_tracking 孤儿清理
         'track_channel_message': 'tracking', 'update_channel_views': 'tracking',
         'get_channel_tracking': 'tracking', 'get_channel_stats_summary': 'tracking',
         'get_daily_active_users': 'tracking', 'get_daily_bot_messages': 'tracking',

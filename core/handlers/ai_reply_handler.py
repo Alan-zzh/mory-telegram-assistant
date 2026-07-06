@@ -22,10 +22,13 @@ _append_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_
 
 
 def _final_ai_reply_fallback(mode: str, is_priv: bool = False) -> str:
-    """处理失败时给用户的兜底回复。"""
-    if mode in ("convert", "contact_mory"):
-        return _direct_access_reply(is_priv=is_priv)
-    return ""
+    """处理失败时给用户的兜底回复。
+
+    [Bug-01 修复] 兜底文案统一走 ai_engine.get_fallback_text()，
+    与 ai_engine._final_fallback_reply / ai_handlers._final_ai_reply_fallback 保持一致。
+    """
+    from core.ai_engine import get_fallback_text
+    return get_fallback_text(mode, is_priv=is_priv)
 
 
 _DIRECT_ACCESS_KEYWORDS = (

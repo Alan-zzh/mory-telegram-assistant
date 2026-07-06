@@ -39,10 +39,12 @@ import logging
 import threading
 import random
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from core.logging_util import get_logger
 
 logger = get_logger("ai_engine")
+
+_CST = timezone(timedelta(hours=8))
 
 
 class _ApiKeyRedactor(logging.Filter):
@@ -741,7 +743,7 @@ class AIEngine:
             return False
         try:
             expire_date = datetime.strptime(expire_str, "%Y-%m-%d").date()
-            today = datetime.now().date()
+            today = datetime.now(_CST).date()
             if expire_date < today:
                 logger.info(f"⏰ 模型 {model_info['name']} 已过期 ({expire_str})，将跳过")
                 return True
@@ -973,7 +975,7 @@ class AIEngine:
     def _get_emotional_state(self) -> str:
         """根据当前时间返回情绪状态追加文本（情绪状态机）"""
         states = self.config.get("EMOTIONAL_STATES", {}) or self._DEFAULT_EMOTIONAL_STATES
-        current_hour = datetime.now().hour
+        current_hour = datetime.now(_CST).hour
         for state_name, state_info in states.items():
             if current_hour in state_info.get("hours", []):
                 mood = state_info.get("mood", "")
@@ -1065,7 +1067,7 @@ class AIEngine:
     def _select_emotion_bucket(self, triggers_cfg: dict) -> str:
         """[v5.19.0] 根据 context（is_priv/hour/intimacy/keywords）选择主导情绪桶"""
         is_priv = getattr(self, "_ctx_is_priv", False)
-        hour = datetime.now().hour
+        hour = datetime.now(_CST).hour
         score = getattr(self, "_ctx_intimacy_score", 0)
         message = getattr(self, "_ctx_message", "")
 
@@ -1305,7 +1307,7 @@ class AIEngine:
 
     def _get_scene_prompt(self, is_priv: bool, seed: int = 0) -> str:
         """根据时间+场景匹配场景模拟prompt"""
-        current_hour = datetime.now().hour
+        current_hour = datetime.now(_CST).hour
         scenes_cfg = self.config.get("SCENE_TEMPLATES", {}) or self._SCENE_TEMPLATES
         matched = []
 
@@ -1447,7 +1449,7 @@ class AIEngine:
     @staticmethod
     def _get_festival_persona() -> str:
         """根据当前日期返回节日人格追加文本"""
-        now = datetime.now()
+        now = datetime.now(_CST)
         m, d = now.month, now.day
         if m == 2 and d == 14:
             return "\n【今天是情人节，你是占有欲强、爱吃醋的小妖精。】"
@@ -1648,10 +1650,10 @@ class AIEngine:
 
         用户侧不能暴露模型、接口、服务异常等系统细节，也不硬凑拟人化故障文案。
         普通/未知模式失败直接静默；明确转化场景给固定入口，避免下单链路断掉。
+
+        [Bug-01 修复] 兜底文案统一走 get_fallback_text()，避免三处分散维护。
         """
-        if mode in ("convert", "contact_mory"):
-            return "入口在 @MorychannelBot，预览群 @moryselect。"
-        return ""
+        return get_fallback_text(mode, is_priv=is_priv)
 
     def ask(self, question: str, mode: str = "normal", retry: int = 3, seed: int = 0,
             tools: list = None, tool_choice: str = "auto", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, news_content: str = "") -> str | None:
@@ -1887,7 +1889,7 @@ class AIEngine:
             }
             # ── [v5.19.0] 动态 LLM 参数：按 is_priv × 亲密度 × 时段查表 ──
             dyn_temp, dyn_top_p, dyn_freq_pen, dyn_pres_pen = self._get_dynamic_llm_params(
-                is_priv, ctx_flirt_level, datetime.now().hour)
+                is_priv, ctx_flirt_level, datetime.now(_CST).hour)
             # [阶段3-A] 检测记忆系统注入：_build_persona 会将 memory_summary 注入 <past_interaction_summary>
             # 若 user_profile 含非空 memory_summary，则本次会话标记为记忆辅助，供后续 funnel_state.transition 归因
             _mem_summary = ""
@@ -2119,6 +2121,32 @@ def calc_typing_delay(text: str) -> float:
     cn = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
     en = len([w for w in text.split() if any(c.isalpha() for c in w)])
     return max(2.0, min(12.0, cn * 0.5 + en * 0.3))
+
+
+def get_fallback_text(reason: str = "default", is_priv: bool = False) -> str:
+    """AI 失败统一兜底文案入口
+
+    [Bug-01 修复] 之前三处兜底文案分散（ai_engine._final_fallback_reply /
+    ai_reply_handler._final_ai_reply_fallback / ai_handlers._final_ai_reply_fallback），
+    修改一处其他会复发，且文案不一致。现在统一从此函数获取，确保一致性。
+
+    Args:
+        reason: 触发原因，对应 mode（convert/contact_mory/default）
+        is_priv: 是否私聊场景（影响入口文案措辞）
+
+    Returns:
+        统一兜底文案；普通/未知模式返回空串（静默，不暴露系统异常）
+    """
+    if reason in ("convert", "contact_mory"):
+        if is_priv:
+            return ("给你入口啦，别再兜圈。\n"
+                    "预览：https://t.me/moryselect\n"
+                    "自助下单：https://t.me/MorychannelBot")
+        return ("入口给你，自己去看就行。\n"
+                "预览群 @moryselect\n"
+                "自助下单 @MorychannelBot")
+    # 普通模式失败：静默，不暴露系统异常，也不硬凑拟人化故障文案
+    return ""
 
 
 # ─────────────────────── AI图片识图分析 ─────────────────────────────────

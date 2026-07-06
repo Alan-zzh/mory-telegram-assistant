@@ -88,6 +88,12 @@ class LLMCostGuard:
         self._downgraded_users: Dict[int, float] = {}
         self._global_downgrade_until = 0.0  # 全局降级解除时间
 
+        # 【WARN-2 修复】低频 cleanup 时间戳：持续降级期间第 1/2 道闸直接 return，
+        # _get_global_daily_cost 不会被调用，导致 _global_window 永不清理（内存泄漏风险）。
+        # check_before_call 开头每 5 分钟做一次 daily cleanup，确保即使持续降级也定期清理。
+        self._last_cleanup_ts: float = 0.0
+        self._CLEANUP_INTERVAL_SEC = 300  # 5 分钟
+
         # 统计
         self._stats = {
             "total_calls": 0,
@@ -160,25 +166,37 @@ class LLMCostGuard:
             window.popleft()
 
     def _get_user_hourly_cost(self, uid: int, now: float) -> float:
-        """获取用户最近 1h 消费"""
+        """获取用户最近 1h 消费
+
+        [审计暗病修复] 原实现调用 _cleanup_expired(now, window, 3600) 会弹出
+        所有 1h 前的元素，但 _user_windows[uid] 是 hourly 和 daily 共用的同一
+        deque，hourly cleanup 会破坏 daily 窗口数据，导致 daily 熔断永远无法
+        触发（check_before_call 先检查 hourly 把 24h 数据清空了）。
+        现改为只读不写：sum 1h 内的元素，cleanup 交给 _get_user_daily_cost 统一处理。
+        """
         window = self._user_windows.get(uid)
         if not window:
             return 0.0
-        self._cleanup_expired(now, window, 3600)
-        return sum(cost for _, cost in window)
+        cutoff = now - 3600
+        return sum(cost for ts, cost in window if ts >= cutoff)
 
     def _get_global_hourly_cost(self, now: float) -> float:
-        """获取全局最近 1h 消费"""
-        self._cleanup_expired(now, self._global_window, 3600)
-        return sum(cost for _, cost in self._global_window)
+        """获取全局最近 1h 消费（不清理窗口，避免破坏 daily 数据）"""
+        cutoff = now - 3600
+        return sum(cost for ts, cost in self._global_window if ts >= cutoff)
 
     def _get_user_daily_cost(self, uid: int, now: float) -> float:
-        """获取用户最近 24h 消费"""
+        """获取用户最近 24h 消费（统一清理 24h 前的过期数据）"""
         window = self._user_windows.get(uid)
         if not window:
             return 0.0
         self._cleanup_expired(now, window, 86400)
         return sum(cost for _, cost in window)
+
+    def _get_global_daily_cost(self, now: float) -> float:
+        """获取全局最近 24h 消费（统一清理 24h 前的过期数据）"""
+        self._cleanup_expired(now, self._global_window, 86400)
+        return sum(cost for _, cost in self._global_window)
 
     def check_before_call(self, uid: int, tier: str = "llm_premium") -> Tuple[bool, str, str]:
         """
@@ -198,6 +216,29 @@ class LLMCostGuard:
             return (True, tier, "guard_disabled")
 
         now = time.time()
+
+        # 【WARN-2 修复】低频 cleanup：持续降级期间第 1/2 道闸直接 return，
+        # _get_global_daily_cost 不会被调用，导致 _global_window/_user_windows 永不清理。
+        # 这里在所有闸门检查之前，每 5 分钟做一次 daily cleanup，确保窗口不会无限增长。
+        if now - self._last_cleanup_ts >= self._CLEANUP_INTERVAL_SEC:
+            with self._lock:
+                self._cleanup_expired(now, self._global_window, 86400)
+                # 清理已解除降级的用户窗口（避免 _user_windows dict 无限增长）
+                expired_uids = [
+                    uid for uid, until in self._downgraded_users.items()
+                    if now >= until
+                ]
+                for uid in expired_uids:
+                    self._downgraded_users.pop(uid, None)
+                    # 用户窗口保留（仍可能在 24h 内有新调用），由 daily cleanup 自然过期
+                # 清理空窗口
+                empty_uids = [
+                    uid for uid, w in self._user_windows.items()
+                    if not w
+                ]
+                for uid in empty_uids:
+                    self._user_windows.pop(uid, None)
+            self._last_cleanup_ts = now
 
         # 1. 检查全局降级状态
         if now < self._global_downgrade_until:
@@ -254,6 +295,28 @@ class LLMCostGuard:
             )
             return (False, "llm_light", "user_daily_limit_exceeded_blocked")
 
+        # 6. [P0 修复] 检查全局 24h 消费（之前定义了阈值但未实现拦截，导致成本失控风险）
+        global_daily = self._get_global_daily_cost(now)
+        if global_daily >= self.global_daily_limit:
+            # 全局 24h 超限：全量降级 llm_light 持续到当日结束（最长 24h）
+            self._global_downgrade_until = now + 86400
+            self._stats["global_downgrades"] += 1
+            logger.critical(
+                f"🚨 全局 LLM 成本日熔断！24h 消费 ${global_daily:.2f} >= ${self.global_daily_limit:.2f}，"
+                f"全量降级 llm_light 持续 24h"
+            )
+            try:
+                from core.alert_bot import send_alert
+                send_alert(
+                    "critical",
+                    "LLM成本全局日熔断",
+                    f"全局 24h 消费 ${global_daily:.2f} 超阈值 ${self.global_daily_limit:.2f}，"
+                    f"已自动降级 llm_light 持续 24h"
+                )
+            except Exception as e:
+                logger.error(f"LLM成本全局日熔断告警发送失败: {e}")
+            return (True, "llm_light", "global_daily_limit_exceeded")
+
         return (True, tier, "ok")
 
     def record_cost(self, uid: int, model_name: str, task_type: str,
@@ -296,6 +359,8 @@ class LLMCostGuard:
                 **self._stats,
                 "global_hourly_cost": self._get_global_hourly_cost(now),
                 "global_hourly_limit": self.global_hourly_limit,
+                "global_daily_cost": self._get_global_daily_cost(now),
+                "global_daily_limit": self.global_daily_limit,
                 "active_user_downgrades": len(self._downgraded_users),
                 "global_downgrade_active": now < self._global_downgrade_until,
             }

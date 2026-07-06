@@ -15,6 +15,11 @@ import signal
 import logging
 import traceback
 
+# 【v5.31.2 审计暗病修复】统一代码版本号来源：启动横幅用 version.VERSION（代码版本），
+# 不再读 config._CONFIG_VERSION（配置 schema 版本）。两者语义不同，混用会造成日志显示 v5.18.2
+# 而 /api/health 返回 v5.31.2 的版本号不一致暗病。
+from version import VERSION as CODE_VERSION
+
 # ── 项目根目录（跨目录启动也正确）──
 base_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, base_dir)
@@ -216,10 +221,17 @@ def main():
         CONFIG["CURRENT_MODEL_INDEX"] = 0
     cur_model = _llm_pool[_cur_idx].get("name", "N/A") if _llm_pool else "N/A"
     reply_chance = CONFIG.get("REPLY_CHANCE", 10)
-    config_version = CONFIG.get("_CONFIG_VERSION") or CONFIG.get("VERSION", "未知")
+    # 【v5.31.2 审计暗病修复】启动横幅优先用代码版本（version.VERSION），
+    # 与 /api/health 返回的版本号保持一致；_CONFIG_VERSION 是配置 schema 版本，
+    # 仅作为回退（兼容旧部署未导入 version 模块的场景）。
+    # 注意：version.VERSION 已自带 "v" 前缀（如 "v5.31.2"），无需再拼 "v"。
+    config_version = CODE_VERSION if CODE_VERSION else (CONFIG.get("_CONFIG_VERSION") or CONFIG.get("VERSION", "未知"))
+    # 统一格式：保证 "v5.31.2"（带 v 前缀）
+    if config_version and not config_version.startswith("v"):
+        config_version = f"v{config_version}"
 
     logger.info("=" * 60)
-    logger.info(f"🚀 {bot_name} 私域超级分身  v{config_version}  启动！")
+    logger.info(f"🚀 {bot_name} 私域超级分身  {config_version}  启动！")
     logger.info(f"🤖 当前模型：{cur_model}")
     logger.info(f"👑 管理员ID：{CONFIG.get('ADMIN_ID', 0)}")
     logger.info(f"👥 主群ID：{CONFIG.get('GROUP_ID', 0)}")

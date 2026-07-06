@@ -219,7 +219,8 @@ def api_stats_users():
         ("private_messages", "asc"): "private_messages ASC", ("private_messages", "desc"): "private_messages DESC",
     }
     order_by = order_by_map.get((sort, order), "last_active DESC")
-    # where_clause 使用参数化查询，order_by 使用白名单映射，双重防护
+    # 安全：where_clause 为字面量（"" 或 "WHERE name LIKE ? OR CAST(uid AS TEXT) LIKE ?"），
+    # order_by 来自白名单映射，均非用户输入；查询值通过 params 参数化绑定。
     total = conn.execute(f"SELECT COUNT(*) FROM users {where_clause}", params).fetchone()[0]
     offset = (page - 1) * per_page
     rows = conn.execute(f"SELECT * FROM users {where_clause} ORDER BY {order_by} LIMIT ? OFFSET ?", params + [per_page, offset]).fetchall()
@@ -227,6 +228,7 @@ def api_stats_users():
     # [TRAE SOLO CN] 修复N+1查询：批量获取用户等级积分，替代逐个查询
     if users:
         uids = [u["uid"] for u in users]
+        # 安全：placeholders 仅生成 ? 占位符，uid 值通过 uids 参数化绑定
         placeholders = ','.join('?' * len(uids))
         levels = conn.execute(f"SELECT uid, level, points FROM user_levels WHERE uid IN ({placeholders})", uids).fetchall()
         level_map = {r[0]: {'level': r[1], 'points': r[2]} for r in levels}

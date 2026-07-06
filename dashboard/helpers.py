@@ -9,7 +9,10 @@ from functools import wraps
 from pathlib import Path
 from flask import g, jsonify, session
 from datetime import datetime, timedelta, timezone
+import logging
 from core.config_compat import normalize_runtime_config, compact_runtime_config
+
+logger = logging.getLogger(__name__)
 
 _CST = timezone(timedelta(hours=8))
 
@@ -44,10 +47,10 @@ def _ensure_media_db(db_path: str):
         # DB.__init__ 自动建表 + 初始化 Repo
         _tmp_db = DB(db_path)
         _tmp_db.close()
-        print(f"[Dashboard] 已自动创建 {os.path.basename(db_path)} 并初始化表结构")
+        logger.info(f"[Dashboard] 已自动创建 {os.path.basename(db_path)} 并初始化表结构")
     except Exception as e:
         # 降级：如果 core.database 依赖有问题，至少保证空文件存在
-        print(f"[Dashboard] 自动创建数据库失败（非致命）：{e}")
+        logger.warning(f"[Dashboard] 自动创建数据库失败（非致命）：{e}")
 
 
 def get_db():
@@ -157,7 +160,22 @@ def get_vps_status():
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(get_ssh_policy())
     try:
-        client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, password=VPS_PASS, timeout=10)
+        # SSH 认证：优先 SSH Key（推荐），向后兼容密码模式
+        # 【v5.31.2 hotfix P1-3a】统一环境变量名为 VPS_SSH_KEY（与 core/vps_config.py 一致），
+        # 避免出现 VPS_SSH_KEY_PATH / VPS_SSH_KEY 双命名分裂。
+        # 兼容回退：若已部署用户仍用 VPS_SSH_KEY_PATH，向后兼容读取（不推荐新部署使用）。
+        ssh_key_path = os.environ.get("VPS_SSH_KEY", "") or os.environ.get("VPS_SSH_KEY_PATH", "")
+        if ssh_key_path and os.path.exists(ssh_key_path):
+            client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, key_filename=ssh_key_path, timeout=10)
+        elif VPS_PASS:
+            # 向后兼容：密码模式（不推荐，建议迁移到 SSH Key）
+            logger.warning("VPS SSH 使用密码认证，建议配置 VPS_SSH_KEY 环境变量改用 SSH Key")
+            client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, password=VPS_PASS, timeout=10)
+        else:
+            results["error"] = "无可用 SSH 认证方式（VPS_SSH_KEY 未设置且无密码）"
+            _vps_cache["data"] = results
+            _vps_cache["updated_at"] = time.time()
+            return results
         # 根据模式选择查询哪个 Bot
         if mode == "media":
             ps_cmd = f"ps -ef | grep '{VPS_PATH}/main.py' | grep -v grep | grep mory_media | head -1"

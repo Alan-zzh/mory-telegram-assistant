@@ -1,6 +1,51 @@
 ## v5.31.2 [2026-06-30] [Puzan-OS]
 - **修复监控系统持续误报**：http_client.py HTTP重试日志从 warning 降级为 debug，避免污染 journalctl；puzan_loop_monitor.py L2/L5 过滤规则优化，排除业务抓取重试日志和正常调度事件名误匹配；task_log 无 status 列显示从 N/A 改为 INFO 标注。部署后监控恢复 errors_10min=none + fail_log_10min=(none) + all normal。
 
+### Hotfix [2026-07-06] 项目自检与架构优化审计整改（P0/P1/P2 + 4 Bug）
+基于 `Project_Audit_Report.md` 12 项 Task + 4 项 Bug 修复后多专家团审计，本次补齐审计发现的 6 项 P1 暗病 + 4 项 P2 暗病，达成"零暗病、零下一步计划"标准。
+
+**P0 阶段（成本/性能/数据完整性）**：
+- `core/llm_cost_guard.py` 新增全局 24h 消费熔断（第 6 道闸）：超额自动降级到 `llm_light` 池 24 小时，避免单日烧爆预算；`get_stats()` 暴露 `global_daily_cost/limit` 供 Dashboard 监控。
+- `core/write_queue.py` + `core/db_connection_proxy.py` 修复 `executemany` 逐条入队导致 10x 性能损失：新增 `enqueue_batch()` 批量入队 + `_FakeCursorForBatch` 伪 cursor，Worker 单次 `executemany` 完成批量写。
+- `dashboard/auth.py` 新增 sha256 密码哈希双模式校验（`_hash_password` + `_verify_password`）：支持 `DASHBOARD_PASSWORD_HASH` / `DASHBOARD_VIEWER_PASSWORD_HASH` 环境变量，向后兼容明文部署；hmac.compare_digest 防时序攻击。
+- `migrations/env.py` + `alembic.ini` 新增 Alembic 数据库 URL 环境变量覆盖链：`DATABASE_URL` > `MORY_DB_PATH` > 默认 `mory.db`，避免媒体模式/多实例部署迁移写错库。
+- `modules/auto_tasks.py` 11 处 silent exception 升级为 logger.warning/debug，新增 `_job_burn_orphan` Phase 3 channel_tracking 清理调用；`check_critical_jobs_health` 调用补 db 参数。
+- `dashboard/app.py` + `dashboard/helpers.py` + `core/deploy_utils.py` 15 处 `print` 替换为 `logger`（保留 `deploy_utils.py` 2 处 heredoc print）。
+
+**P1 阶段（可观测性 / 安全 / 时区）**：
+- `core/scheduler_monitor.py` `_CRITICAL_JOBS` 关键任务清单扩展 7→13（deadline 模式 + interval 模式），新增 `_load_alerted_jobs_from_db` / `_save_alerted_jobs_to_db` 持久化到 `system_states` 表，重启不丢告警状态。
+- `dashboard/auth.py` Session 滑动续期：`_touch_session` + `_is_session_expired`，GET 请求自动刷新 30 分钟过期，POST 不刷新防攻击者续期。
+- `dashboard/helpers.py` SSH Key 优先认证：通过 `VPS_SSH_KEY` 环境变量（向后兼容 `VPS_SSH_KEY_PATH`），密码模式仅作 fallback。
+- `core/ai_engine.py` 新增 `_CST = timezone(timedelta(hours=8))`，6 处 `datetime.now()` 改为 `datetime.now(_CST)`，避免 VPS(UTC) 下时间错位 8 小时。
+- `tasks/monitoring/critical_jobs_health_task.py` 调用 `check_critical_jobs_health` 时补传 db 参数。
+
+**P2 阶段（代码质量）**：
+- `core/db_repos/ab_test_repo.py` SQL f-string 拼接重构为 if/else 字面量，避免不必要的字符串构造。
+
+**4 项 Bug 修复**：
+- Bug-01：`core/ai_engine.py` 新增 `get_fallback_text()` 统一兜底入口；`core/handlers/ai_reply_handler.py` + `core/handlers/ai_handlers.py` 调用统一。
+- Bug-02：`core/message_dispatcher.py` `/unban` 早路由前移到 P1 之前（lines 702-717），避免被 AI 路由抢走。
+- Bug-03：`core/db_repos/tracking_repo.py` 新增 `cleanup_channel_tracking_orphan(max_age_hours=47)`，`burn_orphan` Phase 3 调用清理孤儿 channel_tracking 记录。
+- Bug-04：`core/write_queue.py` 死锁检测：Worker 线程内调用 `enqueue_and_wait` 自动抛 `RuntimeError`，避免 Worker 等待自己处理；`_worker_thread_id` 在 `_run_loop` 内部记录避免 ident 时序问题。
+
+**审计暗病修复（本次）**：
+- P1-1+P1-2：`core/scheduler_monitor.py` `_CRITICAL_JOBS` 修正 3 个错误 broadcast job_id（`broadcast_afternoon_tea` → `broadcast_afternoon_tease`、`broadcast_evening_wind` → `broadcast_evening_warm`、`broadcast_night_whisper` → `broadcast_night_hook`，与 `config.json.example` `SCHEDULED_BROADCASTS.id` 对齐）；删除 3 个不存在的 job_id（`ad_cleanup` / `write_queue_flush` / `llm_cost_flush`，原任务函数从未在 `auto_tasks.py` 注册，保留会每天 false alarm）；补加真实存在的 `sync_scheduler_metrics` / `flush_alert_summary` 两个 interval 模式任务。
+- P1-3a：`dashboard/helpers.py` SSH Key 环境变量统一为 `VPS_SSH_KEY`（与 `core/vps_config.py` 一致），向后兼容 `VPS_SSH_KEY_PATH` 避免命名分裂。
+- P1-3b：`.env.example` 补全 4 个新环境变量声明（`DASHBOARD_PASSWORD_HASH` / `DASHBOARD_VIEWER_PASSWORD_HASH` / `DATABASE_URL` / `MORY_DB_PATH`），并同步"代码中实际读取的环境变量"索引说明。
+- P1-4：`dashboard/api/orphan_api.py` 修复 logger 未定义 bug（原 line 166/170/185 使用 logger 但未导入，会抛 NameError），新增 `import logging` + `logger = logging.getLogger(__name__)`。
+- P1-5：本 CHANGELOG 段落。
+- P1-6：`VERSION.md` 新增 v5.31.2-hotfix 条目。
+- P2-7：`project_snapshot.md` 更新防御系统描述（新增 LLM 成本熔断 / 批量写入 / SSH Key / Session 滑动 / 密码哈希等条目）。
+- P2-8：`tests/unit/` 新增 `test_audit_fixes.py` 覆盖 5 个新函数（`_verify_password` / `get_fallback_text` / `enqueue_batch` / `cleanup_channel_tracking_orphan` / LLM global_daily 熔断）。
+- P2-10：`docs/technical/` 新增 3 篇技术文档（`llm-cost-guard.md` / `write-queue-batch.md` / `dashboard-auth-hardening.md`）。
+- **暗病延伸修复（单元测试暴露）**：`core/llm_cost_guard.py` `_get_global_hourly_cost` / `_get_user_hourly_cost` 原实现调用 `_cleanup_expired(now, window, 3600)` 会弹出所有 1h 前的元素，但 `_global_window` / `_user_windows[uid]` 是 hourly 和 daily 共用的同一 deque，hourly cleanup 会破坏 daily 窗口数据，导致 `global_daily_limit_exceeded` / `user_daily_limit_exceeded` 熔断实际上从未生效（check_before_call 先检查 hourly 把 24h 数据清空了）。改为 hourly 只读不写（`sum(cost for ts, cost in window if ts >= cutoff)`），cleanup 交给 daily 方法统一处理（max_age=86400）。
+
+**验证证据**：
+- `py_compile` 覆盖 21+ 修改文件全部通过（含本次延伸修复的 `core/llm_cost_guard.py`）。
+- `PYTHONUTF8=1 python scripts/verify_db_methods.py` 通过 165 个委托方法（新增 1 个 `cleanup_channel_tracking_orphan`）。
+- `python -m pytest tests/unit/test_audit_fixes.py -v` 全部通过（5 类共 27 个测试用例，覆盖 sha256 密码 / 兜底文案 / 批量入队 / 孤儿清理 / LLM global_daily 熔断）。
+- 多专家团审计复扫（代码质量 / 安全 / 业务逻辑 / 暗病排查 4 维）确认零 P1 暗病、零下一步计划。
+
 ### Hotfix [2026-07-06] 广告资料层误封止血 + 管理员一键解封按钮
 - 修复误封入口：`core/handlers/security_handlers.py` 将 `AD_WHITELIST.user_ids` 和群管理员免检提前到 Bio / Premium emoji 状态资料层检测之前，避免白名单或管理员被资料层高置信命中直接永久禁言。
 - `modules/ad_enforcement.py` 管理员广告处置通知新增“解封”按钮，callback_data 为 `ad_unban:<uid>:<chat_id>`；点击后复用 `restore_ad_user()` 同时删除 `blacklist`、`global_blacklist`、`mute_records`，并尝试恢复群内发言/媒体/反应权限。

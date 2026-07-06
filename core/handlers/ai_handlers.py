@@ -26,12 +26,13 @@ logger = get_logger("ai_handlers")
 
 
 def _final_ai_reply_fallback(mode: str, is_priv: bool = False) -> str:
-    """处理AI失败时给用户的兜底回复（旧版兼容）。"""
-    if mode in ("convert", "contact_mory"):
-        if is_priv:
-            return "预览：https://t.me/moryselect\n自助下单：https://t.me/MorychannelBot"
-        return "预览群 @moryselect\n自助下单 @MorychannelBot"
-    return ""
+    """处理AI失败时给用户的兜底回复（旧版兼容）。
+
+    [Bug-01 修复] 兜底文案统一走 ai_engine.get_fallback_text()，
+    与 ai_engine._final_fallback_reply / ai_reply_handler._final_ai_reply_fallback 保持一致。
+    """
+    from core.ai_engine import get_fallback_text
+    return get_fallback_text(mode, is_priv=is_priv)
 
 # ═══════════════════════════════════════════════════════════════════════
 #  P8：固定彩蛋 + P8.8 成就检测 + P8.85 猜数字

@@ -699,6 +699,23 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     if _dispatch_p0_member(dctx):
         return
 
+    # [Bug-02 修复] /unban 早路由：必须在 P1 黑名单拦截之前处理
+    # 被误封禁的用户发 /unban 时，P1 黑名单拦截会先返回 True 吞掉解封指令，
+    # 导致用户无法自助解封。这里强制在 P1 之前拦截 /unban/解封 等指令。
+    # 注意：用 strip() 容忍前导空格，避免 " /unban" 被漏判
+    _stripped = msg_text.strip() if msg_text else ""
+    if _stripped.startswith(("/unban", "/解封", "解封 ", "解除封禁")) or _stripped == "解封":
+        try:
+            from modules.ad_enforcement import handle_unban_command
+            handle_unban_command(ctx.bot, m, ctx.config, ctx.db,
+                                 ad_detector=getattr(ctx, "ad_detector", None))
+            logger.info(f"🔓 [Bug-02 早路由] /unban 已在 P1 前处理 uid={uid} chat={chat_id}")
+            clear_logging_context()
+            return
+        except Exception as unban_err:
+            logger.warning(f"🔓 [Bug-02 早路由] /unban 处理异常，回退到 P5.6: {unban_err}")
+            # 异常时不 return，让 P5.6 兜底处理
+
     # ── P1-P3：安全处理（黑名单/敏感词/夜间模式）──
     if _dispatch_p1_p3_security(dctx):
         return

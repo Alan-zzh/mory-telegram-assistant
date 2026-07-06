@@ -199,8 +199,11 @@ def sync_metrics_to_db(db) -> int:
 
 
 # 【v5.31.1 第四层防御】关键用户可感知任务的预期执行时间表
-# 格式：job_id 前缀 → {latest_hour, latest_minute, description}
-# 监控逻辑：如果当前时间 > (latest_hour:latest_minute + 30min 宽限)，且该 job 今天未成功执行 → CRITICAL 告警
+# 格式：job_id 前缀 → spec dict
+#   - deadline 模式（每日时间点）：{deadline_hour, deadline_minute, desc}
+#       监控逻辑：当前时间 > (deadline + 30min 宽限)，且该 job 今天未成功执行 → CRITICAL 告警
+#   - interval 模式（高频周期）：{interval_minutes, desc}
+#       监控逻辑：上次成功执行距今 > interval_minutes * 2 → CRITICAL 告警
 # 注：broadcast_* 和 greeting_* 的具体时间由 config.json 决定，这里只设一个保守的"当日必须执行"截止时间
 _CRITICAL_JOBS = {
     # 问候：早安 8:05 / 午安 12:35 / 晚安 23:05 — 所有问候最晚 23:35 前应执行至少一次（如果开启）
@@ -208,38 +211,168 @@ _CRITICAL_JOBS = {
     "greeting_afternoon": {"deadline_hour": 13, "deadline_minute": 30, "desc": "午安问候(12:35)"},
     "greeting_evening": {"deadline_hour": 23, "deadline_minute": 40, "desc": "晚安问候(23:05)"},
     # 播报：早 10:00 / 午 14:30 / 晚 19:00 / 夜 22:30 — 所有播报最晚 23:00 前应执行
+    # 【v5.31.2 hotfix P1-1】job_id 必须与 config.json.example SCHEDULED_BROADCASTS.id 一致：
+    #   bc_id=morning_nudge / afternoon_tease / evening_warm / night_hook
+    #   实际注册的 job_id = "broadcast_" + bc_id（见 auto_tasks._register_scheduled_broadcasts）
     "broadcast_morning_nudge": {"deadline_hour": 11, "deadline_minute": 0, "desc": "晨间播报(10:00)"},
-    "broadcast_afternoon_tea": {"deadline_hour": 15, "deadline_minute": 30, "desc": "下午茶播报(14:30)"},
-    "broadcast_evening_wind": {"deadline_hour": 20, "deadline_minute": 0, "desc": "傍晚播报(19:00)"},
-    "broadcast_night_whisper": {"deadline_hour": 23, "deadline_minute": 30, "desc": "夜间播报(22:30)"},
+    "broadcast_afternoon_tease": {"deadline_hour": 15, "deadline_minute": 30, "desc": "下午茶播报(14:30)"},
+    "broadcast_evening_warm": {"deadline_hour": 20, "deadline_minute": 0, "desc": "傍晚播报(19:00)"},
+    "broadcast_night_hook": {"deadline_hour": 23, "deadline_minute": 30, "desc": "夜间播报(22:30)"},
+    # 【v5.31.2 P1-Task07】业务关键任务
+    # 【v5.31.2 审计复扫修复】以下 3 项监控模式与实际调度对齐：
+    #   - cart_recovery: auto_tasks.py:4627 实际是 cron minute="*/5"（每5分钟），原 deadline 03:00 会导致监控盲区 13h
+    #   - backup: auto_tasks.py:4628 实际是 cron minute=15（每小时:15），原 deadline 04:00 监控了错误任务
+    #   - daily_backup: auto_tasks.py:4584 实际是 cron hour=3,minute=0（每日03:00），原 _CRITICAL_JOBS 未监控此任务
+    #   - health_check: auto_tasks.py:4674 实际是 cron hour="10,16,22"（每日3次），原 interval=5 会导致每天误报
+    "cart_recovery": {"interval_minutes": 5, "desc": "购物车挽回(每5分钟)"},
+    "backup": {"interval_minutes": 60, "desc": "每小时备份(:15)"},
+    "daily_backup": {"deadline_hour": 4, "deadline_minute": 0, "desc": "每日数据库备份(03:00)"},
+    "health_check": {"deadline_hour": 23, "deadline_minute": 50, "desc": "健康检查(每日10/16/22点)"},
+    # 【v5.31.2 hotfix P1-2】删除不存在的 job_id (ad_cleanup/write_queue_flush/llm_cost_flush)，
+    #   这三个任务在 auto_tasks.py 中没有对应的 _job_ 函数和 add_job 调用，
+    #   保留会导致每天 false alarm。
+    # 【v5.31.2 hotfix P1-2】补加真实存在的 interval 模式任务：
+    #   - sync_scheduler_metrics (auto_tasks.py:4790, 每5分钟刷调度指标到 DB)
+    #   - flush_alert_summary (auto_tasks.py:4821, 每5分钟刷告警摘要)
+    "sync_scheduler_metrics": {"interval_minutes": 5, "desc": "调度指标刷盘(每5分钟)"},
+    "flush_alert_summary": {"interval_minutes": 5, "desc": "告警摘要刷盘(每5分钟)"},
 }
 
 # 已告警的 job（避免每 30 分钟重复告警，每天重置一次）
+# 【v5.31.2 P1-Task08】持久化到 system_states 表（key="alerted_jobs"），重启不丢、告警风暴不复发
 _alerted_jobs = set()
 _alerted_date = None
+_ALERTED_JOBS_DB_KEY = "alerted_jobs"
 
 
-def check_critical_jobs_health(scheduler=None, config=None):
+def _load_alerted_jobs_from_db(db) -> None:
+    """【v5.31.2 P1-Task08】从 system_states 表加载 _alerted_jobs 持久化状态
+
+    仅当 DB 中存储的日期等于今天时才合并到内存；跨天状态视为过期丢弃。
+    DB 异常不影响监控主流程。
+
+    存储格式：JSON {"date": "YYYY-MM-DD", "jobs": ["job_id1", ...]}
+    """
+    global _alerted_jobs, _alerted_date
+    if db is None:
+        return
+    try:
+        raw = db.get_system_state(_ALERTED_JOBS_DB_KEY)
+        if not raw:
+            return
+        import json
+        data = json.loads(raw)
+        stored_date = data.get("date")
+        stored_jobs = data.get("jobs", [])
+        if stored_date == _alerted_date and isinstance(stored_jobs, list):
+            _alerted_jobs |= set(stored_jobs)
+            logger.debug(f"[Scheduler] 从 DB 恢复 _alerted_jobs: {len(stored_jobs)} 项 (date={stored_date})")
+    except Exception as e:
+        logger.debug(f"[Scheduler] 加载 _alerted_jobs 持久化状态失败: {e}")
+
+
+def _save_alerted_jobs_to_db(db) -> None:
+    """【v5.31.2 P1-Task08】将 _alerted_jobs 持久化到 system_states 表
+
+    保存当前 _alerted_jobs + _alerted_date，重启后可恢复。
+    DB 异常不影响监控主流程。
+    """
+    global _alerted_jobs, _alerted_date
+    if db is None:
+        return
+    try:
+        import json
+        payload = {
+            "date": _alerted_date,
+            "jobs": sorted(list(_alerted_jobs)),
+        }
+        db.set_system_state(_ALERTED_JOBS_DB_KEY, json.dumps(payload, ensure_ascii=False))
+    except Exception as e:
+        logger.debug(f"[Scheduler] 保存 _alerted_jobs 持久化状态失败: {e}")
+
+
+def _is_job_disabled_by_config(job_id: str, config) -> bool:
+    """【v5.31.2 审计复扫修复 WARN-1】根据 config 判断该 job 对应的功能是否被禁用
+
+    避免对管理员主动关闭的功能（如问候/播报）误报"未执行"告警。
+
+    判断规则（与 auto_tasks._is_greeting_enabled 保持一致）：
+    - greeting_morning  → GREETING_CONFIG.morning_enabled，回退 AUTO_GREETING
+    - greeting_afternoon→ GREETING_CONFIG.afternoon_enabled，回退 AUTO_GREETING
+    - greeting_evening  → GREETING_CONFIG.evening_enabled，回退 AUTO_GOODNIGHT / AUTO_GREETING
+    - broadcast_*       → SCHEDULED_BROADCASTS 中对应 bc_id 的 enabled 字段
+    - 其他 job（cart_recovery/backup/daily_backup/health_check/sync_*/flush_*）→ 永不禁用（基础设施任务）
+
+    Args:
+        job_id: 任务 ID（如 greeting_morning / broadcast_morning_nudge）
+        config: 配置 dict（None 视为所有功能启用，不阻塞监控）
+
+    Returns:
+        True 表示该功能被禁用，应跳过监控
+    """
+    if config is None:
+        return False  # 调用方未传 config，向后兼容（不跳过任何任务）
+    try:
+        if job_id.startswith("greeting_"):
+            # 与 auto_tasks._is_greeting_enabled 逻辑一致
+            cfg = config.get("GREETING_CONFIG", {}) if isinstance(config, dict) else {}
+            period = job_id[len("greeting_"):]  # morning / afternoon / evening
+            key_map = {
+                "morning": "morning_enabled",
+                "afternoon": "afternoon_enabled",
+                "evening": "evening_enabled",
+            }
+            key = key_map.get(period)
+            if key and key in cfg:
+                return not bool(cfg.get(key))
+            # 回退到 AUTO_GREETING / AUTO_GOODNIGHT
+            if period == "evening":
+                return not bool(config.get("AUTO_GOODNIGHT", config.get("AUTO_GREETING", False)))
+            return not bool(config.get("AUTO_GREETING", False))
+        if job_id.startswith("broadcast_"):
+            bc_id = job_id[len("broadcast_"):]
+            broadcasts = config.get("SCHEDULED_BROADCASTS", []) or []
+            if not isinstance(broadcasts, list):
+                return False
+            for bc in broadcasts:
+                if isinstance(bc, dict) and bc.get("id") == bc_id:
+                    return not bool(bc.get("enabled", True))
+            # 配置中找不到该 bc_id，视为禁用（避免对已删除的播报任务误告警）
+            return True
+        # 基础设施任务（backup/cart_recovery/health_check/sync_scheduler_metrics/flush_alert_summary）
+        # 永不通过 config 跳过 — 这些是系统级保障任务
+        return False
+    except Exception:
+        return False
+
+
+def check_critical_jobs_health(scheduler=None, config=None, db=None):
     """【v5.31.1 第四层防御】检查关键用户可感知任务是否按时执行
 
     监控逻辑：
     1. 遍历 _CRITICAL_JOBS 中定义的关键任务
-    2. 如果当前时间已超过该任务的截止时间（含宽限），检查今天是否成功执行过
-    3. 如果今天未成功执行 → CRITICAL 日志告警（触发告警 bot 通知，如果已配置）
-    4. 用 _alerted_jobs 防重复告警（每天重置）
+    2. 【WARN-1 修复】跳过被 config 禁用的功能对应任务（greeting_*/broadcast_*）
+    3. deadline 模式：当前时间已超过截止时间（含宽限），且该 job 今天未成功执行 → 告警
+    4. interval 模式：上次成功执行距今超过 interval_minutes * 2 → 告警
+    5. 用 _alerted_jobs 防重复告警（每天重置）
+    6. 【P1-Task08】_alerted_jobs 持久化到 system_states 表，重启不丢、告警风暴不复发
 
     Args:
         scheduler: APScheduler 实例（可选，用于获取 job 的 next_run_time）
-        config: 配置 dict（可选，用于检查开关状态）
+        config: 配置 dict（可选，用于检查开关状态，跳过被禁用功能的监控）
+        db: DB 实例（可选，用于 _alerted_jobs 持久化到 system_states 表）
     """
     global _alerted_jobs, _alerted_date
     now = datetime.now(_CST)
     today_str = now.strftime("%Y-%m-%d")
+    now_ts = int(now.timestamp())
 
     # 每天重置告警状态
     if _alerted_date != today_str:
         _alerted_jobs = set()
         _alerted_date = today_str
+        # 【P1-Task08】跨天重置后，从 DB 恢复今天的告警状态（重启场景：内存清零但 DB 仍在）
+        _load_alerted_jobs_from_db(db)
 
     with _metrics_lock:
         jobs_snapshot = {jid: dict(info) for jid, info in _metrics["jobs"].items()}
@@ -250,7 +383,31 @@ def check_critical_jobs_health(scheduler=None, config=None):
     for job_id, spec in _CRITICAL_JOBS.items():
         if job_id in _alerted_jobs:
             continue
+        # 【WARN-1 修复】跳过被 config 禁用的功能对应任务，避免对主动关闭的功能误告警
+        if _is_job_disabled_by_config(job_id, config):
+            continue
 
+        # 【P1-Task07】interval 模式：高频任务基于时间间隔判断
+        # 上次成功执行距今超过 interval_minutes * 2 即告警
+        if "interval_minutes" in spec:
+            interval_min = spec["interval_minutes"]
+            threshold_sec = interval_min * 2 * 60
+            job_info = jobs_snapshot.get(job_id, {})
+            last_run = job_info.get("last_run", 0)
+            last_status = job_info.get("last_status", "")
+
+            if last_run > 0 and last_status == "success" and (now_ts - last_run) <= threshold_sec:
+                continue  # 最近一次执行在阈值内，正常
+
+            gap_desc = f"距上次执行{(now_ts - last_run) // 60}分钟" if last_run > 0 else "从未执行"
+            alerts.append(
+                f"🚨 关键任务未执行: {spec['desc']} (job_id={job_id}, interval={interval_min}min, {gap_desc}, last_status={last_status})"
+            )
+            _alerted_jobs.add(job_id)
+            all_ok = False
+            continue
+
+        # deadline 模式（原逻辑）：基于每日时间点判断
         deadline = now.replace(hour=spec["deadline_hour"], minute=spec["deadline_minute"], second=0, microsecond=0)
         if now < deadline:
             continue  # 还没到截止时间，不检查
@@ -273,6 +430,8 @@ def check_critical_jobs_health(scheduler=None, config=None):
     if alerts:
         for a in alerts:
             logger.critical(a)
+        # 【P1-Task08】告警后持久化 _alerted_jobs，重启不丢、告警风暴不复发
+        _save_alerted_jobs_to_db(db)
     elif now.hour >= 0 and now.minute >= 0:  # 每次检查都记录正常状态（debug 级别）
         logger.debug("✅ 关键任务健康检查通过：所有到点任务均已执行")
 

@@ -44,15 +44,17 @@ class WriteQueueFullError(Exception):
 class _WriteTask:
     """单个写任务"""
 
-    __slots__ = ("conn", "sql", "params", "callback", "future", "ts")
+    __slots__ = ("conn", "sql", "params", "callback", "future", "ts", "is_executemany")
 
-    def __init__(self, conn, sql: str, params: tuple, callback=None, future=None):
+    def __init__(self, conn, sql: str, params: tuple, callback=None, future=None, is_executemany: bool = False):
         self.conn = conn
         self.sql = sql
         self.params = params
         self.callback = callback
         self.future = future
         self.ts = time.time()
+        # [P0 修复] executemany 批量任务标志：True 时 params 视为参数序列，Worker 调用 executemany
+        self.is_executemany = is_executemany
 
 
 class _WriteResult:
@@ -83,6 +85,8 @@ class WriteQueue:
         self._worker: Optional[threading.Thread] = None
         self._running = False
         self._lock = threading.Lock()
+        # [Bug-04 修复] Worker 线程标识：用于检测 enqueue_and_wait 死锁风险
+        self._worker_thread_id: Optional[int] = None
         # 统计指标
         self._stats = {
             "total": 0,        # 总写入数
@@ -106,6 +110,11 @@ class WriteQueue:
                 daemon=True,
             )
             self._worker.start()
+            # [Bug-04 修复 + WARN-3 修复] 在 start() 之后读取 ident，
+            # 此时线程已就绪（ident 非 None）；原实现在线程 start 之前读取，
+            # ident 必为 None，是无效赋值。
+            # Worker 内 _run_loop 也会重新设置（双保险），保证 enqueue_and_wait 死锁检测可用。
+            self._worker_thread_id = self._worker.ident
             logger.info("✅ WriteQueue Worker 已启动（单线程串行写入）")
 
     def stop(self, timeout: float = 5.0):
@@ -191,6 +200,9 @@ class WriteQueue:
         适用于需要立即拿到 lastrowid/rowcount 的场景。
         注意：不要在 Worker 线程内调用此方法（会死锁）。
 
+        [Bug-04 修复] 自动检测 Worker 线程内调用并抛 RuntimeError，
+        避免未来误用导致死锁（之前仅注释警告，无运行时检测）。
+
         [v5.25.0 阶段1-B] 背压机制：
         - 队列满时禁止回退同步写（避免锁竞争）
         - 核心写入（默认）：队列满抛 WriteQueueFullError
@@ -209,6 +221,13 @@ class WriteQueue:
         result = _WriteResult()
         future = threading.Event()
         future.result = result
+
+        # [Bug-04 修复] Worker 线程内调用 enqueue_and_wait 会死锁（Worker 等待自己处理）
+        if self._worker_thread_id is not None and threading.get_ident() == self._worker_thread_id:
+            err = RuntimeError("Deadlock risk detected: enqueue_and_wait called from DBWriteWorker thread")
+            result.error = err
+            logger.error(f"🚨 {err} | SQL: {sql[:80]}")
+            return result
 
         if not self._running:
             # 回退同步写（仅启动阶段，非背压场景）
@@ -247,6 +266,57 @@ class WriteQueue:
 
         return result
 
+    def enqueue_batch(self, conn, sql: str, params_seq, is_critical: bool = False) -> bool:
+        """
+        [P0 修复 Task-02] 批量写投递：整个参数序列一次性入队，Worker 调用 executemany。
+
+        之前 db_connection_proxy.executemany 逐条入队（10x 性能损失），
+        现在统一投递整个 params_seq，Worker 一次 executemany 执行完毕。
+
+        Args:
+            conn: SQLite 连接
+            sql: SQL 语句（含 ? 占位符）
+            params_seq: 参数序列（list/tuple of tuples）
+            is_critical: 是否核心写入
+
+        Returns:
+            True 投递成功，False 队列满（仅非核心写入）
+        """
+        real_conn = getattr(conn, "_real", conn)
+
+        if not self._running:
+            logger.warning("WriteQueue 未启动，回退同步 executemany")
+            try:
+                real_conn.executemany(sql, params_seq)
+                real_conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"同步 executemany 失败: {e} | SQL: {sql[:80]}")
+                return False
+
+        try:
+            task = _WriteTask(real_conn, sql, params_seq, None, None, is_executemany=True)
+            self._queue.put_nowait(task)
+            with self._stats_lock:
+                self._stats["pending"] = self._queue.qsize()
+            return True
+        except queue.Full:
+            with self._stats_lock:
+                self._stats["failed"] += 1
+                self._stats["last_error"] = "queue full (batch)"
+                self._stats["last_error_ts"] = time.time()
+
+            if is_critical:
+                logger.error(f"WriteQueue 满，批量核心写入被拒: {sql[:80]}")
+                raise WriteQueueFullError(f"队列满，批量核心写入失败: {sql[:60]}")
+            else:
+                now = time.time()
+                if now - self._stats.get("last_drop_warn_ts", 0) > 30:
+                    logger.warning(f"WriteQueue 满（{self._queue.maxsize}），丢弃非关键批量写入: {sql[:80]}")
+                    with self._stats_lock:
+                        self._stats["last_drop_warn_ts"] = now
+                return False
+
     def get_stats(self) -> dict:
         """获取队列统计指标"""
         with self._stats_lock:
@@ -256,6 +326,8 @@ class WriteQueue:
 
     def _run_loop(self):
         """Worker 主循环"""
+        # [Bug-04 修复] 在 Worker 线程内部记录 ident（start 时线程可能尚未运行）
+        self._worker_thread_id = threading.get_ident()
         logger.info("🔄 DBWriteWorker 开始消费队列")
         while True:
             try:
@@ -297,14 +369,25 @@ class WriteQueue:
         但 enqueue_and_wait 返回的是本地 result 引用（初始 rowcount=0），
         导致 claim_task 等依赖 rowcount 的方法永远拿到 0，所有任务被误判为"数据库锁拦截"。
         修复：直接更新 task.future.result 的字段，保持对象引用不变。
-        """
-        cur = task.conn.execute(task.sql, task.params)
-        task.conn.commit()
 
-        # 直接更新 future.result 的字段（future.result 由 enqueue_and_wait 创建并共享引用）
-        if task.future:
-            task.future.result.rowcount = cur.rowcount
-            task.future.result.lastrowid = cur.lastrowid
+        【P0 修复 Task-02】executemany 批量任务支持：
+        之前 db_connection_proxy.executemany 逐条入队（性能下降 10x+），
+        现在一次性投递整个参数序列，Worker 调用 conn.executemany 统一执行。
+        """
+        if task.is_executemany:
+            # 批量写：调用 executemany，rowcount 为累计受影响行数
+            cur = task.conn.executemany(task.sql, task.params)
+            task.conn.commit()
+            if task.future:
+                task.future.result.rowcount = cur.rowcount
+                task.future.result.lastrowid = cur.lastrowid
+        else:
+            cur = task.conn.execute(task.sql, task.params)
+            task.conn.commit()
+            # 直接更新 future.result 的字段（future.result 由 enqueue_and_wait 创建并共享引用）
+            if task.future:
+                task.future.result.rowcount = cur.rowcount
+                task.future.result.lastrowid = cur.lastrowid
 
         if task.callback:
             # callback 仍需独立 result 对象（避免与 future.result 共享状态）

@@ -98,6 +98,32 @@ class _FakeCursor:
         pass
 
 
+class _FakeCursorForBatch:
+    """[P0 修复 Task-02] executemany 批量写专用伪 cursor
+
+    异步批量入队后立即返回，rowcount 无法预知（Worker 异步执行），
+    设为 -1 表示"批量写已投递，行数未知"，符合 PEP 249 executemany 语义。
+    """
+
+    __slots__ = ("rowcount", "lastrowid")
+
+    def __init__(self):
+        self.rowcount = -1
+        self.lastrowid = -1
+
+    def fetchone(self):
+        return None
+
+    def fetchall(self):
+        return []
+
+    def fetchmany(self, size=None):
+        return []
+
+    def close(self):
+        pass
+
+
 class WriteQueueCursorProxy:
     """cursor 代理：写操作走队列，读操作直接执行
 
@@ -165,15 +191,25 @@ class WriteQueueConnectionProxy:
         return self._real.execute(sql, params)
 
     def executemany(self, sql, params_seq):
-        """拦截 executemany：批量写走队列"""
+        """拦截 executemany：批量写走队列
+
+        [P0 修复 Task-02] 之前逐条入队导致性能下降 10x+，
+        现在一次性投递整个参数序列，Worker 调用 conn.executemany 统一执行。
+        """
         if _is_write_sql(sql):
             from core.write_queue import write_queue
             if not write_queue._running:
                 return self._real.executemany(sql, params_seq)
-            # 批量写逐条入队（保持串行）
-            for params in params_seq:
-                write_queue.enqueue(self._real, sql, params)
-            return self._real.cursor()  # 返回空 cursor
+            # 批量写一次性入队（Worker 内部调用 executemany）
+            is_critical = _is_critical_write(sql)
+            # 物化 params_seq（可能是生成器），同时便于空检查
+            params_list = list(params_seq) if not isinstance(params_seq, (list, tuple)) else params_seq
+            if not params_list:
+                # 空序列直接返回，避免无效入队
+                return self._real.cursor()
+            write_queue.enqueue_batch(self._real, sql, params_list, is_critical=is_critical)
+            # 返回伪 cursor（fetchone/fetchall 返回空，符合 executemany 语义）
+            return _FakeCursorForBatch()
         return self._real.executemany(sql, params_seq)
 
     def cursor(self):

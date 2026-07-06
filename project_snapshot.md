@@ -12,7 +12,7 @@
 | 名称 | Mory小助理 - 运营型商业 AI 转化机器人 |
 | 版本 | v5.31.2 |
 | 部署状态 | 2026-07-01 起 `scripts/puzan_loop_monitor.py` 本地无限 LOOP 持续监控（间隔 300s，日志 `logs/puzan_loop_monitor_live_20260630.log`；当前本地 lock PID 28388）；VPS `43.153.23.115` RUNNING；`scripts/vps_watchdog.py` 由 root cron 每 2min 检查 health；`mory-assistant` / `mory-dashboard` 双 active；✅ verify_db_methods 164 方法无缺失无孤儿；✅ /api/health 返回 200 且 version=v5.31.2；L4 已按真实 schema 统计 task/token/成本；2026-07-02 22:37 AI 复发热修已部署，远端备份 `ai_engine.py.bak.20260702_223745`、`health_check_task.py.bak.20260702_223745`，22:51 二次加固备份 `ai_engine.py.bak.20260702_225119`，2026-07-03 03:06 最终告警加固备份 `ai_engine.py.bak.20260703_030627`；2026-07-03 09:37 群聊露馅兜底与阅后即焚热修已精确部署，远端备份 `ai_engine.py.bak.20260703_093729`、`ai_reply_handler.py.bak.20260703_093729`、`ai_handlers.py.bak.20260703_093729`、`tracking_repo.py.bak.20260703_093729`、`burn_orphan_task.py.bak.20260703_093729`、`auto_tasks.py.bak.20260703_093729`、`bot_initializer.py.bak.20260703_093729`；2026-07-03 10:06 AI 运行池与后台任务锁二次加固已精确部署，远端备份 `ai_engine.py.bak.20260703_100613`、`greeting_task.py.bak.20260703_100613`、`reactivate_task.py.bak.20260703_100613`、`cart_recovery_task.py.bak.20260703_100613`、`leak_task.py.bak.20260703_100613`、`auto_tasks.py.bak.20260703_100613`；2026-07-04 01:10 主动播报超时清理热修已精确部署，远端备份 `tracking_repo.py.bak.20260704_011055`、`database.py.bak.20260704_011055`、`burn_orphan_task.py.bak.20260704_011055`、`auto_tasks.py.bak.20260704_011055`、`models_api.py.bak.20260704_011055`；生产 47 小时内新闻/问候/定点播报残留已处理，最终 `reply_tracking=0`、`broadcast_tracking_recent=0`、`channel_tracking_recent=0`；`burn_orphan` 继续每 6 小时执行，但现在会合并清理 `reply_tracking` 与 `channel_tracking`，并统一清 `broadcast_tracking` 残留；普通群聊 AI 全失败返回空串不再发模型故障文案，私聊返回短人设兜底；`qwen3.6-plus-2026-04-02`、`glm-5.2` 已从运行时候选池剔除；`greeting` / `reactivate` / `cart_recovery` / `leak` 不再持有 `config` / `ai` / `bot` 锁等待外部模型；真实 AI smoke 返回 `正常`，10:06 后 journal 无 `AI模型全部失败` / `三层路由全失败` / `Traceback` / `CRITICAL` / 锁超时；03:00-03:03 复盘无 402/403/余额/额度日志，只有超时和空 content，结论不是整体没额度；外部模型全失败但已返回兜底文案时不再发送 `AI模型全部失败` 管理员故障，只有明确 HTTP 402/403 才发送 `AI模型额度或权限异常`；远端强制失败 smoke journal 无 `AI模型全部失败` / `三层路由全失败`；早间任务缺失已确认是进程晚于任务窗口启动导致，健康检查已改为“任务窗口已错过”信息归类；注意 `WatchdogUSec=0`，当前依赖外部 watchdog 而非 systemd watchdog |
-| 防御体系 | v5.31.1 四层防御：L1启动自检(_self_check_repo_methods) + L2__getattr__ CRITICAL+re-raise + L3 scripts/verify_db_methods.py 部署前门禁 + L4 core/scheduler_monitor.py:check_critical_jobs_health 调度健康监控。v5.31.2 新增：① LLMCostGuard 成本熔断器（用户1h $1.0，全局1h $5.0，data/router_usage.db 12列schema记录token_usage）② 腾讯云 Lighthouse API 监控（实例 lhins-4ney4np5，IP 43.153.23.115）③ Loop 多智能体暗病搜索机制 ④ RLock 替代 Lock 解决 add_points 重入死锁 ⑤ 原子 UPDATE 防止 TOCTOU 余额检查竞态 ⑥ 独立看门狗 scripts/vps_watchdog.py（每2min检查health，连续3次失败自动重启，已去重日志）⑦ _CST 时区常量全域覆盖（累计修复 40+ 处 datetime.now() 时区错位）⑧ WriteQueue 停机 drain，降低重启尾部写丢失风险 |
+| 防御体系 | v5.31.1 四层防御：L1启动自检(_self_check_repo_methods) + L2__getattr__ CRITICAL+re-raise + L3 scripts/verify_db_methods.py 部署前门禁 + L4 core/scheduler_monitor.py:check_critical_jobs_health 调度健康监控。v5.31.2 新增：① LLMCostGuard 成本熔断器（6道闸：用户1h $1.0 / 全局1h $5.0 / 用户24h $10.0 / 全局24h $50.0，含 hourly 只读不写避免破坏 daily 窗口的暗病修复）② 腾讯云 Lighthouse API 监控（实例 lhins-4ney4np5，IP 43.153.23.115）③ Loop 多智能体暗病搜索机制 ④ RLock 替代 Lock 解决 add_points 重入死锁 ⑤ 原子 UPDATE 防止 TOCTOU 余额检查竞态 ⑥ 独立看门狗 scripts/vps_watchdog.py（每2min检查health，连续3次失败自动重启，已去重日志）⑦ _CST 时区常量全域覆盖（累计修复 40+ 处 datetime.now() 时区错位）⑧ WriteQueue 停机 drain，降低重启尾部写丢失风险 ⑨ sha256 密码哈希双模式 + Session 滑动续期 + SSH Key 优先认证 ⑩ executemany 批量化 + WriteQueue 死锁检测 |
 | 技术栈 | Python3 + pyTelegramBotAPI + SQLite(WAL+busy_timeout=30s+单线程写入队列+连接代理全量化+背压Fail-Fast+Alembic迁移) + Flask + gunicorn+gevent + structlog + diskcache |
 | 部署 | VPS（systemd作为唯一进程管理）+ GitHub Actions CI/CD（待启用Secrets） |
 | 存储 | `mory.db`(SQLite) + `config.json`(业务配置) + `.env`(敏感凭据) + `requirements.lock`(锁定依赖) |
@@ -366,9 +366,9 @@ mory_assistant/
 | ID | 时间 | 时段 | 定位 | 标题 | 角标 | 正文 | 折叠补充 | 按钮 |
 |---|---|---|---|---|---|---|---|---|
 | `morning_nudge` | 10:00 | morning | 早间轻撩 | ☀️ 早上好呀 | ✨ Mory来报到啦 | 上午场景化问候+隐晦牵引 | 💬 想聊的随时来找我～ | 💌 找Mory聊聊 → @MorychannelBot |
-| `afternoon_tea` | 14:30 | afternoon | 午后小确幸 | 🍵 下午茶时间到 | 🍵 Mory的小确幸 | 午后松弛场景+生活小确幸 | ☕ 累了就来找我聊聊天～ | ☕ 和Mory喝杯茶 → @MorychannelBot |
-| `evening_wind` | 19:00 | evening | 傍晚陪伴 | 🌆 傍晚的风刚好 | 🌆 Mory陪你吹风 | 傍晚陪伴感+放松引导 | 🌆 一天的疲惫就让它随风去吧～ | 🌙 陪Mory看日落 → @MorychannelBot |
-| `night_whisper` | 22:30 | night | 深夜悄悄话 | 🌙 夜深了 | 🌙 Mory的悄悄话 | 深夜走心+悄悄话引导 | 🌙 夜深了，有些话只适合在夜里说～ | 💌 和Mory说悄悄话 → @MorychannelBot |
+| `afternoon_tease` | 14:30 | afternoon | 午后小确幸 | 🍵 下午茶时间到 | 🍵 Mory的小确幸 | 午后松弛场景+生活小确幸 | ☕ 累了就来找我聊聊天～ | ☕ 和Mory喝杯茶 → @MorychannelBot |
+| `evening_warm` | 19:00 | evening | 傍晚陪伴 | 🌆 傍晚的风刚好 | 🌆 Mory陪你吹风 | 傍晚陪伴感+放松引导 | 🌆 一天的疲惫就让它随风去吧～ | 🌙 陪Mory看日落 → @MorychannelBot |
+| `night_hook` | 22:30 | night | 深夜悄悄话 | 🌙 夜深了 | 🌙 Mory的悄悄话 | 深夜走心+悄悄话引导 | 🌙 夜深了，有些话只适合在夜里说～ | 💌 和Mory说悄悄话 → @MorychannelBot |
 
 **播报特性（v5.18.2 无缝升级版）**：
 - HTML 卡片排版：`<b><i>emoji 标题</i></b>` + `<i>斜体角标</i>` + 正文 + `<blockquote expandable><i>折叠补充</i></blockquote>`
@@ -378,7 +378,7 @@ mory_assistant/
 - 彩色按钮：`BUTTON_STYLE_ENABLED=true` 时读取 `button_style` / `button_emoji_id`
 - 用户画像：私聊定点播报可根据 `user_profile` 做 VIP/高等级/兴趣个性化
 - 模板轻变化：`BROADCAST_TEMPLATE_VARIATION_ENABLED=true` 时保留旧模板正文和按钮，只在折叠补充里每日追加轻变化句
-- 静默发送：`night_whisper` 配置 `silent: true`，深夜不打扰
+- 静默发送：`night_hook` 配置 `silent: true`，深夜不打扰
 - 防重复：TaskTransactionManager 原子抢占，每日每播报只执行一次
 - 问候话术池兜底：AI 生成失败时从 `_GREETING_FALLBACK_POOL` 随机选择，避免重复
 
@@ -418,6 +418,7 @@ mory_assistant/
 | 版本 | 关键内容 |
 |------|---------|
 | v5.31.2 | Token 消耗暗病排查 + Loop 监控轮 1-20 多智能体联排暗病搜索 84 处修复：① 高频任务 task_log 死锁（task_key 加时间窗口后缀）② LLMCostGuard 成本熔断器启用（用户1h $1.0/全局1h $5.0）③ token_usage 记录到 data/router_usage.db（12列schema）④ WriteQueue rowcount 丢失导致所有定时任务失效 ⑤ LLMCostGuard flush_to_db 从未被调用修复 ⑥ RLock 替代 Lock 解决 add_points 重入死锁 ⑦ get_user_profile 重复定义重命名为 get_user_persona_profile ⑧ 原子 UPDATE 防止 TOCTOU 余额检查竞态 ⑨ 腾讯云 Lighthouse 监控接入 ⑩ 独立看门狗 scripts/vps_watchdog.py ⑪ _CST 时区常量全域覆盖（累计修复 40+ 处 datetime.now() 时区错位）⑫ shop.py:126 P0 SQL 列名错误修复（兑换功能 100% 失败）⑬ health_api.py 3 处 datetime.now(_CST) 残留修复 ⑭ 12 处静默吞异常升级日志级别 ⑮ 3 处幂等添加列加注释 ⑯ shop.py TOCTOU 漏洞修复（原子 SQL + rowcount 检查防积分负数）⑰ emergency_ban_ad_user.py 时区+类型不一致修复 ⑱ bot_initializer/pinyin_util 静默吞异常修复 ⑲ dashboard/app.py sqlite3.connect finally 修复。162 委托方法远程验证注册成功 |
+| v5.31.2 (审计整改) | 项目自检与架构优化审计 12 Task + 4 Bug + 6 P1 暗病 + 4 P2 暗病全部修复完成。新增防御能力：① LLM 全局 24h 熔断（第 6 道闸，超额自动降级 llm_light 24h）② executemany 批量化（enqueue_batch + _FakeCursorForBatch，10x 性能修复）③ sha256 密码哈希双模式（DASHBOARD_PASSWORD_HASH，hmac.compare_digest 防时序攻击）④ Alembic 环境变量覆盖链（DATABASE_URL > MORY_DB_PATH > 默认 mory.db）⑤ Session 滑动续期（GET 刷新 30 分钟，POST 不刷新）⑥ SSH Key 优先认证（VPS_SSH_KEY 统一命名，向后兼容 VPS_SSH_KEY_PATH）⑦ WriteQueue 死锁检测（Worker 内调用 enqueue_and_wait 自动抛 RuntimeError）⑧ _alerted_jobs 持久化到 system_states 表（重启不丢告警状态）⑨ scheduler_monitor _CRITICAL_JOBS 修正（3 个错误 broadcast job_id + 删除 3 个不存在 job_id + 补加 2 个真实任务）⑩ orphan_api.py logger 未定义修复。165 委托方法验证通过，零暗病、零下一步计划 |
 | v5.31.1 | 四层智能体联排防御体系根治 _REPO_METHOD_MAP 漏注册沉默失败：L1启动自检(_self_check_repo_methods) + L2__getattr__ CRITICAL+re-raise + L3 scripts/verify_db_methods.py 部署前门禁 + L4 core/scheduler_monitor.py:check_critical_jobs_health 调度健康监控。162 委托方法注册验证 |
 | v5.30.3 | 多智能体协作诊断+彻底修复：① `core/database.py` `_REPO_METHOD_MAP` 补注册 30 方法（ab_test 17+user 8+social 5，消除 A/B 测试持久化/增长遥测/用户画像/购物车恢复静默失效）② 服务器 `.env` `VPS_HOST` 错指 TokenLab VPS 修正 ③ `config.json` 属主修复 ④ 删除硬编码密码文件 `query_final.py` / `query_extra.py` ⑤ `core/ai_engine.py` 7 处 `except: pass` 静默吞错改 `logger.debug`。共 158 方法远程验证注册成功 |
 | v5.30.1 | 修复 `_REPO_METHOD_MAP` 注册缺失（snapshot_message/mark_message_deleted/get_user_messages/get_user_undeleted_messages 4 方法），message_snapshots 30+ 版本空表根因消除 |

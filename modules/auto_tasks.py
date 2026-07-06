@@ -1811,6 +1811,18 @@ def _job_burn_orphan(rm):
         # 4. 保留Phase1清理，Phase2改为仅记录日志不执行探测
         logger.info("✅ [Phase2] 已跳过forward探测（v4.5.35废弃），依赖Phase1 TTL清理")
 
+        # ── Phase 3: [Bug-03 修复] channel_tracking 孤儿兜底清扫 ──
+        # Phase1 通过 get_expired_channel_messages + delete_bot_message_records 清理，
+        # 但当查询失败、LIMIT 截断或消息已被 Telegram 删除时，channel_tracking 表仍会残留。
+        # 这里按 posted_at 时间戳批量删除超过 47 小时的孤儿记录，作为兜底。
+        try:
+            if hasattr(rm.db, "cleanup_channel_tracking_orphan"):
+                deleted_ct = rm.db.cleanup_channel_tracking_orphan(max_age_hours=47)
+                if deleted_ct > 0:
+                    logger.info(f"🧹 [Phase3] channel_tracking 兜底清理：{deleted_ct} 条孤儿记录")
+        except Exception as ct_err:
+            logger.warning(f"🧹 [Phase3] channel_tracking 兜底清理失败: {ct_err}")
+
     except Exception as e:
         logger.error(f"❌ 阅后即焚孤儿清理失败：{e}", exc_info=True)
         # [Trae CN v5.12.0] 失败时也写日志
@@ -2427,7 +2439,8 @@ def _send_daily_group_report(rm, admin_id: int, today: str, yesterday: str, gid:
             try:
                 with rm.locked('bot'):
                     total_members = rm.bot.get_chat_member_count(gid)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"auto_task 获取群成员数失败，降级用DB缓存: {e}")
                 total_members = rm.db.get_group_total_members_latest(gid)
         active_today = rm.db.get_daily_active_users(today, gid)
         row = rm.db.conn.execute(
@@ -2653,7 +2666,8 @@ def _send_daily_channel_report(rm, admin_id: int, today: str, trend_fn):
         try:
             with rm.locked('bot'):
                 total_members_group = rm.bot.get_chat_member_count(gid)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"auto_task 获取群成员数失败，降级用DB缓存: {e}")
             total_members_group = rm.db.get_group_total_members_latest(gid)
     activity_rate = (active_today / max(total_members_group, 1)) * 100
 
@@ -2732,7 +2746,8 @@ def _send_weekly_group_report(rm, admin_id: int, today: str, week_ago: str, two_
         try:
             with rm.locked('bot'):
                 total_members = rm.bot.get_chat_member_count(gid)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"auto_task 获取群成员数失败，降级用DB缓存: {e}")
             total_members = rm.db.get_group_total_members_latest(gid)
 
     def pct(cur, prev):
@@ -2958,7 +2973,8 @@ def _send_monthly_group_report(rm, admin_id: int, today: str, month_start: str, 
         try:
             with rm.locked('bot'):
                 total_members = rm.bot.get_chat_member_count(gid)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"auto_task 获取群成员数失败，降级用DB缓存: {e}")
             total_members = rm.db.get_group_total_members_latest(gid)
 
     def pct(cur, prev):
@@ -3483,7 +3499,8 @@ seed={convert_seed}"""
                 convert_hint = rm.ai.ask(convert_prompt, mode="convert_hook", seed=convert_seed)
                 if not convert_hint or len(convert_hint) < 10:
                     convert_hint = _get_fallback_hook(tarot['theme'], uname)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"auto_task AI转换钩子失败，降级用兜底文案: {e}")
                 convert_hint = _get_fallback_hook(tarot['theme'], uname)
 
             short_mode = random.random() < 0.4
@@ -3595,8 +3612,8 @@ def _do_backup(db_file: str):
                 try:
                     os.remove(old)
                     removed += 1
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.debug(f"auto_task 删除旧备份跳过: {e}")
         logger.info(f"💾 备份完成：{dest}（保留 {len(keep)} 份，清理 {removed} 份）")
     except Exception as e:
         logger.error(f"备份失败：{e}")
@@ -3783,7 +3800,8 @@ def _job_startup_history_cleanup(rm):
             for cid in chat_ids:
                 try:
                     msgs = db.get_user_messages(uid, cid, limit=500)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"auto_task 获取用户消息失败，降级空列表: {e}")
                     msgs = []
                 for mm in msgs:
                     if mm.get("deleted"): continue
@@ -3848,7 +3866,8 @@ def _job_startup_member_scan(rm):
                     admins = bot.get_chat_administrators(chat_id)
                     admin_ids = {a.user.id for a in admins}
                     admin_ids.add(bot.get_me().id)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"auto_task 获取管理员失败，降级空集合: {e}")
                     admin_ids = set()
                     try:
                         admin_ids.add(bot.get_me().id)
@@ -3898,7 +3917,8 @@ def _job_startup_member_scan(rm):
                         user = member.user
                         if user.is_bot:
                             continue
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"auto_task 扫描成员跳过: {e}")
                         continue
 
                     total_scanned += 1
@@ -4777,7 +4797,7 @@ def _start_with_apscheduler(rm):
     def _job_critical_jobs_health_check():
         try:
             from core.scheduler_monitor import check_critical_jobs_health
-            check_critical_jobs_health(scheduler, rm.config)
+            check_critical_jobs_health(scheduler, rm.config, db=db)
         except Exception as e:
             logger.debug(f"关键任务健康检查异常：{e}")
     try:

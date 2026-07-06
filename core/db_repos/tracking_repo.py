@@ -221,6 +221,42 @@ class TrackingRepo:
             )
             self.conn.commit()
 
+    def cleanup_channel_tracking_orphan(self, max_age_hours: int = 47) -> int:
+        """[Bug-03 修复] 清理超过 max_age_hours 的 channel_tracking 孤儿记录。
+
+        之前 _job_burn_orphan 只清 reply_tracking，漏清 channel_tracking，
+        导致 47 小时内残留主动消息（新闻/问候/定点播报等）。
+        delete_bot_message_records 已能清理单条记录，但当 get_expired_channel_messages
+        查询失败、LIMIT 截断或消息已被 Telegram 删除时，channel_tracking 表仍会残留。
+
+        本方法作为兜底清扫：按 posted_at 时间戳批量删除超期记录，不依赖
+        get_expired_channel_messages 的查询结果。
+
+        Args:
+            max_age_hours: 最大保留小时数，默认 47（覆盖 2 天的播报周期）
+
+        Returns:
+            删除的行数
+        """
+        cutoff = int(time.time()) - max_age_hours * 3600
+        try:
+            with self.lock:
+                cur = self.conn.execute(
+                    "DELETE FROM channel_tracking WHERE posted_at < ?",
+                    (cutoff,),
+                )
+                self.conn.commit()
+                deleted = cur.rowcount or 0
+                if deleted > 0:
+                    logger.info(
+                        f"🧹 [Bug-03] channel_tracking 孤儿清理：删除 {deleted} 条 "
+                        f"(posted_at < {cutoff}, max_age={max_age_hours}h)"
+                    )
+                return deleted
+        except Exception as e:
+            logger.error(f"🧹 [Bug-03] channel_tracking 孤儿清理失败: {e}")
+            return 0
+
     def get_tracking_stats(self):
         """获取追踪统计"""
         c = self.conn.cursor()
