@@ -58,11 +58,11 @@ SCAN_DIRS = ["core", "modules", "dashboard", "scripts", "tasks"]  # [v5.31.2] �
 ROOT_FILES = ["main.py", "version.py", "windows_helper.py", "start_dashboard.py"]
 
 # 需要上传到 /etc/systemd/system/ 的服务文件
+# [v5.31.2 整改] 只保留双核心服务；mory-media-* 是引用不存在的 `main.py --media`
+# 参数的坏桩（启动必崩），已从仓库删除，不再部署。
 SERVICE_FILES = [
     "config/mory-dashboard.service",
     "config/mory-assistant.service",
-    "config/mory-media-assistant.service",
-    "config/mory-media-dashboard.service",
 ]
 
 
