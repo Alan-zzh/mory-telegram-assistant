@@ -35,7 +35,7 @@ v5.31.2（2026-07-06）
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=91
-core_py=73
+core_py=74
 job_count=53
 db_tables=108
 dashboard_routes=157

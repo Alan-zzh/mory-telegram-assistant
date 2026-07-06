@@ -1,6 +1,6 @@
 # 整改执行台账 (EXECUTION_LOG)
 
-> 任务来源：根目录 `PROJECT_AUDIT_REPORT.md` 路线图 P0+P1（本轮仅做 P0 + P1 + 清理/迁移 + 文档治理；P2 留下一轮）
+> 任务来源：根目录 `PROJECT_AUDIT_REPORT.md` 路线图 P0+P1+P2（首轮做 P0+P1+清理/迁移+文档治理，收尾轮做全部 P2）
 > 基线 commit：`e20abf1`（chore: 整改前基线）
 > 台账创建：2026-07-07
 > 格式：`任务ID | 状态 | 证据 | 备注`（证据均为真实路径/命令输出，禁止编造）
@@ -17,7 +17,7 @@
 | Phase 3 | 清理/隔离/迁移 | ✅ 完成 | `_quarantine_20260707/` + 根残留清空 |
 | Phase 4 | P1 修复 | ✅ 完成 | `scripts/doc_consistency.py` + 归档 + 迁移审计报告 |
 | Phase 5 | 重建六份根文档 | ✅ 完成 | 6 份文档 + 防失真 METRICS 块（自检通过） |
-| Phase 6 | 验收报告 + 最终 commit | 🔄 进行中 | 本台账 + `EXECUTION_REPORT.md` |
+| Phase 6 | 验收报告 + 最终 commit + P2 收尾 | ✅ 完成 | 本台账 + `EXECUTION_REPORT.md` |
 
 ---
 
@@ -39,22 +39,22 @@
 | PH5-CHANGELOG | ✅ 完成 | `CHANGELOG.md`（20 行，≤400） | 一行式 + 旧日志归档 |
 | PH5-AI_DEBUG | ✅ 完成 | `AI_DEBUG_HISTORY.md`（47 行，≤300） | 去重 6 条反复暗病 |
 | PH5-README | ✅ 完成 | `README.md`（56 行） | 按当前真实状态重写 |
-| PH6-验收 | 🔄 进行中 | `EXECUTION_REPORT.md`（待生成） | 全量复检 + 最终 commit |
+| PH6-验收 | ✅ 完成 | `EXECUTION_REPORT.md` | 全量复检 + 最终 commit + P2 收尾 |
 
----
+### 第二轮 P2 执行（2026-07-07 收尾，已全完成）
 
-## 下一轮待办（P2，本轮未做）
+| 任务ID | 状态 | 证据 | 备注 |
+|--------|------|------|------|
+| ISSUE-002 | ✅ 完成 | `core/structured_logger.py` 删 get_struct_logger/clear_context；`core/pinyin_util.py` 删 has_pinyin_leak | 全仓 0 引用 |
+| ISSUE-003 | ✅ 完成 | 新增 `core/handlers/utility_dispatch.py`；两 handler 改为 `dispatch_utility_commands` 调用 | py_compile 通过；19 命令分支仅存于公共模块 |
+| ISSUE-005 | ✅ 已消解 | 重建后 README 已无"34 拦截点"；仅残留在归档旧文档/审计报告 | 无需改动 |
+| ISSUE-006 | ✅ 误报 | 实测 config.json.example MODE_ROUTING=25；文档"25 mode"准确 | 审计误比对 config 配置项与 model_router 内部映射 |
+| ISSUE-007 | ✅ 完成 | `docs/technical/capability-matrix.md` 两处"每小时"→"每5分钟" | 与 cron minute=*/5 一致 |
+| ISSUE-010 | ✅ 完成 | `core/profile_learner.py` 新增 `STICKER_DIMENSION_ENABLED=False` | sticker 维度显式标注未启用 |
+| ISSUE-011 | ✅ 完成 | `scripts/scan_group.py` 硬编码 api_hash 提升为命名常量 | 脚本为 gitignore，本地修正不进提交 |
+| ISSUE-012 | ✅ 完成 | 新增 `docs/plans/remediation_roadmap.md` | 补齐计划文档 |
 
-| 任务ID | 内容 | 备注 |
-|--------|------|------|
-| ISSUE-002 | 删除死代码 `structured_logger.py:104/150`、`pinyin_util.py:98` | 低风险，下一轮 |
-| ISSUE-003 | 合并重复 handler 路由 `module_handlers.py:227-275` vs `command_handlers.py:1349-1394` | 需回归测试 |
-| ISSUE-005 | 文档数字修正：34 拦截 | 与 METRICS 块对齐后自然消解 |
-| ISSUE-006 | 文档数字修正：25 模式 | 同上 |
-| ISSUE-007 | 文档数字修正：hourly-cart-recovery | 同上 |
-| ISSUE-010 | 贴纸尺寸 | 下一轮 |
-| ISSUE-011 | api_hash 纳入 config | 下一轮 |
-| ISSUE-012 | plans 文档 | 下一轮 |
+> 全程由 `scripts/doc_consistency.py` 门禁守护：P2 新增 `utility_dispatch.py` 后该脚本即时拦出 core_py 73→74 偏移，已同步 `project_snapshot.md` 与 `README.md`。
 
 ---
 

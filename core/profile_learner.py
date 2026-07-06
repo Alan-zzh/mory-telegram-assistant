@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 # CST 时区常量（VPS 为 UTC，统一使用 CST 避免时间错位）
 _CST = timezone(timedelta(hours=8))
 
+# 画像维度开关：sticker_ratio 维度当前未持久化（仅内存统计），显式标注为未启用，避免误判为遗漏功能。
+STICKER_DIMENSION_ENABLED = False
+
 # 兴趣关键词映射表
 INTEREST_KEYWORDS = {
     "tarot": [r"塔罗", r"tarot", r"占卜", r"牌阵", r"牌灵", r"塔罗牌", r"大阿卡纳", r"小阿卡纳", r"愚者", r"魔术师", r"女祭司"],
@@ -237,8 +240,10 @@ class ProfileLearner:
             tags.append("vip_intent")
         if profile.get("resistance_idx", 0.5) > 0.7:
             tags.append("resistant")
-        sticker_count = 0  # sticker_ratio 暂不入库，仅内存
-        if sticker_count > 0:
+        # 画像维度：sticker_ratio 当前未启用（仅内存统计、未持久化）
+        # STICKER_DIMENSION_ENABLED=False 显式标注为未启用维度，避免误判为遗漏功能。
+        sticker_count = 0
+        if STICKER_DIMENSION_ENABLED and sticker_count > 0:
             tags.append("heavy_sticker")
         return tags
 

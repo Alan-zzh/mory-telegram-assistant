@@ -93,16 +93,18 @@
 
 ---
 
-## 7. 下一轮待办（P2，本轮未做）
+## 7. 第二轮 P2 执行（2026-07-07 收尾，已全完成）
 
-| 任务ID | 内容 | 备注 |
-|--------|------|------|
-| ISSUE-002 | 删除死代码 `structured_logger.py:104/150`、`pinyin_util.py:98` | 低风险 |
-| ISSUE-003 | 合并重复 handler 路由 `module_handlers.py:227-275` vs `command_handlers.py:1349-1394` | 需回归测试 |
-| ISSUE-005/006/007 | 文档数字修正（34 拦截 / 25 模式 / hourly-cart-recovery） | 与 METRICS 块对齐后自然消解 |
-| ISSUE-010 | 贴纸尺寸 | — |
-| ISSUE-011 | api_hash 纳入 config | — |
-| ISSUE-012 | plans 文档 | — |
+| 任务ID | 状态 | 证据 | 备注 |
+|--------|------|------|------|
+| ISSUE-002 | ✅ | `core/structured_logger.py` 删 get_struct_logger/clear_context；`core/pinyin_util.py` 删 has_pinyin_leak | 全仓 0 引用 |
+| ISSUE-003 | ✅ | 新增 `core/handlers/utility_dispatch.py`；两 handler 改为调用 | py_compile 通过；19 命令分支仅存于公共模块 |
+| ISSUE-005 | ✅ 已消解 | 重建后 README 已无"34 拦截点"，仅残留在归档旧文档/审计报告 | 无需改动 |
+| ISSUE-006 | ✅ 误报 | 实测 config.json.example MODE_ROUTING=25；文档"25 mode"准确 | 审计误比对 config 配置项与 model_router 内部映射 |
+| ISSUE-007 | ✅ | `docs/technical/capability-matrix.md` 两处"每小时"→"每5分钟" | 与 cron minute=*/5 一致 |
+| ISSUE-010 | ✅ | `core/profile_learner.py` 新增 `STICKER_DIMENSION_ENABLED=False` | sticker 维度显式标注未启用 |
+| ISSUE-011 | ✅ | `scripts/scan_group.py` 硬编码 api_hash 提升为命名常量 | 脚本为 gitignore，本地修正不进提交 |
+| ISSUE-012 | ✅ | 新增 `docs/plans/remediation_roadmap.md` | 补齐计划文档 |
 
 ---
 
@@ -116,7 +118,7 @@
 
 ## 9. 验收结论
 
-本轮整改已完成全部 P0 + P1 任务及文档治理：根目录从 8593 行膨胀文档压缩至 289 行并全部达标；建立文档数字与代码一致的防失真门禁（`scripts/doc_consistency.py` 已通过）；清理 9 项垃圾至隔离区、删除根缓存、归档 6 份旧文档并迁移审计报告。无阻塞、无取消项。剩余 8 项 P2 任务留待下一轮。
+本轮整改已完成全部 P0 + P1 任务及文档治理，并在收尾轮完成全部 P2 任务（死代码删除、重复路由抽取、文档数字修正、计划文档补齐）。根目录从 8593 行膨胀文档压缩至 289 行并全部达标；建立文档数字与代码一致的防失真门禁（`scripts/doc_consistency.py` 已通过，并在 P2 中成功拦出新增文件导致的 core_py 指标偏移，已同步修正）；清理 9 项垃圾至隔离区、删除根缓存、归档 6 份旧文档并迁移审计报告。无阻塞、无取消项。
 
 ---
 
@@ -128,3 +130,4 @@
 | `a658f2a` | Phase3+4 清理隔离区 + 自检脚本 + 归档迁移 |
 | `48d2c91` | Phase5 重建六份根文档 |
 | `（最终）` | Phase6 验收报告 + 执行台账 |
+| `（P2）` | P2 整改：死代码 + 重复路由抽取 + 文档修正 + 计划文档 |

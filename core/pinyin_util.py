@@ -95,33 +95,4 @@ def text_to_pinyin_silent(text: str) -> str:
     return " ".join(result)
 
 
-def has_pinyin_leak(text: str, leak_patterns: list = None) -> bool:
-    """
-    检测文本拼音中是否包含穿帮词。
 
-    Args:
-        text: 待检测文本
-        leak_patterns: 穿帮词拼音列表，默认使用内置列表
-
-    Returns:
-        True 检测到穿帮，False 安全
-    """
-    if not text:
-        return False
-
-    if leak_patterns is None:
-        leak_patterns = [
-            'wo shi ai', 'wo shi a i',
-            'ren gong zhi neng',
-            'zuo wei ai', 'zuo wei a i',
-            'zuo wei mo xing', 'wo shi mo xing',
-            'wo shi ge cheng xu', 'zuo wei zhu shou',
-            'wo shi zhu shou', 'wo shi ge ji qi ren',
-            'ji qi ren', 'zuo wei ge cheng xu',
-        ]
-
-    pinyin_text = text_to_pinyin_silent(text).lower()
-    for pat in leak_patterns:
-        if pat in pinyin_text:
-            return True
-    return False

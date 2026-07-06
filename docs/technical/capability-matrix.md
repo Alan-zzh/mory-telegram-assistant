@@ -455,7 +455,7 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 | 5 | **`lottery.py`** | 抽奖（定时开奖 + 即开即得） | `LOTTERY_CONFIG{enabled=false}` | `lotteries` / `lottery_participants` / `lottery_config` |
 | 6 | **`blind_box.py`** | 盲盒/扭蛋（积分消耗型） | `BLIND_BOX_CONFIG{cost=50}` | `blind_box_prizes` / `blind_box_config` |
 | 7 | **`lucky_wheel.py`** | 幸运转盘（每日免费 1 次 + 积分再玩） | `LUCKY_WHEEL_CONFIG{cost=30, free_spins=1}` | `lucky_wheel_results` / `lucky_wheel_config` |
-| 8 | **`auto_tasks._job_cart_recovery`** | 购物车挽回（每小时 AI 个性化私信） | （无独立配置，挂 auto_tasks 调度） | `cart_recovery` / `conversion_events` |
+| 8 | **`auto_tasks._job_cart_recovery`** | 购物车挽回（每5分钟 AI 个性化私信） | （无独立配置，挂 auto_tasks 调度） | `cart_recovery` / `conversion_events` |
 
 **实施注意**：
 - 7 大模块全部**默认关闭**（`config.get('XXX_CONFIG', {}).get('enabled', False)`）——Dashboard 手动开启。
@@ -1078,7 +1078,7 @@ P0(新成员) → P0.5(验证码) → P0.6(设置面板) → P0.7(私聊连接)
 |------|------|-----------|
 | 1280 | `_job_wakeup_check` | 叫醒服务检查（订阅到期/未签到用户激活） |
 | 1468 | `_job_reactivate` | 用户重新激活（沉默 7/15/30 天分层触达） |
-| 1535 | `_job_cart_recovery` | **购物车挽回（每小时 AI 个性化消息，硬核商业闭环）** |
+| 1535 | `_job_cart_recovery` | **购物车挽回（每5分钟 AI 个性化消息，硬核商业闭环）** |
 | 1564 | `_job_leak` | 漏斗引导（漏斗各阶段用户差异化推送） |
 | 2822 | `_job_tarot_flirt` | 塔罗撩拨（塔罗场景下软引导至 channel bot） |
 | 1299 | `_job_burn_probe` | 烧号探测（疑似注册即弃用账号打标） |

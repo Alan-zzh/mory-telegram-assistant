@@ -101,20 +101,6 @@ def init_structlog(
     _initialized = True
 
 
-def get_struct_logger(name: str) -> structlog.stdlib.BoundLogger:
-    """
-    获取结构化 logger
-
-    Args:
-        name: logger 名称（通常为模块名）
-
-    Returns:
-        绑定了 logger_name 的 BoundLogger 实例
-    """
-    logger = structlog.get_logger(name)
-    return logger.bind(logger_name=name)
-
-
 def bind_context(
     request_id: Optional[str] = None,
     user_id: Optional[int] = None,
@@ -147,14 +133,7 @@ def bind_context(
     structlog.contextvars.bind_contextvars(**ctx)
 
 
-def clear_context() -> None:
-    """清除当前协程/线程的绑定上下文"""
-    structlog.contextvars.clear_contextvars()
-
-
 __all__ = [
     "init_structlog",
-    "get_struct_logger",
     "bind_context",
-    "clear_context",
 ]
