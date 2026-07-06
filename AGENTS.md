@@ -32,11 +32,13 @@
 6. `project_snapshot.md` → 当前真实状态
 7. `docs/technical/` → 按需查技术细节
 
-### 日常开发收工三件套（同一会话内完成）
-1. `CHANGELOG.md` 追加一行：`日期 | 类型 | 一句话 | 涉及文件`。
-2. `project_snapshot.md` 覆盖更新对应模块状态区块。
-3. 有新教训则按模板（问题 | 根因 | 解法 | 预防）追加 `AI_DEBUG_HISTORY.md` 一条。
-禁止"下次再补"。
+### 日常开发收工六件套（同一会话内完成，禁止"下次再补"）
+根文档仅限六文档，须保持同步：AGENTS.md / VERSION.md / CHANGELOG.md / AI_DEBUG_HISTORY.md / project_snapshot.md / README.md。
+1. `CHANGELOG.md` 追加：`日期 | 类型 | 一句话 | 涉及文件`。
+2. `project_snapshot.md` 覆盖更新对应模块状态区块（METRICS 与代码一致）。
+3. `AI_DEBUG_HISTORY.md` 有新教训则按（问题 | 根因 | 解法 | 预防）追加。
+4. `VERSION.md` 版本/阶段有变则 bump；`AGENTS.md` 规则有变则同步；`README.md` 入口有变则同步。
+5. 完成后跑 `python scripts/doc_consistency.py` 确认通过。
 
 ### 验证门禁
 - 任何新代码改动，合并前至少两条证据（文件路径+diff 摘要 / 命令输出 / 测试结果，三者至少其二）。
@@ -63,6 +65,12 @@
 - 禁止 root SSH 部署（统一 `ubuntu`）；禁止 `start.sh` / `nohup` / `pm2`（systemd 唯一）。
 - 禁止 `.env` / 密钥提交 Git。
 - 部署后必须验证：`systemctl status` 双 active + `curl localhost:6616/api/health`。
+
+### 运维 Runbook（变更 / 部署 / 排查前必读）
+- 上线前状态核实：`docs/technical/runbook-vps-recon.md`（只读探针，禁止本地推断）。
+- 改动后验证 + 收工六件套：`docs/technical/runbook-ship-gate.md`。
+- 删除 / 重构前引用清扫：`docs/technical/runbook-safe-change.md`。
+- 架构真相（媒体 Bot 在 `/opt/moryfansbot`，非本仓库）：`docs/technical/architecture-truth.md`。
 
 ### 广告治理
 - 不踢人：永久禁言 + 删除消息 + `global_blacklist` + 历史清理。

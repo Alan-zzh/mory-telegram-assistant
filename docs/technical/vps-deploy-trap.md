@@ -138,19 +138,22 @@ Mory 小助理部署到腾讯云硅谷 VPS（43.159.168.175, ubuntu@22.04）。�
   DASHBOARD_HTTPS=false  # 不用 HTTPS 时
   ```
 
-#### 陷阱 7：误杀 mory_media_assistant 进程（多 Bot 混淆）
+#### 陷阱 7：多 Bot 混淆误杀进程（路径精确匹配）
 
-- **现象**：`pkill -f main.py` 误杀了另一个项目 `mory_media_assistant`
-- **根因**：VPS 上运行多个 Bot（`mory_assistant` + `mory_media_assistant`），路径前缀相似
+- **现象**：`pkill -f main.py` 误杀了同机其他 Bot 进程。
+- **架构真相（2026-07-07 修订）**：VPS 上除本仓库 `mory_assistant`（`/home/ubuntu/mory_assistant`，双核心 `mory-assistant`+`mory-dashboard`）外，媒体/宣发 Bot 是**独立项目** `/opt/moryfansbot`（`bot.py` + `web_admin`），**不在本仓库**，且读取本仓库 `mory.db` 的 `promotions` 表做定时广播。本仓库**不存在** `mory_media_assistant` 目录/服务（该名称是历史过期描述，详见 `docs/technical/architecture-truth.md`）。
+- **根因**：同机多 Bot 路径前缀相似（`/home/ubuntu/mory_assistant` vs `/opt/moryfansbot`），模糊匹配会跨项目误杀。
 - **诊断**：
   ```bash
-  # 精确匹配完整路径
-  ps -ef | grep '/home/ubuntu/mory_assistant/main.py' | grep -v grep | grep -v mory_media
+  # 精确匹配本仓库主进程
+  ps -ef | grep '/home/ubuntu/mory_assistant/main.py' | grep -v grep
+  # 独立宣发 Bot（另一项目，勿动）
+  ps -ef | grep '/opt/moryfansbot' | grep -v grep
   ```
 - **修复**：
-  - 操作 mory_assistant 时**必须精确匹配完整路径**
-  - 部署脚本 `deploy_vps.py` 已自动处理进程区分
-  - 禁止用模糊 `pkill -f main.py`
+  - 操作 `mory_assistant` 时**必须精确匹配完整路径**，禁止模糊 `pkill -f main.py`。
+  - `/opt/moryfansbot` 是独立部署，排查/重启须到该目录，不要在本仓库动手。
+  - 部署脚本 `deploy_vps.py` 只管本仓库双核心服务，不涉及 `/opt/moryfansbot`。
 
 #### 陷阱 8：依赖缺失
 

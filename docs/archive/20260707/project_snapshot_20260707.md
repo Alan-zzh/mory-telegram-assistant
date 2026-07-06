@@ -407,7 +407,7 @@ mory_assistant/
 ## 7. 多项目同机边界（重要）
 
 - 服务器上可能同时运行其他项目/其他机器人。排查本项目时，**只操作本项目目录与本项目 systemd 服务**，不要"看到 409 就乱杀进程"。
-- 目前同机存在 `mory_media_assistant`（独立宣发号），它会读取主项目 `mory.db` 的 `promotions` 表做定时广播：主项目侧务必避免长事务/长时间独占锁，尽量保持写事务短小，避免把库锁死影响宣发号读取。
+- 同机存在独立宣发 Bot（项目 `/opt/moryfansbot`，`bot.py` + `web_admin`），它读取主项目 `mory.db` 的 `promotions` 表做定时广播；该 Bot **不在本仓库**，本仓库无 `mory_media_assistant` 目录（历史过期描述，详见 `docs/technical/architecture-truth.md`）。主项目侧务必避免长事务/长时间独占锁，尽量保持写事务短小，避免把库锁死影响宣发号读取。
 
 ---
 
