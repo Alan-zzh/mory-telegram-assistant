@@ -50,9 +50,10 @@ logger = get_logger("auto_tasks")
 
 class _TaskAbort(Exception):
     """任务中止（非异常，但不应确认完成，需释放数据库锁）"""
-    def __init__(self, message: str, expected: bool = False):
+    def __init__(self, message: str, expected: bool = False, context: dict = None):
         super().__init__(message)
         self.expected = expected
+        self.context = context or {}
 
 # 尝试导入 APScheduler（可选依赖，未安装则回退到旧版 while True）
 try:
@@ -720,8 +721,33 @@ def report_fault(category: str, detail: str, severity: str = "⚠️", extra: st
     """全局故障上报函数（供其他模块调用）"""
     _fault_reporter.report(category, detail, severity, extra)
 
+
 # 时区：VPS默认UTC，强制用北京时间(UTC+8)
 _CST = timezone(timedelta(hours=8))
+
+
+def _handle_task_abort(task_name: str, abort: _TaskAbort, time_desc: str = ""):
+    """统一处理任务中止异常，区分预期和非预期中止
+
+    Args:
+        task_name: 任务名称
+        abort: _TaskAbort 异常对象
+        time_desc: 时间描述（如"早间"、"午间"等，可选）
+    """
+    reason = str(abort)
+    prefix = f"{time_desc} " if time_desc else ""
+    if abort.expected:
+        logger.info(f"ℹ️ [{task_name}] {prefix}任务正常中止：{reason}")
+    else:
+        logger.warning(f"⚠️ [{task_name}] {prefix}任务异常中止：{reason}")
+        try:
+            _fault_reporter.report(
+                f"{task_name}任务异常中止",
+                f"任务：{task_name}\n原因：{reason}\n时间描述：{time_desc or '无'}",
+                "⚠️"
+            )
+        except Exception as e:
+            logger.debug(f"告警发送失败: {e}")
 
 
 def _get_scheduler():
@@ -1215,8 +1241,8 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
 
             _record_abort(task_name, "新闻发送失败")
             raise _TaskAbort("新闻发送失败")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort(task_name, e, time_desc)
     except Exception as e:
         logger.error(f"{time_desc}新闻播报失败：{e}")
         _retry_task(rm, lambda rm: _execute_news_task(rm, task_name, time_desc), task_name)
@@ -1531,8 +1557,8 @@ def _job_greeting_morning(rm):
                     logger.warning(f"☀️ 早安发送到群 {gid} 失败: {e}")
             if not sent_any:
                 raise _TaskAbort("早安全部群发送失败")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("greeting_morning", e)
     except Exception as e:
         logger.error(f"早安问候失败：{e}")
         _retry_task(rm, _job_greeting_morning, "greeting_morning")
@@ -1577,8 +1603,8 @@ def _job_greeting_afternoon(rm):
                     logger.warning(f"🍃 午安发送到群 {gid} 失败: {e}")
             if not sent_any:
                 raise _TaskAbort("午安全部群发送失败")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("greeting_afternoon", e)
     except Exception as e:
         logger.error(f"午安问候失败：{e}")
         _retry_task(rm, _job_greeting_afternoon, "greeting_afternoon")
@@ -1623,8 +1649,8 @@ def _job_greeting_evening(rm):
                     logger.warning(f"🌙 晚安发送到群 {gid} 失败: {e}")
             if not sent_any:
                 raise _TaskAbort("晚安全部群发送失败")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("greeting_evening", e)
     except Exception as e:
         logger.error(f"晚安问候失败：{e}")
         _retry_task(rm, _job_greeting_evening, "greeting_evening")
@@ -1946,8 +1972,8 @@ def _job_reactivate(rm):
                             logger.warning(f"醋意挽回发送失败 uid={uid}：{e}")
             if sent_count == 0:
                 raise _TaskAbort("无发送目标", expected=True)
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("reactivate", e)
     except Exception as e:
         logger.error(f"醋意挽回失败：{e}")
 
@@ -2098,8 +2124,8 @@ def _job_cart_recovery(rm):
             else:
                 logger.info(f"🛒 购物车挽回本轮发送 {sent_count} 条")
 
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("cart_recovery", e)
     except Exception as e:
         logger.error(f"购物车挽回失败：{e}")
 
@@ -2152,8 +2178,8 @@ def _job_leak(rm):
                 except Exception as e:
                     logger.warning(f"背刺泄密发送失败：{e}")
             raise _TaskAbort("泄密发送失败")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("leak", e)
     except Exception as e:
         logger.error(f"背刺泄密失败：{e}")
         _retry_task(rm, _job_leak, "leak")
@@ -2281,8 +2307,8 @@ def _job_faq_distill(rm):
             else:
                 logger.info("📋 FAQ蒸馏完成：无新高频问题候选")
                 raise _TaskAbort("无新高频问题候选")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("faq_distill", e)
     except Exception as e:
         logger.error(f"FAQ蒸馏失败：{e}")
         _fault_reporter.report("FAQ蒸馏失败", str(e)[:200], "⚠️")
@@ -2375,8 +2401,8 @@ def _job_daily_report(rm):
             _send_daily_channel_report(rm, admin_id, today, trend)
 
             logger.info(f"✅ 每日数据报告已发送（群+频道）")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("daily_report", e)
     except Exception as e:
         logger.error(f"每日数据报告失败：{e}")
         _retry_task(rm, _job_daily_report, "daily_report")
@@ -2728,8 +2754,8 @@ def _job_weekly_report(rm):
             _send_weekly_channel_report(rm, admin_id, today, week_ago, week_ago_ts, now_ts)
 
             logger.info("✅ 每周数据报告已发送（群+频道）")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("weekly_report", e)
     except Exception as e:
         logger.error(f"每周数据报告失败：{e}")
         _retry_task(rm, _job_weekly_report, "weekly_report")
@@ -2955,8 +2981,8 @@ def _job_monthly_report(rm):
             _send_monthly_channel_report(rm, admin_id, today, month_start, prev_month_start)
 
             logger.info("✅ 每月数据报告已发送（群+频道）")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("monthly_report", e)
     except Exception as e:
         logger.error(f"每月数据报告失败：{e}")
         _retry_task(rm, _job_monthly_report, "monthly_report")
@@ -3550,8 +3576,8 @@ seed={convert_seed}"""
             except Exception as e:
                 logger.error(f"塔罗搭讪发送失败：{e}")
                 raise
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("tarot_flirt", e)
     except Exception as e:
         logger.error(f"塔罗搭讪任务失败：{e}")
 
@@ -3614,6 +3640,19 @@ def _do_backup(db_file: str):
                     removed += 1
                 except OSError as e:
                     logger.debug(f"auto_task 删除旧备份跳过: {e}")
+        # 【v5.31.x 优化】硬上限兜底：极端情况下（清理失败累积）限制总份数，防磁盘无限增长
+        MAX_BACKUPS = 60
+        remaining = sorted(glob.glob(os.path.join(backup_dir, "mory_backup_*.db")), key=os.path.getmtime)
+        extra_removed = 0
+        while len(remaining) > MAX_BACKUPS:
+            old = remaining.pop(0)
+            try:
+                os.remove(old)
+                extra_removed += 1
+            except OSError as e:
+                logger.debug(f"auto_task 硬上限删除旧备份跳过: {e}")
+                break
+        removed += extra_removed
         logger.info(f"💾 备份完成：{dest}（保留 {len(keep)} 份，清理 {removed} 份）")
     except Exception as e:
         logger.error(f"备份失败：{e}")
@@ -4014,8 +4053,8 @@ def _job_startup_member_scan(rm):
                 except Exception as e:
                     logger.debug(f"操作异常: {e}")
             logger.info(f"[启动扫描] 完成：扫描{len(group_ids)}群/{total_scanned}人，封禁{total_banned}人")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("startup_member_scan", e)
     except Exception as e:
         logger.error(f"启动成员扫描失败：{e}")
 
@@ -4184,8 +4223,8 @@ def _job_night_mode_start(rm):
                 start_night_mode(rm.bot, gid, rm.config)
             else:
                 raise _TaskAbort("GROUP_ID为0")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("night_mode_start", e)
     except Exception as e:
         logger.error(f"🌙 夜间模式开启失败: {e}")
 
@@ -4204,8 +4243,8 @@ def _job_night_mode_end(rm):
                 end_night_mode(rm.bot, gid, rm.config)
             else:
                 raise _TaskAbort("GROUP_ID为0")
-    except _TaskAbort:
-        pass
+    except _TaskAbort as e:
+        _handle_task_abort("night_mode_end", e)
     except Exception as e:
         logger.error(f"☀️ 夜间模式关闭失败: {e}")
 
@@ -4625,7 +4664,9 @@ def _start_with_apscheduler(rm):
     scheduler.add_job(_job_clean_relay_sessions, "interval", seconds=3600, args=[rm], id="clean_relay_sessions", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_reactivate, "cron", minute=5, args=[rm], id="reactivate", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_cart_recovery, "cron", minute="*/5", args=[rm], id="cart_recovery", max_instances=1, coalesce=True, misfire_grace_time=300)
-    scheduler.add_job(_job_backup, "cron", minute=15, args=[rm], id="backup", max_instances=1, coalesce=True, misfire_grace_time=300)
+    # 【v5.31.x 优化】备份由每小时 1 次降为每 6 小时 1 次（03:15/09:15/15:15/21:15），
+    # 配合 _do_backup 的 24h 内全保留 + 7 天每日 1 份策略，常态约 11 份≈29MB（原 ~31 份≈62MB）。
+    scheduler.add_job(_job_backup, "cron", hour="*/6", minute=15, args=[rm], id="backup", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_ttl_cleanup, "cron", minute=20, args=[rm], id="ttl_cleanup", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_save_config, "cron", minute=30, args=[rm], id="save_config", max_instances=1, coalesce=True, misfire_grace_time=300)
     scheduler.add_job(_job_channel_views, "cron", minute=25, args=[rm], id="channel_views", max_instances=1, coalesce=True, misfire_grace_time=300)

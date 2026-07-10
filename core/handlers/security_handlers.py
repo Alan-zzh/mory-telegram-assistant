@@ -148,6 +148,28 @@ def check_ad_detection(dctx) -> bool:
     if not dctx.is_group:
         return False
 
+    # 频道转发消息豁免：频道转发的消息由 anti_channel.py 统一处理，避免误判
+    # 配置 AD_EXEMPT_CHANNEL_FORWARDS=true 开启豁免（默认开启）
+    m = dctx.msg
+    CONFIG = dctx.ctx.config
+    if CONFIG.get("AD_EXEMPT_CHANNEL_FORWARDS", True):
+        try:
+            # 检测是否为频道转发消息
+            is_channel_forward = False
+            if hasattr(m, 'forward_origin') and m.forward_origin:
+                origin = m.forward_origin
+                if hasattr(origin, 'type') and origin.type == 'channel':
+                    is_channel_forward = True
+            if hasattr(m, 'forward_from_chat') and m.forward_from_chat:
+                if hasattr(m.forward_from_chat, 'type') and m.forward_from_chat.type == 'channel':
+                    is_channel_forward = True
+            
+            if is_channel_forward:
+                logger.debug(f"[AD] 频道转发消息跳过广告检测: uid={dctx.uid} chat_id={dctx.chat_id}")
+                return False
+        except Exception as e:
+            logger.debug(f"[AD] 频道转发检测异常: {e}")
+
     msg = dctx.text
     m = dctx.msg
     from modules.ad_detector import AdDetector

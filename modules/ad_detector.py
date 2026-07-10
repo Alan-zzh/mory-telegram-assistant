@@ -160,6 +160,9 @@ class AdDetector:
         self._load_rules(config)
         self._cas_cache = {}
         self._spb_cache = {}
+        # 【v5.31.x 优化】按 user_id 缓存但原无上限：活跃群长期运行会无界增长。
+        # 加容量上限，超出时淘汰最旧条目（dict 保序，next(iter) 即最旧）。
+        self._AD_CACHE_MAX = 2000
         self._load_tracking_from_db()
 
     @staticmethod
@@ -291,6 +294,8 @@ class AdDetector:
         except Exception:
             result = (False, "")
         self._cas_cache[user_id] = (result, now)
+        if len(self._cas_cache) > self._AD_CACHE_MAX:
+            self._cas_cache.pop(next(iter(self._cas_cache)))
         return result
 
     def _check_spb(self, user_id: int) -> tuple:
@@ -315,6 +320,8 @@ class AdDetector:
         except Exception:
             result = (0.0, False)
         self._spb_cache[user_id] = (result, now)
+        if len(self._spb_cache) > self._AD_CACHE_MAX:
+            self._spb_cache.pop(next(iter(self._spb_cache)))
         return result
 
     def _check_metadata(self, msg: str, message_meta: dict, bio_score: int, username_anomaly_score: int) -> tuple:
@@ -854,6 +861,32 @@ class AdDetector:
                     logger.info(f"[AD] 色情引流组合模式命中: {msg_clean[:80]}")
                     break
 
+        # [Puzan-OS] v5.31.3 新增：明确色情骚扰话术兜底（单条消息直接封禁）
+        # 覆盖聊天消息里常见的色情招嫖/引流黑话，如"水多多""看b吗""我的水"等
+        if not is_ad:
+            explicit_adult_patterns = [
+                r"\u6c34\u591a\u591a",  # 水多多
+                r"\u770b[b\u903c\u5c41]\u5417",  # 看b吗/看逼吗/看屁吗
+                r"\u60f3\u770b[\s\S]{0,3}[b\u903c\u5c41\u4e73]",  # 想看b/逼/屁/乳
+                r"\u89c6\u9891[\s\S]{0,3}\u770b[b\u903c]",  # 视频看b/逼
+                r"\u6211\u7684\u6c34[\s\S]{0,5}\u591a",  # 我的水...多
+                r"\u597d\u5927[\s\S]{0,5}\u597d\u75db",  # 好大...好痛
+                r"\u597d\u75db[\s\S]{0,5}\u54e5\u54e5",  # 好痛...哥哥
+                r"\u54e5\u54e5[\s\S]{0,8}\u6c34\u591a",  # 哥哥...水多
+                r"\u5b9d\u5b9d[\s\S]{0,8}\u6c34\u591a",  # 宝宝...水多
+                r"\u4e00\u5bf9\u4e00[\s\S]{0,8}\u89c6\u9891",  # 一对一视频
+                r"\u88f8\u804a",  # 裸聊
+            ]
+            for pat in explicit_adult_patterns:
+                if re.search(pat, msg_clean, re.IGNORECASE):
+                    is_ad = True
+                    action = "ban"
+                    total_score += 4
+                    matched_rules.append("明确色情骚扰话术兜底")
+                    reasons.append("内容命中: 色情骚扰话术(+4)")
+                    logger.info(f"[AD] 明确色情骚扰话术兜底命中: {msg_clean[:80]}")
+                    break
+
         if total_score >= threshold:
             is_ad = True
             if action != "ban":
@@ -939,9 +972,10 @@ class AdDetector:
         检测同一用户连续发送的多条消息是否构成广告模式
         
         检测规则：
-        1. 短时间内（5分钟）发送3条以上消息
+        1. 短时间内（15分钟）发送4条以上消息
         2. 消息内容相似度高（重复发送）
         3. 消息内容包含色情引流词组合
+        4. [Puzan-OS] v5.31.4 新增：慢速刷屏检测（相似意图消息，非完全重复）
         
         返回: {"is_spam": bool, "reason": str, "score": int, "messages": list}
         """
@@ -957,14 +991,15 @@ class AdDetector:
         
         now = datetime.now(timezone.utc)
         
-        # 检查5分钟内的消息
+        # [Puzan-OS] v5.31.4 优化：扩大时间窗口到15分钟，捕获慢速刷屏
+        # 原5分钟窗口太窄，3-4分钟间隔的广告会漏判
         recent_messages = []
         for msg in messages:
             msg_time = datetime.fromisoformat(msg.get("time", now.isoformat()))
             if msg_time.tzinfo is None:
                 msg_time = msg_time.replace(tzinfo=timezone.utc)
             elapsed = (now - msg_time).total_seconds() / 60
-            if elapsed <= 5:
+            if elapsed <= 15:
                 recent_messages.append(msg)
         
         if len(recent_messages) < 3:
@@ -984,7 +1019,7 @@ class AdDetector:
             }
         
         # 检测色情引流词组合
-        adult_keywords = ["上門", "粉嫩", "紧", "约", "全套", "特服", "小姐", "少妇"]
+        adult_keywords = ["上門", "粉嫩", "紧", "约", "全套", "特服", "小姐", "少妇", "水多多", "看b", "看逼", "看b吗", "我的水", "好痛", "好大", "哥哥", "一对一视频", "裸聊", "約炮"]
         hit_count = 0
         for text in msg_texts:
             for kw in adult_keywords:
@@ -1030,6 +1065,29 @@ class AdDetector:
                         "score": 5,
                         "messages": recent_messages
                     }
+
+        # [Puzan-OS] v5.31.4 新增：慢速刷屏检测（相似意图消息）
+        # 检测高频引流词组合，即使消息不完全重复
+        ad_intent_keywords = [
+            "点我", "发财", "翻身", "赚钱", "风口", "错过", "后悔",
+            "加我", "私我", "联系", "领取", "福利", "点击", "加入",
+            "唯一", "机会", "限时", "最后", "马上", "赶紧",
+        ]
+        hit_intent_count = 0
+        for text in msg_texts:
+            for kw in ad_intent_keywords:
+                if kw in text:
+                    hit_intent_count += 1
+                    break
+        
+        # 15分钟内4+条消息命中引流词，判定为慢速刷屏
+        if hit_intent_count >= 4:
+            return {
+                "is_spam": True,
+                "reason": f"慢速刷屏模式：{len(recent_messages)}条消息中{hit_intent_count}条命中引流关键词",
+                "score": 5,
+                "messages": recent_messages
+            }
 
         return {"is_spam": False, "reason": "", "score": 0, "messages": []}
 

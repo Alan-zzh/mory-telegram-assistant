@@ -9,7 +9,9 @@ WorkingDirectory=/home/ubuntu/mory_assistant
 # 用 gunicorn + gevent 替代 Flask dev server，稳定 + 防阻塞
 # 用 python3 -m gunicorn 替代直接 gunicorn 路径
 # （apt 安装的 python3-gunicorn 有时不提供 /usr/bin/gunicorn 二进制）
-ExecStart=/usr/bin/python3 -m gunicorn -k gevent -w 2 -b 0.0.0.0:6616 dashboard.wsgi:app
+# 【v5.31.x 优化】内部运维面板 QPS 极低，-w 2 冗余。降为 1 个 worker 省约一半内存（~30-50MB），
+# 保留 --max-requests 自动回收防内存泄漏。dashboard 故障不影响 bot（双服务隔离设计保留）。
+ExecStart=/usr/bin/python3 -m gunicorn -k gevent -w 1 --timeout 120 --graceful-timeout 30 --max-requests 1000 --max-requests-jitter 100 -b 0.0.0.0:6616 dashboard.wsgi:app
 Restart=always
 RestartSec=5
 EnvironmentFile=/home/ubuntu/mory_assistant/.env

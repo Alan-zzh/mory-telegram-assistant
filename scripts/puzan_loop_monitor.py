@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Puzan OS Loop 6 层监控脚本 - v5.31.2
+"""Puzan OS Loop 6 层监控脚本 - v5.31.4
 
 只读 VPS 监控，6 层 + 腾讯云 Lighthouse API：
   L1 VPS 实例层（CPU/MEM/DISK/LOAD/NET）
@@ -39,7 +39,7 @@ ENV_PATH = PROJECT_ROOT / ".env"
 LOGS_DIR = PROJECT_ROOT / "logs"
 LOCK_FILE = LOGS_DIR / ".puzan_loop_monitor.lock"
 DEBUG_HISTORY = PROJECT_ROOT / "AI_DEBUG_HISTORY.md"
-EXPECTED_VERSION = "v5.31.2"
+EXPECTED_VERSION = "v5.31.4"
 HEALTH_URL = "http://localhost:6616/api/health"
 MORY_DB = "/home/ubuntu/mory_assistant/mory.db"
 ROUTER_DB = "/home/ubuntu/mory_assistant/data/router_usage.db"
@@ -303,7 +303,7 @@ def l3_app_check(client):
         )
         details["home_http_code"] = home_code.strip()
 
-        # 从 health 响应解析 version（响应形如 {"status":"ok","version":"v5.31.2"}）
+        # 从 health 响应解析 version（响应形如 {"status":"ok","version":"v5.31.4"}）
         ver_ok = False
         ver = ""
         if h:

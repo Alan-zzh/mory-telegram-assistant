@@ -45,3 +45,15 @@
 
 ## 结构性风险（推断，附依据）
 - 历史误封集中在"检测链与入口/清理链不一致"类问题（见上 1–5）。推断系统存在"新增能力未同步接入统一入口/清理"的结构性风险，新功能易重蹈覆辙。应对：所有新增检测/播报必须显式接入 dispatcher 与 burn_orphan，并加回归测试固化（依据：AI_DEBUG_HISTORY 多次同类 hotfix）。
+
+### 7. Dashboard worker timeout
+- 问题：生产 `mory-dashboard` 在 2026-07-07 08:31–08:33 出现连续 Gunicorn `WORKER TIMEOUT` / `SIGKILL`，服务自恢复但后台存在慢请求拖死 worker 的隐患。
+- 根因：Dashboard systemd 使用 Gunicorn 默认 30 秒 timeout，后台页面包含数据库、SSH、审计等慢操作，2 worker 配置下容易被长请求占满。
+- 解法：`config/mory-dashboard.service` 增加 `--timeout 120 --graceful-timeout 30 --max-requests 1000 --max-requests-jitter 100`，部署后重启 Dashboard 并复核 health / journal。
+- 预防：Dashboard 新增慢接口必须设置应用层 timeout，生产巡检除 10 分钟错误外要抽查最近 1 小时 Dashboard journal。
+
+### 8. 同机浏览器容器拖垮 Mory
+- 问题：2026-07-08 生产机出现“各种报错不能用”，`mory-assistant`/`mory-dashboard` 表面 active，但整机 swap 接近打满，内核 OOM 杀过 `headless_shell`，Dashboard 出现 `WORKER TIMEOUT` / `SIGKILL`。
+- 根因：同机 `dreamina-bridge` 容器内 Playwright/Chromium 进程占用约 1.8GiB 内存并触发 OOM，拖慢 systemd、调度任务和 Dashboard worker。
+- 解法：重启 `dreamina-bridge` 释放内存，并用 `docker update --memory 1536m --memory-swap 1792m dreamina-bridge` 限制容器内存；同时修复 `conversion_events` 重复 `ALTER TABLE ADD COLUMN` 的日志噪声。
+- 预防：生产巡检不能只看 Mory 双服务 active，必须同时看 `free -m`、`docker stats`、内核 OOM 日志和最近 1 小时 Dashboard journal。

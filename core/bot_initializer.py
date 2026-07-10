@@ -216,7 +216,19 @@ def _ensure_deps():
     if not missing:
         return
 
-    logger.info(f"📦 自动安装依赖：{missing}")
+    # 【v5.31.x 优化/稳定性】生产环境默认【只校验不安装】。
+    # 原逻辑在生产启动时联网自动 pip 安装缺失依赖：会拖慢启动、可能拉入不兼容版本、
+    # 破坏 requirements.lock 可复现性，且无网时静默掩盖真实部署缺陷。
+    # 仅在显式开启 MORY_AUTO_INSTALL_DEPS=1/true 时才回退到自动安装（本地/DEBUG 用）。
+    _auto_install = os.environ.get("MORY_AUTO_INSTALL_DEPS", "").lower() in ("1", "true", "yes")
+    if not _auto_install:
+        logger.error(
+            f"❌ 启动缺少依赖：{missing}。生产环境已禁用自动安装（避免破坏可复现性）。"
+            f"请在部署时通过 requirements 安装，或在本地设置 MORY_AUTO_INSTALL_DEPS=1 允许自动安装后重试。"
+        )
+        raise RuntimeError(f"缺失依赖且自动安装未开启：{missing}")
+
+    logger.info(f"📦 自动安装依赖（MORY_AUTO_INSTALL_DEPS 已开启）：{missing}")
 
     installed = False
     import sys as _sys
@@ -398,7 +410,7 @@ def _check_config_hot_reload(cfg: dict):
 RELOAD_FLAG = Path(base_dir) / 'reload_flag'
 
 
-def start_config_reload_watcher(cfg: dict, interval: int = 5):
+def start_config_reload_watcher(cfg: dict, interval: int = 30):
     """启动后台线程，定期检查reload_flag文件，发现后重载config.json到内存
 
     Dashboard修改config.json后会创建reload_flag文件作为信号，
@@ -533,7 +545,9 @@ def initialize_bot() -> BotContext:
     import telebot
     from core.telebot_compat import preserve_telegram_extra_fields
     preserve_telegram_extra_fields()
-    bot = telebot.TeleBot(cfg["TOKEN"], threaded=True, num_threads=50, use_class_middlewares=True)
+    # 【v5.31.x 优化】单 Bot 单 VPS：实测 RSS~92MB、FD 仅 19，并发并不高。
+    # 50 线程常驻纯耗调度，降到 10 对单群/中等流量绰绰有余，稳定前提下省 ~40 线程。
+    bot = telebot.TeleBot(cfg["TOKEN"], threaded=True, num_threads=10, use_class_middlewares=True)
 
     # 11. 广告检测引擎
     from modules.ad_detector import AdDetector

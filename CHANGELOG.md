@@ -7,6 +7,11 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-07-09 | 处置 | 封禁3个发送色情骚扰消息的账号（uid=7811860071/810654988/7630821037），已落 `blacklist`+`global_blacklist` 并清理历史消息 | `modules/ad_enforcement.py` |
+| 2026-07-09 | 修复 | 消息层色情骚扰话术漏检，新增"水多多/看b吗/好大...好痛"等即时封禁规则 | `modules/ad_patterns_encoded.py`、`modules/ad_detector.py` |
+| 2026-07-09 | 优化 | 专家团多角度审查落地低占用（稳定第一）：telebot num_threads 50→10、dashboard gunicorn -w 2→1、SQLite 加 cache_size=-4000/mmap=256MB、备份降为每6h+硬上限60、ad_detector 缓存加 2000 容量上限、_ensure_deps 默认只校验不自动安装、config_reload_watcher 5s→30s；并修复 dashboard 宕机（sudo systemctl enable --now 持久拉起，原 disabled+inactive） | `core/bot_initializer.py`、`core/database.py`、`modules/auto_tasks.py`、`modules/ad_detector.py`、`config/mory-dashboard.service` |
+| 2026-07-08 | 修复 | 生产服务器 OOM/高 swap 恢复，限制异常 `dreamina-bridge` 容器内存并修复 `conversion_events` 重复加列错误 | `core/funnel_state_machine.py`、`core/growth_optimizer.py`、`version.py` |
+| 2026-07-07 | 修复 | 生产 Dashboard worker timeout 隐患修复，Gunicorn 超时放宽并启用 worker 回收，巡检期望版本同步到 v5.31.3 | `config/mory-dashboard.service`、`version.py`、`scripts/puzan_loop_monitor.py`、`project_snapshot.md` |
 | 2026-07-06 | 修复 | 解封入口三次加固，`/unban` 私聊解析到正确 ID | `main.py`、`core/message_dispatcher.py` |
 | 2026-07-06 | 修复 | 修复解封指令私聊不生效，前移 P5.6 早路由 | `core/message_dispatcher.py` |
 | 2026-07-06 | 修复 | 彻底修复"签到"误封，正常业务动作不进广告资料层 | `modules/ad_detector.py` |

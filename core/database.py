@@ -59,6 +59,10 @@ class DB:
         self.conn.execute("PRAGMA busy_timeout=30000;")
         # 【TRAE SOLO CN v5.18.3】WAL 模式下 synchronous=NORMAL 安全且更快
         self.conn.execute("PRAGMA synchronous=NORMAL;")
+        # 【v5.31.x 优化】小库（2.6MB）内存常驻 + 内存映射，降低读 IO 与 CPU 页拷贝：
+        # cache_size 负值=KB，-4000 ≈ 4MB 页缓存（库全驻留）；mmap 256MB 让 SQLite 直接 mmap 文件。
+        self.conn.execute("PRAGMA cache_size=-4000;")
+        self.conn.execute("PRAGMA mmap_size=268435456;")
         self._init_tables()
         # 【v5.24.0 阶段1-A】用 WriteQueueConnectionProxy 包装连接，写操作自动走队列
         # PRAGMA 和建表已在真实连接上执行完毕，代理包装后所有 Repo 的写操作自动全量化

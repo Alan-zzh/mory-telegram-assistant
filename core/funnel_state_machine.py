@@ -309,6 +309,13 @@ class FunnelStateMachine:
 
     # ── 内部方法 ──
 
+    def _ensure_conversion_column(self, column: str, definition: str):
+        c = self.conn.cursor()
+        c.execute("PRAGMA table_info(conversion_events)")
+        existing_cols = {row[1] for row in c.fetchall()}
+        if column not in existing_cols:
+            self.conn.execute(f"ALTER TABLE conversion_events ADD COLUMN {column} {definition}")
+
     def _log_event(self, uid: int, event: str, mode: str = "", source: str = "", campaign_id: str = "",
                    is_memory_assisted: bool = False):
         """写入 conversion_events 日志表（兼容现有查询）
@@ -324,28 +331,13 @@ class FunnelStateMachine:
         """
         try:
             # [v5.23.0] 幂等添加归因列（兼容旧表结构）
-            try:
-                self.conn.execute("ALTER TABLE conversion_events ADD COLUMN source TEXT DEFAULT ''")
-            except Exception:
-                pass  # 列已存在
-            try:
-                self.conn.execute("ALTER TABLE conversion_events ADD COLUMN campaign_id TEXT DEFAULT ''")
-            except Exception:
-                pass  # 列已存在
+            self._ensure_conversion_column("source", "TEXT DEFAULT ''")
+            self._ensure_conversion_column("campaign_id", "TEXT DEFAULT ''")
             # [阶段3-E] 幂等添加时间衰减归因列
-            try:
-                self.conn.execute("ALTER TABLE conversion_events ADD COLUMN attribution_model TEXT DEFAULT ''")
-            except Exception:
-                pass  # 列已存在
-            try:
-                self.conn.execute("ALTER TABLE conversion_events ADD COLUMN weight REAL DEFAULT 0")
-            except Exception:
-                pass  # 列已存在
+            self._ensure_conversion_column("attribution_model", "TEXT DEFAULT ''")
+            self._ensure_conversion_column("weight", "REAL DEFAULT 0")
             # [阶段3-A] 幂等添加记忆辅助归因列
-            try:
-                self.conn.execute("ALTER TABLE conversion_events ADD COLUMN is_memory_assisted INTEGER DEFAULT 0")
-            except Exception:
-                pass  # 列已存在
+            self._ensure_conversion_column("is_memory_assisted", "INTEGER DEFAULT 0")
 
             _mem_flag = 1 if is_memory_assisted else 0
             self.conn.execute(

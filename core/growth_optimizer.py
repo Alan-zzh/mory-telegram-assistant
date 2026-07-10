@@ -164,17 +164,18 @@ def build_stage_hint(experiment_id: str, variant: str, intent: str, mode: str, p
 
 
 def _ensure_conversion_columns(conn: Any) -> None:
-    for ddl in (
-        "ALTER TABLE conversion_events ADD COLUMN source TEXT DEFAULT ''",
-        "ALTER TABLE conversion_events ADD COLUMN campaign_id TEXT DEFAULT ''",
-        "ALTER TABLE conversion_events ADD COLUMN attribution_model TEXT DEFAULT ''",
-        "ALTER TABLE conversion_events ADD COLUMN weight REAL DEFAULT 0",
-        "ALTER TABLE conversion_events ADD COLUMN is_memory_assisted INTEGER DEFAULT 0",
-    ):
-        try:
-            conn.execute(ddl)
-        except Exception:
-            pass  # 幂等添加列：列已存在则跳过
+    cursor = conn.execute("PRAGMA table_info(conversion_events)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    column_defs = {
+        "source": "TEXT DEFAULT ''",
+        "campaign_id": "TEXT DEFAULT ''",
+        "attribution_model": "TEXT DEFAULT ''",
+        "weight": "REAL DEFAULT 0",
+        "is_memory_assisted": "INTEGER DEFAULT 0",
+    }
+    for column, definition in column_defs.items():
+        if column not in existing_cols:
+            conn.execute(f"ALTER TABLE conversion_events ADD COLUMN {column} {definition}")
 
 
 def log_attribution_event(db: Any, uid: int, event: str, mode: str, source: str, campaign_id: str) -> None:

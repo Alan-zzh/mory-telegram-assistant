@@ -1,5 +1,5 @@
 {
-  "_CONFIG_VERSION": "5.31.2",
+  "_CONFIG_VERSION": "5.31.3",
   "_CONFIG_UPDATED": "2026-07-06",
   "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。",
   "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
@@ -321,6 +321,7 @@
     "enable": false,
     "sensitivity": 3
   },
+  "AD_EXEMPT_CHANNEL_FORWARDS": true,
   "SPAM_ACTION": "mute",
   "EMOJI_MASK_DETECT": false,
   "EDIT_DETECT_ENABLE": false,
