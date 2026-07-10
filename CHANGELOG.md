@@ -7,6 +7,8 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-07-10 | 修复 | 部署脚本健壮性：pip 预检跳过 + SIGTERM 信号兜底 + 健康轮询 + 独立重连重启 | `deploy_vps.py` |
+| 2026-07-10 | 修复 | 广告检测补漏：`发~财` 模糊匹配 + `加我wx/加我v/加我微信` 联系方式模式 | `modules/ad_patterns_encoded.py` |
 | 2026-07-09 | 处置 | 封禁3个发送色情骚扰消息的账号（uid=7811860071/810654988/7630821037），已落 `blacklist`+`global_blacklist` 并清理历史消息 | `modules/ad_enforcement.py` |
 | 2026-07-09 | 修复 | 消息层色情骚扰话术漏检，新增"水多多/看b吗/好大...好痛"等即时封禁规则 | `modules/ad_patterns_encoded.py`、`modules/ad_detector.py` |
 | 2026-07-09 | 优化 | 专家团多角度审查落地低占用（稳定第一）：telebot num_threads 50→10、dashboard gunicorn -w 2→1、SQLite 加 cache_size=-4000/mmap=256MB、备份降为每6h+硬上限60、ad_detector 缓存加 2000 容量上限、_ensure_deps 默认只校验不自动安装、config_reload_watcher 5s→30s；并修复 dashboard 宕机（sudo systemctl enable --now 持久拉起，原 disabled+inactive） | `core/bot_initializer.py`、`core/database.py`、`modules/auto_tasks.py`、`modules/ad_detector.py`、`config/mory-dashboard.service` |

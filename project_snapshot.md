@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-08。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-10。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、新闻播报、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -25,12 +25,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
 
 ## 当前版本
-v5.31.4（2026-07-08）
+v5.31.5（2026-07-10）
 
 ## 最近 3 条大事
-1. 2026-07-08 生产服务器 OOM/高 swap 恢复：重启并限制异常 `dreamina-bridge` 容器，修复 `conversion_events` 重复加列错误。
-2. 2026-07-07 生产 Dashboard worker timeout 隐患修复：Gunicorn timeout 放宽到 120s，并启用 worker 周期回收。
-3. 2026-07-07 文档治理：统一文档数字、清理两套备份与根目录垃圾、新增文档一致性自检脚本、重建六大根文档。
+1. 2026-07-10 部署脚本健壮性修复：pip 快速预检跳过 + SIGTERM 信号兜底 + 健康轮询确认 + finally 独立重连重启；删除 `nil` 等本地脏文件。
+2. 2026-07-10 广告检测补漏：`发~财` 模糊匹配 + `加我wx/加我v/加我微信` 联系方式模式，修复 `发财` 不匹配 `发大财了` 的问题。
+3. 2026-07-08 生产服务器 OOM/高 swap 恢复：重启并限制异常 `dreamina-bridge` 容器，修复 `conversion_events` 重复加列错误。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

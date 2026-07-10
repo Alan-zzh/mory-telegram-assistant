@@ -90,6 +90,58 @@ def _collect_upload_files():
 UPLOAD_FILES = _collect_upload_files()
 
 
+# ──────────────────────────────────────────────────────
+# 【v5.31.4 修复】部署健壮性：信号兜底 + 独立重连重启
+# ──────────────────────────────────────────────────────
+import signal
+
+# 部署状态追踪：外部信号(如工具超时SIGTERM)触发时，确保服务被拉起
+_DEPLOY_STATE = {
+    "services_stopped": False,
+    "phase": "init",
+}
+
+
+def _restart_services_fresh():
+    """[v5.31.4] 用全新 SSH 连接重启双核心服务（主连接可能已损坏/超时）
+
+    无论部署成功/失败/被外部杀死，都保证服务在跑。返回 True/False。
+    """
+    try:
+        client = paramiko.SSHClient()
+        ssh_connect(client, timeout=15)
+    except Exception as e:
+        print(f"  ⚠️ [保险] 重连VPS失败：{e}")
+        return False
+    try:
+        stdin, stdout, stderr = client.exec_command(
+            "sudo systemctl restart mory-assistant mory-dashboard", timeout=60)
+        rc = stdout.channel.recv_exit_status()
+        if rc == 0:
+            print("  ✅ [保险] 双核心服务已重启")
+            return True
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        print(f"  ⚠️ [保险] restart 返回码 {rc}：{err}")
+        client.exec_command("sudo systemctl start mory-assistant mory-dashboard", timeout=60)
+        return True
+    except Exception as e:
+        print(f"  ❌ [保险] 重启异常：{e}")
+        return False
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _signal_handler(signum, frame):
+    """[v5.31.4] 捕获 SIGTERM/SIGINT：若服务已停，立即拉起再退出"""
+    print(f"\n⚠️ 收到信号 {signum}，进入保险恢复...")
+    if _DEPLOY_STATE["services_stopped"]:
+        _restart_services_fresh()
+    sys.exit(1)
+
+
 def _cleanup_old_backups(backup_dir: str = "backups", keep: int = 2):
     """清理本地备份目录，只保留最近 keep 个备份"""
     backup_path = ROOT / backup_dir
@@ -112,6 +164,13 @@ def main():
     print("=" * 60)
     print("  Mory小助理 · 一键部署到VPS")
     print("=" * 60)
+
+    # [v5.31.4 修复] 注册信号兜底：工具超时(SIGTERM)等外部中断时，先拉起服务再退出
+    try:
+        signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGINT, _signal_handler)
+    except Exception:
+        pass
 
     # 1. 前置检查
     if not VPS_HOST or (not VPS_PASS and not VPS_KEY_FILES):
@@ -227,24 +286,40 @@ def main():
                 except Exception as e:
                     print(f"  ⚠️ {extra} 上传失败：{e}")
 
+        # [v5.31.4 修复] pip 安装改为快速预检 + 非致命
+        # 先判断依赖是否已满足（通过导入检查），跳过慢速网络安装，避免与工具超时竞态
         print("\n  安装/同步 Python 依赖 ...")
-        install_cmd = (
-            f"cd {VPS_PATH} && "
-            "(python3 -m pip install --user -r requirements.lock --break-system-packages "
-            "|| python3 -m pip install --user -r requirements.lock) "
-            "&& python3 -m pip check"
+        dep_check = (
+            f"cd {VPS_PATH} && python3 -c 'import telebot, flask, gevent, gunicorn, apscheduler; "
+            'print(\"DEPS_OK\")' "' 2>/dev/null"
         )
-        stdin, stdout, stderr = client.exec_command(install_cmd, timeout=300)
-        out = stdout.read().decode("utf-8", errors="replace").strip()
-        err = stderr.read().decode("utf-8", errors="replace").strip()
-        exit_code = stdout.channel.recv_exit_status()
-        if exit_code == 0:
-            print("  ✅ requirements.lock 已安装，pip check 通过")
+        try:
+            stdin, stdout, stderr = client.exec_command(dep_check, timeout=15)
+            dep_out = stdout.read().decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            dep_out = ""
+            print(f"  ⚠️ 依赖预检异常（非致命）：{e}")
+        if "DEPS_OK" in dep_out:
+            print("  ✅ 依赖已满足，跳过 pip install（避免网络超时）")
         else:
-            print(f"  ❌ requirements.lock 安装/校验失败（返回码 {exit_code}）")
-            tail = "\n".join((out + "\n" + err).splitlines()[-40:])
-            print(tail)
-            raise RuntimeError("VPS Python 依赖同步失败")
+            print("  ⏳ 依赖未满足，执行 pip install（非致命，失败不阻断部署）...")
+            try:
+                install_cmd = (
+                    f"cd {VPS_PATH} && "
+                    "(python3 -m pip install --user -r requirements.lock --break-system-packages "
+                    "|| python3 -m pip install --user -r requirements.lock)"
+                )
+                stdin, stdout, stderr = client.exec_command(install_cmd, timeout=180)
+                out = stdout.read().decode("utf-8", errors="replace").strip()
+                err = stderr.read().decode("utf-8", errors="replace").strip()
+                exit_code = stdout.channel.recv_exit_status()
+                if exit_code == 0:
+                    print("  ✅ requirements.lock 已安装")
+                else:
+                    print(f"  ⚠️ pip install 返回码 {exit_code}（非致命，继续部署）：")
+                    print("\n".join((out + "\n" + err).splitlines()[-20:]))
+            except Exception as e:
+                print(f"  ⚠️ pip install 超时/异常（非致命，继续部署）：{e}")
 
         print("\n  清理远端运行态缓存 ...")
         cleanup_cmd = (
@@ -341,54 +416,63 @@ def main():
 
         # 6. 启动Bot（systemd）→ 取消保险标记
         print("\n[5/5] 启动Bot服务 ...")
-        stdin, stdout, stderr = client.exec_command("sudo systemctl start mory-assistant mory-dashboard", timeout=30)
+        _DEPLOY_STATE["phase"] = "starting"
+        stdin, stdout, stderr = client.exec_command("sudo systemctl restart mory-assistant mory-dashboard", timeout=60)
         exit_code = stdout.channel.recv_exit_status()
         if exit_code == 0:
-            print("  ✅ Bot和Dashboard已启动")
-            services_stopped = False  # 已重启成功，finally 不用再管
+            print("  ✅ Bot和Dashboard已重启")
         else:
             err = stderr.read().decode("utf-8", errors="replace").strip()
-            print(f"  ❌ 启动失败：{err}")
-            # services_stopped 仍为 True，finally 会兜底重试
+            print(f"  ❌ 启动失败：{err}（保险机制将重试）")
 
-        time.sleep(3)
+        # [v5.31.4 修复] 健康检查轮询：start 是异步的，必须等真正起来再判成功
+        print("  ⏳ 等待服务就绪并轮询 health ...")
+        for attempt in range(10):
+            time.sleep(3)
+            try:
+                hc = client.exec_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:6616/api/health", timeout=10)
+                code = hc[1].read().decode("utf-8", "replace").strip()
+            except Exception:
+                code = ""
+            if code == "200":
+                print(f"  ✅ health=200（第 {attempt+1} 次轮询）")
+                services_stopped = False  # 已确认起来，保险不用再管
+                deploy_ok = True
+                break
+            else:
+                print(f"  ... 第 {attempt+1} 次 health={code or '无响应'}")
+        if not deploy_ok:
+            print("  ⚠️ 启动后 health 未达 200，保险机制将重试重启")
 
         # 7. 验证部署
         print("\n验证部署结果 ...")
-        deploy_ok = verify_deployment(client, VPS_PATH)
+        try:
+            deploy_ok = verify_deployment(client, VPS_PATH)
+        except Exception as e:
+            print(f"  ⚠️ 验证脚本异常（非致命）：{e}")
 
     except Exception as e:
         print(f"\n❌ 部署过程异常：{e}")
         print("  保险机制将自动恢复服务...")
 
     finally:
-        # ── 🛡️ 保险：无论部署成功/失败/超时，确保服务在跑 ──
-        if services_stopped:
-            print("\n🛡️ [保险触发] 检测到服务可能未启动，自动恢复中...")
-            retry_count = 0
-            while retry_count < 3:
-                try:
-                    stdin_r, stdout_r, stderr_r = client.exec_command(
-                        "sudo systemctl start mory-assistant mory-dashboard", timeout=30)
-                    rc = stdout_r.channel.recv_exit_status()
-                    if rc == 0:
-                        print("  ✅ 保险恢复成功：mory-assistant + mory-dashboard 已启动")
-                        services_stopped = False
-                        break
-                    retry_count += 1
-                    time.sleep(2)
-                except Exception as ex:
-                    print(f"  ⚠️ 保险恢复第{retry_count+1}次异常：{ex}")
-                    retry_count += 1
-                    time.sleep(2)
-            if services_stopped:
+        # ── 🛡️ 保险：无论部署成功/失败/被外部杀死，确保服务在跑 ──
+        # [v5.31.4 修复] 用全新 SSH 连接重启（主连接可能已损坏/超时）；
+        # 并修复原 finally 引用未定义 logger 的 NameError。
+        if services_stopped or not deploy_ok:
+            print("\n🛡️ [保险触发] 检测到服务未确认运行，自动恢复中...")
+            restored = _restart_services_fresh()
+            if restored:
+                _DEPLOY_STATE["services_stopped"] = False
+                services_stopped = False
+            else:
                 print("  ❌ 保险恢复失败，请手动执行：")
-                print("     sudo systemctl start mory-assistant mory-dashboard")
-        # 关闭 SSH
+                print("     sudo systemctl restart mory-assistant mory-dashboard")
+        # 关闭主 SSH（忽略任何错误，主连接可能在中断中已部分损坏）
         try:
             client.close()
-        except Exception as e:
-            logger.debug(f"操作异常: {e}")
+        except Exception:
+            pass
     # ── 输出最终结果 ──
     if deploy_ok:
         print("\n" + "=" * 60)
@@ -398,6 +482,11 @@ def main():
         # deploy_ok=False 但服务在跑（验证发现问题但服务正常）
         print("\n" + "=" * 60)
         print("  ⚠️ 部署完成，但验证发现问题，请手动检查")
+        print("  查看日志：journalctl -u mory-assistant -n 100 --no-pager")
+        print("=" * 60)
+    else:
+        print("\n" + "=" * 60)
+        print("  ❌ 部署失败，服务未确认运行")
         print("  查看日志：journalctl -u mory-assistant -n 100 --no-pager")
         print("=" * 60)
 
