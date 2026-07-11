@@ -343,7 +343,15 @@ def _get_minimal_default_config() -> dict:
     return {
         "TOKEN": "", "API_KEY": "", "ADMIN_ID": 0, "GROUP_ID": 0,
         "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-        "MODEL_POOLS": {"llm": [{"name": "qwen3.7-max-preview", "expire": "2026-08-24"}, {"name": "glm-5.2", "expire": "2026-09-15"}]},
+        "MODEL_POOLS": {"llm": [
+            {"name": "qwen3.6-flash-2026-04-16", "expire": "2026-07-17"},
+            {"name": "qwen3.6-27b", "expire": "2026-07-23"},
+            {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24"},
+            {"name": "qwen3.7-max-preview", "expire": "2026-08-24"},
+            {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01"},
+            {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08"},
+            {"name": "kimi-k2.7-code", "expire": "2026-09-14"},
+        ]},
         "REPLY_CHANCE": 10, "_CONFIG_VERSION": "5.0.0",
         "SYSTEM_PROMPT": "你是Mory，一个活泼可爱的小助理。",
     }

@@ -7,6 +7,7 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-07-10 | 优化 | AI 模型池按截图重置为 7 个文本模型和 1 个 OCR 视觉模型；文本入口按到期日升序优先，移除旧型号与 A/B 覆盖 | `config.json`、`config.json.example`、`core/ai_engine.py`、`core/model_router.py`、`core/bot_initializer.py` |
 | 2026-07-10 | 修复 | 部署脚本健壮性：pip 预检跳过 + SIGTERM 信号兜底 + 健康轮询 + 独立重连重启 | `deploy_vps.py` |
 | 2026-07-10 | 修复 | 广告检测补漏：`发~财` 模糊匹配 + `加我wx/加我v/加我微信` 联系方式模式 | `modules/ad_patterns_encoded.py` |
 | 2026-07-09 | 处置 | 封禁3个发送色情骚扰消息的账号（uid=7811860071/810654988/7630821037），已落 `blacklist`+`global_blacklist` 并清理历史消息 | `modules/ad_enforcement.py` |

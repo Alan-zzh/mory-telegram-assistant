@@ -566,7 +566,7 @@ class AIEngine:
             self.model_pool = combined_pool
         else:
             # 旧的单池结构 → 自动迁移
-            old_pool = config.get("MODEL_POOL", [{"name": "qwen-plus", "expire": "2099-12-31"}])
+            old_pool = config.get("MODEL_POOL", [{"name": "qwen3.6-flash-2026-04-16", "expire": "2026-07-17"}])
             self.model_pool = self._filter_runtime_pool(old_pool, "llm")
             self.model_pools = {"llm": old_pool}
         
@@ -2263,7 +2263,7 @@ def text_to_speech(text: str, config: dict = None) -> bytes | None:
     :return: 音频数据(bytes) 或 None
     """
     if config is None:
-        from core.config_manager import load_config
+        from core.bot_initializer import load_config
         config = load_config()
     
     # 获取 voice_tts 池的模型

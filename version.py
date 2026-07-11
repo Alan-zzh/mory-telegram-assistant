@@ -6,11 +6,12 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.31.4"
-CONFIG_VERSION = "5.31.4"
+VERSION = "v5.31.6"
+CONFIG_VERSION = "5.31.6"
 __version__ = VERSION
 
 VERSION_HISTORY = [
+    "v5.31.6: [Codex] AI 模型池按最新额度清单重置为 8 个精确型号（7 个文本模型 + 1 个 OCR 视觉模型）；文本主池与三层池均按到期日升序，关闭会绕过该排序的 A/B 覆盖，并同步示例配置与损坏配置兜底池。",
     "v5.31.4: [Codex] 生产服务器 OOM/高 swap 恢复 - 定位同机 dreamina-bridge Playwright/Chromium 占用约 1.8GiB 并触发内核 OOM，重启容器释放内存并用 docker update 限制 memory=1536m/memory-swap=1792m；修复 conversion_events 重复 ALTER TABLE ADD COLUMN attribution_model 日志噪声，改为 PRAGMA table_info 先查列再加列；生产验证 mory-assistant/mory-dashboard 双 active，/api/health 返回 v5.31.4，新启动窗口无 ERROR/CRITICAL/Traceback/duplicate column，puzan_loop_monitor [RECOMMEND] all normal。",
     "v5.31.3: [Codex] 生产 Dashboard worker timeout 隐患修复 - Gunicorn timeout 30s→120s，graceful-timeout 30s，启用 max-requests 周期回收；修正 project_snapshot AI 回复入口路径；生产验证 mory-assistant/mory-dashboard 双 active，/api/health 返回 v5.31.3，Dashboard 重启后 journal 无新增 WORKER TIMEOUT/ERROR。",
     "v5.31.2: [Puzan-OS] Token消耗暗病排查+多智能体联排根治10项问题+Loop监控发现并修复3项暗病 - P0-1高频任务task_log死锁(cart_recovery每5分钟/reactivate每小时task_key无时间窗口后缀→首次成功后INSERT OR IGNORE永久拦截)：4个高频任务task_key加时间窗口后缀(分钟级/小时级)；P0-2 task_log UNIQUE索引迁移失败静默(logger.debug→logger.error+report_fault)；P1-1 config.json.example缺MODEL_COSTS字段补全(覆盖9个模型池)；P1-2 dashboard/helpers.py get_vps_status() SSH连接泄漏添加finally块；P1-3 TaskTransactionManager._release_task不可靠改用_real_conn绕过WriteQueueConnectionProxy三层防御(Repo层→直连SQL→CRITICAL告警)；P1-4 _CRITICAL_TASKS重复定义(4元组/3元组)删除第一个；P1-5 ad_enforcement._write_blacklists()失败无告警添加report_fault；新发现check_integrity/get_recent_task_logs未注册触发__getattr__ CRITICAL：config_repo.py实现2方法+database.py _REPO_METHOD_MAP注册；database.py close/__del__方法getattr(self,'_logger',logger)和self.conn触发__getattr__委托机制CRITICAL，改用self.__dict__.get('conn')避免GC时fallthrough；core/ai_engine.py timeout 25→45s+max_attempts 5→3+token_usage记录(prompt/completion tokens)+evening_news路由llm_premium→llm_standard；config.json LLM_COST_GUARD_ENABLED=true+vision池清空。Loop监控轮1发现并修复：P0 triggers/cold_group.py+night_hint.py中rm.db.execute/commit未注册_REPO_METHOD_MAP触发__getattr__ CRITICAL被except Exception:pass静默吞掉→改用rm.db.conn.execute/commit+logger.debug→logger.warning；P1 startup_member_scan/night_mode_start/night_mode_end/backup/ttl_cleanup 5个每小时任务task_key无日期后缀→加日期/小时后缀避免UNIQUE索引拦截；沉默失败except Exception:pass→logger.warning升级。修复文件：core/database.py+core/task_transaction.py+core/db_repos/config_repo.py+core/ai_engine.py+modules/auto_tasks.py+modules/ad_enforcement.py+dashboard/helpers.py+modules/triggers/cold_group.py+modules/triggers/night_hint.py+config.json+config.json.example。本地验证：py_compile通过+verify_db_methods.py 161方法无缺失。VPS部署验证：mory-assistant+mory-dashboard双active+health v5.31.2+无CRITICAL+token_usage 3条记录+cart_recovery带后缀task_key持续每5分钟执行(05:00-05:50共10次)+旧task_key残留已清理+check_integrity/get_recent_task_logs实际调用OK+VPS cron监控每15分钟自动巡检",

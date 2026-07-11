@@ -12,7 +12,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 |------|------|----------|------|
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | `SYSTEM_PROMPT` 从 config 读取 |
-| 模型路由 | 在用 | `core/model_router.py` | 三层池 + 降级链；10 个 task_type 映射 |
+| 模型路由 | 在用 | `core/model_router.py` | 7 个截图指定文本型号按到期日升序；`qwen3.5-ocr` 归视觉池 |
 | 定时任务 | 在用 | `modules/auto_tasks.py` | 53 个 `_job_` 函数 |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 92 个业务 `.py` |
@@ -25,12 +25,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
 
 ## 当前版本
-v5.31.5（2026-07-10）
+v5.31.6（2026-07-10）
 
 ## 最近 3 条大事
-1. 2026-07-10 部署脚本健壮性修复：pip 快速预检跳过 + SIGTERM 信号兜底 + 健康轮询确认 + finally 独立重连重启；删除 `nil` 等本地脏文件。
-2. 2026-07-10 广告检测补漏：`发~财` 模糊匹配 + `加我wx/加我v/加我微信` 联系方式模式，修复 `发财` 不匹配 `发大财了` 的问题。
-3. 2026-07-08 生产服务器 OOM/高 swap 恢复：重启并限制异常 `dreamina-bridge` 容器，修复 `conversion_events` 重复加列错误。
+1. 2026-07-10 AI 模型池按最新额度清单重置：7 个文本型号进入主池与三层池并按到期日升序优先，`qwen3.5-ocr` 进入视觉池；旧型号、示例黑名单与 A/B 覆盖已清除。
+2. 2026-07-10 部署脚本健壮性修复：pip 快速预检跳过 + SIGTERM 信号兜底 + 健康轮询确认 + finally 独立重连重启；删除 `nil` 等本地脏文件。
+3. 2026-07-10 广告检测补漏：`发~财` 模糊匹配 + `加我wx/加我v/加我微信` 联系方式模式，修复 `发财` 不匹配 `发大财了` 的问题。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
