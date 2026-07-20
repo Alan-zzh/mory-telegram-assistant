@@ -84,9 +84,10 @@ class GroupSafetyCenterModule:
 
     def _get_recent_risks(self, chat_id: int, days: int = 7) -> List[Dict[str, Any]]:
         try:
-            cutoff_time = (datetime.now() - timedelta(days=days)).isoformat()
+            # 修复字段名错误：security_events 表字段是 ts（INTEGER），不是 created_at
+            cutoff_time = int((datetime.now() - timedelta(days=days)).timestamp())
             cursor = self._db.conn.execute(
-                'SELECT data FROM security_events WHERE chat_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT 10',
+                'SELECT data FROM security_events WHERE chat_id = ? AND ts > ? ORDER BY ts DESC LIMIT 10',
                 (chat_id, cutoff_time)
             )
             risks = []
@@ -97,22 +98,27 @@ class GroupSafetyCenterModule:
             return []
 
     def _get_next_actions(self, chat_id: int) -> List[str]:
+        # 修复无限递归：不调用 get_safety_status（它又会调用 _get_next_actions），
+        # 而是直接调用内部计算方法
         actions = []
-        status = self.get_safety_status(chat_id)
-        if status.get('security_level') == '高风险':
+        security_level = self._get_security_level(chat_id)
+        rules_health = self._get_rules_health(chat_id)
+        bot_permissions = self._get_bot_permissions(chat_id)
+        if security_level == '高风险':
             actions.append('检查并清理广告用户')
             actions.append('加强入群验证')
-        if status.get('rules_health', {}).get('health_score', 0) < 50:
+        if rules_health.get('health_score', 0) < 50:
             actions.append('优化自动规则配置')
-        if not status.get('bot_permissions', {}).get('perm_delete_messages', False):
+        if not bot_permissions.get('perm_delete_messages', False):
             actions.append('授予机器人删除消息权限')
         return actions
 
     def _count_recent_alerts(self, chat_id: int, hours: int = 24) -> int:
         try:
-            cutoff_time = (datetime.now() - timedelta(hours=hours)).isoformat()
+            # 修复字段名错误：security_events 表字段是 ts（INTEGER），不是 created_at
+            cutoff_time = int((datetime.now() - timedelta(hours=hours)).timestamp())
             cursor = self._db.conn.execute(
-                'SELECT COUNT(*) FROM security_events WHERE chat_id = ? AND created_at > ?',
+                'SELECT COUNT(*) FROM security_events WHERE chat_id = ? AND ts > ?',
                 (chat_id, cutoff_time)
             )
             row = cursor.fetchone()

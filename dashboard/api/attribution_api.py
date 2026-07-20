@@ -3,6 +3,9 @@
 import time
 from flask import Blueprint, jsonify, request
 from dashboard.helpers import login_required, admin_required, read_config
+from core.logging_util import get_logger
+
+logger = get_logger(__name__)
 
 attribution_bp = Blueprint("attribution", __name__)
 
@@ -29,7 +32,8 @@ def api_attribution_report():
         report = fsm.get_attribution_report(days=days)
         return jsonify({"ok": True, "data": report, "count": len(report), "days": days})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[attribution_api] api_attribution_report 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @attribution_bp.route("/api/attribution/user/<int:uid>", methods=["GET"])
@@ -44,7 +48,8 @@ def api_attribution_user(uid: int):
         attr = fsm.attribute_conversion(uid, window_hours=48)
         return jsonify({"ok": True, "data": attr})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[attribution_api] api_attribution_user 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @attribution_bp.route("/api/attribution/by-campaign", methods=["GET"])
@@ -82,7 +87,8 @@ def api_attribution_by_campaign():
             })
         return jsonify({"ok": True, "data": data, "count": len(data), "days": days})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[attribution_api] api_attribution_by_campaign 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @attribution_bp.route("/api/attribution/by-hour", methods=["GET"])
@@ -110,7 +116,8 @@ def api_attribution_by_hour():
         data = [{"hour": r[0], "conversions": r[1] or 0, "total_events": r[2] or 0} for r in rows]
         return jsonify({"ok": True, "data": data, "count": len(data), "days": days})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[attribution_api] api_attribution_by_hour 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @attribution_bp.route("/api/attribution/by-persona", methods=["GET"])
@@ -147,7 +154,8 @@ def api_attribution_by_persona():
             })
         return jsonify({"ok": True, "data": data, "count": len(data), "days": days})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[attribution_api] api_attribution_by_persona 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @attribution_bp.route("/api/ab-test/report", methods=["GET"])
@@ -171,7 +179,8 @@ def api_ab_test_report():
         report = get_report(days=days)
         return jsonify({"ok": True, "data": report, "count": len(report), "days": days})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[attribution_api] api_ab_test_report 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @attribution_bp.route("/api/attribution/memory-impact", methods=["GET"])
@@ -195,7 +204,8 @@ def api_attribution_memory_impact():
         report = fsm.get_memory_attribution_report(days=days)
         return jsonify({"ok": True, "data": report, "days": days})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[attribution_api] api_attribution_memory_impact 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @attribution_bp.route("/api/attribution/growth-summary", methods=["GET"])
@@ -215,4 +225,5 @@ def api_attribution_growth_summary():
         data = summarize_growth(db, days=days)
         return jsonify({"ok": True, "data": data, "count": len(data), "days": days})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[attribution_api] api_attribution_growth_summary 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500

@@ -26,8 +26,8 @@ ANTI_RAID_CONFIG = config.get('ANTI_RAID_CONFIG', {
 
 class AntiRaidModule:
     def __init__(self):
-        self._db = db_manager
-        self._compat = TelebotCompat.get_instance()
+        self._db = None
+        self._compat = None
         self._raid_active: Dict[int, bool] = {}
         self._last_raid_time: Dict[int, int] = {}
 

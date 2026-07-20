@@ -10,6 +10,9 @@ dashboard/api/engage_api.py  ·  商业搭讪事件 API（v5.14.0）
 """
 from flask import Blueprint, jsonify, request
 from dashboard.helpers import login_required, admin_required, read_config, write_config, get_db
+from core.logging_util import get_logger
+
+logger = get_logger(__name__)
 
 bp = Blueprint("engage_api", __name__, url_prefix="/api/engage")
 
@@ -30,7 +33,8 @@ def get_stats():
 
         return jsonify({"ok": True, "data": stats})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        logger.exception(f"[engage_api] get_stats 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @bp.route("/recent", methods=["GET"])
@@ -53,7 +57,8 @@ def get_recent():
 
         return jsonify({"ok": True, "data": rows, "count": len(rows)})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        logger.exception(f"[engage_api] get_recent 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @bp.route("/config", methods=["GET"])
@@ -74,7 +79,8 @@ def get_config():
             engage_cfg.setdefault(k, v)
         return jsonify({"ok": True, "data": engage_cfg})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        logger.exception(f"[engage_api] get_config 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @bp.route("/config", methods=["POST"])
@@ -109,4 +115,5 @@ def update_config():
 
         return jsonify({"ok": True, "data": existing, "updated_keys": list(updates.keys())})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        logger.exception(f"[engage_api] update_config 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500

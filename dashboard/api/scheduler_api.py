@@ -3,6 +3,9 @@
 from flask import Blueprint, jsonify
 from dashboard.helpers import login_required, admin_required
 from dashboard.helpers import get_db
+from core.logging_util import get_logger
+
+logger = get_logger(__name__)
 
 scheduler_bp = Blueprint("scheduler_monitor", __name__)
 
@@ -86,7 +89,8 @@ def api_scheduler_stats():
             stats = _scheduler_stats_from_db()
         return jsonify({"ok": True, "data": stats})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[scheduler_api] api_scheduler_stats 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @scheduler_bp.route("/api/scheduler/jobs", methods=["GET"])
@@ -103,4 +107,5 @@ def api_scheduler_jobs():
             source = "scheduler_metrics"
         return jsonify({"ok": True, "data": jobs, "count": len(jobs), "source": source})
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[scheduler_api] api_scheduler_jobs 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500

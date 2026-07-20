@@ -19,8 +19,8 @@ GROUP_MEMBERS_CONFIG = config.get('GROUP_MEMBERS_CONFIG', {
 
 class GroupMembersModule:
     def __init__(self):
-        self._db = db_manager
-        self._compat = TelebotCompat.get_instance()
+        self._db = None
+        self._compat = None
 
     async def get_members(self, chat_id: int, offset: int = 0, limit: int = 50,
                           search_query: str = '') -> Dict[str, Any]:

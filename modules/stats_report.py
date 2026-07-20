@@ -27,7 +27,8 @@ class StatsReportModule:
         if not STATS_REPORT_CONFIG.get('enabled', False):
             return {}
         try:
-            cutoff_time = (datetime.now() - timedelta(days=days)).isoformat()
+            # 修复：message_logs.created_at 是 INTEGER（Unix 时间戳），不能用 ISO 字符串比较
+            cutoff_time = int(time.time()) - days * 86400
             cursor = self._db.conn.execute(
                 'SELECT COUNT(*) FROM message_logs WHERE chat_id = ? AND created_at > ?',
                 (chat_id, cutoff_time)
@@ -47,7 +48,7 @@ class StatsReportModule:
                 'avg_messages_per_user': (total_messages / active_users) if active_users > 0 else 0,
             }
         except Exception as e:
-            logger.error(f"[统计报表] 获取消息统计失败: {e}")
+            logger.error(f"[统计报表] 获取消息统计失败 chat_id={chat_id}: {e}")
             return {}
 
     def get_user_stats(self, chat_id: int) -> Dict[str, Any]:
@@ -60,15 +61,18 @@ class StatsReportModule:
             )
             row = cursor.fetchone()
             total_members = row[0] if row else 0
+            # 修复：group_members.status 默认值是 'member'（不是 'active'）
             cursor = self._db.conn.execute(
-                'SELECT COUNT(*) FROM group_members WHERE chat_id = ? AND status = "active"',
+                'SELECT COUNT(*) FROM group_members WHERE chat_id = ? AND status = "member"',
                 (chat_id,)
             )
             row = cursor.fetchone()
             active_members = row[0] if row else 0
+            # 修复：group_members 表字段是 first_seen（INTEGER），不是 joined_at
+            cutoff_7days = int(time.time()) - 7 * 86400
             cursor = self._db.conn.execute(
-                'SELECT COUNT(*) FROM group_members WHERE chat_id = ? AND joined_at > ?',
-                (chat_id, (datetime.now() - timedelta(days=7)).isoformat())
+                'SELECT COUNT(*) FROM group_members WHERE chat_id = ? AND first_seen > ?',
+                (chat_id, cutoff_7days)
             )
             row = cursor.fetchone()
             new_members = row[0] if row else 0
@@ -79,14 +83,15 @@ class StatsReportModule:
                 'active_rate': (active_members / total_members * 100) if total_members > 0 else 0,
             }
         except Exception as e:
-            logger.error(f"[统计报表] 获取用户统计失败: {e}")
+            logger.error(f"[统计报表] 获取用户统计失败 chat_id={chat_id}: {e}")
             return {}
 
     def get_activity_stats(self, chat_id: int, hours: int = 24) -> Dict[str, Any]:
         if not STATS_REPORT_CONFIG.get('enabled', False):
             return {}
         try:
-            cutoff_time = (datetime.now() - timedelta(hours=hours)).isoformat()
+            # 修复：message_logs.created_at 是 INTEGER（Unix 时间戳），不能用 ISO 字符串比较
+            cutoff_time = int(time.time()) - hours * 3600
             cursor = self._db.conn.execute(
                 'SELECT COUNT(*) FROM message_logs WHERE chat_id = ? AND created_at > ?',
                 (chat_id, cutoff_time)

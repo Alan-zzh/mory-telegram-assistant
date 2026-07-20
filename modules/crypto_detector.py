@@ -6,9 +6,13 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 import requests
 
-from core.settings import config
-from utils.logger import get_logger
+from core.logging_util import get_logger
+from core.settings import get_config
 
+try:
+    config = get_config()
+except Exception:
+    config = {}
 logger = get_logger(__name__)
 
 CRYPTO_DETECTOR_CONFIG = config.get('CRYPTO_DETECTOR_CONFIG', {

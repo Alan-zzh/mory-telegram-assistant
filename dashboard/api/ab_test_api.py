@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """A/B 测试与按钮统计 API（v5.18.0）"""
-import logging
 from flask import Blueprint, jsonify, request
 
 # 【TRAE SOLO CN v5.18.3审计修复】从 helpers 导入 admin_required（auth.py 版本已删除，因实现失效）
 from dashboard.helpers import login_required, admin_required
 from core.profile_learner import ProfileLearner
+from core.logging_util import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 ab_test_bp = Blueprint("ab_test", __name__)
 button_stats_bp = Blueprint("button_stats", __name__)
@@ -78,8 +78,8 @@ def record_ab_test_sent():
         db.record_ab_test_sent(group_name, format_version, count)
         return jsonify({"ok": True})
     except Exception as e:
-        logger.warning(f"记录 A/B 测试发送数失败: {e}")
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[ab_test_api] record_ab_test_sent 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @ab_test_bp.route("/api/ab-test/significance", methods=["GET"])
@@ -109,8 +109,8 @@ def get_ab_test_significance():
         report = get_significance_report(days=days, alpha=alpha)
         return jsonify({"ok": True, "data": report})
     except Exception as e:
-        logger.warning(f"获取 A/B 测试统计显著性失败: {e}")
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[ab_test_api] get_ab_test_significance 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 # ── 按钮统计 API ────────────────────────────────────────────
@@ -151,8 +151,8 @@ def record_button_event():
             db.record_button_click(button_id, style)
         return jsonify({"ok": True})
     except Exception as e:
-        logger.warning(f"记录按钮事件失败: {e}")
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[ab_test_api] record_button_event 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 # ── 用户画像 API（v5.18.0） ────────────────────────────────────────────
@@ -179,8 +179,8 @@ def learn_profile():
         profile = learner.learn_from_message(int(user_id), text)
         return jsonify({"ok": True, "data": profile})
     except Exception as e:
-        logger.warning(f"学习用户画像失败: {e}")
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[ab_test_api] learn_profile 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @profile_bp.route("/api/profile/list", methods=["GET"])
@@ -198,8 +198,8 @@ def list_profiles():
         profiles = db.list_user_profiles(min_level, tag, limit)
         return jsonify({"ok": True, "data": {"profiles": profiles, "count": len(profiles)}})
     except Exception as e:
-        logger.warning(f"列出用户画像失败: {e}")
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[ab_test_api] list_profiles 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @profile_bp.route("/api/profile/<int:user_id>", methods=["GET"])
@@ -214,5 +214,5 @@ def get_profile(user_id: int):
         profile = db.get_user_persona_profile(user_id)
         return jsonify({"ok": True, "data": profile})
     except Exception as e:
-        logger.warning(f"获取用户画像失败: {e}")
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[ab_test_api] get_profile 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500

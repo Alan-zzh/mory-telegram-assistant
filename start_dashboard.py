@@ -36,9 +36,20 @@ def main() -> int:
         print("已生成本次临时Dashboard密钥。")
 
     if not os.environ.get("DASHBOARD_PASSWORD"):
-        temp_password = "mory-" + secrets.token_hex(4)
+        temp_password = "mory-" + secrets.token_hex(8)
         os.environ["DASHBOARD_PASSWORD"] = temp_password
-        print(f"本次临时Dashboard密码：{temp_password[:5]}...{temp_password[-4:]}（完整密码请查看 .env 或环境变量）")
+        # 写入 .env 文件，方便用户从 .env 获取完整密码（避免脱敏后无法登录的功能回归）
+        env_file = ROOT / ".env"
+        try:
+            existing = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
+            if "DASHBOARD_PASSWORD" not in existing:
+                with open(env_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n# 自动生成的临时Dashboard密码\nDASHBOARD_PASSWORD={temp_password}\n")
+                print(f"已生成临时Dashboard密码并写入 .env（前4位: {temp_password[:4]}***，完整密码请查看 .env）")
+            else:
+                print(f"已生成临时Dashboard密码（前4位: {temp_password[:4]}***，完整密码请查看环境变量）")
+        except Exception as e:
+            print(f"已生成临时Dashboard密码（前4位: {temp_password[:4]}***，写入 .env 失败: {e}）")
         print("建议以后把 DASHBOARD_PASSWORD 写进 .env，避免每次启动变化。")
 
     os.environ.setdefault("DASHBOARD_PORT", "6616")

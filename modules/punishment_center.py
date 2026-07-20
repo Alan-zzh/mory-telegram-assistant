@@ -18,7 +18,7 @@ PUNISHMENT_CENTER_CONFIG = config.get('PUNISHMENT_CENTER_CONFIG', {
 
 class PunishmentCenterModule:
     def __init__(self):
-        self._db = db_manager
+        self._db = None
 
     def get_punishment_records(self, chat_id: int = None,
                                user_id: int = None,

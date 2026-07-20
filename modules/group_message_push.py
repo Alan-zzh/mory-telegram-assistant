@@ -34,14 +34,14 @@ class GroupMessagePushModule:
             else:
                 await self._compat.send_message(chat_id, text, parse_mode=parse_mode)
             if buttons:
-                from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
                 inline_buttons = [
                     [InlineKeyboardButton(b.get('text', ''), url=b.get('url', ''), callback_data=b.get('callback', ''))]
                     for b in buttons
                 ]
                 await self._compat.send_message(chat_id, ' ', reply_markup=InlineKeyboardMarkup(inline_buttons))
             if keyboard:
-                from telegram import ReplyKeyboardMarkup
+                from telebot.types import ReplyKeyboardMarkup
                 await self._compat.send_message(chat_id, ' ', reply_markup=ReplyKeyboardMarkup(keyboard))
             logger.info(f"[主动消息] 发送到 chat={chat_id}")
             return 'success'

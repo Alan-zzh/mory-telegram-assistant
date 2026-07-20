@@ -9,6 +9,9 @@ dashboard/api/monitor_api.py · 监控 API（v5.24.0 阶段3-B DB 迁移时机�
 import time
 from flask import Blueprint, jsonify
 from dashboard.helpers import login_required, read_config
+from core.logging_util import get_logger
+
+logger = get_logger(__name__)
 
 monitor_bp = Blueprint("monitor", __name__, url_prefix="/api")
 
@@ -35,7 +38,8 @@ def api_db_migration_status():
         status = get_migration_status(db)
         return jsonify(status)
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[monitor_api] api_db_migration_status 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
 
 
 @monitor_bp.route("/llm-cost/stats", methods=["GET"])
@@ -146,4 +150,5 @@ def api_llm_cost_stats():
             "in_memory_state_unavailable": True,
         })
     except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        logger.exception(f"[monitor_api] api_llm_cost_stats 失败: {e}")
+        return jsonify({"ok": False, "msg": "internal_error"}), 500
