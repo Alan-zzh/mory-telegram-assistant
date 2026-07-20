@@ -30,6 +30,11 @@ from modules.ad_patterns_encoded import (
     CRYPTO_PATTERNS, CRYPTO_NEUTRAL_PATTERNS, CONTACT_PATTERNS, RECRUIT_PATTERNS,
     LOW_BARRIER_PATTERNS, PROFILE_HINT_PATTERNS, USERNAME_PATTERNS, BIO_PATTERNS
 )
+# [Puzan-OS v5.32] 营销话术正则库
+from modules.ad_marketing_patterns import (
+    MARKETING_TEMPLATE_PATTERNS, MARKETING_CONTACT_PATTERNS,
+    MARKETING_URGENCY_PATTERNS, MARKETING_PROJECT_PATTERNS,
+)
 
 logger = get_logger("ad_detector")
 
@@ -96,6 +101,27 @@ BUILTIN_KEYWORD_GROUPS = {
         "label": "灰色产业",
         "weight": 4,
         "patterns": GRAY_PATTERNS,
+    },
+    # [Puzan-OS v5.32] 营销话术分组（4 个子维度）
+    "marketing_template": {
+        "label": "营销话术模板",
+        "weight": 2,
+        "patterns": MARKETING_TEMPLATE_PATTERNS,
+    },
+    "marketing_contact": {
+        "label": "引流联系方式",
+        "weight": 3,
+        "patterns": MARKETING_CONTACT_PATTERNS,
+    },
+    "marketing_urgency": {
+        "label": "紧迫诱导话术",
+        "weight": 2,
+        "patterns": MARKETING_URGENCY_PATTERNS,
+    },
+    "marketing_project": {
+        "label": "项目平台诱导",
+        "weight": 3,
+        "patterns": MARKETING_PROJECT_PATTERNS,
     },
 }
 
@@ -264,6 +290,10 @@ class AdDetector:
             '飛': '飞',  # 飛 -> 飞（啟飛→启飞）
             '啟': '启',  # 啟 -> 启（啟飛→启飞）
             '帶': '带',  # 帶 -> 带（帶你→带你）
+            # [Puzan-OS] v5.31.5 新增：支付宝谐音变体
+            '吱': '支',  # 吱 -> 支（有吱付宝=有支付宝）
+            '伏': '付',  # 伏 -> 付（吱伏宝=支付宝）
+            '寶': '宝',  # 寶 -> 宝（繁体）
         }
         for variant, normal in variant_map.items():
             text = text.replace(variant, normal)
@@ -876,6 +906,15 @@ class AdDetector:
                 r"\u5b9d\u5b9d[\s\S]{0,8}\u6c34\u591a",  # 宝宝...水多
                 r"\u4e00\u5bf9\u4e00[\s\S]{0,8}\u89c6\u9891",  # 一对一视频
                 r"\u88f8\u804a",  # 裸聊
+                # [Puzan-OS] v5.31.5 新增：色情直播招嫖兜底（"无毛鲍鱼B我在直播"类）
+                r"\u65e0\u6bdb[\s\S]{0,5}[\u9c8d\u9c7cBb\u903c][\s\S]{0,5}\u76f4\u64ad",  # 无毛+鲍鱼/B/逼+直播
+                r"[\u9c8d\u9c7cBb\u903c][\s\S]{0,5}\u76f4\u64ad",  # 鲍鱼/B/逼+直播
+                r"\u76f4\u64ad[\s\S]{0,5}[\u9c8d\u9c7c\u65e0\u6bdb\u767d\u864eBb\u903c]",  # 直播+鲍鱼/无毛/白虎/B/逼
+                # [Puzan-OS] v5.31.5 新增：谐音支付宝+时长+价格色情交易兜底（"10分钟3Oo♠"类）
+                r"[0-9]+[\s\S]{0,3}\u5206\u949f[\s\S]{0,5}[0-9Oo]+[\u2660\u2665\u2663\u2666Bb\u5143\u5757]",  # 数字+分钟+数字/Oo+♠/♥/B/元/块（色情符号或价格单位）
+                r"[\u2660\u2665\u2663\u2666][\s\S]{0,5}[0-9Oo]+[\s\S]{0,3}\u5206\u949f",  # ♠/♥/♣/♦+数字+分钟（色情符号开头强信号）
+                r"[\u652f\u5431][\s,，]*[\u4ed8\u4f0f][\s,，]*[\u5b9d\u5b9d][\s\S]{0,10}[0-9]+[\s\S]{0,3}\u5206\u949f",  # 支付宝谐音+数字+分钟
+                r"[\u652f\u5431][\s,，]*[\u4ed8\u4f0f][\s,，]*[\u5b9d\u5b9d][\s\S]{0,5}\u5c31\u884c",  # 支付宝谐音+就行（接受支付宝付款）
             ]
             for pat in explicit_adult_patterns:
                 if re.search(pat, msg_clean, re.IGNORECASE):
@@ -934,6 +973,33 @@ class AdDetector:
             matched_rules.append(f"用户名可疑(+{uname_anomaly_score})")
             logger.info(f"[AD] 用户名可疑但无广告内容，仅记录不拦截: {uname_anomaly_reason}")
 
+        # [Puzan-OS v5.32] AI 边界复核：score=2 但规则引擎未判为广告时，调用 AI 复核升级
+        ai_review_result = None
+        if not is_ad and total_score == 2 and self.config.get("AD_AI_REVIEW_ENABLED", False):
+            try:
+                from modules.ai_advisor import review_borderline_ad
+                ai_review_result = review_borderline_ad(
+                    text=msg_clean,
+                    score=total_score,
+                    reason="；".join(reasons) if reasons else "规则边界评分",
+                    config=self.config,
+                    user_id=user_id,
+                )
+                if ai_review_result.get("used_ai") and ai_review_result.get("is_ad") \
+                        and ai_review_result.get("confidence", 0.0) >= 0.7:
+                    is_ad = True
+                    action = "ban"
+                    ai_reason = ai_review_result.get("reason", "AI复核升级")
+                    matched_rules.append(f"AI边界复核升级(conf={ai_review_result.get('confidence', 0):.2f})")
+                    reasons.append(f"AI复核: {ai_reason}")
+                    logger.info(
+                        f"[AD] AI边界复核升级为广告: uid={user_id} score={total_score} "
+                        f"ai_conf={ai_review_result.get('confidence', 0):.2f} ai_reason={ai_reason}"
+                    )
+            except Exception as ai_err:
+                logger.debug(f"[AD] AI边界复核调用失败: {ai_err}")
+                ai_review_result = None
+
         reason_str = "；".join(reasons) if reasons else "未命中规则"
 
         result = {
@@ -951,6 +1017,8 @@ class AdDetector:
             "cas_score": cas_score,
             "spb_score": spb_score,
             "metadata_score": metadata_score,
+            # [Puzan-OS v5.32] AI 复核结果（仅 AD_AI_REVIEW_ENABLED=true 且边界区间有值）
+            "ai_review": ai_review_result,
         }
 
         if is_ad:

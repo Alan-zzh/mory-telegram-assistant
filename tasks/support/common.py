@@ -56,6 +56,8 @@ def send_and_track(rm: ResourceManager, chat_id: int, text: str, parse_mode=None
     """发送消息并追踪浏览量（主动消息也入库 channel_tracking）。"""
     try:
         with rm.locked('bot'):
+            # [v5.32] 修复：link_preview_options 由 send_message_compat 统一处理
+            # 避免传 dict 给 pyTelegramBotAPI 4.34.0 触发 'dict' object has no attribute 'is_disabled'
             sent = send_message_compat(
                 rm.bot,
                 chat_id,
@@ -63,9 +65,6 @@ def send_and_track(rm: ResourceManager, chat_id: int, text: str, parse_mode=None
                 parse_mode=parse_mode,
                 disable_web_page_preview=disable_web_page_preview,
                 reply_markup=reply_markup,
-                link_preview_options={
-                    "is_disabled": disable_web_page_preview
-                } if disable_web_page_preview is not None else None,
             )
         if sent and hasattr(sent, 'message_id'):
             schedule_auto_delete(rm, chat_id, sent.message_id, 24 * 3600)
@@ -78,8 +77,12 @@ def send_and_track(rm: ResourceManager, chat_id: int, text: str, parse_mode=None
         return None
 
 
-def send_greeting(rm: ResourceManager, chat_id: int, text: str, category: str = "greeting"):
-    """发送早安/午安/晚安问候，支持"发新删旧"链式互删。"""
+def send_greeting(rm: ResourceManager, chat_id: int, text: str, category: str = "greeting", rich_text: str = ""):
+    """发送早安/午安/晚安问候，支持"发新删旧"链式互删。
+
+    [v5.32] 新增 rich_text 参数：当 RICH_MESSAGE_ENABLED=true 且 BROADCAST_FORMAT_VERSION
+    ∈ {"rich","auto"} 时优先用 rich_text 走 sendRichMessage，失败回退到 text + HTML。
+    """
     auto_cfg = get_broadcast_auto_delete_config(rm.config)
 
     # 链式互删
@@ -102,8 +105,29 @@ def send_greeting(rm: ResourceManager, chat_id: int, text: str, category: str = 
         except Exception as e:
             logger.debug(f"链式互删查询失败（继续发新问候）: {e}")
 
-    # 发送新问候
-    sent = send_and_track(rm, chat_id, text, parse_mode="HTML")
+    # [v5.32] 优先尝试 Rich Message 路径
+    sent = None
+    cfg = rm.config or {}
+    rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
+    format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
+    if rich_enabled and rich_text and format_version in ("rich", "auto"):
+        try:
+            with rm.locked('bot'):
+                from core.telebot_compat import send_rich_message_compat
+                sent = send_rich_message_compat(rm.bot, chat_id, rich_text)
+            if sent and hasattr(sent, 'message_id'):
+                schedule_auto_delete(rm, chat_id, sent.message_id, 24 * 3600)
+                if chat_id < 0:
+                    rm.db.track_channel_message(chat_id, sent.message_id, "text")
+                    rm.db.track_bot_message(chat_id, sent.message_id)
+        except Exception as e:
+            logger.warning(f"问候 Rich Message 发送失败，回退 HTML: {e}")
+            sent = None
+
+    # 回退到 HTML parse_mode 路径
+    if sent is None:
+        sent = send_and_track(rm, chat_id, text, parse_mode="HTML")
+
     if sent and hasattr(sent, 'message_id') and hasattr(rm, "db") and rm.db is not None:
         try:
             rm.db.track_broadcast(chat_id, "greeting", sent.message_id)
@@ -222,16 +246,29 @@ def looks_like_ai_fallback(text: str) -> bool:
 
 
 def build_news_without_ai(lines: List[str], time_desc: str) -> str:
-    """LLM 不可用时，用真实标题生成保守新闻文案。"""
+    """[v5.32] LLM 不可用时，用真实标题生成有信息量的新闻文案。
+
+    重构原则（用户反馈"记流水账一样没有实际"）：
+    - 不再用"晚点再补一条更稳的消息"等无价值填充
+    - 不足 5 条时，明确告知"今日 X 条"，不凑数
+    - 用编号列表 + 时间段 + 简短观察，提供真实阅读价值
+    """
     cleaned = []
     for line in lines[:5]:
         core = line.split("】", 1)[-1].split("🔥", 1)[0].strip()
         if core:
-            cleaned.append(core[:36])
-    while len(cleaned) < 5:
-        cleaned.append("晚点再补一条更稳的消息")
-    observation = f"{time_desc}先看这几条，后续有新进展再跟"
-    return "\n".join(cleaned[:5] + [observation])
+            cleaned.append(core[:40])
+
+    if not cleaned:
+        # 真无数据就明说，不假装有内容
+        return f"📰 {time_desc}新闻源暂时拉不到数据，稍后会重试。"
+
+    # 用编号列表呈现，每条独立一行
+    numbered = [f"{i+1}. {title}" for i, title in enumerate(cleaned)]
+    count = len(numbered)
+    header = f"📰 {time_desc}新闻速览（共 {count} 条）"
+    observation = f"\n\n以上为 {time_desc}实时热点，有想细聊的随时来戳我。"
+    return header + "\n\n" + "\n".join(numbered) + observation
 
 
 def get_preferred_news_lines(time_desc: str, config: dict) -> Tuple[List[str], str]:
@@ -300,7 +337,7 @@ def retry_task(rm: ResourceManager, task_func, task_name: str, delay_sec: int = 
 
 
 def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
-    """执行新闻播报任务的公共函数（富文本排版 + 转化按钮）。"""
+    """[v5.32] 执行新闻播报任务（富文本排版 + Rich Message + 转化按钮）。"""
     try:
         with TaskTransactionManager(task_name, rm.db, resources=None, min_interval_sec=7200) as tx:
             if not tx.claimed:
@@ -333,10 +370,37 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                 news = build_news_without_ai(lines, time_desc)
 
             if news:
+                # [v5.32] 同时构建 HTML 卡片和 Rich Message 卡片
                 rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
+                from core.broadcast_formatter import build_rich_news_card_message
+                rich_news_message = build_rich_news_card_message(time_desc, news, source_name=source_name)
                 markup = types.InlineKeyboardMarkup()
                 markup.add(types.InlineKeyboardButton("💬 来找Mory聊聊", url="https://t.me/MorychannelBot"))
 
+                # [v5.32] 优先尝试 Rich Message 路径
+                cfg = rm.config or {}
+                rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
+                format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
+
+                if rich_enabled and format_version in ("rich", "auto"):
+                    try:
+                        from core.telebot_compat import send_rich_message_compat
+                        with rm.locked('bot'):
+                            sent = send_rich_message_compat(
+                                rm.bot, gid, rich_news_message,
+                                reply_markup=markup,
+                            )
+                        if sent and hasattr(sent, 'message_id'):
+                            schedule_auto_delete(rm, gid, sent.message_id, 24 * 3600)
+                            rm.db.track_channel_message(gid, sent.message_id, "text")
+                            rm.db.track_bot_message(gid, sent.message_id)
+                            remember_news_lines(lines)
+                            logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，Rich Message+按钮）")
+                            return
+                    except Exception as e:
+                        logger.warning(f"{time_desc}新闻 Rich Message 发送失败，回退 HTML: {e}")
+
+                # HTML parse_mode 路径（含 [v5.32] 修复的 link_preview_options dict 兼容）
                 try:
                     with rm.locked('bot'):
                         sent = send_message_compat(

@@ -397,7 +397,7 @@ def render_main_menu(config):
             meta = CATEGORY_META[cat]
             row.append(InlineKeyboardButton(f"{meta['emoji']} {meta['name']}", callback_data=f"settings_{cat}_menu"))
         keyboard.add(*row)
-    text = "⚙️ **Mory小助理 设置面板**\n\n请选择要配置的分类："
+    text = "⚙️ <b>Mory小助理 设置面板</b>\n\n请选择要配置的分类："
     return text, keyboard
 
 
@@ -494,7 +494,7 @@ def _build_submenu(category, keys, title, emoji, config):
     # 返回主菜单
     keyboard.add(InlineKeyboardButton("🔙 返回主菜单", callback_data="settings_back_main"))
 
-    text = f"{emoji} **{title}**\n\n点击按钮修改配置："
+    text = f"{emoji} <b>{title}</b>\n\n点击按钮修改配置："
     return text, keyboard
 
 
@@ -1154,7 +1154,7 @@ def handle_settings_callback(bot, call, config, db=None):
         text, keyboard = render_main_menu(config)
         try:
             bot.edit_message_text(text, chat_id, call.message.message_id,
-                                  reply_markup=keyboard, parse_mode="Markdown")
+                                  reply_markup=keyboard, parse_mode="HTML")
         except Exception as e:
             logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id)
@@ -1165,7 +1165,7 @@ def handle_settings_callback(bot, call, config, db=None):
         text, keyboard = render_main_menu(config)
         try:
             bot.edit_message_text(text, chat_id, call.message.message_id,
-                                  reply_markup=keyboard, parse_mode="Markdown")
+                                  reply_markup=keyboard, parse_mode="HTML")
         except Exception as e:
             logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id)
@@ -1187,7 +1187,7 @@ def handle_settings_callback(bot, call, config, db=None):
         text, keyboard = render_map[category](config)
         try:
             bot.edit_message_text(text, chat_id, call.message.message_id,
-                                  reply_markup=keyboard, parse_mode="Markdown")
+                                  reply_markup=keyboard, parse_mode="HTML")
         except Exception as e:
             logger.debug(f"操作异常: {e}")
         bot.answer_callback_query(call.id)
@@ -1205,7 +1205,7 @@ def handle_settings_callback(bot, call, config, db=None):
                 text, keyboard = render_map[category](config)
                 try:
                     bot.edit_message_text(text, chat_id, call.message.message_id,
-                                          reply_markup=keyboard, parse_mode="Markdown")
+                                          reply_markup=keyboard, parse_mode="HTML")
                 except Exception as e:
                     logger.debug(f"操作异常: {e}")
         else:
@@ -1222,7 +1222,7 @@ def handle_settings_callback(bot, call, config, db=None):
                     text, keyboard = render_map[category](config)
                     try:
                         bot.edit_message_text(text, chat_id, call.message.message_id,
-                                              reply_markup=keyboard, parse_mode="Markdown")
+                                              reply_markup=keyboard, parse_mode="HTML")
                     except Exception as e:
                         logger.debug(f"操作异常: {e}")
             else:
@@ -1240,7 +1240,7 @@ def handle_settings_callback(bot, call, config, db=None):
                     text, keyboard = render_map[category](config)
                     try:
                         bot.edit_message_text(text, chat_id, call.message.message_id,
-                                              reply_markup=keyboard, parse_mode="Markdown")
+                                              reply_markup=keyboard, parse_mode="HTML")
                     except Exception as e:
                         logger.debug(f"操作异常: {e}")
             else:

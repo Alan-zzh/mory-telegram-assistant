@@ -146,8 +146,8 @@ def create_app():
         try:
             from core.structured_logger import bind_context
             bind_context(request_id=uuid.uuid4().hex[:12])
-        except Exception:
-            pass  # structlog 未初始化时静默跳过
+        except Exception as e:
+            logger.debug(f"structlog 未初始化，跳过 request_id 绑定: {e}")
 
     # [阶段3-F] DB 驱动权限映射：启动时幂等初始化 role_permissions 表
     # 表为空时用 ROLE_PERMISSIONS 字典 bootstrap，保证向后兼容

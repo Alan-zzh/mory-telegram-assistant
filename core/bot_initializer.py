@@ -344,7 +344,6 @@ def _get_minimal_default_config() -> dict:
         "TOKEN": "", "API_KEY": "", "ADMIN_ID": 0, "GROUP_ID": 0,
         "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "MODEL_POOLS": {"llm": [
-            {"name": "qwen3.6-flash-2026-04-16", "expire": "2026-07-17"},
             {"name": "qwen3.6-27b", "expire": "2026-07-23"},
             {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24"},
             {"name": "qwen3.7-max-preview", "expire": "2026-08-24"},

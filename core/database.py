@@ -70,7 +70,7 @@ class DB:
         self._real_conn = self.conn  # 保留真实连接引用（供 close/WriteQueue Worker 使用）
         self.conn = WriteQueueConnectionProxy(self._real_conn)
         # 初始化8个Repo实例
-        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo
+        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo, SalesRepo
         self.users = UserRepo(self)
         self.groups = GroupRepo(self)
         self.points = PointsRepo(self)
@@ -80,6 +80,7 @@ class DB:
         self.questions = QuestionRepo(self)
         self.relay = RelayRepo(self)
         self.ab_test = ABTestRepo(self)
+        self.sales = SalesRepo(self)
 
         # 【v5.31.1 第一层防御：启动自检】扫描所有 Repo 实例的 public 方法，
         # 验证每个方法都在 _REPO_METHOD_MAP 中注册。缺失则直接启动失败，
@@ -1215,6 +1216,12 @@ class DB:
             # [v5.26.0] 用户生命周期阶段标签（New/Active/Silent/Churning/Lost）
             self._safe_add_column(c, "user_profiles", "lifecycle_stage", "TEXT DEFAULT 'New'")
 
+            # [v5.33] 对话轮次持久化（递进引导重启不重置）
+            # 注：SQLite 不允许 ALTER TABLE ADD COLUMN 带 CURRENT_TIMESTAMP 非常量默认值，
+            # 改为允许 NULL，由 update_conversation_turn() 在 UPDATE 时显式赋值。
+            self._safe_add_column(c, "user_profiles", "conv_turn_count", "INTEGER DEFAULT 0")
+            self._safe_add_column(c, "user_profiles", "conv_last_active", "TIMESTAMP")
+
             # ── [TRAE SOLO CN] v5.19.0 A/B 测试与 Telemetry 表 ──────
             c.execute("""CREATE TABLE IF NOT EXISTS ab_experiments (
                 id TEXT PRIMARY KEY,
@@ -1363,6 +1370,492 @@ class DB:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_bot_routing_chat ON bot_group_routing(chat_id, is_active)")
 
+            # ── [v5.34.0] 销售中心表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS sales_products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sku TEXT DEFAULT '',
+                category TEXT DEFAULT 'default',
+                price REAL NOT NULL DEFAULT 0,
+                description TEXT DEFAULT '',
+                stock INTEGER DEFAULT -1,
+                sort_order INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_products_category ON sales_products(category, is_active)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS sales_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_no TEXT NOT NULL UNIQUE,
+                uid INTEGER NOT NULL,
+                product_id INTEGER NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                chat_id INTEGER DEFAULT 0,
+                source TEXT DEFAULT 'group',
+                referrer_uid INTEGER DEFAULT 0,
+                note TEXT DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_orders_uid ON sales_orders(uid)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON sales_orders(status, created_at)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_orders_created ON sales_orders(created_at)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS sales_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                event TEXT NOT NULL,
+                chat_id INTEGER DEFAULT 0,
+                product_id INTEGER DEFAULT 0,
+                value REAL DEFAULT 0,
+                note TEXT DEFAULT '',
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_sales_events_uid ON sales_events(uid, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_sales_events_event ON sales_events(event, ts)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS sales_commissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                referrer_uid INTEGER NOT NULL,
+                order_id INTEGER NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                rate REAL DEFAULT 0.1,
+                status TEXT DEFAULT 'pending',
+                created_at INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_commissions_referrer ON sales_commissions(referrer_uid)")
+
+            # ── [v5.34.0] 安全中心表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS user_risk_profile (
+                uid INTEGER PRIMARY KEY,
+                risk_score INTEGER DEFAULT 0,
+                risk_factors TEXT DEFAULT '{}',
+                risk_updated_at INTEGER DEFAULT 0
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS security_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                chat_id INTEGER DEFAULT 0,
+                risk_score INTEGER DEFAULT 0,
+                action TEXT DEFAULT '',
+                detail TEXT DEFAULT '',
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_sec_events_uid ON security_events(uid, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_sec_events_type ON security_events(event_type, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_sec_events_ts ON security_events(ts)")
+
+            # ── [v5.34.0] 托管管理表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS managed_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL UNIQUE,
+                group_name TEXT NOT NULL,
+                customer_id TEXT NOT NULL,
+                plan TEXT DEFAULT 'basic',
+                status TEXT DEFAULT 'active',
+                expire_at INTEGER DEFAULT 0,
+                contact TEXT DEFAULT '',
+                note TEXT DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_mg_customer ON managed_groups(customer_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_mg_status ON managed_groups(status)")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS managed_group_features (
+                mg_id INTEGER NOT NULL,
+                feature TEXT NOT NULL,
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (mg_id, feature)
+            )""")
+
+            # ── [v5.34.0] 内容排查表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS content_violations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                message_type TEXT DEFAULT 'text',
+                violations TEXT DEFAULT '',
+                risk_level TEXT DEFAULT 'low',
+                detail TEXT DEFAULT '',
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_violations_uid ON content_violations(uid, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_violations_chat ON content_violations(chat_id, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_violations_ts ON content_violations(ts)")
+
+            # ── [v5.34.0] 网编会员表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS user_membership (
+                uid INTEGER PRIMARY KEY,
+                tier TEXT DEFAULT 'free',
+                expire_at INTEGER DEFAULT 0,
+                sub_type TEXT DEFAULT '',
+                auto_renew INTEGER DEFAULT 0,
+                total_spent REAL DEFAULT 0,
+                joined_at INTEGER DEFAULT 0,
+                updated_at INTEGER DEFAULT 0
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS membership_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid INTEGER NOT NULL,
+                tier TEXT NOT NULL,
+                duration_days INTEGER NOT NULL DEFAULT 0,
+                amount REAL DEFAULT 0,
+                sub_type TEXT DEFAULT 'manual',
+                status TEXT DEFAULT 'active',
+                created_at INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_membership_uid ON membership_subscriptions(uid)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_membership_status ON membership_subscriptions(status)")
+
+            # ── [v5.35.0] 群聊设置表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS chat_settings (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 入群设置表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS join_settings (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 群组命令表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS group_commands (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 机器人设置表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS bot_settings (
+                bot_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 阿福会员表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS afool_member (
+                uid INTEGER PRIMARY KEY,
+                level TEXT DEFAULT 'free',
+                points INTEGER DEFAULT 0,
+                experience INTEGER DEFAULT 0,
+                expire_at INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 超级阿福表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS super_afool (
+                uid INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 0,
+                tier TEXT DEFAULT 'standard',
+                expire_at INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 机器人列表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS bot_list (
+                bot_id INTEGER PRIMARY KEY,
+                name TEXT DEFAULT '',
+                token TEXT DEFAULT '',
+                status TEXT DEFAULT 'active',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 新成员观察期表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS new_member_probation (
+                chat_id INTEGER PRIMARY KEY,
+                duration INTEGER DEFAULT 300,
+                enabled INTEGER DEFAULT 0,
+                welcome_message TEXT DEFAULT '',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 群聊举报表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS group_report (
+                chat_id INTEGER PRIMARY KEY,
+                keywords TEXT DEFAULT '[]',
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 词云表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS word_cloud (
+                chat_id INTEGER PRIMARY KEY,
+                color_scheme TEXT DEFAULT 'default',
+                hour_limit INTEGER DEFAULT 1,
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 语言白名单表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS language_whitelist (
+                chat_id INTEGER PRIMARY KEY,
+                languages TEXT DEFAULT '[]',
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 强制关注频道表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS force_channel (
+                chat_id INTEGER PRIMARY KEY,
+                channel_id INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 有效发言表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS valid_speak (
+                chat_id INTEGER PRIMARY KEY,
+                min_length INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 聊天积分消耗表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS chat_points_cost (
+                chat_id INTEGER PRIMARY KEY,
+                cost_per_message INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 自动规则表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS auto_rules (
+                chat_id INTEGER PRIMARY KEY,
+                rules TEXT DEFAULT '[]',
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 用户标记表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS user_marking (
+                uid INTEGER,
+                chat_id INTEGER,
+                tags TEXT DEFAULT '[]',
+                updated_at INTEGER,
+                PRIMARY KEY (uid, chat_id)
+            )""")
+
+            # ── [v5.35.0] 群组待办表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS group_todo (
+                chat_id INTEGER PRIMARY KEY,
+                todos TEXT DEFAULT '[]',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 邀请链接管理表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS invite_link_manager (
+                chat_id INTEGER PRIMARY KEY,
+                links TEXT DEFAULT '[]',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 关联频道表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS channel_link (
+                chat_id INTEGER PRIMARY KEY,
+                channel_id INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 群安全中心表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS group_safety_center (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 主动消息推送表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS group_message_push (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 群管处罚中心表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS punishment_center (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}',
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 娱乐功能表 ─────────────────────────────
+            c.execute("""CREATE TABLE IF NOT EXISTS entertainment_games (
+                chat_id INTEGER PRIMARY KEY,
+                games TEXT DEFAULT '{}',
+                enabled INTEGER DEFAULT 0,
+                updated_at INTEGER
+            )""")
+
+            # ── [v5.35.0] 36 个新模块补表（模块 SQL 引用，_init_tables 原未定义）─
+            # 通用规则：updated_at INTEGER 允许 NULL，主键参照模块 SQL 使用方式
+            c.execute("""CREATE TABLE IF NOT EXISTS global_ad_blacklist (
+                id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '[]'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS member_info (
+                user_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS bot_registry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                data TEXT DEFAULT '{}'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS user_points (
+                user_id INTEGER PRIMARY KEY,
+                points INTEGER DEFAULT 0
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS chat_points_usage (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS group_configs (
+                chat_id INTEGER,
+                key TEXT,
+                value TEXT,
+                updated_at INTEGER,
+                PRIMARY KEY (chat_id, key)
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS config_templates (
+                name TEXT PRIMARY KEY,
+                data TEXT DEFAULT '{}'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS config_template_applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                data TEXT DEFAULT '{}',
+                created_at INTEGER
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS group_registry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                data TEXT DEFAULT '{}'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS member_actions (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '[]'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS groups (
+                chat_id INTEGER PRIMARY KEY
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS migration_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                data TEXT DEFAULT '[]'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS user_props (
+                user_id INTEGER,
+                prop_name TEXT,
+                count INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, prop_name)
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS image_records (
+                chat_id INTEGER,
+                message_id INTEGER,
+                user_id INTEGER,
+                file_id TEXT,
+                file_unique_id TEXT,
+                data TEXT,
+                is_favorite INTEGER,
+                is_approved INTEGER,
+                upload_time INTEGER,
+                PRIMARY KEY (chat_id, message_id)
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS invite_links (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '[]'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS content_archive (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                message_id INTEGER,
+                content_type TEXT,
+                user_id INTEGER,
+                content TEXT,
+                data TEXT,
+                created_at INTEGER
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS join_records (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '[]'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS message_library (
+                title TEXT PRIMARY KEY,
+                category TEXT DEFAULT 'default',
+                data TEXT DEFAULT '{}',
+                used_count INTEGER DEFAULT 0,
+                created_at INTEGER
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS probation_members (
+                chat_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '[]'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS punishment_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                user_id INTEGER,
+                action_type TEXT,
+                data TEXT DEFAULT '{}',
+                created_at INTEGER
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS user_exp (
+                user_id INTEGER PRIMARY KEY,
+                exp INTEGER DEFAULT 0
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS user_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                item_name TEXT,
+                obtained_at INTEGER
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS message_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                user_id INTEGER,
+                text TEXT,
+                created_at INTEGER
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS premium_usage (
+                id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '{}'
+            )""")
+
+            c.execute("""CREATE TABLE IF NOT EXISTS user_marks (
+                user_id INTEGER PRIMARY KEY,
+                data TEXT DEFAULT '[]'
+            )""")
+
             self.conn.commit()
 
             # ── 性能索引（IF NOT EXISTS 幂等）【v4.2.8增强：添加replied索引防止全表扫描】─
@@ -1394,6 +1887,8 @@ class DB:
         'get_all_badges_leaderboard': 'users', 'get_user_profile': 'users',
         'get_user_persona_profile': 'users',
         'get_all_user_profiles': 'users', 'delete_user': 'users',
+        # [v5.33] 对话轮次持久化（递进引导重启不重置）
+        'update_conversation_turn': 'users', 'get_conversation_turn': 'users',
         # group_repo
         'record_group_join': 'groups', 'record_group_left': 'groups',
         'update_group_total_members': 'groups', 'get_group_stats': 'groups',
@@ -1492,6 +1987,11 @@ class DB:
         'init_cart_recovery': 'social', 'advance_recovery_stage': 'social',
         'get_pending_cart_recoveries': 'social', 'cancel_cart_recovery': 'social',
         'log_paid': 'social',
+        # sales_repo [v5.34.0 新增] 销售中心数据层
+        'add_product': 'sales', 'update_product': 'sales', 'list_products': 'sales', 'get_product': 'sales',
+        'create_order': 'sales', 'update_order_status': 'sales', 'get_user_orders': 'sales', 'get_order_stats': 'sales',
+        'track_sales_event': 'sales', 'get_funnel_stats': 'sales',
+        'add_commission': 'sales', 'get_commission_stats': 'sales',
     }
 
     # ──────────────────────────── v5.31.1 第一层防御：启动自检 ──────────────────────────
@@ -1500,6 +2000,7 @@ class DB:
         'users': 'users', 'groups': 'groups', 'points': 'points',
         'tracking': 'tracking', 'config': 'config', 'social': 'social',
         'questions': 'questions', 'relay': 'relay', 'ab_test': 'ab_test',
+        'sales': 'sales',
     }
 
     def _self_check_repo_methods(self):
@@ -1549,6 +2050,7 @@ class DB:
             'users': self.users, 'groups': self.groups, 'points': self.points,
             'tracking': self.tracking, 'config': self.config, 'social': self.social,
             'questions': self.questions, 'relay': self.relay, 'ab_test': self.ab_test,
+            'sales': self.sales,
         }
         for method_name, repo_key in self._REPO_METHOD_MAP.items():
             repo_instance = repo_instances.get(repo_key)

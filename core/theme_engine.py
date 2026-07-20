@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-播报多样性引擎 v1.0 - 去重 + 主题轮换 + 黑话软植入。
+播报多样性引擎 v2.0 - 主题轮换 + 语气匹配（[v5.32] 重构）。
+
+重构说明（用户反馈"再加的东西特别尬"、"记流水账一样没有实际"）：
+- 移除 SLANG_TEMPLATES / PHOTO_HINT_TEMPLATES / CONVERSION_TEMPLATES
+  这三类硬塞话术（"有些人已经进来了"/"想看私聊"/"来了就知道"等）
+  与正文割裂、价值低、像生硬营销，是用户吐槽的"尬"内容源头。
+- 保留 THEME_POOL / TONE_POOL：仅作为 AI 生成时的 prompt 上下文，
+  让 AI 知道"今天聊天气/生活/情感"，避免 AI 自由发挥跑偏。
+- build_broadcast_context 不再返回 slang_hint / photo_hint / conversion_hint，
+  下游 scheduled_broadcast.py 的 .get() 检查会自动跳过，无破坏性变更。
 
 核心能力：
 1. 基于日期/时段/星期的种子随机，确保同一天同一时段内容一致
 2. 主题池轮换（天气/生活/情感/故事/提问），避免同质化
 3. 语气池轮换（清新/慵懒/温暖/神秘），匹配时段情绪
-4. 黑话软植入（门槛/至臻/全享/原味/定制），不直白营销
-5. 图片关键词暗示（照片/福利/自拍/视频/看图），制造好奇
-
-设计原则：
-- 像朋友随口提到，不像推销
-- 话说一半留一半，让对方自己脑补
-- 禁止"想看更多？""要不要试试？"这种硬广句式
 """
 
 import hashlib
@@ -21,7 +23,7 @@ from datetime import datetime, timezone, timedelta
 _CST = timezone(timedelta(hours=8))
 
 
-# ── 主题池（按星期轮换）─────────────────────────────────────────────────────
+# ── 主题池（按星期轮换，仅用于 AI prompt 上下文）─────────────────────────────
 THEME_POOL = {
     "morning": [
         {"theme": "weather", "desc": "从天气聊起", "keywords": ["阳光", "温度", "风"]},
@@ -54,7 +56,7 @@ THEME_POOL = {
 }
 
 
-# ── 语气池（按时段匹配）─────────────────────────────────────────────────────
+# ── 语气池（按时段匹配，仅用于 AI prompt 上下文）─────────────────────────────
 TONE_POOL = {
     "morning": {
         "fresh": "清新、期待、轻盈",
@@ -79,79 +81,10 @@ TONE_POOL = {
 }
 
 
-# ── 黑话软植入模板（不直白说价格/购买）─────────────────────────────────────
-SLANG_TEMPLATES = {
-    "门槛": [
-        "有些人已经进来了。",
-        "那个坎，过了就知道。",
-        "想知道私聊。",
-    ],
-    "至臻": [
-        "那边东西多一点。",
-        "完整版在那边。",
-        "有些这边不放。",
-    ],
-    "全享": [
-        "年费档什么都有。",
-        "全享那边更全。",
-        "一次到位的选这个。",
-    ],
-    "原味": [
-        "有些东西...不好说。",
-        "穿过的，私聊。",
-        "贴身的，懂的都懂。",
-    ],
-    "定制": [
-        "单独的，私聊。",
-        "定制只给你一个人。",
-        "想拍什么私聊说。",
-    ],
-}
-
-
-# ── 图片关键词暗示模板 ──────────────────────────────────────────────────────
-PHOTO_HINT_TEMPLATES = {
-    "照片": [
-        "有些照片这边不放。",
-        "刚拍了点东西。",
-        "照片在那边。",
-    ],
-    "福利": [
-        "今天有更新。",
-        "新的，私聊。",
-        "有些东西只发给主动的人。",
-    ],
-    "自拍": [
-        "拍了几张。",
-        "新自拍在那边。",
-        "有些不适合发群里。",
-    ],
-    "视频": [
-        "录了点东西。",
-        "视频这边不发。",
-        "想看私聊。",
-    ],
-    "看图": [
-        "图在那边。",
-        "想看图来找我。",
-        "图不发群里。",
-    ],
-}
-
-
-# ── 转化引导模板（底部折叠区/按钮）─────────────────────────────────────────
-CONVERSION_TEMPLATES = [
-    "有些事私聊说更方便。",
-    "来 @MorychannelBot 找我聊。",
-    "那边有更多内容。",
-    "主动的人先看到。",
-    "群里不方便说。",
-    "有事私聊。",
-    "找我。",
-    "那边自己看。",
-    "想知道私聊。",
-    "来了就知道。",
-]
+# [v5.32] 已移除：SLANG_TEMPLATES / PHOTO_HINT_TEMPLATES / CONVERSION_TEMPLATES
+# 这些模板硬塞"想知道私聊"/"有些照片这边不放"/"来了就知道"等话术到 footer，
+# 与正文割裂、像生硬营销，是用户反馈"再加的东西特别尬"的源头。
+# 对应的 getter 函数 get_slang_hint / get_photo_hint / get_conversion_hint 也一并移除。
 
 
 def _get_seed(date: datetime, period: str, item_id: str = "") -> str:
@@ -203,65 +136,32 @@ def get_daily_tone(period: str, date: datetime = None, item_id: str = "") -> dic
 
 
 def get_slang_hint(slang_key: str, date: datetime = None, item_id: str = "") -> str:
-    """
-    获取黑话软植入句子。
-
-    slang_key: 门槛/至臻/全享/原味/定制
-    """
-    if date is None:
-        date = datetime.now(_CST)
-
-    if slang_key not in SLANG_TEMPLATES:
-        return ""
-
-    seed = _get_seed(date, "slang", item_id + slang_key)
-    rng = _seeded_random(seed)
-
-    templates = SLANG_TEMPLATES[slang_key]
-    return rng.choice(templates)
+    """[v5.32] 已弃用，始终返回空串。保留函数签名避免调用方报错。"""
+    return ""
 
 
 def get_photo_hint(photo_keyword: str, date: datetime = None, item_id: str = "") -> str:
-    """
-    获取图片关键词暗示句子。
-
-    photo_keyword: 照片/福利/自拍/视频/看图
-    """
-    if date is None:
-        date = datetime.now(_CST)
-
-    if photo_keyword not in PHOTO_HINT_TEMPLATES:
-        return ""
-
-    seed = _get_seed(date, "photo", item_id + photo_keyword)
-    rng = _seeded_random(seed)
-
-    templates = PHOTO_HINT_TEMPLATES[photo_keyword]
-    return rng.choice(templates)
+    """[v5.32] 已弃用，始终返回空串。保留函数签名避免调用方报错。"""
+    return ""
 
 
 def get_conversion_hint(date: datetime = None, item_id: str = "") -> str:
-    """获取转化引导句子（用于底部折叠区）。"""
-    if date is None:
-        date = datetime.now(_CST)
-
-    seed = _get_seed(date, "conversion", item_id)
-    rng = _seeded_random(seed)
-
-    return rng.choice(CONVERSION_TEMPLATES)
+    """[v5.32] 已弃用，始终返回空串。保留函数签名避免调用方报错。"""
+    return ""
 
 
 def build_broadcast_context(period: str, date: datetime = None, item_id: str = "") -> dict:
     """
-    构建播报上下文（主题+语气+黑话+图片暗示+转化引导）。
+    构建播报上下文（仅主题+语气，[v5.32] 移除 slang/photo/conversion hint）。
 
     返回：
     {
-        "theme": {...},
-        "tone": {...},
-        "slang_hint": "...",
-        "photo_hint": "...",
-        "conversion_hint": "...",
+        "theme": {"theme": "weather", "desc": "...", "keywords": [...]},
+        "tone": {"fresh": "清新、期待、轻盈"},
+        # 以下字段保留键但值为空串，确保下游 .get() 检查不报错
+        "slang_hint": "",
+        "photo_hint": "",
+        "conversion_hint": "",
     }
     """
     if date is None:
@@ -270,23 +170,10 @@ def build_broadcast_context(period: str, date: datetime = None, item_id: str = "
     theme = get_daily_theme(period, date, item_id)
     tone = get_daily_tone(period, date, item_id)
 
-    slang_keys = list(SLANG_TEMPLATES.keys())
-    photo_keys = list(PHOTO_HINT_TEMPLATES.keys())
-
-    seed = _get_seed(date, period, item_id)
-    rng = _seeded_random(seed)
-
-    if period in ("morning", "afternoon"):
-        slang_key = rng.choice(["门槛", "至臻"])
-        photo_key = rng.choice(["照片", "福利"])
-    else:
-        slang_key = rng.choice(["全享", "原味", "定制"])
-        photo_key = rng.choice(["自拍", "视频", "看图"])
-
     return {
         "theme": theme,
         "tone": tone,
-        "slang_hint": get_slang_hint(slang_key, date, item_id),
-        "photo_hint": get_photo_hint(photo_key, date, item_id),
-        "conversion_hint": get_conversion_hint(date, item_id),
+        "slang_hint": "",
+        "photo_hint": "",
+        "conversion_hint": "",
     }

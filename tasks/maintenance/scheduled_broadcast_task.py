@@ -81,6 +81,7 @@ class ScheduledBroadcastTask(BaseTask):
                     execute_scheduled_broadcast(
                         self.rm.bot, gid, self.rm.config, self.rm.db,
                         target_broadcast_id=broadcast_id,
+                        ai_engine=self.rm.ai,
                     )
                 except Exception as e:
                     logger.warning(f"📢 定点播报 {broadcast_id} 发送到群 {gid} 失败: {e}")

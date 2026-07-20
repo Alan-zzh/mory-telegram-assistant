@@ -39,17 +39,17 @@ logger = get_logger("model_router")
 
 _DEFAULT_TIER_CONFIG = {
     "llm_premium": {
-        "model_name": "qwen3.6-flash-2026-04-16",
+        "model_name": "qwen3.6-27b",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "PREMIUM_MODEL_API_KEY",
     },
     "llm_standard": {
-        "model_name": "qwen3.6-flash-2026-04-16",
+        "model_name": "qwen3.6-27b",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "STANDARD_MODEL_API_KEY",
     },
     "llm_light": {
-        "model_name": "qwen3.6-flash-2026-04-16",
+        "model_name": "qwen3.6-27b",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "LIGHT_MODEL_API_KEY",
     },

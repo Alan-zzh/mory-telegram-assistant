@@ -1267,21 +1267,6 @@ def _job_news_evening(rm):
     _execute_news_task(rm, "news_evening", "晚间")
 
 
-def _job_trendradar_morning(rm):
-    """旧的TrendRadar早间播报入口已停用，保留函数仅兼容历史调用"""
-    logger.info("ℹ️ trendradar_morning 已并入 news_morning 统一主流程")
-
-
-def _job_trendradar_noon(rm):
-    """旧的TrendRadar午间播报入口已停用，保留函数仅兼容历史调用"""
-    logger.info("ℹ️ trendradar_noon 已并入 news_afternoon 统一主流程")
-
-
-def _job_trendradar_evening(rm):
-    """旧的TrendRadar晚间播报入口已停用，保留函数仅兼容历史调用"""
-    logger.info("ℹ️ trendradar_evening 已并入 news_evening 统一主流程")
-
-
 # ── 动态随机话术池（去AI化，与ai_engine人设系统一致）── [TRAE SOLO CN]
 
 # 早安/午安/晚安播报尾语池（自然引导私聊，不硬推）
@@ -4298,7 +4283,11 @@ def _job_scheduled_broadcast(rm, chat_id, broadcast_id):
             return
         for gid in group_ids:
             try:
-                execute_scheduled_broadcast(rm.bot, gid, rm.config, rm.db, target_broadcast_id=broadcast_id)
+                execute_scheduled_broadcast(
+                    rm.bot, gid, rm.config, rm.db,
+                    target_broadcast_id=broadcast_id,
+                    ai_engine=getattr(rm, "ai", None),
+                )
             except Exception as e:
                 logger.warning(f"📢 定点播报 {broadcast_id} 发送到群 {gid} 失败: {e}")
     except Exception as e:

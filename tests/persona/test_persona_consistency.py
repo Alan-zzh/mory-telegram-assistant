@@ -379,7 +379,7 @@ def test_persona_adapter_gpt():
     prompt = get_model_persona_prompt("gpt-4o")
     assert "GPT" in prompt
     assert "翻译腔" in prompt  # 强化中文口语化
-    assert "网络用语" in prompt
+    assert "中国网友" in prompt  # 强化口语化要求
 
 
 def test_persona_adapter_unknown():
@@ -402,10 +402,10 @@ def test_persona_adapter_exception_safe():
 
 
 def test_persona_adapter_list_supported_families():
-    """测试 list_supported_families 返回 3 个家族"""
+    """测试 list_supported_families 返回 4 个家族"""
     from core.persona_adapter import list_supported_families
     families = list_supported_families()
-    assert set(families) == {"qwen", "deepseek", "gpt"}
+    assert set(families) == {"qwen", "glm", "deepseek", "gpt"}
 
 
 # ── 端到端批量评估（用 mock 裁判，可离线运行）──

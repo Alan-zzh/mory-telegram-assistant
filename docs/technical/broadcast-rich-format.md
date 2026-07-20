@@ -1,13 +1,66 @@
 # 播报富文本与 Bot API 兼容说明
 
-最后更新：2026-06-15 [Trae Solo CN]
+最后更新：2026-07-18 [Trae Solo CN]（v5.32.0 同步 Bot API 10.1 Rich Message）
 
 ## 目标
 
 - 让早安/午安/晚安、定点播报在 Telegram 里更像"卡片消息"，更美观、更有层次。
-- 保持当前 pyTelegramBotAPI 4.12.0 可运行，不因为官方新参数增加而直接报错。
-- 充分利用 Telegram Bot API HTML 模式的富文本格式化能力。
+- pyTelegramBotAPI 4.34.0 已支持 Bot API 10.1（Rich Message / sendRichMessage / InputRichMessage）。
+- 双路径排版：HTML parse_mode（旧客户端兼容）+ Rich Message 块级标签（新客户端富文本）。
+- v5.32：移除硬塞营销 footer/button，支持 `ai_generate:true` 动态生成 content。
 - v4.0：支持用户画像个性化播报（VIP 专属 emoji、高等级感谢话术、兴趣匹配）
+
+## v5.32 双路径排版架构
+
+### 路径 1：HTML parse_mode（旧版，所有客户端可用）
+统一结构（`build_card_html`）：
+```
+<b><i>emoji 标题</i></b>
+
+<i>角标</i>
+
+正文段落1
+
+正文段落2
+
+<blockquote expandable>折叠补充</blockquote>
+```
+标签限制：仅内联标签 + blockquote，不支持 `<h1>`/`<ul>`/`<table>` 等块级标签。
+
+### 路径 2：Rich Message（v5.32 新增，Bot API 10.1+）
+统一结构（`build_rich_card_message`）：
+```
+<h2>emoji 标题</h2>
+<p><i>角标</i></p>
+<p>正文段落1</p>
+<p>正文段落2</p>
+<details><summary>更多</summary><p>footer</p></details>
+```
+支持块级标签：`<h1>`-`<h6>`/`<p>`/`<ul>`/`<ol>`/`<li>`/`<table>`/`<tr>`/`<td>`/`<th>`/`<details>`/`<summary>`/`<hr>`/`<blockquote>`/`<pullquote>`/`<footer>`
+旧客户端降级为纯文本，新客户端展示富文本。
+
+Rich Message 限制（官方 Bot API 10.1）：
+- 嵌套 ≤16 层
+- 块数 ≤500
+- 表格列数 ≤20
+- `<td>` 仅内联格式
+- `<blockquote>` 不能嵌套
+- `<table>` 内不能嵌套 `<table>`
+- 最大 32768 UTF-8 字符
+- 最多 50 个媒体附件
+
+### 路径选择逻辑
+`_send_formatted_text` 按配置决定路径：
+- `RICH_MESSAGE_ENABLED=true` 且 `BROADCAST_FORMAT_VERSION ∈ {"rich","auto"}` → 优先 Rich Message，失败回退 HTML
+- 其他情况 → HTML parse_mode
+
+### v5.32 ai_generate 动态生成
+SCHEDULED_BROADCASTS 配置项新增 `ai_generate: true` 字段：
+- 启用时调用 `ai_engine.ask(mode=period, seed=确定性int)` 动态生成 content
+- AI 失败自动回退静态 content（保证播报不中断）
+- seed 用 `hashlib.md5(broadcast_id + date)` 确定性生成，同一天同一播报内容稳定
+
+
 
 ## 当前已落地能力
 

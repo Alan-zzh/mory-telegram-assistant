@@ -24,7 +24,13 @@ import os
 import random
 from datetime import datetime, timezone, timedelta
 from telebot import types
-from core.broadcast_formatter import build_broadcast_html, build_rich_broadcast_html, looks_like_html, normalize_text
+from core.broadcast_formatter import (
+    build_broadcast_html,
+    build_rich_broadcast_html,
+    build_rich_broadcast_card_message,
+    looks_like_html,
+    normalize_text,
+)
 from core.telebot_compat import send_checklist_compat, send_message_compat, send_photo_compat, send_poll_compat, send_rich_message_compat
 from core.logging_util import get_logger
 from core.theme_engine import build_broadcast_context
@@ -200,16 +206,23 @@ def _merge_footer_with_variant(footer: str, variant: str) -> str:
 
 
 def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict = None):
-    """按配置把播报渲染成更适合 Telegram 的 HTML 卡片（富文本升级版 v5.0，含多样性引擎）。"""
+    """[v5.32] 按配置把播报渲染成 HTML 卡片，同时返回 Rich Message 版本。
+
+    返回三元组 (html_text, parse_mode, rich_html)：
+    - html_text：HTML parse_mode 路径用（旧客户端兼容）
+    - parse_mode：通常为 "HTML"
+    - rich_html：Rich Message 路径用（块级标签），调用方按需取用
+    """
     content = normalize_text(item.get("content", ""))
     if not content:
-        return "", None
+        return "", None, ""
 
     parse_mode = str(item.get("parse_mode", "") or "").strip() or None
     if parse_mode and parse_mode.upper() != "HTML":
-        return content, parse_mode
+        return content, parse_mode, ""
     if looks_like_html(content):
-        return content, "HTML"
+        # 已是 HTML 富文本，不二次包裹，Rich 路径也用同一份
+        return content, "HTML", ""
 
     title = str(item.get("title", "") or "").strip() or "群播报"
     footer = str(item.get("footer", "") or "").strip()
@@ -219,30 +232,22 @@ def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict =
     button_url = str(item.get("button_url", "") or "").strip()
     broadcast_id = str(item.get("id", "") or "").strip()
 
-    # 使用多样性引擎构建播报上下文
+    # 使用多样性引擎构建播报上下文（[v5.32] 已移除 slang/photo/conversion hint，
+    # theme/tone 仍可用作 AI prompt 上下文，但此处不再拼接到 footer）
     theme_enabled = bool((config or {}).get("BROADCAST_THEME_ENABLED", True))
     soft_variant = _pick_soft_template_variant(item, config)
     footer = _merge_footer_with_variant(footer, soft_variant)
 
     if theme_enabled and period:
         try:
-            ctx = build_broadcast_context(period=period, item_id=broadcast_id)
-            theme_hints = []
-            if ctx.get("slang_hint"):
-                theme_hints.append(ctx["slang_hint"])
-            if ctx.get("photo_hint"):
-                theme_hints.append(ctx["photo_hint"])
-            if ctx.get("conversion_hint"):
-                theme_hints.append(ctx["conversion_hint"])
-
-            if theme_hints:
-                selected_hint = random.choice(theme_hints)
-                footer = _merge_footer_with_variant(footer, selected_hint)
+            # 仅触发上下文构建（确定性种子，用于 AI 后续生成参考）
+            # hint 已为空串，不再拼接到 footer，避免硬塞话术
+            build_broadcast_context(period=period, item_id=broadcast_id)
         except Exception as e:
             logger.debug(f"多样性引擎异常（已忽略，回退默认）: {e}")
 
-    # 使用 v5.0 富文本排版（支持用户画像个性化）
-    return build_rich_broadcast_html(
+    # 旧版 HTML parse_mode 卡片（所有客户端可用）
+    html_text = build_rich_broadcast_html(
         title=title,
         body=content,
         footer=footer,
@@ -251,20 +256,38 @@ def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict =
         button_text=button_text,
         button_url=button_url,
         user_profile=user_profile,
-    ), "HTML"
+    )
+
+    # [v5.32] 新版 Rich Message 卡片（块级标签，Bot API 10.1+）
+    rich_html = build_rich_broadcast_card_message(
+        title=title,
+        body=content,
+        footer=footer,
+        badge=badge,
+        period=period,
+        user_profile=user_profile,
+    )
+
+    return html_text, "HTML", rich_html
 
 
-def _send_formatted_text(bot, chat_id, text: str, parse_mode, config: dict, **kwargs):
-    """按配置优先发送 Rich Message，失败时回退 HTML。"""
+def _send_formatted_text(bot, chat_id, text: str, parse_mode, config: dict, rich_html: str = "", **kwargs):
+    """[v5.32] 按配置优先发送 Rich Message，失败时回退 HTML。
+
+    新增 rich_html 参数：当 RICH_MESSAGE_ENABLED=true 且 BROADCAST_FORMAT_VERSION
+    ∈ {"rich","auto"} 时优先用 rich_html 发送 sendRichMessage，失败回退到 text +
+    parse_mode=HTML 路径。rich_html 为空时直接走旧路径。
+    """
     cfg = config or {}
     format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
-    # 【v5.31.0 修复 Bug B】暂时禁用 Rich Message：_html_to_rich_components 生成的组件格式
-    # 触发 Telegram API 400 "object expected as rich message"。等修复组件格式后再启用。
-    rich_enabled = False  # bool(cfg.get("RICH_MESSAGE_ENABLED", False))
+    # 【v5.31.6 修复 Bug B】send_rich_message_compat 已修正为传入 InputRichMessage 对象
+    # {"html": "..."}（而非 List[Dict]），400 "object expected as rich message" 已解决。
+    # 恢复从 config 读取开关，默认 False（铁律 #8 新功能默认关闭）。
+    rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
 
-    if rich_enabled and parse_mode == "HTML" and format_version in ("rich", "auto"):
+    if rich_enabled and rich_html and format_version in ("rich", "auto"):
         try:
-            return send_rich_message_compat(bot, chat_id, text, **kwargs)
+            return send_rich_message_compat(bot, chat_id, rich_html, **kwargs)
         except Exception as e:
             logger.warning(f"Rich Message 发送失败，回退 HTML: {e}")
 
@@ -277,10 +300,49 @@ def _send_formatted_text(bot, chat_id, text: str, parse_mode, config: dict, **kw
     )
 
 
-def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broadcast_id: str = ""):
+def _try_ai_generate(bc: dict, ai_engine, broadcast_id: str) -> str:
+    """[v5.32] 尝试用 AI 动态生成播报内容。失败返回空串，调用方用静态 content 兜底。
+
+    仅当 bc.ai_generate=true 且 ai_engine 可用时调用。
+    使用 period 作为 mode（morning/afternoon/evening/night），seed 按日期+id 确定性 int。
+    """
+    if not ai_engine or not bc.get("ai_generate"):
+        return ""
+
+    period = str(bc.get("period", "") or "").strip()
+    ai_msg_map = {
+        "morning": "早安",
+        "afternoon": "午安",
+        "evening": "晚安",
+        "night": "晚安",
+    }
+    ai_msg = ai_msg_map.get(period)
+    if not ai_msg:
+        return ""
+
+    try:
+        import hashlib
+        today = datetime.now(_CST).strftime("%Y%m%d")
+        # 确定性 int seed：同一播报同一天生成相同内容，避免重复触发时变来变去
+        seed_str = f"broadcast_{broadcast_id}_{today}"
+        seed = int(hashlib.md5(seed_str.encode("utf-8")).hexdigest()[:8], 16) % 1000000
+        content = ai_engine.ask(ai_msg, mode=period, seed=seed)
+        if content and len(content.strip()) >= 20:
+            return content.strip()
+        logger.warning(f"[broadcast] AI 生成内容过短或为空 {broadcast_id}, 回退静态")
+        return ""
+    except Exception as e:
+        logger.warning(f"[broadcast] AI 生成失败 {broadcast_id}, 回退静态 content: {e}")
+        return ""
+
+
+def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broadcast_id: str = "", ai_engine=None):
     """
     执行定点播报
     被 auto_tasks.py 定时任务调用
+
+    [v5.32] 新增 ai_engine 参数：当 broadcast 配置 ai_generate=true 时，
+    调用 AI 动态生成 content，失败自动回退静态 content。
     """
     broadcasts = config.get("SCHEDULED_BROADCASTS", [])
 
@@ -318,6 +380,14 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
         # 执行播报
         content_type = bc.get("type", "text")
         content = bc.get("content", "")
+        # [v5.32] AI 动态生成 content（仅 text 类型，ai_generate=true 时启用）
+        # 失败自动回退静态 content，保证播报不中断
+        if content_type == "text" and bc.get("ai_generate"):
+            ai_content = _try_ai_generate(bc, ai_engine, broadcast_id)
+            if ai_content:
+                bc = dict(bc)  # 复制避免污染原配置
+                bc["content"] = ai_content
+                content = ai_content
         reply_markup = _build_markup(bc, config)
         disable_notification = bool(bc.get("silent", False))
         protect_content = bool(bc.get("protect_content", False))
@@ -362,7 +432,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
 
         if content_type == "text":
             try:
-                text, parse_mode = _render_broadcast_text(bc, user_profile=user_profile, config=config)
+                text, parse_mode, rich_html = _render_broadcast_text(bc, user_profile=user_profile, config=config)
                 logger.info(f"[broadcast] 准备发送 {broadcast_id} 到 chat={chat_id}, type=text")
                 msg = _send_formatted_text(
                     bot,
@@ -370,6 +440,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     text,
                     parse_mode,
                     config,
+                    rich_html=rich_html,
                     disable_notification=disable_notification,
                     protect_content=protect_content,
                     reply_markup=reply_markup,
@@ -402,11 +473,12 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
             # content 可以是 file_id 或 URL
             caption = normalize_text(bc.get("caption", ""))
             caption_mode = None
+            caption_rich_html = ""
             if caption:
                 temp_item = dict(bc)
                 temp_item["content"] = caption
                 temp_item["title"] = temp_item.get("title", "图片播报")
-                caption, caption_mode = _render_broadcast_text(temp_item, user_profile=user_profile, config=config)
+                caption, caption_mode, caption_rich_html = _render_broadcast_text(temp_item, user_profile=user_profile, config=config)
 
             is_url = bool(content) and str(content).lower().startswith(("http://", "https://"))
             looks_local = _looks_like_local_path(content)
@@ -449,6 +521,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                             caption,
                             caption_mode,
                             config,
+                            rich_html=caption_rich_html,
                             disable_notification=disable_notification,
                             protect_content=protect_content,
                             reply_markup=reply_markup,

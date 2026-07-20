@@ -146,6 +146,18 @@ class BurnOrphanTask(BaseTask):
                     logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
 
             logger.info("✅ [Phase2] 已跳过forward探测（v4.5.35废弃），依赖Phase1 TTL清理")
+
+            # ── Phase 3: [Bug-03 修复] channel_tracking 孤儿兜底清扫 ──
+            # Phase1 通过 get_expired_channel_messages + delete_bot_message_records 清理，
+            # 但当查询失败、LIMIT 截断或消息已被 Telegram 删除时，channel_tracking 表仍会残留。
+            # 这里按 posted_at 时间戳批量删除超过 47 小时的孤儿记录，作为兜底。
+            try:
+                if hasattr(self.rm.db, "cleanup_channel_tracking_orphan"):
+                    deleted_ct = self.rm.db.cleanup_channel_tracking_orphan(max_age_hours=47)
+                    if deleted_ct > 0:
+                        logger.info(f"🧹 [Phase3] channel_tracking 兜底清理：{deleted_ct} 条孤儿记录")
+            except Exception as ct_err:
+                logger.warning(f"🧹 [Phase3] channel_tracking 兜底清理失败: {ct_err}")
         except Exception as e:
             logger.error(f"❌ 阅后即焚孤儿清理失败：{e}", exc_info=True)
             try:

@@ -2,6 +2,9 @@
 """Dashboard设置面板API - 所有/settings/*路由"""
 from flask import Blueprint, request, jsonify
 from dashboard.helpers import login_required, admin_required, get_current_role, read_config, write_config
+from core.logging_util import get_logger
+
+logger = get_logger("settings_api")
 
 settings_bp = Blueprint('settings', __name__, url_prefix='/api')
 

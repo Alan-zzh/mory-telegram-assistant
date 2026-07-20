@@ -7,7 +7,7 @@ tasks/broadcast/greeting_task.py - 早/午/晚安问候任务
 import random
 from typing import Any, Dict, List
 
-from core.broadcast_formatter import build_rich_greeting_html
+from core.broadcast_formatter import build_rich_greeting_html, build_rich_greeting_card_message
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
@@ -72,14 +72,20 @@ class GreetingTask(BaseTask):
                     msg = MessageTemplates.get_fallback_greeting(period)
                     logger.info(f"🌅 {period} 问候使用话术池兜底")
 
-                msg = msg.replace("\n", " ").strip()[:250]
+                # [v5.32] 移除强制单段，保留 AI 生成的多段结构，放宽到 400 字
+                msg = msg.strip()[:400]
                 suffix = MessageTemplates.get_dynamic_suffix(period) if MessageTemplates.needs_suffix(msg) else ""
-                rich = build_rich_greeting_html(period, msg, suffix.strip())
+                # [v5.32] 同时构建 HTML 版本和 Rich Message 版本
+                rich_html = build_rich_greeting_html(period, msg, suffix.strip())
+                rich_message_html = build_rich_greeting_card_message(period, msg, suffix.strip())
 
                 sent_any = False
                 for gid in group_ids:
                     try:
-                        sent = send_greeting(self.rm, gid, rich, f"greeting_{period}")
+                        sent = send_greeting(
+                            self.rm, gid, rich_html, f"greeting_{period}",
+                            rich_text=rich_message_html,
+                        )
                         if sent:
                             sent_any = True
                             logger.info(f"🌅 {period} 问候已发送到群 {gid}：{msg}")

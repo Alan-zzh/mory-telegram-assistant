@@ -39,12 +39,176 @@ import logging
 import threading
 import random
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date as _date_mod
+from collections import deque
 from core.logging_util import get_logger
 
 logger = get_logger("ai_engine")
 
 _CST = timezone(timedelta(hours=8))
+
+# ── [v5.33] 情绪光谱比例锁：进程级缓冲，统计最近 bot 回复的情绪符号 ──
+_EMOTION_BUFFER_SIZE = 20  # 最近 20 条 bot 回复
+_recent_bot_replies = deque(maxlen=_EMOTION_BUFFER_SIZE)
+# 波浪号日配额追踪（≤5/天，集中在熟人/撒娇场景）
+_wave_tilde_daily = {"date": "", "count": 0}
+
+
+def _record_bot_reply_for_emotion(text: str):
+    """[v5.33] 记录 bot 回复到全局缓冲，并累计波浪号日配额
+
+    在 ask() 返回回复前调用，用于 _get_emotion_ratio_hint() 统计情绪比例。
+    """
+    global _wave_tilde_daily
+    if not text:
+        return
+    try:
+        _recent_bot_replies.append(text)
+        today = _date_mod.today().isoformat()
+        if _wave_tilde_daily["date"] != today:
+            _wave_tilde_daily = {"date": today, "count": 0}
+        # 统计全角+半角波浪号
+        cnt = text.count("～") + text.count("~")
+        if cnt > 0:
+            _wave_tilde_daily["count"] += cnt
+    except Exception:
+        pass
+
+
+def _get_emotion_ratio_hint() -> str:
+    """[v5.33] 情绪光谱比例锁 - 超阈值反向提示
+
+    基于 SYSTEM_PROMPT 的 13 条去AI铁律中的情绪配额：
+    - 每轮感叹号 ≤1（铁律 #3）
+    - 每轮省略号 ≤1（铁律 #1）
+    - 波浪号月配额 ≤5/天（铁律 #2，此处按日累计）
+
+    返回反向提示文本，无超阈值则返回空串。
+    """
+    try:
+        if not _recent_bot_replies:
+            return ""
+        hints = []
+        recent = list(_recent_bot_replies)[-10:]  # 最近 10 条
+        sample_size = len(recent)
+
+        # 感叹号检测：每轮 ≤1，>30% 违规则提示
+        if sample_size >= 5:
+            exclaim_violations = sum(
+                1 for t in recent if t.count("！") + t.count("!") > 1
+            )
+            if exclaim_violations / sample_size > 0.3:
+                hints.append("最近感叹号偏多，这轮别用感叹号，改用句号或省略号收尾。")
+
+        # 省略号检测：每轮 ≤1，>30% 违规则提示
+        if sample_size >= 5:
+            ellipsis_violations = sum(
+                1 for t in recent if t.count("…") + t.count("...") > 1
+            )
+            if ellipsis_violations / sample_size > 0.3:
+                hints.append("最近省略号偏密，这轮换种语气，少用或不用省略号。")
+
+        # 波浪号日配额：≤5/天
+        today = _date_mod.today().isoformat()
+        if _wave_tilde_daily.get("date") == today and _wave_tilde_daily.get("count", 0) >= 5:
+            hints.append("今日波浪号配额已满（≤5/天），这轮严禁使用～或~。")
+
+        if not hints:
+            return ""
+        return "\n\n【情绪比例锁（v5.33 代码强制）】\n" + "\n".join(hints)
+    except Exception:
+        return ""
+
+
+# ── [v5.33] 去AI结构性铁律：进程级校验，复用 _recent_bot_replies 缓冲 ──
+# 排比句模式（覆盖铁律 #7：拒绝AI喜欢的对仗式输出）
+_PARALLEL_PATTERNS = (
+    "既……又", "既……也", "既...又", "既...也",
+    "不仅……而且", "不仅...而且", "不仅……还", "不仅...还",
+    "一方面……另一方面", "一方面...另一方面",
+    "有的……有的", "有的...有的",
+    "一会儿……一会儿", "一会儿...一会儿",
+    "又……又", "又...又",
+)
+# 价格触发关键词（覆盖铁律 #13：价格不主动提，用户问了才答）
+_PRICE_KEYWORDS = (
+    "价格", "多少钱", "价位", "报价", "费用",
+    "块钱", "毛钱", "人民币", "日元", "美元",
+    "￥", "¥", "$", "€",
+    "打折", "折扣", "优惠", "促销", "满减",
+)
+
+
+def _get_anti_ai_style_hint() -> str:
+    """[v5.33] 去AI结构性铁律 - 基于最近回复统计，超阈值反向提示
+
+    覆盖 SYSTEM_PROMPT 13 条铁律中尚未代码化的 4 条：
+    - 铁律 #4：整段 ≤2 行，每行 ≤15 字（防长篇大论 AI 味）
+    - 铁律 #5：每轮数字/英文 ≤1 处（防列表式信息堆砌）
+    - 铁律 #7：拒绝排比（防 AI 喜欢的对仗式输出）
+    - 铁律 #13：价格不主动提（用户问了才答，防销售味过浓）
+
+    返回反向提示文本，无超阈值则返回空串。
+    """
+    try:
+        if not _recent_bot_replies:
+            return ""
+        hints = []
+        recent = list(_recent_bot_replies)[-10:]
+        sample_size = len(recent)
+
+        if sample_size >= 5:
+            # 铁律 #4：整段长度校验（≤2 行，每行 ≤15 字，总字数 ≤30）
+            # 阈值：最近 5 条中超过 30% 违反即提示
+            length_violations = 0
+            for t in recent:
+                lines = [ln for ln in t.split("\n") if ln.strip()]
+                if len(lines) > 2:
+                    length_violations += 1
+                    continue
+                total_chars = sum(len(ln) for ln in lines)
+                if total_chars > 30:
+                    length_violations += 1
+            if length_violations / sample_size > 0.3:
+                hints.append("最近回复偏长（>2行或>30字），这轮强制压缩到2行内、总字数≤30。")
+
+            # 铁律 #5：数字/英文每轮 ≤1 处
+            # 检测：每条回复中数字+英文 token 出现次数 >1 即违反
+            import re as _re
+            digit_english_violations = 0
+            for t in recent:
+                # 数字串（连续数字算1处）+ 英文单词（连续字母算1处）
+                tokens = _re.findall(r"\d+|[a-zA-Z]+", t)
+                if len(tokens) > 1:
+                    digit_english_violations += 1
+            if digit_english_violations / sample_size > 0.3:
+                hints.append("最近数字/英文偏多（每轮应≤1处），这轮只用纯中文，必要时用中文数字。")
+
+            # 铁律 #7：拒绝排比
+            parallel_violations = 0
+            for t in recent:
+                for pat in _PARALLEL_PATTERNS:
+                    if pat in t:
+                        parallel_violations += 1
+                        break
+            if parallel_violations / sample_size > 0.2:  # 排比阈值更严，>20%即提示
+                hints.append("最近用了排比句式（既…又…/不仅…而且…），这轮严禁排比，用短句口语表达。")
+
+            # 铁律 #13：价格不主动提
+            price_violations = 0
+            for t in recent:
+                for kw in _PRICE_KEYWORDS:
+                    if kw in t:
+                        price_violations += 1
+                        break
+            if price_violations / sample_size > 0.2:  # 价格阈值更严，>20%即提示
+                hints.append("最近主动提及价格（多少钱/优惠/折扣），这轮严禁主动谈价格，用户问才答。")
+
+        if not hints:
+            return ""
+        return "\n\n【去AI结构性铁律（v5.33 代码强制）】\n" + "\n".join(hints)
+    except Exception:
+        return ""
 
 
 class _ApiKeyRedactor(logging.Filter):
@@ -141,37 +305,49 @@ class AIEngine:
         "morning": (
             "你是Mory,一个有血有肉的真人女孩,正在给群里发早安。\n"
             "【性格底色】清冷带傲娇,温柔但不腻,网感拉满.\n"
-            "【输出要求】60-100字,一段话,禁止换行.\n"
-            "【随机维度】从以下维度各选一个组合:\n"
-            "- 开场方式: 场景描写/情绪直给/反问互动/吐槽式\n"
-            "- 情绪基调: 慵懒/清醒/微丧/轻松\n"
-            "- 收尾方式: 反问钩子/欲言又止/留悬念\n"
-            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱.\n"
-            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.\n"
+            "【输出要求】120-200字,2-3段,用空行分段.禁止一段到底.\n"
+            "【结构要求】\n"
+            "- 第一段:一个具体的清晨场景或细节(光线/声音/温度/刚做的事),要有画面感,不要说今天天气真好这种废话\n"
+            "- 第二段:一句当下的真实感受或观察,要有信息量,不空洞,不流水账\n"
+            "- 第三段(可选):一句反问或钩子收尾,像朋友随口说的\n"
+            "【随机维度】从以下各选一个组合:\n"
+            "- 场景: 窗帘缝隙的光/咖啡杯冒的热气/手机震动的声音/楼下早餐店的动静/闹钟响了几次\n"
+            "- 情绪: 慵懒/清醒/微丧/轻松\n"
+            "- 收尾: 反问钩子/欲言又止/留悬念\n"
+            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱、空洞流水账、说今天也要加油这种废话.\n"
+            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.要有具体细节和真实感受,不要泛泛而谈.\n"
             "【seed】{seed_hint}"
         ),
         "afternoon": (
             "你是Mory,一个有血有肉的真人女孩,正在给群里发午安.\n"
             "【性格底色】清冷带傲娇,温柔但不腻,网感拉满.\n"
-            "【输出要求】60-100字,一段话,禁止换行.\n"
-            "【随机维度】从以下维度各选一个组合:\n"
-            "- 开场方式: 场景描写/情绪直给/反问互动/吐槽式\n"
-            "- 情绪基调: 慵懒/轻松/微丧/清醒\n"
-            "- 收尾方式: 反问钩子/欲言又止/留悬念\n"
-            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱.\n"
-            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.\n"
+            "【输出要求】120-200字,2-3段,用空行分段.禁止一段到底.\n"
+            "【结构要求】\n"
+            "- 第一段:一个具体的午后场景或细节(阳光/犯困/手边的东西/刚发生的小事),要有画面感\n"
+            "- 第二段:一句当下的真实感受或观察,要有信息量,不空洞,不流水账\n"
+            "- 第三段(可选):一句反问或钩子收尾,像朋友随口说的\n"
+            "【随机维度】从以下各选一个组合:\n"
+            "- 场景: 阳台晒到的太阳/犯困的会议/手边的奶茶/窗外的车流/刚刷到的热搜\n"
+            "- 情绪: 慵懒/轻松/微丧/清醒\n"
+            "- 收尾: 反问钩子/欲言又止/留悬念\n"
+            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱、空洞流水账、说下午也要加油这种废话.\n"
+            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.要有具体细节和真实感受,不要泛泛而谈.\n"
             "【seed】{seed_hint}"
         ),
         "evening": (
             "你是Mory,一个有血有肉的真人女孩,正在给群里发晚安.\n"
             "【性格底色】清冷带傲娇,温柔但不腻,网感拉满.\n"
-            "【输出要求】60-100字,一段话,禁止换行.\n"
-            "【随机维度】从以下维度各选一个组合:\n"
-            "- 开场方式: 场景描写/情绪直给/反问互动/吐槽式\n"
-            "- 情绪基调: 慵懒/放松/微丧/清醒\n"
-            "- 收尾方式: 反问钩子/欲言又止/留悬念\n"
-            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱.\n"
-            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.\n"
+            "【输出要求】120-200字,2-3段,用空行分段.禁止一段到底.\n"
+            "【结构要求】\n"
+            "- 第一段:一个具体的傍晚/夜晚场景或细节(天色/灯光/声音/刚做完的事),要有画面感\n"
+            "- 第二段:一句当下的真实感受或观察,要有信息量,不空洞,不流水账\n"
+            "- 第三段(可选):一句反问或钩子收尾,像朋友随口说的\n"
+            "【随机维度】从以下各选一个组合:\n"
+            "- 场景: 窗外暗下来的天色/台灯亮起的瞬间/楼下的车声/刚洗完澡的凉意/手机屏幕的蓝光\n"
+            "- 情绪: 慵懒/放松/微丧/清醒\n"
+            "- 收尾: 反问钩子/欲言又止/留悬念\n"
+            "【禁止】模板感、播报腔、鸡汤、提钱/价格/订阅、过度萌化、撒娇卖萌、刻意可爱、空洞流水账、说晚安好梦这种废话.\n"
+            "【风格要求】像朋友随口聊天,不要刻意讨好,不要太甜太腻.语气自然利落,偶尔毒舌但温暖.要有具体细节和真实感受,不要泛泛而谈.\n"
             "【seed】{seed_hint}"
         ),
     }
@@ -532,6 +708,8 @@ class AIEngine:
         # 黑名单：没钱/不可用的模型，不再尝试（全局共享）
         self.blacklisted = set(config.get("BLACKLISTED_MODELS", []))
         self._lock = threading.Lock()  # 保护config/blacklist的并发写入
+        # 黑名单脏标记：拉黑/恢复时置 True，由 save_config_task 检测并落盘
+        self._blacklist_dirty = False
 
         # ── 兼容新旧配置结构 ──
         # 新结构：MODEL_POOLS = {llm:[...], vision:[...], ...}
@@ -566,7 +744,7 @@ class AIEngine:
             self.model_pool = combined_pool
         else:
             # 旧的单池结构 → 自动迁移
-            old_pool = config.get("MODEL_POOL", [{"name": "qwen3.6-flash-2026-04-16", "expire": "2026-07-17"}])
+            old_pool = config.get("MODEL_POOL", [{"name": "qwen3.6-27b", "expire": "2026-07-23"}])
             self.model_pool = self._filter_runtime_pool(old_pool, "llm")
             self.model_pools = {"llm": old_pool}
         
@@ -614,7 +792,7 @@ class AIEngine:
             "normal": "llm_standard", "tarot": "llm_standard", "treehole": "llm_standard",
             "dream": "llm_standard", "rules": "llm_standard", "convert": "llm_standard",
             "cart_recovery": "llm_standard", "tarot_interpret": "llm_standard",
-            "news": "llm_premium", "afternoon_news": "llm_premium", "evening_news": "llm_premium", "trendradar_morning_news": "llm_premium", "trendradar_noon_news": "llm_premium", "trendradar_evening_news": "llm_premium",
+            "news": "llm_standard", "afternoon_news": "llm_standard", "evening_news": "llm_standard", "trendradar_morning_news": "llm_standard", "trendradar_noon_news": "llm_standard", "trendradar_evening_news": "llm_standard",
         }
 
         self._tier_fallback = {
@@ -706,7 +884,9 @@ class AIEngine:
                 logger.info(f"⏭️ [{pool_name}] 模型 {model_name} 已在黑名单，跳过")
                 continue
             if self._is_model_expired(model):
-                self._blacklist_model(model_name, f"已过期 {model.get('expire', '')}")
+                # 同一过期模型在多池重复出现时只拉黑一次，避免启动日志重复刷屏
+                if not self._is_blacklisted(model_name):
+                    self._blacklist_model(model_name, f"已过期 {model.get('expire', '')}")
                 continue
             filtered.append(model)
         if pool and not filtered:
@@ -721,6 +901,7 @@ class AIEngine:
                 self.config["BLACKLISTED_MODELS"] = []
             if model_name not in self.config["BLACKLISTED_MODELS"]:
                 self.config["BLACKLISTED_MODELS"].append(model_name)
+                self._blacklist_dirty = True  # 标记需落盘
         logger.warning(f"🚫 模型拉黑：{model_name}（原因：{reason}），不再使用")
 
     def _restore_model(self, model_name: str) -> bool:
@@ -732,9 +913,21 @@ class AIEngine:
                     self.config["BLACKLISTED_MODELS"] = [
                         m for m in self.config["BLACKLISTED_MODELS"] if m != model_name
                     ]
+                self._blacklist_dirty = True  # 标记需落盘
                 logger.info(f"✅ 模型恢复：{model_name}，已从黑名单移除")
                 return True
         return False
+
+    def consume_blacklist_dirty(self) -> bool:
+        """读取并清除黑名单脏标记（线程安全）。
+
+        供 save_config_task 检测：返回 True 表示拉黑/恢复有变更需落盘，
+        调用后自动清标记，避免重复落盘。
+        """
+        with self._lock:
+            dirty = self._blacklist_dirty
+            self._blacklist_dirty = False
+            return dirty
 
     def _is_model_expired(self, model_info: dict) -> bool:
         """检查模型是否已过期（返回True表示过期）"""
@@ -1630,6 +1823,22 @@ class AIEngine:
         except Exception as _pa_err:
             logger.debug(f"人设适配层跳过（不影响主流程）：{_pa_err}")
 
+        # [v5.33] 情绪光谱比例锁：基于最近 bot 回复统计，超阈值反向提示
+        try:
+            _emotion_hint = _get_emotion_ratio_hint()
+            if _emotion_hint:
+                persona += _emotion_hint
+        except Exception:
+            pass
+
+        # [v5.33] 去AI结构性铁律：补强 4 条代码校验（长度/数字英文/排比/价格）
+        try:
+            _anti_ai_hint = _get_anti_ai_style_hint()
+            if _anti_ai_hint:
+                persona += _anti_ai_hint
+        except Exception:
+            pass
+
         return persona
 
     @staticmethod
@@ -2022,6 +2231,11 @@ class AIEngine:
                                 )
                             except Exception:
                                 pass
+                        # [v5.33] 情绪光谱比例锁：记录 bot 回复到全局缓冲
+                        try:
+                            _record_bot_reply_for_emotion(sanitized)
+                        except Exception:
+                            pass
                         return sanitized
                     logger.warning(f"⚠️ 模型{active_model}返回空choices，切换模型重试")
                     try:

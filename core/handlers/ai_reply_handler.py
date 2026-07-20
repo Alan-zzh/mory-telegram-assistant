@@ -134,13 +134,27 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         with _conv_lock:
             if uid in _conv_tracker:
                 if now_ts - _conv_tracker[uid]["last_time"] > _CONV_TIMEOUT:
+                    # [v5.33] 超时重置：内存计数归1，DB 也同步重置
                     _conv_tracker[uid] = {"count": 1, "last_time": now_ts}
                 else:
                     _conv_tracker[uid]["count"] += 1
                     _conv_tracker[uid]["last_time"] = now_ts
             else:
-                _conv_tracker[uid] = {"count": 1, "last_time": now_ts}
+                # [v5.33] 新会话：从 DB 读取持久化轮次作为初始基线（重启不重置）
+                _db_count = 0
+                try:
+                    _db_count = db.users.get_conversation_turn(uid)
+                except Exception as _e:
+                    logger.debug(f"读取 conv_turn 失败 uid={uid}: {_e}")
+                # DB 有历史则续接 +1，无则新会话从 1 开始
+                _init_count = _db_count + 1 if _db_count > 0 else 1
+                _conv_tracker[uid] = {"count": _init_count, "last_time": now_ts}
             conv_count = _conv_tracker[uid]["count"]
+        # [v5.33] 同步到 DB 持久化（异步 try/except，不阻塞主流程）
+        try:
+            db.users.update_conversation_turn(uid, conv_count)
+        except Exception as _e:
+            logger.debug(f"同步 conv_turn 到 DB 失败 uid={uid}: {_e}")
 
     bot.send_chat_action(chat_id, "typing")
 

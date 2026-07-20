@@ -583,6 +583,81 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
         clear_logging_context()
         return True
 
+    # v5.35.1 接入 P1-1：6 个 v5.34.0 业务模块管理员命令入口
+    # 6 模块全部默认 enabled=false，开启后通过 /cmd args 触发
+    if msg.startswith("/sales"):
+        try:
+            from modules.sales_center import handle_admin_cmd as _sales_cmd
+            _sales_cmd(bot, m, CONFIG, db, msg.split()[1:])
+        except Exception as e:
+            logger.error(f"销售中心命令异常: {e}")
+            try:
+                bot.send_message(m.chat.id, f"❌ 销售中心命令执行失败: {e}")
+            except Exception:
+                pass
+        clear_logging_context()
+        return True
+    if msg.startswith("/security"):
+        try:
+            from modules.security_center import handle_admin_cmd as _sec_cmd
+            _sec_cmd(bot, m, CONFIG, db, msg.split()[1:])
+        except Exception as e:
+            logger.error(f"安全中心命令异常: {e}")
+            try:
+                bot.send_message(m.chat.id, f"❌ 安全中心命令执行失败: {e}")
+            except Exception:
+                pass
+        clear_logging_context()
+        return True
+    if msg.startswith("/managed"):
+        try:
+            from modules.managed_groups import handle_admin_cmd as _mg_cmd
+            _mg_cmd(bot, m, CONFIG, db, msg.split()[1:])
+        except Exception as e:
+            logger.error(f"多群托管命令异常: {e}")
+            try:
+                bot.send_message(m.chat.id, f"❌ 多群托管命令执行失败: {e}")
+            except Exception:
+                pass
+        clear_logging_context()
+        return True
+    if msg.startswith("/content_audit"):
+        try:
+            from modules.content_audit import handle_admin_cmd as _ca_cmd
+            _ca_cmd(bot, m, CONFIG, db, msg.split()[1:])
+        except Exception as e:
+            logger.error(f"内容审核命令异常: {e}")
+            try:
+                bot.send_message(m.chat.id, f"❌ 内容审核命令执行失败: {e}")
+            except Exception:
+                pass
+        clear_logging_context()
+        return True
+    if msg.startswith("/analytics"):
+        try:
+            from modules.new_member_analytics import handle_admin_cmd as _nma_cmd
+            _nma_cmd(bot, m, CONFIG, db, msg.split()[1:])
+        except Exception as e:
+            logger.error(f"新成员分析命令异常: {e}")
+            try:
+                bot.send_message(m.chat.id, f"❌ 新成员分析命令执行失败: {e}")
+            except Exception:
+                pass
+        clear_logging_context()
+        return True
+    if msg.startswith("/membership"):
+        try:
+            from modules.membership import handle_admin_cmd as _mem_cmd
+            _mem_cmd(bot, m, CONFIG, db, msg.split()[1:])
+        except Exception as e:
+            logger.error(f"会员管理命令异常: {e}")
+            try:
+                bot.send_message(m.chat.id, f"❌ 会员管理命令执行失败: {e}")
+            except Exception:
+                pass
+        clear_logging_context()
+        return True
+
     return False
 
 

@@ -396,6 +396,54 @@ class UserRepo:
             ))
             self.conn.commit()
 
+    # ───────────────────────────────────────────────────────────────────
+    # [v5.33] 对话轮次持久化（递进引导重启不重置）
+    # ───────────────────────────────────────────────────────────────────
+    def update_conversation_turn(self, uid: int, count: int) -> None:
+        """[v5.33] 更新用户对话轮次到 DB（持久化，重启不丢失）
+
+        与内存级 _conv_tracker 同步：每次 conv_count 更新时同步写入 DB。
+        重启后 ai_reply_handler 可从 DB 读取上次会话轮次作为初始值。
+        """
+        try:
+            with self.lock:
+                c = self.conn.cursor()
+                # 幂等补列（旧表兼容）
+                self._db._safe_add_column(c, "user_profiles", "conv_turn_count", "INTEGER DEFAULT 0")
+                self._db._safe_add_column(c, "user_profiles", "conv_last_active", "TIMESTAMP")
+                # 先尝试 UPDATE
+                c.execute(
+                    "UPDATE user_profiles SET conv_turn_count=?, conv_last_active=CURRENT_TIMESTAMP WHERE user_id=?",
+                    (count, uid)
+                )
+                if c.rowcount == 0:
+                    # 用户画像不存在，INSERT OR IGNORE 创建
+                    c.execute(
+                        "INSERT OR IGNORE INTO user_profiles (user_id, conv_turn_count, conv_last_active) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                        (uid, count)
+                    )
+                self.conn.commit()
+        except Exception as e:
+            logger.warning(f"update_conversation_turn 失败 uid={uid}: {e}")
+
+    def get_conversation_turn(self, uid: int) -> int:
+        """[v5.33] 获取用户对话轮次（持久化）
+
+        重启后 _conv_tracker 内存清空时，fallback 读取 DB 上次会话轮次。
+        返回 0 表示无历史记录。
+        """
+        try:
+            with self.lock:
+                c = self.conn.cursor()
+                # 幂等补列
+                self._db._safe_add_column(c, "user_profiles", "conv_turn_count", "INTEGER DEFAULT 0")
+                c.execute("SELECT conv_turn_count FROM user_profiles WHERE user_id=?", (uid,))
+                r = c.fetchone()
+                return int(r[0]) if r and r[0] is not None else 0
+        except Exception as e:
+            logger.debug(f"get_conversation_turn 失败 uid={uid}: {e}")
+            return 0
+
     def list_user_profiles(self, min_level: int = 0, tag: str = "", limit: int = 100) -> list:
         """列出用户画像（用于画像运营页面）。"""
         import json

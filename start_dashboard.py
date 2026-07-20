@@ -38,7 +38,7 @@ def main() -> int:
     if not os.environ.get("DASHBOARD_PASSWORD"):
         temp_password = "mory-" + secrets.token_hex(4)
         os.environ["DASHBOARD_PASSWORD"] = temp_password
-        print(f"本次临时Dashboard密码：{temp_password}")
+        print(f"本次临时Dashboard密码：{temp_password[:5]}...{temp_password[-4:]}（完整密码请查看 .env 或环境变量）")
         print("建议以后把 DASHBOARD_PASSWORD 写进 .env，避免每次启动变化。")
 
     os.environ.setdefault("DASHBOARD_PORT", "6616")

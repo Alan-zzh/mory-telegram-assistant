@@ -27,9 +27,9 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 
 ## 目录结构
 - `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler。
-- `modules/`：91 个业务模块（广告检测、群管、积分、转化、播报、定时任务等）。
+- `modules/`：135 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等 v5.34.0+ 默认关闭）。
 - `dashboard/`：运营后台（`app` + `api`，157 路由）。
-- `tasks/`：后台定时任务（58 `.py`）。
+- `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
 - `scripts/`：工具脚本（含 `doc_consistency.py` 自检）。
 - `tests/`：单元测试。
 - `docs/`：技术(`technical`)、计划(`plans`)、愿景(`vision`)、归档(`archive`)。
@@ -37,8 +37,8 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `runtime/audit-reports/`：审计报告与完工报告。
 - `config/`：systemd 服务文件。
 
-## 客观指标（2026-07-07 实测）
-modules 业务 `.py` = 91，core 业务 `.py` = 74，`_job_` = 53，DB 表 = 108，Dashboard 路由 = 157，消息分发函数 = 9，model_router 映射 = 10。
+## 客观指标（2026-07-19 实测，`scripts/doc_consistency.py` 全过）
+modules 业务 `.py` = 135，core 业务 `.py` = 75，`_job_` = 50，DB 表 = 167，Dashboard 路由 = 157，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 六大文档索引

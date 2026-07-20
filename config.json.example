@@ -1,6 +1,6 @@
 {
-  "_CONFIG_VERSION": "5.31.3",
-  "_CONFIG_UPDATED": "2026-07-06",
+  "_CONFIG_VERSION": "5.35.3",
+  "_CONFIG_UPDATED": "2026-07-18",
   "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。",
   "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
   "API_KEY": "YOUR_DASHSCOPE_API_KEY",
@@ -82,34 +82,6 @@
   "VOICE_POOL": [],
   "MODEL_POOLS": {
     "llm": [
-      {"name": "qwen3.6-flash-2026-04-16", "expire": "2026-07-17", "desc": "通义千问3.6 Flash"},
-      {"name": "qwen3.6-27b", "expire": "2026-07-23", "desc": "通义千问3.6 27B"},
-      {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24", "desc": "通义千问3.7 Max (2026-05-17)"},
-      {"name": "qwen3.7-max-preview", "expire": "2026-08-24", "desc": "通义千问3.7 Max Preview"},
-      {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01", "desc": "通义千问3.7 Plus (2026-05-26)"},
-      {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08", "desc": "通义千问3.7 Max (2026-06-08)"},
-      {"name": "kimi-k2.7-code", "expire": "2026-09-14", "desc": "Kimi K2.7 Code"}
-    ],
-    "llm_light": [
-      {"name": "qwen3.6-flash-2026-04-16", "expire": "2026-07-17", "desc": "通义千问3.6 Flash"},
-      {"name": "qwen3.6-27b", "expire": "2026-07-23", "desc": "通义千问3.6 27B"},
-      {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24", "desc": "通义千问3.7 Max (2026-05-17)"},
-      {"name": "qwen3.7-max-preview", "expire": "2026-08-24", "desc": "通义千问3.7 Max Preview"},
-      {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01", "desc": "通义千问3.7 Plus (2026-05-26)"},
-      {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08", "desc": "通义千问3.7 Max (2026-06-08)"},
-      {"name": "kimi-k2.7-code", "expire": "2026-09-14", "desc": "Kimi K2.7 Code"}
-    ],
-    "llm_standard": [
-      {"name": "qwen3.6-flash-2026-04-16", "expire": "2026-07-17", "desc": "通义千问3.6 Flash"},
-      {"name": "qwen3.6-27b", "expire": "2026-07-23", "desc": "通义千问3.6 27B"},
-      {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24", "desc": "通义千问3.7 Max (2026-05-17)"},
-      {"name": "qwen3.7-max-preview", "expire": "2026-08-24", "desc": "通义千问3.7 Max Preview"},
-      {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01", "desc": "通义千问3.7 Plus (2026-05-26)"},
-      {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08", "desc": "通义千问3.7 Max (2026-06-08)"},
-      {"name": "kimi-k2.7-code", "expire": "2026-09-14", "desc": "Kimi K2.7 Code"}
-    ],
-    "llm_premium": [
-      {"name": "qwen3.6-flash-2026-04-16", "expire": "2026-07-17", "desc": "通义千问3.6 Flash"},
       {"name": "qwen3.6-27b", "expire": "2026-07-23", "desc": "通义千问3.6 27B"},
       {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24", "desc": "通义千问3.7 Max (2026-05-17)"},
       {"name": "qwen3.7-max-preview", "expire": "2026-08-24", "desc": "通义千问3.7 Max Preview"},
@@ -130,45 +102,21 @@
     "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory。",
     "dream": "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
     "fortune": "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
-    "business_engage": "\n【商业搭讪模式】：用户刚刚在群内咨询了商业相关问题（订阅/价格/权限/内容等），请用轻松自然的方式回复：先简短回应他的问题（30-50字），然后自然引导他私聊了解详情。不要直白营销，不要催促，语气像朋友推荐。绝对不要称呼用户'老板'。保持清冷底色，句号收尾，不要撒娇卖萌。"
-  },
-  "MODE_ROUTING": {
-    "morning": "llm_light",
-    "afternoon": "llm_light",
-    "evening": "llm_light",
-    "hook": "llm_light",
-    "nudge": "llm_light",
-    "convert_soft": "llm_light",
-    "leak": "llm_light",
-    "fortune": "llm_light",
-    "wakeup": "llm_light",
-    "reactivate": "llm_light",
-    "convert_hook": "llm_light",
-    "normal": "llm_standard",
-    "tarot": "llm_standard",
-    "treehole": "llm_standard",
-    "dream": "llm_standard",
-    "rules": "llm_standard",
-    "convert": "llm_standard",
-    "cart_recovery": "llm_standard",
-    "tarot_interpret": "llm_standard",
-    "news": "llm_standard",
-    "afternoon_news": "llm_standard",
-    "evening_news": "llm_standard",
-    "trendradar_morning_news": "llm_standard",
-    "trendradar_noon_news": "llm_standard",
-    "trendradar_evening_news": "llm_standard"
+    "business_engage": "\n【商业搭讪模式】：用户刚刚在群内咨询了商业相关问题（订阅/价格/权限/内容等），请用轻松自然的方式回复：先简短回应他的问题（30-50字），然后自然引导他私聊了解详情。不要直白营销，不要催促，语气像朋友推荐。绝对不要称呼用户'老板'。保持清冷底色，句号收尾，不要撒娇卖萌。",
+    "ad_review": "\n【广告复核模式】：你是一个群聊广告检测助手。判断消息是否为广告/营销/引流。严格按JSON返回：{\"is_ad\": true/false, \"confidence\": 0.0-1.0, \"reason\": \"≤30字\"}。",
+    "ad_warning": "\n【可疑提醒模式】：用清冷人设给可疑用户一句≤30字的温和提醒。不直接说\"你是广告\"，用反问或提醒语气。句号收尾。",
+    "ad_explain": "\n【群内说明模式】：刚处理了一个广告号，用清冷人设给群里一句≤25字简短说明。不渲染恐慌，不解释规则。像随口说一句那样自然。"
   },
   "MODEL_ROUTER_ENABLED": false,
-  "MODEL_POOL_PREMIUM": "qwen3.6-flash-2026-04-16",
-  "MODEL_POOL_STANDARD": "qwen3.6-flash-2026-04-16",
-  "MODEL_POOL_LIGHT": "qwen3.6-flash-2026-04-16",
+  "MODEL_POOL_PREMIUM": "qwen3.6-27b",
+  "MODEL_POOL_STANDARD": "qwen3.6-27b",
+  "MODEL_POOL_LIGHT": "qwen3.6-27b",
   "MODEL_ROUTER_OVERRIDE": {},
   "GROWTH_OPTIMIZER_ENABLED": true,
   "GROWTH_AB_SPLIT": 50,
   "AB_TEST_ENABLED": false,
-  "AB_TEST_GROUP_A_MODEL": "qwen3.6-flash-2026-04-16",
-  "AB_TEST_GROUP_B_MODEL": "qwen3.6-27b",
+  "AB_TEST_GROUP_A_MODEL": "qwen3.6-27b",
+  "AB_TEST_GROUP_B_MODEL": "qwen3.7-max-2026-05-17",
   "LLM_COST_GUARD_ENABLED": true,
   "LLM_COST_USER_HOURLY_LIMIT": 1.0,
   "LLM_COST_GLOBAL_HOURLY_LIMIT": 5.0,
@@ -178,7 +126,6 @@
   "BOT_ROUTING_DEFAULT_POLICY": "allow",
   "MODEL_COSTS": {
     "llm": {
-      "qwen3.6-flash-2026-04-16": {"cost_level": "low", "input_price": 1.65e-06, "output_price": 9.9e-06},
       "qwen3.6-27b": {"cost_level": "medium"},
       "qwen3.7-max-2026-05-17": {"cost_level": "high", "input_price": 2.5e-06, "output_price": 1e-05},
       "qwen3.7-max-2026-06-08": {"cost_level": "high", "input_price": 2.5e-06, "output_price": 1e-05},
@@ -219,8 +166,13 @@
   },
   "ANTI_RAID_CONFIG": {
     "enabled": false,
-    "threshold": 5,
-    "window": 60
+    "trigger_member_count": 10,
+    "stats_window_seconds": 30,
+    "defense_duration_seconds": 600,
+    "cooldown_seconds": 300,
+    "emergency_strategy": "mute_new_members",
+    "new_member_mute_duration_seconds": 3600,
+    "alert_message": "🚨 检测到突袭！已自动启用保护模式"
   },
   "ANTIFLOOD_CONFIG": {
     "enabled": false,
@@ -295,13 +247,17 @@
   },
   "LANGUAGE": "zh",
   "AD_DETECT_CONFIG": {
-    "enable": false,
+    "enable": true,
     "sensitivity": 3
   },
   "AD_EXEMPT_CHANNEL_FORWARDS": true,
   "SPAM_ACTION": "mute",
   "EMOJI_MASK_DETECT": false,
   "EDIT_DETECT_ENABLE": false,
+  "AD_MARKETING_DETECTION_ENABLED": true,
+  "AD_AI_REVIEW_ENABLED": true,
+  "AD_AI_AUTO_REPLY_ENABLED": false,
+  "AD_AVATAR_AI_REVIEW_ENABLED": true,
   "MESSAGE_LOCKS": {
     "media": false,
     "sticker": false,
@@ -334,17 +290,17 @@
   },
   "SCHEDULED_BROADCASTS": [
     {
+      "_doc": "[v5.32] ai_generate=true 时调用 AI 动态生成 content，静态 content 作为 fallback。footer 不再硬塞营销。",
       "id": "morning_nudge",
       "hour": 10,
       "minute": 0,
       "type": "text",
       "period": "morning",
       "title": "早",
-      "badge": "报到。",
-      "content": "刚拉开窗帘，阳光有点刺眼，但心情还行。\n\n今天上午也要顺顺利利的，有什么想聊的随时来找我。",
-      "footer": "有事找我。 找 @MorychannelBot",
-      "button_text": "@MorychannelBot",
-      "button_url": "https://t.me/MorychannelBot",
+      "badge": "Mory来报到啦",
+      "ai_generate": true,
+      "content": "窗帘缝隙里漏进来一道光，刚好落在枕头边上。咖啡杯还冒着热气，先喝一口再说。\n\n今天的状态对，节奏就跟着走。上午慢慢来，别一上来就把自己逼太紧。",
+      "footer": "",
       "silent": false,
       "protect_content": false,
       "enabled": true
@@ -356,11 +312,10 @@
       "type": "text",
       "period": "afternoon",
       "title": "午后碎碎念",
-      "badge": "冒个泡。",
-      "content": "午饭吃完了，现在有点犯困，阳光晒得窗台暖暖的。\n\n你们别太累了，记得喝水休息，下午也要撑住。",
-      "footer": "累了就歇会。 找 @MorychannelBot",
-      "button_text": "@MorychannelBot",
-      "button_url": "https://t.me/MorychannelBot",
+      "badge": "Mory冒个泡",
+      "ai_generate": true,
+      "content": "午后的阳光斜斜晒到桌面，咖啡杯空了一半。犯困的会议刚结束，脑子还有点转不过来。\n\n下午容易卡，喝口水缓一缓，剩下的活儿慢慢推，不用一直绷着。",
+      "footer": "",
       "silent": false,
       "protect_content": false,
       "enabled": true
@@ -372,11 +327,10 @@
       "type": "text",
       "period": "evening",
       "title": "今日份碎碎念",
-      "badge": "来了。",
-      "content": "刚忙完坐下来，窗外天色暗下来了，突然想跟你们说声辛苦了。\n\n今天过得怎么样？有没有什么想跟我分享的？我都在听。",
-      "footer": "今天辛苦了。 找 @MorychannelBot",
-      "button_text": "@MorychannelBot",
-      "button_url": "https://t.me/MorychannelBot",
+      "badge": "Mory来了",
+      "ai_generate": true,
+      "content": "窗外天色慢慢暗下来，路灯一盏一盏亮起来。刚忙完坐下来，台灯的光比白天温柔多了。\n\n今天辛苦了。晚上的节奏可以慢一拍，今天的事今天算完，剩下的交给明天。",
+      "footer": "",
       "silent": false,
       "protect_content": false,
       "enabled": true
@@ -388,11 +342,10 @@
       "type": "text",
       "period": "night",
       "title": "睡前悄悄话",
-      "badge": "还没睡？",
-      "content": "窝进被子里了，外面好安静，突然有点想你们。\n\n今天也辛苦啦，早点休息，睡前想我就来敲一下，我可能还没睡。",
-      "footer": "早点睡。 找 @MorychannelBot",
-      "button_text": "@MorychannelBot",
-      "button_url": "https://t.me/MorychannelBot",
+      "badge": "Mory的悄悄话",
+      "ai_generate": true,
+      "content": "外面好安静，能听见楼下偶尔的车声。刚洗完澡，头发还有点湿，窝在被窝里不想动。\n\n今天的事别带到床上想。睡前别刷太久手机，眼睛先休息。",
+      "footer": "",
       "silent": true,
       "protect_content": false,
       "enabled": true
@@ -513,9 +466,9 @@
   "ENABLE_MESSAGE_DELETION": false,
   "ORPHAN_CLEANUP_ENABLED": true,
   "AD_CLEANUP_REACTIONS": true,
-  "RICH_MESSAGE_ENABLED": false,
+  "RICH_MESSAGE_ENABLED": true,
   "BROADCAST_FORMAT_VERSION": "html",
-  "BROADCAST_TEMPLATE_VARIATION_ENABLED": true,
+  "BROADCAST_TEMPLATE_VARIATION_ENABLED": false,
   "BROADCAST_THEME_ENABLED": true,
   "RICH_MESSAGE_STYLE": {
     "title_bold": true,
@@ -531,6 +484,7 @@
     "info": "primary",
     "settings": "default"
   },
+  "EPHEMERAL_MESSAGE_ENABLED": false,
   "CUSTOM_EMOJI_ENABLED": false,
   "CUSTOM_EMOJI_POOL": {},
   "USER_PROFILE_ENABLED": true,
@@ -647,5 +601,266 @@
   "TRACING_BATCH_MODE": true,
   "QUALITY_EVAL_ENABLED": true,
   "QUALITY_EVAL_SAMPLE_RATE": 0.03,
-  "QUALITY_EVAL_DAILY_LIMIT": 50
+  "QUALITY_EVAL_DAILY_LIMIT": 50,
+  "SALES_CENTER_CONFIG": {
+    "enabled": false,
+    "commission_rate": 0.1,
+    "auto_track_events": true,
+    "show_price_in_group": false,
+    "notify_admin_on_order": true,
+    "daily_sales_report": false,
+    "cart_expire_hours": 24
+  },
+  "SECURITY_CENTER_CONFIG": {
+    "enabled": false,
+    "low_risk_threshold": 30,
+    "medium_risk_threshold": 60,
+    "high_risk_threshold": 80,
+    "critical_risk_threshold": 90,
+    "auto_action_medium": "warn",
+    "auto_action_high": "mute",
+    "auto_action_critical": "ban",
+    "mute_minutes_medium": 30,
+    "mute_minutes_high": 1440,
+    "notify_admin_on_high": true,
+    "risk_decay_hours": 24
+  },
+  "MANAGED_GROUPS_CONFIG": {
+    "enabled": false,
+    "notify_expire_days": [30, 7, 1],
+    "trial_days": 7
+  },
+  "CONTENT_AUDIT_CONFIG": {
+    "enabled": false,
+    "check_text": true,
+    "check_links": true,
+    "check_media": false,
+    "check_files": true,
+    "auto_delete_violation": false,
+    "violation_threshold": 3,
+    "mute_minutes": 60,
+    "notify_admin_on_violation": true
+  },
+  "NEW_MEMBER_ANALYTICS": {
+    "enabled": false,
+    "track_invite_source": true,
+    "retention_days": [1, 3, 7, 14, 30],
+    "quality_threshold": 60,
+    "daily_report": false
+  },
+  "MEMBERSHIP_CONFIG": {
+    "enabled": false,
+    "notify_expire_days": [7, 3, 1],
+    "auto_extend": false,
+    "daily_bonus_points": {
+      "basic": 10,
+      "premium": 30,
+      "vip": 100
+    },
+    "lottery_weight": {
+      "free": 1,
+      "basic": 2,
+      "premium": 5,
+      "vip": 10
+    }
+  },
+  "BOTTOM_BUTTON_CONFIG": {
+    "enabled": false,
+    "menu_enabled": false,
+    "menu_title": "菜单",
+    "menu_items": []
+  },
+  "CONFIG_TEMPLATE_CONFIG": {
+    "enabled": false
+  },
+  "CONTENT_ARCHIVE_CONFIG": {
+    "enabled": false,
+    "auto_clean_days": 90,
+    "max_entries_per_group": 10000
+  },
+  "MESSAGE_LIBRARY_CONFIG": {
+    "enabled": false,
+    "categories": []
+  },
+  "RANDOM_DROP_CONFIG": {
+    "enabled": false,
+    "trigger_chance": 0.02,
+    "min_message_interval": 30,
+    "daily_limit_per_user": 3
+  },
+  "GROUP_PROPS_CONFIG": {
+    "enabled": false,
+    "auto_expire_hours": 72
+  },
+  "IMAGE_MANAGER_CONFIG": {
+    "enabled": false,
+    "auto_clean_days": 30,
+    "max_images_per_group": 500
+  },
+  "CRYPTO_DETECTOR_CONFIG": {
+    "enabled": false,
+    "keywords": ["BTC", "ETH", "USDT", "加密货币", "区块链", "虚拟币", "炒币", "挖矿"]
+  },
+  "GROUP_SAFETY_CENTER_CONFIG": {
+    "enabled": false
+  },
+  "GROUP_MESSAGE_PUSH_CONFIG": {
+    "enabled": false
+  },
+  "PUNISHMENT_CENTER_CONFIG": {
+    "enabled": false
+  },
+  "ENTERTAINMENT_GAMES_CONFIG": {
+    "enabled": false,
+    "games": {
+      "basketball": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "slot_machine": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "poker": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "football": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "darts": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "bowling": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "niuniu": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "dice_quick": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "horse_racing": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "baccarat": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "blackjack": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "single_dice": {"enabled": false, "bet_min": 1, "bet_max": 100},
+      "emoji_race": {"enabled": false, "bet_min": 1, "bet_max": 100}
+    }
+  },
+  "AUTO_RULES_CONFIG": {
+    "enabled": false,
+    "auto_warning_enabled": false,
+    "auto_ban_enabled": false,
+    "auto_reply_enabled": false,
+    "auto_delete_enabled": false,
+    "auto_mute_enabled": false
+  },
+  "USER_MARKING_CONFIG": {
+    "enabled": false,
+    "mark_types": ["广告", "骚扰", "优质", "VIP", "黑名单", "白名单"]
+  },
+  "GROUP_TODO_CONFIG": {
+    "enabled": false
+  },
+  "STATS_REPORT_CONFIG": {
+    "enabled": false
+  },
+  "INVITE_LINK_CONFIG": {
+    "enabled": false
+  },
+  "CHANNEL_LINK_CONFIG": {
+    "enabled": false
+  },
+  "GROUP_REPORT_CONFIG": {
+    "enabled": false,
+    "trigger_keywords": ["举报", "report"],
+    "delete_trigger_message": false,
+    "report_format_hint": "请使用 /举报 @用户名 理由 格式",
+    "success_message": "✅ 举报已提交，管理员将尽快处理",
+    "duplicate_message": "⚠️ 您已举报过此消息",
+    "review_message": "🔍 举报已收到，正在审核中",
+    "processed_message": "✅ 举报已处理",
+    "rejected_message": "❌ 举报已驳回"
+  },
+  "WORD_CLOUD_CONFIG": {
+    "enabled": false,
+    "command": "获取词云",
+    "auto_delete_seconds": 30,
+    "background_color": "#ffffff",
+    "word_colors": ["#333333", "#666666", "#999999"],
+    "hourly_limit": 1
+  },
+  "LANGUAGE_WHITELIST_CONFIG": {
+    "enabled": false,
+    "whitelist": ["zh", "en"],
+    "delete_message": true,
+    "delete_hint": "⚠️ 本群只允许使用中文和英文"
+  },
+  "FORCE_CHANNEL_CONFIG": {
+    "enabled": false,
+    "channels": [],
+    "kick_delay_seconds": 300,
+    "warning_message": "⚠️ 请先关注 @channel_name 频道才能发言"
+  },
+  "VALID_SPEAK_CONFIG": {
+    "enabled": false,
+    "min_length": 3,
+    "max_length": 1000,
+    "blocked_patterns": [],
+    "reward_points": 1
+  },
+  "CHAT_POINTS_COST_CONFIG": {
+    "enabled": false,
+    "cost_per_message": 1,
+    "min_points_required": 0,
+    "daily_limit": 100,
+    "free_messages_per_day": 10
+  },
+  "GROUP_MEMBERS_CONFIG": {
+    "enabled": false
+  },
+  "AD_BLOCKER_CONFIG": {
+    "enabled": false,
+    "global_blacklist": [],
+    "ban_duration_days": 30,
+    "delete_messages": true,
+    "notify_admins": true
+  },
+  "GROUP_MIGRATION_CONFIG": {
+    "enabled": false,
+    "auto_invite": true,
+    "message_forward": true,
+    "batch_size": 100
+  },
+  "NEW_MEMBER_PROBATION_CONFIG": {
+    "enabled": false,
+    "probation_minutes": 5,
+    "auto_mute": true,
+    "welcome_message": true,
+    "notification": true
+  },
+  "BOT_LIST_CONFIG": {
+    "enabled": false
+  },
+  "GROUP_LIST_CONFIG": {
+    "enabled": false
+  },
+  "SUPER_AFOOL_CONFIG": {
+    "enabled": false,
+    "advanced_analytics": false,
+    "auto_response_optimization": false,
+    "custom_rules_engine": false,
+    "priority_support": false,
+    "api_access": false
+  },
+  "CHAT_SETTINGS_CONFIG": {
+    "enabled": false
+  },
+  "JOIN_SETTINGS_CONFIG": {
+    "enabled": false,
+    "approval_required": false,
+    "captcha_enabled": true,
+    "captcha_type": "button",
+    "welcome_message": true,
+    "welcome_template": "欢迎 {name} 加入本群！请遵守群规。",
+    "auto_kick_non_member": false,
+    "max_join_per_hour": 10
+  },
+  "GROUP_COMMANDS_CONFIG": {
+    "enabled": false,
+    "custom_commands": {}
+  },
+  "BOT_SETTINGS_CONFIG": {
+    "enabled": false,
+    "bot_name": "",
+    "description": "",
+    "language": "zh",
+    "privacy_mode": false
+  },
+  "AFOOL_MEMBER_CONFIG": {
+    "enabled": false,
+    "vip_enabled": false,
+    "premium_enabled": false
+  }
 }

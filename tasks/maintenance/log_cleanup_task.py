@@ -4,6 +4,7 @@ tasks/maintenance/log_cleanup_task.py - 日志自动清理任务
 每天凌晨清理过期日志文件和数据库日志表。
 """
 
+import os
 import time as _time
 from datetime import timezone, timedelta
 from typing import Any, Dict, List

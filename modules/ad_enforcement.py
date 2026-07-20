@@ -35,8 +35,8 @@ def _safe_delete(bot, db, chat_id: int, msg_id: int) -> bool:
     return deleted
 
 
-def _mute_forever(bot, chat_id: int, uid: int) -> bool:
-    """永久禁言广告账号，不踢出群。"""
+def _mute_forever(bot, db, chat_id: int, uid: int, reason: str = "广告检测") -> bool:
+    """永久禁言广告账号，不踢出群。同步写入 mute_records 表。"""
     try:
         restrict_chat_member_compat(
             bot,
@@ -57,6 +57,17 @@ def _mute_forever(bot, chat_id: int, uid: int) -> bool:
                 "can_react_to_messages": False,
             },
         )
+        # 【v5.31.6 修复】禁封时写入 mute_records，与解封时清理 mute_records 对称
+        if db is not None:
+            try:
+                db.conn.execute(
+                    "INSERT OR REPLACE INTO mute_records "
+                    "(uid, chat_id, mute_until, reason) VALUES (?,?,?,?)",
+                    (uid, chat_id, 0, reason),
+                )
+                db.conn.commit()
+            except Exception as me:
+                logger.debug(f"写入 mute_records 失败（不影响禁言）: uid={uid} err={me}")
         return True
     except Exception as e:
         logger.warning(f"永久禁言广告账号失败: chat={chat_id} uid={uid} err={e}")
@@ -103,7 +114,7 @@ def _write_blacklists(bot, db, uid: int, reason: str) -> bool:
 
 
 def _remove_blacklists(db, uid: int) -> bool:
-    """移除广告处置写入的本地/全局黑名单和禁言记录。"""
+    """移除广告处置写入的本地/全局黑名单、禁言记录和可疑用户追踪。"""
     ok = True
     lock = getattr(db, "lock", None)
     try:
@@ -112,6 +123,8 @@ def _remove_blacklists(db, uid: int) -> bool:
         db.conn.execute("DELETE FROM blacklist WHERE uid=?", (uid,))
         db.conn.execute("DELETE FROM global_blacklist WHERE user_id=?", (uid,))
         db.conn.execute("DELETE FROM mute_records WHERE uid=?", (uid,))
+        # 【v5.31.6 修复】解封时清理 ad_suspicious_users，避免残留可疑评分导致再次触发禁封
+        db.conn.execute("DELETE FROM ad_suspicious_users WHERE user_id=?", (uid,))
         db.conn.commit()
     except Exception as e:
         ok = False
@@ -177,6 +190,46 @@ def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int
         f"广告误封解封完成: uid={uid} chat={chat_id} "
         f"removed={removed} restored={restored} tracking_cleared={tracking_cleared} actor={actor_id}"
     )
+    # 【v5.31.7】解封后通知管理员（卡片化），与禁封通知对称
+    try:
+        admin_id = (config or {}).get("ADMIN_ID", 0)
+        if admin_id:
+            from core.broadcast_formatter import build_alert_card_html
+            body = (
+                f"👤 用户：{format_user_mention(uid, str(uid))}\n"
+                f"📋 操作：移除黑名单 + 恢复权限 + 清理追踪\n"
+                f"🔓 权限恢复：{'成功' if restored else '失败'}\n"
+                f"🧹 追踪清理：{'成功' if tracking_cleared else '失败'}\n"
+                f"👨‍⚖️ 操作者：{actor_id}"
+            )
+            card = build_alert_card_html(
+                title="广告误封已解封",
+                body=body,
+                level="success",
+                footer=f"chat_id={chat_id} uid={uid}",
+            )
+            bot.send_message(admin_id, card, parse_mode="HTML")
+    except Exception as e:
+        logger.debug(f"解封通知管理员失败: uid={uid} err={e}")
+    # 【v5.31.7】Ephemeral Messages 接入：给被解封用户发群内私密通知（Bot API 10.2）
+    # 默认关闭，开启 EPHEMERAL_MESSAGE_ENABLED 后生效。被禁言用户可见性官方未明示，
+    # 仅在已解封（restored=True）后发送，确保用户已恢复发言权限。
+    if (config or {}).get("EPHEMERAL_MESSAGE_ENABLED", False) and restored and chat_id:
+        try:
+            from core.telebot_compat import send_ephemeral_message_compat
+            from core.broadcast_formatter import build_alert_card_html
+            user_card = build_alert_card_html(
+                title="你的群内发言权限已恢复",
+                body="如果是误封，已为你解除。欢迎继续正常交流～",
+                level="success",
+            )
+            send_ephemeral_message_compat(
+                bot, chat_id, uid, user_card, parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.debug(f"解封 Ephemeral 通知用户失败: uid={uid} err={e}")
+    # 【v5.31.6 修复】返回码以 removed（黑名单移除）为核心判断，
+    # restored 和 tracking_cleared 是辅助操作，失败在 data 中反映但不影响主返回码
     return {
         "code": 200 if removed else 500,
         "data": {
@@ -438,20 +491,29 @@ def _build_unban_markup(uid: int, chat_id: int):
 
 
 def _notify_admin(bot, config: dict, chat_id: int, uid: int, uname: str, reason: str, deleted_count: int, muted: bool, reactions_cleaned: bool = False):
-    """通知管理员广告处置结果。"""
+    """通知管理员广告处置结果（v5.31.7 卡片化）。"""
     admin_id = config.get("ADMIN_ID", 0)
     if not admin_id:
         return
     try:
-        bot.send_message(
-            admin_id,
-            f"🚫 广告账号已处理\n"
+        from core.broadcast_formatter import build_alert_card_html
+        body = (
             f"👤 用户：{format_user_mention(uid, uname)}\n"
             f"📋 操作：永久禁言 + 加黑名单 + 删除消息\n"
             f"🗑 删除消息：{deleted_count}条\n"
             f"🧹 清理反应：{'已尝试' if reactions_cleaned else '未执行/不支持'}\n"
             f"🔇 永久禁言：{'成功' if muted else '失败'}\n"
-            f"🎯 原因：{reason[:200]}",
+            f"🎯 原因：{reason[:200]}"
+        )
+        card = build_alert_card_html(
+            title="广告账号已处理",
+            body=body,
+            level="danger",
+            footer=f"chat_id={chat_id} uid={uid}",
+        )
+        bot.send_message(
+            admin_id,
+            card,
             parse_mode="HTML",
             reply_markup=_build_unban_markup(uid, chat_id),
         )
@@ -476,7 +538,7 @@ def enforce_ad_user(
     if not current_msg_id and message is not None:
         current_msg_id = getattr(message, "message_id", 0) or 0
     deleted_count = _cleanup_user_messages(bot, db, config or {}, uid, chat_id, current_msg_id)
-    muted = _mute_forever(bot, chat_id, uid)
+    muted = _mute_forever(bot, db, chat_id, uid, reason)
     reactions_cleaned = _cleanup_user_reactions(bot, config or {}, uid, chat_id)
     blacklisted = _write_blacklists(bot, db, uid, reason)
     if notify_admin:
@@ -485,6 +547,22 @@ def enforce_ad_user(
         f"广告账号处置完成: uid={uid} chat={chat_id} "
         f"muted={muted} blacklisted={blacklisted} deleted={deleted_count} reactions_cleaned={reactions_cleaned}"
     )
+
+    # [Puzan-OS v5.32] 处置后给群内 AI 上下文说明（默认关闭，开启 AD_AI_AUTO_REPLY_ENABLED 才生效）
+    # 避免群里其他用户看到广告被删后困惑，AI 自然地说一句"清了个广告"
+    if (config or {}).get("AD_AI_AUTO_REPLY_ENABLED", False) and chat_id and chat_id < 0:
+        try:
+            from modules.ai_advisor import explain_enforcement_to_chat
+            explain_enforcement_to_chat(
+                bot=bot,
+                chat_id=chat_id,
+                uname=uname or str(uid),
+                reason=reason,
+                config=config or {},
+            )
+        except Exception as e:
+            logger.debug(f"群内说明发送失败（不影响处置）: uid={uid} err={e}")
+
     return {
         "code": 200,
         "data": {

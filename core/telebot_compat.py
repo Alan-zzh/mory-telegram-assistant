@@ -306,8 +306,34 @@ def preserve_telegram_extra_fields():
 
 
 
+def _normalize_link_preview_options(kwargs: dict) -> bool:
+    """[v5.32] 把 link_preview_options dict 转成 LinkPreviewOptions 对象。
+
+    pyTelegramBotAPI 4.34.0 期望对象而非 dict，传 dict 会报
+    `'dict' object has no attribute 'is_disabled'`。SDK 不支持时返回 False，
+    调用方应走 raw API 兜底。
+    """
+    lpo = kwargs.get("link_preview_options")
+    if lpo is None or isinstance(lpo, str):
+        return True
+    if not isinstance(lpo, dict):
+        return True
+    try:
+        from telebot.types import LinkPreviewOptions
+        kwargs["link_preview_options"] = LinkPreviewOptions(**lpo)
+        return True
+    except Exception:
+        return False
+
+
 def send_message_compat(bot, chat_id, text, **kwargs):
     """兼容 send_message 新参数。"""
+    # [v5.32] 修复 link_preview_options dict 不兼容 bug
+    if "link_preview_options" in kwargs and not _normalize_link_preview_options(kwargs):
+        # SDK 不支持 LinkPreviewOptions，走 raw API
+        params = {"chat_id": chat_id, "text": text, **kwargs}
+        return _make_raw_request(bot, "sendMessage", params)
+
     unsupported_keys = (
         "allow_paid_broadcast",
         "message_effect_id",
@@ -344,33 +370,128 @@ def send_photo_compat(bot, chat_id, photo, **kwargs):
 
 def send_rich_message_compat(bot, chat_id, rich_message, **kwargs):
     """兼容 Telegram Bot API 10.1 Rich Messages。
-    
+
     rich_message 可以是：
-    1. List[Dict] - 富文本组件列表
-    2. str - HTML 格式（自动转换为 Rich Message 组件）
-    
-    示例组件：
-    [
-        {"type": "bold", "text": "标题"},
-        {"type": "italic", "text": "副标题"},
-        {"type": "text", "text": "正文内容"},
-        {"type": "text_link", "text": "链接", "url": "https://..."},
-        {"type": "custom_emoji", "text": "🎉", "emoji_id": "..."},
-        {"type": "blockquote", "text": "引用内容"},
-        {"type": "spoiler", "text": "剧透内容"}
-    ]
+    1. str - HTML 格式字符串，自动包装为 InputRichMessage 对象 {"html": "..."}
+    2. dict - 已是 InputRichMessage 对象（如 {"html": "..."} 或 {"text": {...}}），直接使用
+    3. list - 旧版组件列表格式（已弃用，会尝试转为 HTML）
+
+    官方期望 rich_message 参数是 InputRichMessage 对象（如 {"html": "<b>标题</b>"}），
+    而非组件列表。早期版本错误地传入 List[Dict] 导致 400 "object expected as rich message"。
     """
-    # 如果是 HTML 字符串，尝试转换为 Rich Message 组件
+    # str → 包装成 InputRichMessage 对象
     if isinstance(rich_message, str):
-        rich_message = _html_to_rich_components(rich_message)
-    
+        rich_message = {"html": rich_message}
+    # list → 旧版组件格式，尝试拼接为 HTML 字符串后包装
+    elif isinstance(rich_message, list):
+        html_parts = []
+        for comp in rich_message:
+            if not isinstance(comp, dict):
+                continue
+            ctype = comp.get("type", "text")
+            ctext = comp.get("text", "")
+            if ctype == "bold":
+                html_parts.append(f"<b>{ctext}</b>")
+            elif ctype == "italic":
+                html_parts.append(f"<i>{ctext}</i>")
+            elif ctype == "underline":
+                html_parts.append(f"<u>{ctext}</u>")
+            elif ctype == "strikethrough":
+                html_parts.append(f"<s>{ctext}</s>")
+            elif ctype == "spoiler":
+                html_parts.append(f"<tg-spoiler>{ctext}</tg-spoiler>")
+            elif ctype == "code":
+                html_parts.append(f"<code>{ctext}</code>")
+            elif ctype == "pre":
+                html_parts.append(f"<pre>{ctext}</pre>")
+            elif ctype == "blockquote":
+                html_parts.append(f"<blockquote>{ctext}</blockquote>")
+            elif ctype == "text_link":
+                url = comp.get("url", "")
+                html_parts.append(f'<a href="{url}">{ctext}</a>')
+            else:
+                html_parts.append(str(ctext))
+        rich_message = {"html": "".join(html_parts)}
+    # dict → 直接使用（兼容 {"html": "..."} 和 {"text": {...}} 两种格式）
+
     params = {"chat_id": chat_id, "rich_message": rich_message, **kwargs}
     return _make_raw_request(bot, "sendRichMessage", params)
 
 
+# ── Ephemeral Messages 兼容层（Bot API 10.2, 2026-07-14）─────────────────────
+# 群内私密消息：只对指定用户可见，用于敏感通知（如警告/解封结果）。
+# SDK 4.34.0 未封装，走 raw API 兜底。
+
+
+def send_ephemeral_message_compat(bot, chat_id, receiver_user_id, text, **kwargs):
+    """发送群内私密消息（仅 receiver_user_id 可见）。Bot API 10.2+。
+
+    必需参数：
+        chat_id: 群聊 ID
+        receiver_user_id: 接收者用户 ID
+        text: 消息文本
+
+    可选 kwargs（透传给 Bot API）：
+        parse_mode, reply_markup, disable_notification 等
+    """
+    params = {
+        "chat_id": chat_id,
+        "receiver_user_id": receiver_user_id,
+        "text": text,
+        **kwargs,
+    }
+    return _make_raw_request(bot, "sendEphemeralMessage", params)
+
+
+def edit_ephemeral_message_text_compat(
+    bot, chat_id, message_id, text,
+    receiver_user_id=None, callback_query_id=None, **kwargs
+):
+    """编辑群内私密消息文本。Bot API 10.2+。
+
+    receiver_user_id 和 callback_query_id 至少传一个，用于 Telegram 定位接收者。
+    """
+    params = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        **kwargs,
+    }
+    if receiver_user_id is not None:
+        params["receiver_user_id"] = receiver_user_id
+    if callback_query_id is not None:
+        params["callback_query_id"] = callback_query_id
+    return _make_raw_request(bot, "editEphemeralMessageText", params)
+
+
+def delete_ephemeral_message_compat(
+    bot, chat_id, message_id,
+    receiver_user_id=None, callback_query_id=None, **kwargs
+):
+    """删除群内私密消息。Bot API 10.2+。
+
+    返回 True/False（delete 方法不返回 Message 对象）。
+    """
+    params = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        **kwargs,
+    }
+    if receiver_user_id is not None:
+        params["receiver_user_id"] = receiver_user_id
+    if callback_query_id is not None:
+        params["callback_query_id"] = callback_query_id
+    result = _make_raw_result(bot, "deleteEphemeralMessage", params)
+    return bool(result)
+
+
 def _html_to_rich_components(html_text: str) -> list:
-    """将 HTML 卡片转换为 Rich Message 组件列表。
-    
+    """[DEPRECATED v5.31.7] 将 HTML 卡片转换为 Rich Message 组件列表。
+
+    已弃用：send_rich_message_compat 不再调用此函数。
+    官方 Bot API 10.1 期望 InputRichMessage 对象 {"html": "..."} 而非组件列表。
+    保留此函数仅供历史参考，后续版本可能删除。
+
     支持的 HTML 标签：
     - <b>/<strong> → bold
     - <i>/<em> → italic

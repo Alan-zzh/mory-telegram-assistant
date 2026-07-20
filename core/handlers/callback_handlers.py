@@ -234,7 +234,7 @@ def register_callback_handlers(bot, ctx):
                 return
             from modules.settings_panel import render_main_menu
             text, keyboard = render_main_menu(ctx.config)
-            bot.send_message(m.chat.id, text, reply_markup=keyboard, parse_mode="Markdown")
+            bot.send_message(m.chat.id, text, reply_markup=keyboard, parse_mode="HTML")
         except Exception as e:
             logger.error(f"/settings 命令异常：{e}")
 

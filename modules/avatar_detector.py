@@ -283,6 +283,14 @@ def check_avatar_ocr_text(bot, user_id: int, config: dict = None) -> Tuple[bool,
                         ("币圈", 2), ("套利", 2), ("日入", 2), ("稳赚", 2),
                         ("搬砖", 1), ("搞米", 1), ("带人", 1),
                         ("项目", 1), ("合作", 1), ("招募", 1),
+                        # [Puzan-OS v5.32] 营销话术扩展
+                        ("扫码", 2), ("扫码进群", 2), ("扫码加", 2),
+                        ("客服", 1), ("咨询", 1), ("导师", 2),
+                        ("零投资", 2), ("0投资", 2), ("零门槛", 2),
+                        ("动动手指", 2), ("轻轻松松", 2), ("睡后收入", 2),
+                        ("限时名额", 2), ("名额有限", 2), ("马上报名", 2),
+                        ("加我V", 2), ("加我微信", 2), ("加微信", 2),
+                        ("私聊详情", 2), ("私我", 1), ("VX", 1),
                     ]
                     
                     score = 0
@@ -319,9 +327,88 @@ def check_and_ban_if_porn_avatar(bot, user_id: int, chat_id: int, user_name: str
     [Codex] 处置策略已迁移到 modules.ad_enforcement：本函数只返回命中结果，不踢人。
     """
     is_suspicious, reason = check_user_avatar(bot, user_id)
-    
+
     if is_suspicious:
         logger.warning(f"🚫 头像检测命中：{user_name}({user_id}) 原因：{reason}")
         return True
 
     return False
+
+
+# ──────────────────────────────────────────────────────
+# [Puzan-OS v5.32] 头像营销话术综合检测（OCR + AI 视觉复核）
+# ──────────────────────────────────────────────────────
+
+def check_avatar_marketing(bot, user_id: int, config: dict = None) -> Tuple[bool, str, int, dict]:
+    """
+    [Puzan-OS v5.32] 综合检测头像中的营销话术/二维码/色情元素。
+
+    检测链：
+    1. 现有 check_avatar_ocr_text（OCR + 营销关键词评分）
+    2. ai_advisor.review_avatar_with_vision（AI 视觉模型复核，默认关闭）
+
+    Args:
+        bot: TeleBot 实例
+        user_id: 用户 ID
+        config: 配置字典
+
+    Returns:
+        (is_suspicious: bool, reason: str, score: int, ai_result: dict)
+        - is_suspicious: 是否检测到营销话术/二维码/色情
+        - reason: 命中原因
+        - score: 0=正常，1=可疑，2=明确营销
+        - ai_result: AI 复核结果（未开启时为空 dict）
+    """
+    cfg = config or {}
+
+    # 第一步：现有 OCR 检测
+    ocr_suspicious, ocr_text, ocr_score = check_avatar_ocr_text(bot, user_id, cfg)
+    if ocr_suspicious:
+        reason = f"OCR命中营销话术: {ocr_text[:50]}"
+        return True, reason, ocr_score, {}
+
+    # 第二步：AI 视觉模型复核（默认关闭）
+    ai_result = {}
+    if cfg.get("AD_AVATAR_AI_REVIEW_ENABLED", False):
+        try:
+            # 获取头像图片字节
+            photos = bot.get_user_profile_photos(user_id, limit=1)
+            if not photos or not photos.photos or len(photos.photos) == 0:
+                return False, "无头像", 0, {}
+
+            photo_sizes = photos.photos[0]
+            largest_photo = photo_sizes[-1]
+            file_info = bot.get_file(largest_photo.file_id)
+            if not file_info or not file_info.file_path:
+                return False, "无法获取头像", 0, {}
+
+            file_data = bot.download_file(file_info.file_path)
+            if not file_data:
+                return False, "下载头像失败", 0, {}
+
+            from modules.ai_advisor import review_avatar_with_vision
+            ai_result = review_avatar_with_vision(file_data, cfg, user_id)
+
+            if ai_result.get("used_ai") and ai_result.get("is_ad"):
+                confidence = ai_result.get("confidence", 0.0)
+                ad_type = ai_result.get("type", "unknown")
+                desc = ai_result.get("desc", "")
+
+                # 高置信度直接判营销
+                if confidence >= 0.7:
+                    score = 2 if ad_type in ("marketing", "adult", "qr") else 1
+                    reason = f"AI视觉复核: {ad_type}({desc})"
+                    logger.warning(
+                        f"🚫 [AI头像复核] 命中: uid={user_id} type={ad_type} "
+                        f"conf={confidence:.2f} desc={desc}"
+                    )
+                    return True, reason, score, ai_result
+                # 中置信度记为可疑
+                elif confidence >= 0.5:
+                    reason = f"AI视觉可疑: {ad_type}({desc})"
+                    return True, reason, 1, ai_result
+        except Exception as e:
+            logger.debug(f"[v5.32] AI头像复核失败 uid={user_id}: {e}")
+            ai_result = {"error": str(e), "used_ai": False}
+
+    return False, "头像正常", 0, ai_result

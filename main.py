@@ -65,8 +65,8 @@ def main():
                 f.write(str(fail_count))
             logger.warning(f"⏳ preflight 连续失败 {fail_count} 次，退避 {backoff}s 后退出")
             time.sleep(backoff)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"backoff 文件读取跳过: {e}")
 
         sys.exit(1)
 

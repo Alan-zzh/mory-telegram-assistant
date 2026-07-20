@@ -91,9 +91,16 @@ class _FakeAdDetector:
     def clear_user_tracking(self, uid):
         pass
 
+    def track_suspicious_user(self, user_id: int, msg_id: int, chat_id: int, text: str, score: int) -> dict:
+        return {"action": "none"}
+
+    def check_consecutive_patterns(self, user_id: int, chat_id: int, bot=None) -> dict:
+        return {"is_spam": False, "reason": "", "score": 0, "messages": []}
+
 
 class _FakeKeywordManager:
-    pass
+    def get_ad_keywords(self):
+        return []
 
 
 def _create_dctx_with_channel_forward(config_overrides=None):

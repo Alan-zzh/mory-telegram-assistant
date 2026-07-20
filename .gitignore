@@ -81,3 +81,6 @@ Thumbs.db
 
 # ── AI工作目录（不含业务代码）──────────────────────────────────────────────
 .trae/
+
+# ── runtime 浏览器扫描临时产物（probe/crawl/screenshot，不提交）────────────
+runtime/browser-scan/
