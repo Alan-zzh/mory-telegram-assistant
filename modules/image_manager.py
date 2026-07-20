@@ -39,7 +39,8 @@ class ImageManagerModule:
                 'file_unique_id': file_unique_id,
                 'is_favorite': False,
                 'is_approved': None,
-                'upload_time': datetime.now().isoformat(),
+                # 修复 P2：upload_time 表字段是 INTEGER，原存 ISO 字符串导致排序和清理失效
+                'upload_time': int(datetime.now().timestamp()),
             }
             self._save_image(record)
             logger.debug(f"[图片管理] 记录图片 chat={chat_id}, user={user_id}")
@@ -199,7 +200,8 @@ class ImageManagerModule:
 
     def _delete_old_images(self, days: int, chat_id: int) -> int:
         try:
-            cutoff_time = (datetime.now() - timedelta(days=days)).isoformat()
+            # 修复 P2：upload_time 是 INTEGER（Unix 时间戳），不能用 ISO 字符串比较
+            cutoff_time = int((datetime.now() - timedelta(days=days)).timestamp())
             if chat_id:
                 cursor = self._db.conn.execute(
                     'DELETE FROM image_records WHERE chat_id = ? AND upload_time < ?',

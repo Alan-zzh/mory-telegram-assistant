@@ -5,11 +5,13 @@ import json
 from datetime import datetime
 from typing import Dict, Any
 
-from core.settings import config
-from core.database import db_manager
-from core.telebot_compat import TelebotCompat
-from utils.logger import get_logger
+from core.logging_util import get_logger
+from core.settings import get_config
 
+try:
+    config = get_config()
+except Exception:
+    config = {}
 logger = get_logger(__name__)
 
 BOT_SETTINGS_CONFIG = config.get('BOT_SETTINGS_CONFIG', {
@@ -23,14 +25,15 @@ BOT_SETTINGS_CONFIG = config.get('BOT_SETTINGS_CONFIG', {
 
 class BotSettingsModule:
     def __init__(self):
-        self._db = db_manager
-        self._compat = TelebotCompat.get_instance()
+        self._db = None
+        self._compat = None
 
     async def get_bot_settings(self) -> Dict[str, Any]:
         if not BOT_SETTINGS_CONFIG.get('enabled', False):
             return {}
         try:
-            cursor = self._db.conn.execute('SELECT data FROM bot_settings')
+            # 修复 P0：bot_settings 主键是 bot_id，固定 bot_id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM bot_settings WHERE bot_id=1')
             row = cursor.fetchone()
             if row:
                 return json.loads(row[0])
@@ -56,9 +59,10 @@ class BotSettingsModule:
             current = await self.get_bot_settings()
             current.update(settings)
             current['updated_at'] = datetime.now().isoformat()
+            # 修复 P0 数据丢失：固定 bot_id=1，INSERT 指定主键
             self._db.conn.execute(
-                'INSERT OR REPLACE INTO bot_settings (data) VALUES (?)',
-                (json.dumps(current, ensure_ascii=False),)
+                'INSERT OR REPLACE INTO bot_settings (bot_id, data, updated_at) VALUES (1, ?, ?)',
+                (json.dumps(current, ensure_ascii=False), int(datetime.now().timestamp()))
             )
             self._db.conn.commit()
             logger.info(f"[机器人设置] 更新设置")

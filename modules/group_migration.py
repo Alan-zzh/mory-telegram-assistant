@@ -41,10 +41,16 @@ class GroupMigrationModule:
                     await asyncio.sleep(1)
                 try:
                     if GROUP_MIGRATION_CONFIG.get('auto_invite', True):
-                        await self._invite_member(target_chat_id, member.user.id)
-                    migrated_count += 1
-                except Exception:
+                        success = await self._invite_member(target_chat_id, member.user.id)
+                        if success:
+                            migrated_count += 1
+                        else:
+                            failed_count += 1
+                    else:
+                        migrated_count += 1
+                except Exception as e:
                     failed_count += 1
+                    logger.warning(f"[群组迁移] 邀请用户 {member.user.id} 失败: {e}")
             self._record_migration(source_chat_id, target_chat_id, total_members, migrated_count, failed_count)
             logger.info(f"[群组迁移] 完成 source={source_chat_id}, target={target_chat_id}, migrated={migrated_count}, failed={failed_count}")
             return {
@@ -55,13 +61,16 @@ class GroupMigrationModule:
             }
         except Exception as e:
             logger.error(f"[群组迁移] 失败: {e}")
-            return {'status': 'failed', 'error': str(e)}
+            return {'status': 'failed', 'error': 'internal_error'}
 
-    async def _invite_member(self, chat_id: int, user_id: int):
+    async def _invite_member(self, chat_id: int, user_id: int) -> bool:
+        """邀请单个用户，返回是否成功（修复统计失真：原实现吞异常导致 failed_count 永远为 0）"""
         try:
             await self._compat.unban_chat_member(chat_id, user_id)
+            return True
         except Exception as e:
             logger.warning(f"[群组迁移] 邀请用户 {user_id} 到 {chat_id} 失败: {e}")
+            return False
 
     def _record_migration(self, source_chat_id: int, target_chat_id: int,
                           total: int, migrated: int, failed: int):
@@ -74,8 +83,9 @@ class GroupMigrationModule:
                 'failed_count': failed,
                 'created_at': datetime.now().isoformat(),
             }
+            # 修复 P0 数据丢失：固定 id=1 存储单条 JSON 数组
             cursor = self._db.conn.execute(
-                'SELECT data FROM migration_records'
+                'SELECT data FROM migration_records WHERE id=1'
             )
             row = cursor.fetchone()
             if row:
@@ -84,7 +94,7 @@ class GroupMigrationModule:
                 records = []
             records.append(record)
             self._db.conn.execute(
-                'INSERT OR REPLACE INTO migration_records (data) VALUES (?)',
+                'INSERT OR REPLACE INTO migration_records (id, data) VALUES (1, ?)',
                 (json.dumps(records, ensure_ascii=False),)
             )
             self._db.conn.commit()
@@ -114,7 +124,8 @@ class GroupMigrationModule:
 
     def get_migration_records(self) -> List[Dict[str, Any]]:
         try:
-            cursor = self._db.conn.execute('SELECT data FROM migration_records')
+            # 修复 P0：固定 id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM migration_records WHERE id=1')
             row = cursor.fetchone()
             if row:
                 return json.loads(row[0])

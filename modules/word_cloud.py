@@ -50,7 +50,7 @@ class WordCloudModule:
             return {'status': 'success', 'word_cloud': word_cloud_data}
         except Exception as e:
             logger.error(f"[词云] 生成失败: {e}")
-            return {'status': 'error', 'error': str(e)}
+            return {'status': 'error', 'error': 'internal_error'}
 
     def _can_trigger(self, chat_id: int) -> bool:
         last_time = self._last_trigger.get(chat_id)

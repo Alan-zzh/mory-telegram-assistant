@@ -83,7 +83,8 @@ class GroupListModule:
                 'added_at': datetime.now().isoformat(),
                 'status': 'active',
             }
-            cursor = self._db.conn.execute('SELECT data FROM group_registry')
+            # 修复 P0 数据丢失：固定 id=1 存储单条 JSON 数组
+            cursor = self._db.conn.execute('SELECT data FROM group_registry WHERE id=1')
             row = cursor.fetchone()
             if row:
                 groups = json.loads(row[0])
@@ -95,7 +96,7 @@ class GroupListModule:
             else:
                 groups.append(entry)
             self._db.conn.execute(
-                'INSERT OR REPLACE INTO group_registry (data) VALUES (?)',
+                'INSERT OR REPLACE INTO group_registry (id, data) VALUES (1, ?)',
                 (json.dumps(groups, ensure_ascii=False),)
             )
             self._db.conn.commit()
@@ -107,7 +108,8 @@ class GroupListModule:
 
     def get_group_list(self) -> List[Dict[str, Any]]:
         try:
-            cursor = self._db.conn.execute('SELECT data FROM group_registry')
+            # 修复 P0：固定 id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM group_registry WHERE id=1')
             row = cursor.fetchone()
             if row:
                 return json.loads(row[0])
@@ -120,13 +122,15 @@ class GroupListModule:
             return False
         try:
             await self._compat.leave_chat(chat_id)
-            cursor = self._db.conn.execute('SELECT data FROM group_registry')
+            # 修复 P0：固定 id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM group_registry WHERE id=1')
             row = cursor.fetchone()
             if row:
                 groups = json.loads(row[0])
                 groups = [g for g in groups if g['chat_id'] != chat_id]
+                # 修复 P0：固定 id=1 写入
                 self._db.conn.execute(
-                    'INSERT OR REPLACE INTO group_registry (data) VALUES (?)',
+                    'INSERT OR REPLACE INTO group_registry (id, data) VALUES (1, ?)',
                     (json.dumps(groups, ensure_ascii=False),)
                 )
                 self._db.conn.commit()

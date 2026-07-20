@@ -5,11 +5,13 @@ import json
 from datetime import datetime
 from typing import Dict, Any, List
 
-from core.settings import config
-from core.database import db_manager
-from core.telebot_compat import TelebotCompat
-from utils.logger import get_logger
+from core.logging_util import get_logger
+from core.settings import get_config
 
+try:
+    config = get_config()
+except Exception:
+    config = {}
 logger = get_logger(__name__)
 
 BOT_LIST_CONFIG = config.get('BOT_LIST_CONFIG', {
@@ -19,8 +21,8 @@ BOT_LIST_CONFIG = config.get('BOT_LIST_CONFIG', {
 
 class BotListModule:
     def __init__(self):
-        self._db = db_manager
-        self._compat = TelebotCompat.get_instance()
+        self._db = None
+        self._compat = None
 
     async def get_bot_info(self) -> Dict[str, Any]:
         if not BOT_LIST_CONFIG.get('enabled', False):
@@ -50,8 +52,9 @@ class BotListModule:
                 'registered_at': datetime.now().isoformat(),
                 'status': 'active',
             }
+            # 修复 P0 数据丢失：固定 id=1 存储单条 JSON 数组
             cursor = self._db.conn.execute(
-                'SELECT data FROM bot_registry'
+                'SELECT data FROM bot_registry WHERE id=1'
             )
             row = cursor.fetchone()
             if row:
@@ -60,7 +63,7 @@ class BotListModule:
                 bots = []
             bots.append(entry)
             self._db.conn.execute(
-                'INSERT OR REPLACE INTO bot_registry (data) VALUES (?)',
+                'INSERT OR REPLACE INTO bot_registry (id, data) VALUES (1, ?)',
                 (json.dumps(bots, ensure_ascii=False),)
             )
             self._db.conn.commit()
@@ -72,7 +75,8 @@ class BotListModule:
 
     def get_bot_list(self) -> List[Dict[str, Any]]:
         try:
-            cursor = self._db.conn.execute('SELECT data FROM bot_registry')
+            # 修复 P0：固定 id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM bot_registry WHERE id=1')
             row = cursor.fetchone()
             if row:
                 return json.loads(row[0])
@@ -84,7 +88,8 @@ class BotListModule:
         if not BOT_LIST_CONFIG.get('enabled', False):
             return False
         try:
-            cursor = self._db.conn.execute('SELECT data FROM bot_registry')
+            # 修复 P0：固定 id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM bot_registry WHERE id=1')
             row = cursor.fetchone()
             if row:
                 bots = json.loads(row[0])
@@ -93,8 +98,9 @@ class BotListModule:
                         bot['status'] = status
                         bot['updated_at'] = datetime.now().isoformat()
                         break
+                # 修复 P0：固定 id=1 写入
                 self._db.conn.execute(
-                    'INSERT OR REPLACE INTO bot_registry (data) VALUES (?)',
+                    'INSERT OR REPLACE INTO bot_registry (id, data) VALUES (1, ?)',
                     (json.dumps(bots, ensure_ascii=False),)
                 )
                 self._db.conn.commit()

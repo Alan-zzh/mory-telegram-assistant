@@ -79,7 +79,8 @@ class SuperAfoolModule:
 
     def get_usage_stats(self) -> Dict[str, Any]:
         try:
-            cursor = self._db.conn.execute('SELECT data FROM premium_usage')
+            # 修复 P0：固定 id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM premium_usage WHERE id=1')
             row = cursor.fetchone()
             if row:
                 return json.loads(row[0])
@@ -89,7 +90,8 @@ class SuperAfoolModule:
 
     def record_usage(self, feature_name: str, usage_count: int = 1):
         try:
-            cursor = self._db.conn.execute('SELECT data FROM premium_usage')
+            # 修复 P0：固定 id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM premium_usage WHERE id=1')
             row = cursor.fetchone()
             if row:
                 stats = json.loads(row[0])
@@ -102,8 +104,9 @@ class SuperAfoolModule:
                 }
             stats[feature_name]['total_usage'] += usage_count
             stats[feature_name]['last_used'] = datetime.now().isoformat()
+            # 修复 P0 数据丢失：固定 id=1 写入
             self._db.conn.execute(
-                'INSERT OR REPLACE INTO premium_usage (data) VALUES (?)',
+                'INSERT OR REPLACE INTO premium_usage (id, data) VALUES (1, ?)',
                 (json.dumps(stats, ensure_ascii=False),)
             )
             self._db.conn.commit()

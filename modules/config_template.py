@@ -122,7 +122,8 @@ class ConfigTemplateModule:
             for row in cursor.fetchall():
                 try:
                     result[row[0]] = json.loads(row[1])
-                except:
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.debug(f"[配置模板] 配置值非JSON，降级为原字符串 key={row[0]}: {e}")
                     result[row[0]] = row[1]
             return result
         except Exception:

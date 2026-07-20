@@ -133,9 +133,11 @@ class ContentArchiveModule:
     def _save_archive(self, record: Dict[str, Any]):
         try:
             record_json = json.dumps(record, ensure_ascii=False)
+            # 修复 P2：原 INSERT 缺 created_at（INTEGER），导致 ORDER BY 和清理失效
+            created_at = int(datetime.now().timestamp())
             self._db.conn.execute(
-                'INSERT OR REPLACE INTO content_archive (chat_id, message_id, content_type, data) VALUES (?, ?, ?, ?)',
-                (record['chat_id'], record['message_id'], record['content_type'], record_json)
+                'INSERT OR REPLACE INTO content_archive (chat_id, message_id, content_type, data, created_at) VALUES (?, ?, ?, ?, ?)',
+                (record['chat_id'], record['message_id'], record['content_type'], record_json, created_at)
             )
             self._db.conn.commit()
         except Exception as e:
@@ -161,7 +163,8 @@ class ContentArchiveModule:
 
     def _delete_old_archives(self, max_days: int, chat_id: int = None):
         try:
-            cutoff_time = (datetime.now() - timedelta(days=max_days)).isoformat()
+            # 修复 P2：created_at 是 INTEGER（Unix 时间戳），不能用 ISO 字符串比较
+            cutoff_time = int((datetime.now() - timedelta(days=max_days)).timestamp())
             if chat_id:
                 self._db.conn.execute(
                     'DELETE FROM content_archive WHERE chat_id = ? AND created_at < ?',

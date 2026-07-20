@@ -409,6 +409,6 @@ def check_avatar_marketing(bot, user_id: int, config: dict = None) -> Tuple[bool
                     return True, reason, 1, ai_result
         except Exception as e:
             logger.debug(f"[v5.32] AI头像复核失败 uid={user_id}: {e}")
-            ai_result = {"error": str(e), "used_ai": False}
+            ai_result = {"error": "internal_error", "used_ai": False}
 
     return False, "头像正常", 0, ai_result

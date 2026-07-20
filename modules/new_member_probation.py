@@ -46,7 +46,7 @@ class NewMemberProbationModule:
             }
         except Exception as e:
             logger.error(f"[新成员观察期] 添加失败: {e}")
-            return {'status': 'failed', 'error': str(e)}
+            return {'status': 'failed', 'error': 'internal_error'}
 
     def _add_probation(self, chat_id: int, user_id: int, probation_end: datetime):
         try:

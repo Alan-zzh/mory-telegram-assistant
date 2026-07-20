@@ -58,8 +58,10 @@ class AdBlockerModule:
                 'added_at': datetime.now().isoformat(),
                 'reason': '广告封杀',
             }
+            # 修复 P0 数据丢失：表有 id 主键但 INSERT 不指定 → 每次新增行 → SELECT 无 WHERE 只读第一行
+            # 修复方案：固定 id=1，INSERT 指定主键，SELECT 加 WHERE
             cursor = self._db.conn.execute(
-                'SELECT data FROM global_ad_blacklist'
+                'SELECT data FROM global_ad_blacklist WHERE id=1'
             )
             row = cursor.fetchone()
             if row:
@@ -68,7 +70,7 @@ class AdBlockerModule:
                 blacklist = []
             blacklist.append(entry)
             self._db.conn.execute(
-                'INSERT OR REPLACE INTO global_ad_blacklist (data) VALUES (?)',
+                'INSERT OR REPLACE INTO global_ad_blacklist (id, data) VALUES (1, ?)',
                 (json.dumps(blacklist, ensure_ascii=False),)
             )
             self._db.conn.commit()
@@ -118,7 +120,8 @@ class AdBlockerModule:
 
     def get_blacklist(self) -> List[Dict[str, Any]]:
         try:
-            cursor = self._db.conn.execute('SELECT data FROM global_ad_blacklist')
+            # 修复 P0：固定 id=1 读取
+            cursor = self._db.conn.execute('SELECT data FROM global_ad_blacklist WHERE id=1')
             row = cursor.fetchone()
             if row:
                 return json.loads(row[0])

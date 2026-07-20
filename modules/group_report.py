@@ -57,8 +57,8 @@ class GroupReportModule:
             if GROUP_REPORT_CONFIG.get('delete_trigger_message', False):
                 try:
                     await self._compat.delete_message(chat_id, message_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[群聊举报] 删除触发消息失败 chat={chat_id} msg={message_id}: {e}")
             if GROUP_REPORT_CONFIG.get('success_message'):
                 await self._compat.send_message(chat_id, GROUP_REPORT_CONFIG['success_message'])
             if GROUP_REPORT_CONFIG.get('review_message'):
@@ -67,7 +67,7 @@ class GroupReportModule:
             return {'status': 'success', 'report': report}
         except Exception as e:
             logger.error(f"[群聊举报] 处理举报失败: {e}")
-            return {'status': 'error', 'error': str(e)}
+            return {'status': 'error', 'error': 'internal_error'}
 
     def get_reports(self, chat_id: int, status: str = None) -> List[Dict[str, Any]]:
         if not GROUP_REPORT_CONFIG.get('enabled', False):
@@ -77,8 +77,8 @@ class GroupReportModule:
             return [r for r in reports if r.get('status') == status]
         return reports
 
-    def process_report_action(self, chat_id: int, report_id: int, action: str,
-                             processed_by: int = None, result: str = '') -> bool:
+    async def process_report_action(self, chat_id: int, report_id: int, action: str,
+                                    processed_by: int = None, result: str = '') -> bool:
         if not GROUP_REPORT_CONFIG.get('enabled', False):
             return False
         try:
@@ -93,7 +93,11 @@ class GroupReportModule:
                     message = GROUP_REPORT_CONFIG.get('processed_message') if action == 'approved' else \
                               GROUP_REPORT_CONFIG.get('rejected_message')
                     if message:
-                        self._compat.send_message(chat_id, message)
+                        # 修复 P1：原实现缺 await（协程不执行）+ 缺 try/except（异常中断流程）
+                        try:
+                            await self._compat.send_message(chat_id, message)
+                        except Exception as send_err:
+                            logger.warning(f"[群聊举报] 发送处理结果消息失败 chat={chat_id}: {send_err}")
                     logger.info(f"[群聊举报] 处理举报 chat={chat_id}, report={report_id}, action={action}")
                     return True
             return False

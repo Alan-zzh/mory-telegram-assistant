@@ -152,9 +152,10 @@ def set_membership(db, uid: int, tier: str, duration_days: int, amount: float = 
     now = int(time.time())
     try:
         with db.lock:
-            # 查现有记录
+            # 修复 P1：原 SQL 只查 expire_at/total_spent，却把 row[0]（expire_at）当 joined_at 写回
+            # 现在 SQL 包含 joined_at 字段
             row = db.conn.execute(
-                "SELECT expire_at, total_spent FROM user_membership WHERE uid=?",
+                "SELECT expire_at, total_spent, joined_at FROM user_membership WHERE uid=?",
                 (uid,)
             ).fetchone()
 
@@ -162,10 +163,12 @@ def set_membership(db, uid: int, tier: str, duration_days: int, amount: float = 
                 # 续期
                 new_expire = row[0] + duration_days * 86400
                 new_total = (row[1] or 0) + amount
+                joined_at = row[2] or now  # 保留原 joined_at
             else:
                 # 新订
                 new_expire = now + duration_days * 86400
                 new_total = amount
+                joined_at = now
 
             db.conn.execute(
                 """INSERT INTO user_membership (uid, tier, expire_at, sub_type, total_spent, joined_at, updated_at)
@@ -174,8 +177,9 @@ def set_membership(db, uid: int, tier: str, duration_days: int, amount: float = 
                    tier=excluded.tier,
                    expire_at=excluded.expire_at,
                    total_spent=excluded.total_spent,
+                   joined_at=excluded.joined_at,
                    updated_at=excluded.updated_at""",
-                (uid, tier, new_expire, "manual", new_total, now if not row else row[0], now)
+                (uid, tier, new_expire, "manual", new_total, joined_at, now)
             )
 
             # 记录订阅历史

@@ -161,9 +161,12 @@ class MessageLibraryModule:
     def _save_message(self, message: Dict[str, Any]):
         try:
             message_json = json.dumps(message, ensure_ascii=False)
+            # 修复 P2：原 INSERT 缺 created_at 字段，导致 ORDER BY created_at 排序失效
+            # created_at 是 INTEGER（Unix 时间戳）
+            created_at = int(datetime.now().timestamp())
             self._db.conn.execute(
-                'INSERT OR REPLACE INTO message_library (title, category, data) VALUES (?, ?, ?)',
-                (message['title'], message['category'], message_json)
+                'INSERT OR REPLACE INTO message_library (title, category, data, used_count, created_at) VALUES (?, ?, ?, ?, ?)',
+                (message['title'], message['category'], message_json, message.get('used_count', 0), created_at)
             )
             self._db.conn.commit()
         except Exception as e:
@@ -193,7 +196,8 @@ class MessageLibraryModule:
                 conditions.append('category = ?')
                 params.append(category)
             if keyword:
-                conditions.append('(title LIKE ? OR content LIKE ?)')
+                # 修复 P2：表无 content 字段（content 在 data JSON 里），改为查 data
+                conditions.append('(title LIKE ? OR data LIKE ?)')
                 params.extend([f'%{keyword}%', f'%{keyword}%'])
             if conditions:
                 query += ' WHERE ' + ' AND '.join(conditions)

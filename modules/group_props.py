@@ -42,14 +42,15 @@ class GroupPropsModule:
             logger.error(f"[群组道具] 授予失败: {e}")
             return False
 
-    def use_prop(self, user_id: int, prop_name: str, chat_id: int = None) -> bool:
+    def use_prop(self, user_id: int, prop_name: str, chat_id: int = None,
+                 message_id: int = None, custom_title: str = None) -> bool:
         if not GROUP_PROPS_CONFIG.get('enabled', False):
             return False
         if not self._has_prop(user_id, prop_name):
             return False
         try:
             self._consume_user_prop(user_id, prop_name)
-            self._apply_prop_effect(user_id, prop_name, chat_id)
+            self._apply_prop_effect(user_id, prop_name, chat_id, message_id, custom_title)
             logger.info(f"[群组道具] 用户 {user_id} 使用: {prop_name}")
             return True
         except Exception as e:
@@ -108,16 +109,21 @@ class GroupPropsModule:
             logger.error(f"[群组道具] 检查道具失败: {e}")
             return False
 
-    def _apply_prop_effect(self, user_id: int, prop_name: str, chat_id: int):
+    def _apply_prop_effect(self, user_id: int, prop_name: str, chat_id: int,
+                          message_id: int = None, custom_title: str = None):
         prop_info = self.get_prop_info(prop_name)
         if not prop_info:
             return
         effect_type = prop_info.get('effect_type', '')
         try:
             if effect_type == 'pin' and chat_id:
-                # 置顶卡：通过 _compat 调用 pin_chat_message（如未实现则记录日志）
+                # 修复 P1：原实现把 user_id 当 message_id 传给 pin_chat_message（API 签名错误）
+                # pin_chat_message(chat_id, message_id) 需要 message_id 参数
+                if not message_id:
+                    logger.warning(f"[群组道具] pin 效果需要 message_id 参数，跳过 user={user_id}")
+                    return
                 if hasattr(self._compat, 'pin_chat_message'):
-                    self._compat.pin_chat_message(chat_id, user_id)
+                    self._compat.pin_chat_message(chat_id, message_id)
                 else:
                     logger.info(f"[群组道具] pin 效果未实现 _compat.pin_chat_message，跳过 user={user_id}")
             elif effect_type == 'unmute' and chat_id:
@@ -132,9 +138,12 @@ class GroupPropsModule:
                 # 防踢卡：本地标记，由调用方按 user_props 表查询应用
                 logger.info(f"[群组道具] protect 效果应用（本地标记）user={user_id}")
             elif effect_type == 'nickname':
-                # 群名片修改卡：通过 _compat 调用 set_chat_administrator_custom_title（如未实现则记录日志）
+                # 修复 P1：原实现把 prop_name（道具名）当 custom_title 传，应使用用户提供的 custom_title
+                if not custom_title:
+                    logger.warning(f"[群组道具] nickname 效果需要 custom_title 参数，跳过 user={user_id}")
+                    return
                 if hasattr(self._compat, 'set_chat_administrator_custom_title'):
-                    self._compat.set_chat_administrator_custom_title(chat_id, user_id, prop_name)
+                    self._compat.set_chat_administrator_custom_title(chat_id, user_id, custom_title)
                 else:
                     logger.info(f"[群组道具] nickname 效果未实现 _compat.set_chat_administrator_custom_title，跳过 user={user_id}")
         except Exception as e:

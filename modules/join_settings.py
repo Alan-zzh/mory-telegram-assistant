@@ -47,7 +47,7 @@ class JoinSettingsModule:
             return {'status': 'approved'}
         except Exception as e:
             logger.error(f"[入群相关] 处理新成员失败: {e}")
-            return {'status': 'failed', 'error': str(e)}
+            return {'status': 'failed', 'error': 'internal_error'}
 
     def _record_join(self, chat_id: int, user_id: int):
         try:
