@@ -36,7 +36,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 v5.35.5（2026-07-21）
 
 ## 最近 3 条大事
-1. 2026-07-21 v5.35.5 整仓闭环复验：恢复 4 个被 VPS→本地反向同步覆盖的正确模块实现，新增监控/Windows 门禁回归；loop-monitor 动态读取版本、任一 WARN 进入 NEEDS_REVIEW、watchdog cron 缺失不再误报 all normal；隔离空 Python 3.14 环境与无依赖 uv.lock，按 requirements.lock 重建 Python 3.12 `.venv`。生产已备份并恢复 root watchdog cron。验证 360 passed / 7 skipped / 0 failed + DB 179/179 + doc_consistency 7/7 + pip check 通过。
+1. 2026-07-21 v5.35.5 整仓闭环复验：恢复 4 个被 VPS→本地反向同步覆盖的正确模块实现，新增监控/Windows 门禁回归；loop-monitor 动态读取版本、任一 WARN 进入 NEEDS_REVIEW、watchdog cron 缺失不再误报 all normal；隔离空 Python 3.14 环境与无依赖 uv.lock，按 requirements.lock 重建 Python 3.12 `.venv`。生产已恢复 root watchdog cron并最小发布 v5.35.5；双服务 active+enabled、health 200、当前进程无启动错误、watchdog 跨周期与真实调度回执均通过。验证 360 passed / 7 skipped / 0 failed + DB 179/179 + doc_consistency 7/7 + pip check 通过。
 2. 2026-07-21 v5.35.4 第2轮深度审查修复 22 项（7 P0 + 3 P1 + 6 P2 + 6 P3）：修复单行表 INSERT OR REPLACE 数据丢失、membership/group_props/group_report 高危行为、SQL 字段/类型错误、错误信息泄露与异常处理。验证 py_compile、DB 注册、文档和测试门禁通过。
 3. 2026-07-20 v5.35.3 GOAL MODE 9 阶段全量审计修复 5 P0 + 4 P1 + 3 P2：修复统计游标重复消费、缺失 import、eval 安全风险、异常吞噬与临时密码输出；已部署并验证双服务与 health。
 

@@ -1,8 +1,8 @@
 # v5.35.5 整仓修复与生产闭环报告
 
 > 日期：2026-07-21
-> 当前判定：`PREDEPLOY_VERIFIED`
-> 最终完成条件：形成可信 Git commit，并将该 commit 的最小运行文件发布到生产后复验。
+> 当前判定：`VERIFIED_CLOSED`
+> 完成依据：可信 Git commit、最小生产发布、重启后多真相面复验均已完成。
 
 ## 1. 结论
 
@@ -12,13 +12,13 @@
 2. 生产外部 watchdog cron 消失约 12 天，但旧 loop-monitor 仍输出 `all normal`。
 3. 本地 `.venv` 是无 pip/依赖的 Python 3.14 空环境，未跟踪 `uv.lock` 也没有项目依赖；README 口径失真。
 
-截至本报告写入时，本地 v5.35.5 已通过全部门禁，生产 v5.35.4 服务与业务正常且 watchdog 已恢复持续运行。尚未宣称最终闭环，因为 Git 默认分支提交选择仍待老板确认，生产版本也尚未从 v5.35.4 升到 v5.35.5。
+本地修复已提交到 `main`（`18e048e`、`a71141c`），生产采用最小边界发布 `version.py` 与 `scripts/puzan_loop_monitor.py`，四个业务模块以源码内容核验对齐；重启后版本、服务、日志、watchdog 与业务调度均形成成功回执。本轮状态可判定为 `VERIFIED_CLOSED`。
 
 ## 2. 修复范围
 
 | 范围 | 修复内容 | 证据 |
 |------|----------|------|
-| 模块回归 | 恢复 `anti_raid`、`group_members`、`punishment_center`、`crypto_detector` 正确实现 | 50 个历史回归测试全过；与生产文件逐字对比一致 |
+| 模块回归 | 恢复 `anti_raid`、`group_members`、`punishment_center`、`crypto_detector` 正确实现 | 50 个历史回归测试全过；与生产源码内容一致，3 个文件仅 EOF 换行字节不同 |
 | 监控真实性 | `EXPECTED_VERSION` 改从 `version.py` 读取；L1-L6 任一非 OK 均进入 NEEDS_REVIEW；cron 缺失显式 WARN | 新增 5 个监控/Windows 门禁测试；真实探针能识别本地/生产版本不一致 |
 | Windows 门禁 | DB 注册脚本稳定输出 UTF-8；`alembic.ini` 改为 locale 安全注释 | 非 UTF-8 子进程测试与 `alembic heads/current` 通过 |
 | 环境可复现 | 生成 94 个精确包、2406 个 SHA-256 hashes 的 `requirements.lock`；重建 Python 3.12 `.venv` | `pip install --require-hashes`、`pip check` 通过 |
@@ -40,25 +40,32 @@
 
 静态质量扫描列出的 5 个 100% unused 点均已人工判读：两个是保留兼容签名的弃用参数，一个是 OpenTelemetry 接口参数，一个是 Python signal 回调固定参数，一个是无限循环后的不可达 `return`。它们不是当前运行缺陷，不为追求扫描数字而做破坏兼容性的删除。
 
-## 4. 当前生产证据
+## 4. 部署后生产证据
 
 | 真相面 | 当前结果 |
 |--------|----------|
 | `mory-assistant` | active + enabled |
 | `mory-dashboard` | active + enabled |
-| `/api/health` | `status=ok`，version=v5.35.4 |
-| 四个修复模块 | 生产 import 全部 OK；文件与本地修复后逐字一致 |
-| watchdog | root cron 仅 1 条；每 2 分钟持续健康执行 |
-| 近期 journal | watchdog 恢复后无未解释 Traceback/Exception/Error/Timeout/OOM |
-| 调度业务 | morning/afternoon/evening 播报、问候、日报等 task key 均有当日记录 |
+| `/api/health` | HTTP 200，`status=ok`，version=v5.35.5 |
+| 版本与模块 | `VERSION=v5.35.5`；4 个修复模块 import 4/4；生产源码与本地一致 |
+| 发布边界 | 仅发布 `version.py`、`scripts/puzan_loop_monitor.py`；未改 `.env`、`config.json`、数据库或依赖 |
+| 备份与回滚 | 发布前备份 `/home/ubuntu/mory_assistant/backups/v5_35_5_20260721_234549`；覆盖文件部署后 SHA-256 与本地一致 |
+| watchdog | root cron 恰好 1 条；23:46、23:48 连续自动记录 v5.35.5 健康 |
+| 当前进程 journal | 按 MainPID 过滤后无 Traceback/ImportError/启动致命错误；旧进程退出 traceback 已定位为 gevent finalized 噪声 |
+| 调度业务 | 重启后 ScheduledMessages、Wakeup、Reminders、AlertHealth 连续真实执行成功 |
 | 晚间新闻 | 7 个替代真实源成功；3 个 403 源被容错；AI 超时后使用真实标题 fallback，最终 Rich Message+按钮发送成功 |
+| 六层监控 | L1-L6 全部 OK，版本 v5.35.5，cron=yes，`[RECOMMEND] all normal` |
 
-## 5. 当前未闭环项
+## 5. 闭环矩阵
 
-| 项目 | 状态 | 原因 |
+| 项目 | 状态 | 证据 |
 |------|------|------|
-| Git 可信源 | PENDING | 当前仍在默认分支 `main` 且工作树未提交；提交技能要求老板确认直接 main 或新分支 |
-| 生产版本对齐 | PENDING | 本地 v5.35.5，生产 v5.35.4；修复后的 monitor 已正确报告 NEEDS_REVIEW |
-| 部署后持久复核 | PENDING | 必须从可信 commit 发布后，再复查双服务、health、journal、watchdog、版本与业务任务 |
+| Git 可信源 | PASS | `main` 已形成代码提交 `18e048e` 与预部署记录提交 `a71141c` |
+| 生产版本对齐 | PASS | health 与远端导入均为 v5.35.5 |
+| 服务可用性 | PASS | `mory-assistant`、`mory-dashboard` 均 active + enabled |
+| 启动正确性 | PASS | 当前 MainPID 日志无结构性启动错误，4 个目标模块导入通过，DB 179/179 |
+| 自愈持久性 | PASS | root cron 单实例，部署后跨两个自动周期持续健康 |
+| 业务回执 | PASS | 重启后多个每分钟/每两分钟任务连续执行成功 |
+| 回滚能力 | PASS | 精确备份存在，首次严格校验误判时已真实触发回滚并恢复 v5.35.4，修正证据契约后再发布成功 |
 
-在上述三项完成前，不得把本报告状态改为 `VERIFIED_CLOSED`，也不得宣称“全部无问题”。
+结论边界：当前已知检查面未发现未闭环故障；7 个 skipped 测试属于既有条件性跳过，24 小时长稳观察不在本次即时验收窗口内。
