@@ -89,9 +89,8 @@ class CryptoDetectorModule:
         message_text = CRYPTO_DETECTOR_CONFIG.get('price_message_text', {}).get(symbol_key, f'{symbol_key.upper()}价格: {price}')
         message_text = message_text.format(price=price)
         try:
-            from core.telebot_compat import TelebotCompat
-            compat = TelebotCompat.get_instance()
-            await compat.send_message(chat_id, message_text)
+            from core.telebot_compat import send_message_compat
+            await send_message_compat(None, chat_id, message_text)
             self._last_price_check[symbol_key] = now
             logger.info(f"[加密货币] 发送 {symbol_key} 价格到 chat={chat_id}: {message_text}")
         except Exception as e:

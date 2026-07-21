@@ -5,11 +5,13 @@ import json
 from datetime import datetime
 from typing import Dict, Any, List
 
-from core.settings import config
-from core.database import db_manager
-from core.telebot_compat import TelebotCompat
-from utils.logger import get_logger
+from core.logging_util import get_logger
+from core.settings import get_config
 
+try:
+    config = get_config()
+except Exception:
+    config = {}
 logger = get_logger(__name__)
 
 GROUP_MEMBERS_CONFIG = config.get('GROUP_MEMBERS_CONFIG', {

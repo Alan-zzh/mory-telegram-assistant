@@ -67,6 +67,7 @@ scripts/upload_and_ban.py
 node_modules/
 venv/
 .venv/
+_quarantine_*/
 *.egg-info/
 
 # ── IDE & 系统 ────────────────────────────────────────────────────────────

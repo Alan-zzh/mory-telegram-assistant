@@ -5,10 +5,13 @@ import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from core.settings import config
-from core.database import db_manager
-from utils.logger import get_logger
+from core.logging_util import get_logger
+from core.settings import get_config
 
+try:
+    config = get_config()
+except Exception:
+    config = {}
 logger = get_logger(__name__)
 
 PUNISHMENT_CENTER_CONFIG = config.get('PUNISHMENT_CENTER_CONFIG', {

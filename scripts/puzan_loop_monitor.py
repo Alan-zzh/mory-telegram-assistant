@@ -35,11 +35,15 @@ from dotenv import dotenv_values
 _CST = timezone(timedelta(hours=8))
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from version import VERSION as EXPECTED_VERSION
+
 ENV_PATH = PROJECT_ROOT / ".env"
 LOGS_DIR = PROJECT_ROOT / "logs"
 LOCK_FILE = LOGS_DIR / ".puzan_loop_monitor.lock"
 DEBUG_HISTORY = PROJECT_ROOT / "AI_DEBUG_HISTORY.md"
-EXPECTED_VERSION = "v5.31.4"
 HEALTH_URL = "http://localhost:6616/api/health"
 MORY_DB = "/home/ubuntu/mory_assistant/mory.db"
 ROUTER_DB = "/home/ubuntu/mory_assistant/data/router_usage.db"
@@ -501,6 +505,9 @@ def l6_watchdog_check(client):
             timeout=10,
         )
         details["cron_tasks"] = cron or "(none)"
+        if not cron:
+            status = "WARN"
+            details["_warn"] = details.get("_warn", "") + "cron_missing; "
         # 旧监控脚本 _vps_monitor_cron.py 残留报错识别
         old_cron_err, _, _ = ssh_run(
             client,
@@ -635,6 +642,8 @@ def run_single_round(round_no, total_rounds, log_file):
         if "_warn" in d1: line1 += f" | WARN={d1['_warn']}"
         print(line1); lines.append(line1)
         if s1 == "ERROR": exceptions.append(("L1", d1.get("_exc", "")))
+        if s1 != "OK":
+            need_review.append(f"L1 {d1.get('_warn') or d1.get('_exc') or s1}")
 
         # L2
         s2, d2 = l2_service_check(client)
@@ -644,7 +653,8 @@ def run_single_round(round_no, total_rounds, log_file):
         print(line2); lines.append(line2)
         if s2 == "CRITICAL" or s2 == "ERROR":
             exceptions.append(("L2", d2.get("_exc") or d2.get("_crit") or ""))
-            need_review.append("L2 service not active or ssh error")
+        if s2 != "OK":
+            need_review.append(f"L2 {d2.get('_warn') or d2.get('_crit') or d2.get('_exc') or s2}")
 
         # L3
         s3, d3 = l3_app_check(client)
@@ -656,6 +666,8 @@ def run_single_round(round_no, total_rounds, log_file):
         print(line3); lines.append(line3)
         if s3 == "CRITICAL" or s3 == "ERROR":
             exceptions.append(("L3", d3.get("_exc") or d3.get("_crit") or ""))
+        if s3 != "OK":
+            need_review.append(f"L3 {d3.get('_warn') or d3.get('_crit') or d3.get('_exc') or s3}")
 
         # L4
         s4, d4 = l4_biz_check(client)
@@ -667,6 +679,8 @@ def run_single_round(round_no, total_rounds, log_file):
         print(line4); lines.append(line4)
         if s4 == "ERROR":
             exceptions.append(("L4", d4.get("_exc", "")))
+        if s4 != "OK":
+            need_review.append(f"L4 {d4.get('_warn') or d4.get('_exc') or s4}")
 
         # L5
         s5, d5 = l5_scheduler_check(client)
@@ -686,6 +700,8 @@ def run_single_round(round_no, total_rounds, log_file):
         print(line5); lines.append(line5)
         if s5 == "ERROR":
             exceptions.append(("L5", d5.get("_exc", "")))
+        if s5 != "OK":
+            need_review.append(f"L5 {d5.get('_warn') or d5.get('_exc') or s5}")
 
         # L6
         s6, d6 = l6_watchdog_check(client)
@@ -700,6 +716,8 @@ def run_single_round(round_no, total_rounds, log_file):
         print(line6); lines.append(line6)
         if s6 == "ERROR":
             exceptions.append(("L6", d6.get("_exc", "")))
+        if s6 != "OK":
+            need_review.append(f"L6 {d6.get('_warn') or d6.get('_exc') or s6}")
 
     finally:
         try:
