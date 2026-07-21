@@ -7,12 +7,12 @@ Telegram 群组助手机器人：人设对话、广告检测、群管、积分�
 ## 快速开始
 
 ### 环境
-- Python 3.12+；依赖锁于 `requirements.lock` / `uv.lock`；虚拟环境 `.venv/`。
+- Python 3.12+；唯一依赖锁为 `requirements.lock`；虚拟环境 `.venv/`。
 - 敏感凭据仅在 `.env`（`TG_TOKEN` / `DASHSCOPE_KEY` / `DASHBOARD_SECRET` / `DASHBOARD_PASSWORD` 等），绝不入库。
 
 ### 本地运行
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.lock
 cp .env.example .env   # 填入真实凭据
 python main.py
 ```

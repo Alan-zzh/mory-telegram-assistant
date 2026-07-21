@@ -33,12 +33,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast.py` | 4 个时段：morning_nudge(10:00) / afternoon_tea(14:30) / evening_wind(19:00) / night_whisper(22:30) |
 
 ## 当前版本
-v5.35.4（2026-07-21）
+v5.35.5（2026-07-21）
 
 ## 最近 3 条大事
-1. 2026-07-21 v5.35.4 第2轮深度审查 4 维度（边界/异常/安全/回归）修复 22 项（7 P0 + 3 P1 + 6 P2 + 6 P3）：P0 INSERT OR REPLACE 数据丢失 7 处 6 文件（ad_blocker/bot_settings/bot_list/group_list/group_migration/super_afool）— 单行表主键 `id INTEGER PRIMARY KEY` 但 INSERT 不指定 id → 每次新增行 → SELECT 无 WHERE 只读第一行 → 永远读不到新写入；统一改 `WHERE id=1` + `INSERT (id, data) VALUES (1, ?)`；P1 membership.set_membership SELECT 漏读 joined_at + group_props.use_prop 缺参数 + group_report sync 调 async 不 await；P2 message_library/content_archive/image_manager SQL 字段/类型错误 + 6 处 str(e) 信息泄露；P3 config_template 裸 except + avatar_detector ai_result + group_report except:pass。多智能体并行：2 subagent 静态审计 + Grep 全仓扫描 + 第2轮回归审查无新中高风险。验证 py_compile 17/17 + doc_consistency 7/7 OK + verify_db_methods 179 方法 0 缺失 0 孤儿 + pytest 305 passed / 7 skipped / 0 failed。
-2. 2026-07-20 v5.35.3 GOAL MODE 9 阶段全量审计修复 5 P0 + 4 P1 + 3 P2：多智能体并行静态审计 11 分区共 43 问题；P0 修复 stats_report 第 67/93 行 fetchone 两次 bug 残留 + valid_speak.py import 漏改 + log_cleanup_task 漏 import os + security_center eval()→ast.literal_eval + settings_api 漏 import logger；P1 修复 group_props unmute 漏 hasattr + group_migration except:pass；P2 修复 main/dashboard/app except:pass + start_dashboard 临时密码明文打印脱敏。验证 py_compile 全过 + doc_consistency 7/7 OK + verify_db_methods 179 方法 0 缺失 0 孤儿 + pytest 274/274 passed。部署 VPS 10 文件 SFTP + 双服务 active+enabled + /api/health 200。
-3. 2026-07-19 v5.35.2 全项目验收二轮修复 15 项缺陷（5 P0 + 4 P1 + 4 P2 + 2 P3）：4 处 fetchone() 两次调用 bug（group_safety_center 1 处 + stats_report 8 处）+ datetime.timedelta 多层引用 + group_props 4 effect 补 hasattr 防御 + 3 处 except:pass 改 logger.warning + sales_repo update_* rowcount 检查 + bottom_button telegram→telebot.types + sales_repo.get_user_orders 加 chat_id 过滤 + 6 模块接入管理员命令入口（/sales /security /managed /content_audit /analytics /membership）+ Dashboard 44 新模块 CONFIG 键纳入白名单。验证 355 passed / 0 failed + 179 DB 方法 0 缺失 0 孤儿 + doc_consistency 7/7 OK。
+1. 2026-07-21 v5.35.5 整仓闭环复验：恢复 4 个被 VPS→本地反向同步覆盖的正确模块实现，新增监控/Windows 门禁回归；loop-monitor 动态读取版本、任一 WARN 进入 NEEDS_REVIEW、watchdog cron 缺失不再误报 all normal；隔离空 Python 3.14 环境与无依赖 uv.lock，按 requirements.lock 重建 Python 3.12 `.venv`。生产已备份并恢复 root watchdog cron。验证 360 passed / 7 skipped / 0 failed + DB 179/179 + doc_consistency 7/7 + pip check 通过。
+2. 2026-07-21 v5.35.4 第2轮深度审查修复 22 项（7 P0 + 3 P1 + 6 P2 + 6 P3）：修复单行表 INSERT OR REPLACE 数据丢失、membership/group_props/group_report 高危行为、SQL 字段/类型错误、错误信息泄露与异常处理。验证 py_compile、DB 注册、文档和测试门禁通过。
+3. 2026-07-20 v5.35.3 GOAL MODE 9 阶段全量审计修复 5 P0 + 4 P1 + 3 P2：修复统计游标重复消费、缺失 import、eval 安全风险、异常吞噬与临时密码输出；已部署并验证双服务与 health。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

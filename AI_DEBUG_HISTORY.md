@@ -119,3 +119,9 @@
 - 根因：①表主键是 `id INTEGER PRIMARY KEY`（或 `bot_id`），但 INSERT 不指定主键 → SQLite 自增分配新 id → 每次写入新增一行；②SELECT 无 WHERE 子句 → SQLite 返回第一行（最早写入的）→ 永远读不到最新写入的数据；③"INSERT OR REPLACE"在没有唯一冲突时退化为"INSERT"，开发者误以为它会"替换"原行；④v5.35.0 验收时只跑了模块 import + 表创建，没跑读写往返测试（write→read→assert equal）。
 - 解法：①单行表统一用固定主键 `id=1`：`INSERT OR REPLACE INTO tbl (id, data) VALUES (1, ?)`；②SELECT 加 `WHERE id=1`；③多行表（AUTOINCREMENT）也用固定 id=1 存储单条 JSON 数组（如 bot_registry/group_registry/migration_records）；④本轮同时修复 membership.set_membership SELECT 漏读 joined_at 字段、group_props.use_prop 缺参数、group_report sync 调 async 不 await 三类 P1。
 - 预防：①新增"单行配置表"模式时必须用固定主键 `id=1` + `INSERT (id, ...) VALUES (1, ...)` + `SELECT ... WHERE id=1`；②"INSERT OR REPLACE"不等于"UPDATE"，没有冲突时就是"INSERT"；③新增模块必须跑读写往返测试（write→read→assert），不能只跑 import；④SQLite 表结构审查必须包括"主键策略"——单行表用 `id INTEGER PRIMARY KEY`（非 AUTOINCREMENT）+ 固定 id=1，多行表才用 `AUTOINCREMENT`；⑤sync 方法不能调 async 方法不 await（协程不执行），Python 不会报错但功能失效；⑥`return {'error': str(e)}` 给调用方会泄露内部信息，统一改 `'internal_error'` + `logger.error` 保留内部详情。
+
+### 20. VPS→本地反向同步覆盖已修代码 + watchdog 消失仍误报正常
+- 问题：Git `main` 中 4 个模块恢复为断链 import，但生产热修文件仍正确；同时生产 watchdog cron 消失 12 天，loop-monitor 却因只把 ERROR/CRITICAL 纳入最终建议而输出 `all normal`。
+- 根因：反向同步未做“生产文件 vs 已验证 commit”语义比较，直接用 VPS 文件覆盖本地；监控各层的 WARN 未统一汇总，且 cron 缺失本身未设 WARN。
+- 解法：以生产正确文件和历史已验证 commit 交叉还原模块，保留 50 个回归测试；EXPECTED_VERSION 改读 `version.py`；L1-L6 任一非 OK 都进入 NEEDS_REVIEW，cron 缺失显式 WARN；生产备份 root crontab 后恢复每 2 分钟 watchdog。
+- 预防：禁止无 diff/测试的 VPS→本地反向覆盖；反向同步必须先比较 hash/行为测试并以 commit 为唯一部署源；监控最终结论必须聚合 WARN，且自愈链要验证“调度入口 + 实际二次触发”。
