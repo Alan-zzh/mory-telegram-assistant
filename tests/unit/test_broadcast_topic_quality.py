@@ -192,6 +192,24 @@ def test_special_topic_reply_rejects_rule_specific_hallucination():
     assert db.telemetry[0][4] == "reply_template"
 
 
+def test_custom_topic_requires_mory_as_decision_owner():
+    from modules.keyword_trigger import KeywordTrigger
+
+    rule = {
+        "required_terms": ["@MorychannelBot", "Mory确认"],
+        "forbidden_terms": ["我"],
+    }
+
+    assert KeywordTrigger._is_usable_polish(
+        "去 @MorychannelBot 说清需求，最后由Mory确认能不能接。",
+        rule,
+    )
+    assert not KeywordTrigger._is_usable_polish(
+        "去 @MorychannelBot 说清需求，我确认能接再聊。",
+        rule,
+    )
+
+
 def test_partial_prompt_config_keeps_default_greeting_modes():
     from core.ai_engine import AIEngine
 

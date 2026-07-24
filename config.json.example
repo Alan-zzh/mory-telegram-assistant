@@ -90,10 +90,10 @@
       "keywords": ["定制", "专属定制", "怎么定制", "定做"],
       "ai_polish": true,
       "ai_mode": "normal",
-      "polish_prompt": "说明定制需要先确认方向与可接程度，引导去 @MorychannelBot 说需求，不承诺必接、价格或交付时间。必须写成由Mory确认，不要说成小助理本人接单。",
-      "required_terms": ["@MorychannelBot", "Mory"],
-      "forbidden_terms": ["我再确认", "我能不能接", "一定能接"],
-      "base_reply": "定制要先看你想要的方向，群里不展开聊。去 @MorychannelBot 把需求说清楚，Mory再确认能不能接。"
+      "polish_prompt": "说明定制需要先确认方向与可接程度，引导去 @MorychannelBot 说需求，不承诺必接、价格或交付时间。最终回复必须包含“Mory确认”四个字，严禁用“我”代替Mory。",
+      "required_terms": ["@MorychannelBot", "Mory确认"],
+      "forbidden_terms": ["我", "一定能接"],
+      "base_reply": "定制要先看你想要的方向，群里不展开聊。去 @MorychannelBot 把需求说清楚，最后由Mory确认能不能接。"
     }
   ],
   "PHOTO_KEYWORDS": [
