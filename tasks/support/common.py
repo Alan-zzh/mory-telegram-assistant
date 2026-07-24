@@ -78,17 +78,26 @@ def send_and_track(rm: ResourceManager, chat_id: int, text: str, parse_mode=None
 
 
 def build_mory_contact_markup(period: str = ""):
-    """为新闻和早午晚问候生成一致的用户入口按钮。"""
-    labels = {
-        "morning": "☀️ 和 Mory 说早安",
-        "afternoon": "🍵 找 Mory 聊会儿",
-        "evening": "🌙 和 Mory 说晚安",
+    """按播报场景生成语义一致的联系或自助服务按钮。
+
+    历史函数名保留给现有调用方；@Moryfansbot 用于联系 Mory，
+    @MorychannelBot 仅用于自助下单和自助订阅。
+    """
+    actions = {
+        "morning": ("☀️ 和 Mory 说早安", "https://t.me/Moryfansbot"),
+        "afternoon": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
+        "evening": ("🌙 找 Mory 聊聊", "https://t.me/Moryfansbot"),
+        "news": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
     }
+    label, url = actions.get(
+        period,
+        ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
+    )
     markup = types.InlineKeyboardMarkup()
     markup.add(
         types.InlineKeyboardButton(
-            labels.get(period, "💬 找 Mory"),
-            url="https://t.me/MorychannelBot",
+            label,
+            url=url,
         )
     )
     return markup
@@ -409,7 +418,7 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                 rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
                 from core.broadcast_formatter import build_rich_news_card_message
                 rich_news_message = build_rich_news_card_message(time_desc, news, source_name=source_name)
-                markup = build_mory_contact_markup()
+                markup = build_mory_contact_markup("news")
 
                 # [v5.32] 优先尝试 Rich Message 路径
                 cfg = rm.config or {}

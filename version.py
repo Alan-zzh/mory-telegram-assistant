@@ -6,11 +6,12 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.35.6"
-CONFIG_VERSION = "5.35.6"
+VERSION = "v5.35.7"
+CONFIG_VERSION = "5.35.7"
 __version__ = VERSION
 
 VERSION_HISTORY = [
+    "v5.35.7: [Codex] 修正播报与关键话题的机器人身份和场景分流 - @Moryfansbot 仅用于联系 Mory，@MorychannelBot 仅用于自助下单和自助订阅；晨间/晚间及定制确认走联系入口，午间/新闻/夜间及福利开通走自助入口，文案与实际目标一致。",
     "v5.35.6: [Codex] 生产播报与关键话题闭环修复 - 新闻排版不再泄露聚合策略/供应链名称；早午晚问候与所有降级路径统一携带 Mory 联系按钮；缩短并去模板化四时段提示词，修复部分 PROMPT_TEMPLATES 覆盖导致默认模式丢失；模型池声明思考能力，实时场景跳过仅思考模型并显式关闭兼容模型思考，消除连续 30 秒超时；福利/定制支持规则约束下的 AI 润色、可靠底稿回退与 Dashboard 30 天无原文命中统计；修复零吞吐瞬时积压被估算为 999 秒的数据库迁移假警报。",
     "v5.35.5: [Codex] 整仓闭环复验修复 - 纠正 VPS 反向同步覆盖已修代码导致的 anti_raid/group_members/punishment_center/crypto_detector 断链回归，固化 50 个既有回归测试；监控版本改为读取 version.py，L1-L6 任一 WARN 均进入 NEEDS_REVIEW，watchdog cron 缺失不再误报 all normal；恢复 Windows 非 UTF-8 下 DB 注册与 Alembic 门禁；隔离空 Python 3.14 环境和无依赖 uv.lock，按 requirements.lock 重建 Python 3.12 .venv。生产恢复 root watchdog cron并保留 crontab 备份。验证 360 passed / 7 skipped / 0 failed、DB 179/179、doc_consistency 7/7、pip check 通过。",
     "v5.35.4: [TRAE SOLO CN] 第2轮深度审查 4 维度（边界/异常/安全/回归）修复 22 项（7 P0 + 3 P1 + 6 P2 + 6 P3） - 多智能体并行：2 subagent 静态审计 12 修复文件 + Grep 全仓扫描。P0 INSERT OR REPLACE 数据丢失 7 处 6 文件（ad_blocker/bot_settings/bot_list/group_list/group_migration/super_afool）：单行表主键 id INTEGER PRIMARY KEY 但 INSERT 不指定 id → 每次新增行 → SELECT 无 WHERE 只读第一行 → 永远读不到新写入；统一改 WHERE id=1 + INSERT (id, data) VALUES (1, ?)。P1 高危 3 处：membership.set_membership SELECT 漏读 joined_at 字段被错改为 expire_at；group_props.use_prop 缺 message_id/custom_title 参数 + pin 用 user_id 错参 + nickname 把 prop_name 当 title；group_report.process_report_action sync 方法调 async send_message 不 await 协程不执行。P2 SQL 错误 3 处：message_library content LIKE 改 data LIKE（表无 content 字段）+ 加 created_at；content_archive/image_manager cutoff_time 从 ISO 字符串改 timestamp（INTEGER 列不能 ISO 比较）+ 加 created_at。P2 信息泄露 6 处：str(e) → 'internal_error'（join_settings/new_member_probation/word_cloud/group_report/group_migration×2）。P3 改进 6 处：config_template 裸 except 改 except (json.JSONDecodeError, TypeError) + logger.debug；avatar_detector ai_result error 字段 str(e) → 'internal_error'；group_report except:pass 改 logger.debug；4 处误报确认（import 容错 + 合理 try/except）。验证 py_compile 17/17 + doc_consistency 7/7 OK + verify_db_methods 179 方法 0 缺失 0 孤儿 + pytest 305 passed / 7 skipped / 0 failed。第2轮回归审查：Subagent A+B 复审 + Grep 扫描无新中高风险（P0/P1/P2），达到终止条件。剩余风险：默认关闭模块未做生产 e2e + 未做 24h 长时间运行观察。",

@@ -2,6 +2,8 @@
 """播报排版、话题润色与监控误报回归测试。"""
 
 from contextlib import contextmanager
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 
@@ -27,14 +29,52 @@ def test_news_internal_source_labels_never_render():
         assert "@MorychannelBot" in rendered
 
 
-def test_greeting_contact_button_is_period_specific():
+def test_broadcast_button_matches_each_user_intent():
     from tasks.support.common import build_mory_contact_markup
 
-    markup = build_mory_contact_markup("morning")
-    button = markup.keyboard[0][0]
+    expected = {
+        "morning": ("☀️ 和 Mory 说早安", "https://t.me/Moryfansbot"),
+        "afternoon": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
+        "evening": ("🌙 找 Mory 聊聊", "https://t.me/Moryfansbot"),
+        "news": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
+    }
 
-    assert button.text == "☀️ 和 Mory 说早安"
-    assert button.url == "https://t.me/MorychannelBot"
+    for period, (text, url) in expected.items():
+        markup = build_mory_contact_markup(period)
+        button = markup.keyboard[0][0]
+        assert (button.text, button.url) == (text, url)
+
+
+def test_scheduled_broadcast_example_alternates_contact_and_self_service():
+    config = json.loads(
+        (Path(__file__).parents[2] / "config.json.example").read_text(encoding="utf-8")
+    )
+    buttons = {
+        item["id"]: (item["button_text"], item["button_url"])
+        for item in config["SCHEDULED_BROADCASTS"]
+    }
+
+    assert buttons == {
+        "morning_nudge": ("☀️ 和 Mory 说早安", "https://t.me/Moryfansbot"),
+        "afternoon_tease": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
+        "evening_warm": ("🌙 找 Mory 聊聊", "https://t.me/Moryfansbot"),
+        "night_hook": ("✨ 自助查看订阅", "https://t.me/MorychannelBot"),
+    }
+
+
+def test_custom_topic_contacts_mory_while_welfare_stays_self_service():
+    config = json.loads(
+        (Path(__file__).parents[2] / "config.json.example").read_text(encoding="utf-8")
+    )
+    topics = {
+        item["topic"]: item
+        for item in config["SPECIAL_AUTO_REPLIES"]
+    }
+
+    assert "@MorychannelBot" in topics["福利"]["required_terms"]
+    assert "@Moryfansbot" in topics["定制"]["required_terms"]
+    assert "@MorychannelBot" not in topics["定制"]["required_terms"]
+    assert "@Moryfansbot" in topics["定制"]["base_reply"]
 
 
 def test_send_greeting_keeps_button_on_html_fallback(monkeypatch):
@@ -196,16 +236,16 @@ def test_custom_topic_requires_mory_as_decision_owner():
     from modules.keyword_trigger import KeywordTrigger
 
     rule = {
-        "required_terms": ["@MorychannelBot", "Mory确认"],
+        "required_terms": ["@Moryfansbot", "Mory确认"],
         "forbidden_terms": ["我"],
     }
 
     assert KeywordTrigger._is_usable_polish(
-        "去 @MorychannelBot 说清需求，最后由Mory确认能不能接。",
+        "去 @Moryfansbot 说清需求，最后由Mory确认能不能接。",
         rule,
     )
     assert not KeywordTrigger._is_usable_polish(
-        "去 @MorychannelBot 说清需求，我确认能接再聊。",
+        "去 @Moryfansbot 说清需求，我确认能接再聊。",
         rule,
     )
 
