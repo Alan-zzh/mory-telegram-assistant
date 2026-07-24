@@ -102,6 +102,24 @@ def test_news_source_chain_skips_partial_result_when_next_source_has_ten(monkeyp
     assert len(lines) == 10
 
 
+def test_news_source_chain_never_sends_underfilled_card(monkeypatch):
+    import core.trendradar_news as news_sources
+    import tasks.support.common as common
+
+    partial = "\n".join(f"{i}. 同一条部分新闻{i}" for i in range(1, 7))
+    monkeypatch.setattr(news_sources, "fetch_real_news", lambda: partial)
+    monkeypatch.setattr(news_sources, "fetch_trendradar_news", lambda: partial)
+    monkeypatch.setattr(common, "_news_pushed_today", set())
+
+    lines, source_name = common.get_preferred_news_lines(
+        "晚间",
+        {"NEWS_BROADCAST_CONFIG": {"preferred_source": "real_first"}},
+    )
+
+    assert lines == []
+    assert source_name == "none"
+
+
 def test_polling_exception_handler_only_handles_get_updates_5xx(monkeypatch):
     from core.telebot_compat import TelegramPollingExceptionHandler
 

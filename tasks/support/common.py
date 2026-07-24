@@ -363,14 +363,11 @@ def get_preferred_news_lines(time_desc: str, config: dict) -> Tuple[List[str], s
 
     combined_lines = []
     combined_keys = set()
-    best_source = "none"
     for source_name, fetcher, source_hint in source_chain:
         raw_news = fetcher() or ""
         lines = prepare_news_lines(raw_news, source_hint)
         if len(lines) >= 10:
             return lines, source_name
-        if len(lines) > len(combined_lines):
-            best_source = source_name
         for line in lines:
             key = _extract_news_key(line)
             if key and key not in combined_keys:
@@ -382,7 +379,12 @@ def get_preferred_news_lines(time_desc: str, config: dict) -> Tuple[List[str], s
             )
     if len(combined_lines) >= 10:
         return combined_lines[:10], "fallback"
-    return combined_lines, best_source
+    if combined_lines:
+        logger.warning(
+            f"📰 所有来源合并后仍只有{len(combined_lines)}条，"
+            "不足10条，本轮不发送并进入既有重试链"
+        )
+    return [], "none"
 
 
 def retry_task(rm: ResourceManager, task_func, task_name: str, delay_sec: int = 300):
