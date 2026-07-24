@@ -105,11 +105,11 @@
   "MODEL_POOLS": {
     "llm": [
       {"name": "qwen3.6-27b", "expire": "2026-07-23", "desc": "通义千问3.6 27B"},
-      {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24", "desc": "通义千问3.7 Max (2026-05-17)"},
-      {"name": "qwen3.7-max-preview", "expire": "2026-08-24", "desc": "通义千问3.7 Max Preview"},
-      {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01", "desc": "通义千问3.7 Plus (2026-05-26)"},
-      {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08", "desc": "通义千问3.7 Max (2026-06-08)"},
-      {"name": "kimi-k2.7-code", "expire": "2026-09-14", "desc": "Kimi K2.7 Code"}
+      {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24", "desc": "通义千问3.7 Max (2026-05-17)", "enable_thinking": true},
+      {"name": "qwen3.7-max-preview", "expire": "2026-08-24", "desc": "通义千问3.7 Max Preview", "enable_thinking": true},
+      {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01", "desc": "通义千问3.7 Plus (2026-05-26)", "enable_thinking": false},
+      {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08", "desc": "通义千问3.7 Max (2026-06-08)", "enable_thinking": false},
+      {"name": "kimi-k2.7-code", "expire": "2026-09-14", "desc": "Kimi K2.7 Code", "enable_thinking": false}
     ],
     "vision": [
       {"name": "qwen3.5-ocr", "expire": "2026-09-14", "desc": "通义千问3.5 OCR"}

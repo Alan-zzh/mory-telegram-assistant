@@ -1096,6 +1096,27 @@ class AIEngine:
                 return False
             return True
 
+    def _get_model_request_options(self, model_name: str) -> dict:
+        """读取模型级请求能力标记，不把供应方差异硬编码进业务分支。"""
+        if not model_name:
+            return {}
+        pools = list(self.model_pools.values()) + list(self._tier_pools.values())
+        for pool in pools:
+            if not isinstance(pool, list):
+                continue
+            for model in pool:
+                if isinstance(model, dict) and model.get("name") == model_name:
+                    options = {}
+                    if isinstance(model.get("enable_thinking"), bool):
+                        options["enable_thinking"] = model["enable_thinking"]
+                    return options
+        return {}
+
+    @staticmethod
+    def _mode_prefers_non_thinking(mode: str) -> bool:
+        """实时聊天、播报和业务咨询优先走已验证的非思考模型，避免 30 秒假死。"""
+        return mode not in {"tarot", "dream"}
+
     def _ensure_valid_model(self, pool_name: str = "chat"):
         """确保指定池的当前模型可用，如果被拉黑或过期则自动切到下一个"""
         pool = self.model_pool if pool_name == "chat" else self.model_pools.get(pool_name, self.model_pool)
@@ -2020,6 +2041,24 @@ class AIEngine:
                 time.sleep(2)
                 continue
 
+            active_options = self._get_model_request_options(active_model)
+            if (
+                self._mode_prefers_non_thinking(mode)
+                and active_options.get("enable_thinking") is True
+            ):
+                logger.info(
+                    f"⏩ 模型{active_model}仅支持思考模式，不符合实时场景时延要求，本轮跳过"
+                )
+                local_skip_streak += 1
+                if use_tier_routing:
+                    self._next_tier_model(tier)
+                else:
+                    self._next_available_model()
+                if local_skip_streak >= max_local_skips:
+                    logger.warning("⚠️ 没有符合实时场景时延要求的模型，返回业务兜底")
+                    break
+                continue
+
             # ── [阶段3-A] 多模型协同路由（可选开关，向后兼容）──
             # 开启时按 task_type 路由到不同 API URL + API Key + 模型名
             # 未开启时保持原有逻辑（用 self.base_url / self.api_key / active_model）
@@ -2109,6 +2148,9 @@ class AIEngine:
                 "frequency_penalty": dyn_freq_pen,
                 "presence_penalty": dyn_pres_pen
             }
+            request_options = self._get_model_request_options(req_model)
+            if isinstance(request_options.get("enable_thinking"), bool):
+                payload["enable_thinking"] = request_options["enable_thinking"]
             
             # ── Function Calling 支持 ──
             if tools:

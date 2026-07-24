@@ -162,3 +162,39 @@ def test_ask_silences_normal_group_when_all_requests_fail(monkeypatch):
     result = engine.ask("群聊普通闲聊失败测试", mode="normal", retry=1, is_priv=False)
 
     assert result == ""
+
+
+def test_realtime_mode_skips_thinking_only_model_and_disables_thinking(monkeypatch):
+    cfg = _config()
+    cfg["MODEL_POOLS"]["llm_light"] = [
+        {
+            "name": "thinking-only",
+            "expire": "2099-12-31",
+            "enable_thinking": True,
+        },
+        {
+            "name": "fast-model",
+            "expire": "2099-12-31",
+            "enable_thinking": False,
+        },
+    ]
+    monkeypatch.setattr(ai_engine, "init_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine, "_get_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine.time, "sleep", lambda _seconds: None)
+    engine = ai_engine.AIEngine(cfg)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json)
+        return _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": "早。先挑一件真正要紧的事做。"}}]},
+        )
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    result = engine.ask("早安", mode="morning", retry=1)
+
+    assert result == "早。先挑一件真正要紧的事做。"
+    assert [call["model"] for call in calls] == ["fast-model"]
+    assert calls[0]["enable_thinking"] is False

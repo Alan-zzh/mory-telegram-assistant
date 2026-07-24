@@ -12,7 +12,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 |------|------|----------|------|
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | `SYSTEM_PROMPT` 从 config 读取；时段提示词支持默认集与局部配置合并 |
-| 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；`use_tier_routing = bool(_tier_pools)` 配置无三层池时自动降级；7 个文本模型按到期日升序；`qwen3.5-ocr` 归视觉池；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
+| 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 53 个 BaseTask 子类 | `modules/auto_tasks.py` 为 legacy（`_start_with_apscheduler` 死代码，仅保留部分工具函数） |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层 + 营销话术 4 维度 71 条 + AI 辅助决策 4 函数（默认关闭） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py` |
@@ -37,7 +37,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 v5.35.6（2026-07-24）
 
 ## 最近 3 条大事
-1. 2026-07-24 v5.35.6 生产播报与关键话题闭环：修复新闻内部来源说明泄漏、问候缺按钮、时段话术模板化、局部提示词覆盖默认模式、福利/定制无法按规则润色及统计、零吞吐瞬时积压触发 999 秒迁移假警报。四时段正文与联系入口分工，关键话题统计不保存用户原话。
+1. 2026-07-24 v5.35.6 生产播报与关键话题闭环：修复新闻内部来源说明泄漏、问候缺按钮、时段话术模板化、局部提示词覆盖默认模式、实时链误用仅思考模型连续超时、福利/定制无法按规则润色及统计、零吞吐瞬时积压触发 999 秒迁移假警报。四时段正文与联系入口分工，关键话题统计不保存用户原话。
 2. 2026-07-21 v5.35.5 整仓闭环复验：恢复 4 个被 VPS→本地反向同步覆盖的正确模块实现，新增监控/Windows 门禁回归；生产恢复 root watchdog cron并最小发布，双服务、health、watchdog 跨周期与真实调度回执通过。
 3. 2026-07-21 v5.35.4 第2轮深度审查修复 22 项：修复单行表数据丢失、高危行为、SQL 字段/类型错误、错误信息泄露与异常处理。
 
