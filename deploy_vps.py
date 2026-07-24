@@ -491,5 +491,19 @@ def main():
         print("=" * 60)
 
 
+def _handle_cli_args(args) -> bool:
+    """处理命令行参数；返回 True 表示已经输出结果，不应继续部署。"""
+    if not args:
+        return False
+    if args in (["-h"], ["--help"]):
+        print("用法：python deploy_vps.py")
+        print("说明：不带参数时执行生产部署；--help 仅显示本说明。")
+        return True
+    print(f"❌ 未知参数：{' '.join(args)}")
+    print("使用 python deploy_vps.py --help 查看用法。")
+    raise SystemExit(2)
+
+
 if __name__ == "__main__":
-    main()
+    if not _handle_cli_args(sys.argv[1:]):
+        main()

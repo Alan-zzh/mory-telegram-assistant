@@ -167,3 +167,9 @@
 - 根因：业务代码只读 `CHECKIN_CONFIG.enable` 和固定 `BONUS_DAYS`，示例配置与Dashboard却读写 `enabled`、`streak_bonus`；Dashboard POST 还漏存 `streak_bonus`。
 - 解法：业务代码优先读 `enabled` 并兼容历史 `enable`，连续奖励优先读 `streak_bonus` 并兼容 `bonus_3d/bonus_7d/...`；Dashboard GET规范化历史配置，POST同时同步新旧启用键和奖励键。
 - 预防：配置项变更必须做“示例配置→Dashboard保存→业务代码读取”的往返测试，不能只验证面板返回200或JSON字段可见。
+
+### 28. deploy_vps.py 把 --help 当成真实部署
+- 问题：执行 `python deploy_vps.py --help` 并未显示帮助，而是直接进入生产部署；命令被外部超时终止后，保险路径只确认 Bot 恢复，Dashboard 留在 inactive。
+- 根因：脚本没有命令行参数解析，`__main__` 无条件调用 `main()`；信号恢复只看一次重启命令返回，未逐个确认双服务和 health。
+- 解法：增加 fail-close 参数门禁，`--help/-h` 只输出用法，任何未知参数以退出码 2 拒绝执行；本次生产改用 commit 字节级最小发布、备份和双服务 health 轮询完成恢复。
+- 预防：生产脚本的帮助/未知参数必须是无副作用测试；部署验证必须逐个检查 `mory-assistant`、`mory-dashboard` 和 `/api/health`，不能把 restart 命令返回 0 当成双服务已恢复。
