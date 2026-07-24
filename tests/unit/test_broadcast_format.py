@@ -55,12 +55,10 @@ A > B 的测试结果"""
 
 def test_news_html_hides_internal_source_badge():
     """新闻富文本不向用户展示聚合策略或供应链名称。"""
-    news = """社会新闻一条
-财经新闻一条
-文娱新闻一条
-生活新闻一条
-国际新闻一条
-今晚信息面比较散，先看确定的"""
+    news = "\n".join(
+        [f"第{i}条不同方向的真实新闻" for i in range(1, 11)]
+        + ["今晚信息面比较散，先看确定的"]
+    )
     result = build_rich_news_html("晚间", news, source_name="fallback")
     assert "多源汇总" not in result
     assert "均衡筛选" not in result
@@ -68,23 +66,71 @@ def test_news_html_hides_internal_source_badge():
     assert "<blockquote expandable><i>" in result
 
 
-def test_news_balanced_selection_caps_tech():
-    """多源新闻挑选不会被科技/AI类目占满。"""
+def test_news_renderers_keep_ten_headlines_and_one_observation():
+    """当前排版必须完整展示10条头条，第11行才是观察。"""
+    from core.broadcast_formatter import build_rich_news_card_message
+
+    headlines = [f"第{i}条综合头条有明确事实信息" for i in range(1, 11)]
+    observation = "今天重点分散在民生、国际和社会变化"
+    news = "\n".join(headlines + [observation])
+
+    html = build_rich_news_html("早间", news)
+    rich = build_rich_news_card_message("早间", news)
+
+    for headline in headlines:
+        assert headline in html
+        assert headline in rich
+    assert html.count("📌") == 10
+    assert rich.count("<li>") == 10
+    assert f"<blockquote expandable><i>{observation}</i></blockquote>" in html
+    assert f"<blockquote>{observation}</blockquote>" in rich
+
+
+def test_news_balanced_selection_is_headline_first_and_caps_verticals():
+    """10条新闻综合头条优先，科技最多1条、财经最多2条。"""
     from core.trendradar_news import _select_balanced_news
 
     items = [
-        {"source": "36氪快讯", "title": "AI公司发布大模型新品", "category": "科技"},
-        {"source": "36氪快讯", "title": "芯片企业公布新一轮融资", "category": "科技"},
-        {"source": "36氪快讯", "title": "机器人公司推出新方案", "category": "科技"},
-        {"source": "澎湃新闻", "title": "多地优化地铁换乘服务", "category": "社会"},
-        {"source": "今日头条", "title": "央行公开市场操作受到关注", "category": "财经"},
-        {"source": "微博热搜", "title": "热门电影票房继续走高", "category": "文娱"},
-        {"source": "抖音热点", "title": "暑期旅行目的地热度上升", "category": "生活"},
+        {"source": "36氪快讯", "title": "AI公司发布大模型新品", "category": "科技", "rank": 1},
+        {"source": "36氪快讯", "title": "芯片企业公布新一轮融资", "category": "科技", "rank": 2},
+        {"source": "36氪快讯", "title": "机器人公司推出新方案", "category": "科技", "rank": 3},
+        {"source": "NewsNow华尔街见闻", "title": "全球主要市场关注央行最新表态", "category": "财经", "rank": 1},
+        {"source": "NewsNow华尔街见闻", "title": "多地消费数据公布出现新变化", "category": "财经", "rank": 2},
+        {"source": "NewsNow华尔街见闻", "title": "上市公司发布季度财报", "category": "财经", "rank": 3},
+        {"source": "NewsNow澎湃", "title": "多地优化地铁换乘服务", "category": "社会", "rank": 1},
+        {"source": "NewsNow头条", "title": "防汛救援工作取得新进展", "category": "社会", "rank": 1},
+        {"source": "NewsNow百度", "title": "公共服务新规今日开始实施", "category": "综合", "rank": 1},
+        {"source": "NewsNow早报", "title": "多国就地区局势举行会谈", "category": "国际", "rank": 1},
+        {"source": "NewsNow知乎", "title": "暑期教育政策引发家长关注", "category": "生活", "rank": 1},
+        {"source": "NewsNow微博", "title": "热门电影票房继续走高", "category": "文娱", "rank": 1},
+        {"source": "NewsNow抖音", "title": "暑期旅行目的地热度上升", "category": "生活", "rank": 1},
+        {"source": "NewsNowB站", "title": "中国队在国际比赛中夺冠", "category": "体育", "rank": 1},
     ]
-    selected = _select_balanced_news(items, limit=5)
-    assert len(selected) == 5
-    assert sum("【科技" in line for line in selected) <= 2
-    assert len({line.split("】", 1)[0].lstrip("【").split("·", 1)[0] for line in selected}) >= 3
+    selected = _select_balanced_news(items, limit=10)
+    categories = [
+        line.split("】", 1)[0].lstrip("【").split("·", 1)[0]
+        for line in selected
+    ]
+
+    assert len(selected) == 10
+    assert categories[0] in {"社会", "综合"}
+    assert categories.count("科技") <= 1
+    assert categories.count("财经") <= 2
+    assert len(set(categories)) >= 6
+
+
+def test_active_news_sources_avoid_known_403_direct_endpoints():
+    """生产新闻链不再请求已实测稳定403的微博、知乎、澎湃直连。"""
+    from core.trendradar_news import get_active_news_sources
+
+    sources = get_active_news_sources()
+    urls = {item["url"] for item in sources}
+    names = {item["name"] for item in sources}
+
+    assert "https://weibo.com/ajax/side/hotSearch" not in urls
+    assert "https://www.zhihu.com/hot" not in urls
+    assert "https://www.thepaper.cn/" not in urls
+    assert {"NewsNow头条", "NewsNow澎湃", "NewsNow早报"} <= names
 
 
 if __name__ == "__main__":

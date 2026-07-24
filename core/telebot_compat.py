@@ -14,6 +14,8 @@ Telegram Bot API 新增字段（如 emoji_status_custom_emoji_id）在解析时�
 
 import json
 import logging
+import time
+import traceback
 
 
 DEFAULT_ALLOWED_UPDATES = [
@@ -39,6 +41,70 @@ DEFAULT_ALLOWED_UPDATES = [
     "purchased_paid_media",
     "managed_bot",
 ]
+
+
+class TelegramPollingExceptionHandler:
+    """只接管 getUpdates 的可恢复网络异常，避免轮询风暴和重复堆栈。
+
+    sendMessage 等业务发送异常必须继续抛给原调用方，不能被这里吞掉。
+    """
+
+    _RECOVERABLE_STATUS = {500, 502, 503, 504}
+    _BACKOFF_SECONDS = (1, 2, 4, 8, 15)
+
+    def __init__(self, sleep_func=None, warning_func=None, monotonic_func=None):
+        self._sleep = sleep_func or time.sleep
+        self._warning = warning_func or logging.getLogger(
+            "telegram.polling"
+        ).warning
+        self._monotonic = monotonic_func or time.monotonic
+        self._last_error_at = 0.0
+        self._consecutive = 0
+
+    @staticmethod
+    def _is_get_updates_exception(exception: Exception) -> bool:
+        function_name = str(getattr(exception, "function_name", "") or "").lower()
+        if function_name == "getupdates":
+            return True
+        return any(
+            frame.name in {"__retrieve_updates", "get_updates"}
+            for frame in traceback.extract_tb(exception.__traceback__)
+        )
+
+    @classmethod
+    def _is_recoverable(cls, exception: Exception) -> bool:
+        error_code = getattr(exception, "error_code", None)
+        if error_code in cls._RECOVERABLE_STATUS:
+            return True
+        try:
+            from requests.exceptions import ConnectionError, Timeout
+            return isinstance(exception, (ConnectionError, Timeout))
+        except ImportError:
+            return isinstance(exception, TimeoutError)
+
+    def handle(self, exception: Exception) -> bool:
+        if not self._is_get_updates_exception(exception) or not self._is_recoverable(exception):
+            return False
+
+        now = self._monotonic()
+        if now - self._last_error_at > 60:
+            self._consecutive = 1
+        else:
+            self._consecutive += 1
+        self._last_error_at = now
+
+        delay = self._BACKOFF_SECONDS[
+            min(self._consecutive - 1, len(self._BACKOFF_SECONDS) - 1)
+        ]
+        error_code = getattr(exception, "error_code", None)
+        error_name = f"HTTP {error_code}" if error_code else type(exception).__name__
+        if self._consecutive in {1, 3, 6}:
+            self._warning(
+                f"Telegram轮询暂不可用（{error_name}，连续{self._consecutive}次），"
+                f"{delay}秒后重试；服务保持运行"
+            )
+        self._sleep(delay)
+        return True
 
 
 def get_allowed_updates(config: dict | None = None):

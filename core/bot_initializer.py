@@ -550,11 +550,20 @@ def initialize_bot() -> BotContext:
 
     # 10. 创建TeleBot
     import telebot
-    from core.telebot_compat import preserve_telegram_extra_fields
+    from core.telebot_compat import (
+        TelegramPollingExceptionHandler,
+        preserve_telegram_extra_fields,
+    )
     preserve_telegram_extra_fields()
     # 【v5.31.x 优化】单 Bot 单 VPS：实测 RSS~92MB、FD 仅 19，并发并不高。
     # 50 线程常驻纯耗调度，降到 10 对单群/中等流量绰绰有余，稳定前提下省 ~40 线程。
-    bot = telebot.TeleBot(cfg["TOKEN"], threaded=True, num_threads=10, use_class_middlewares=True)
+    bot = telebot.TeleBot(
+        cfg["TOKEN"],
+        threaded=True,
+        num_threads=10,
+        use_class_middlewares=True,
+        exception_handler=TelegramPollingExceptionHandler(),
+    )
 
     # 11. 广告检测引擎
     from modules.ad_detector import AdDetector

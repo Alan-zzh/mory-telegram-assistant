@@ -29,7 +29,8 @@ _SOURCE_NAME_MAP = {
     "baidu": "百度",
 }
 
-_CATEGORY_ORDER = ["社会", "财经", "文娱", "生活", "体育", "国际", "科技", "综合"]
+_CATEGORY_ORDER = ["社会", "综合", "国际", "生活", "体育", "文娱", "财经", "科技"]
+_CLASSIFICATION_ORDER = ["社会", "体育", "生活", "国际", "文娱", "财经", "科技"]
 _SOURCE_CATEGORY = {
     "百度热搜": "综合",
     "微博热搜": "综合",
@@ -43,8 +44,46 @@ _SOURCE_CATEGORY = {
     "NewsNow知乎": "综合",
     "NewsNowB站": "文娱",
     "NewsNow百度": "综合",
+    "NewsNow头条": "社会",
+    "NewsNow澎湃": "社会",
+    "NewsNow早报": "国际",
 }
+_SOURCE_PRIORITY = {
+    "NewsNow澎湃": 110,
+    "NewsNow头条": 108,
+    "今日头条": 107,
+    "百度热搜": 105,
+    "NewsNow百度": 104,
+    "NewsNow早报": 103,
+    "NewsNow微博": 90,
+    "NewsNow知乎": 88,
+    "抖音热点": 72,
+    "NewsNow抖音": 70,
+    "NewsNowB站": 65,
+    "36氪快讯": 60,
+}
+
+# 2026-07-24 VPS 实测：微博/知乎/澎湃直连稳定返回 403，禁止继续请求。
+# 同名 NewsNow 接口均返回 200，并新增头条、澎湃、早报作为综合头条主干。
+_ACTIVE_NEWS_SOURCE_SPECS = [
+    {"name": "百度热搜", "url": "https://top.baidu.com/board?tab=realtime", "timeout": 10, "min_len": 500, "parser": "baidu"},
+    {"name": "今日头条", "url": "https://tophub.today/n/KqndgxeLl9", "timeout": 8, "min_len": 1000, "parser": "toutiao"},
+    {"name": "抖音热点", "url": "https://tophub.today/n/DpQvNABoNE", "timeout": 8, "min_len": 500, "parser": "douyin"},
+    {"name": "36氪快讯", "url": "https://36kr.com/newsflashes", "timeout": 8, "min_len": 500, "parser": "36kr"},
+    {"name": "NewsNow头条", "url": f"{_NEWSNOW_BASE}?id=toutiao", "timeout": 6, "min_len": 0, "parser": "newsnow"},
+    {"name": "NewsNow澎湃", "url": f"{_NEWSNOW_BASE}?id=thepaper", "timeout": 6, "min_len": 0, "parser": "newsnow"},
+    {"name": "NewsNow早报", "url": f"{_NEWSNOW_BASE}?id=zaobao", "timeout": 6, "min_len": 0, "parser": "newsnow"},
+    {"name": "NewsNow微博", "url": f"{_NEWSNOW_BASE}?id=weibo", "timeout": 6, "min_len": 0, "parser": "newsnow"},
+    {"name": "NewsNow知乎", "url": f"{_NEWSNOW_BASE}?id=zhihu", "timeout": 6, "min_len": 0, "parser": "newsnow"},
+    {"name": "NewsNow抖音", "url": f"{_NEWSNOW_BASE}?id=douyin", "timeout": 6, "min_len": 0, "parser": "newsnow"},
+    {"name": "NewsNowB站", "url": f"{_NEWSNOW_BASE}?id=bilibili", "timeout": 6, "min_len": 0, "parser": "newsnow"},
+    {"name": "NewsNow百度", "url": f"{_NEWSNOW_BASE}?id=baidu", "timeout": 6, "min_len": 0, "parser": "newsnow"},
+]
 _CATEGORY_KEYWORDS = {
+    "社会": (
+        "警方", "法院", "检察院", "救援", "事故", "灾情", "防汛", "台风",
+        "诈骗", "犯罪", "被判", "新规", "政策", "公共服务", "民生",
+    ),
     "科技": (
         "AI", "人工智能", "大模型", "机器人", "芯片", "算力", "科技", "手机",
         "苹果", "华为", "小米", "特斯拉", "OpenAI", "互联网", "算法",
@@ -53,6 +92,7 @@ _CATEGORY_KEYWORDS = {
         "A股", "港股", "美股", "基金", "债券", "降息", "央行", "人民币",
         "经济", "楼市", "房价", "消费", "财报", "关税", "油价", "黄金",
         "股票", "股价", "退市", "融资", "回购", "上市", "营收", "利润",
+        "金条", "外贸", "外资",
     ),
     "文娱": (
         "电影", "电视剧", "综艺", "演唱会", "歌手", "演员", "明星", "票房",
@@ -87,14 +127,19 @@ def _normalize_news_title(title: str) -> str:
 def _classify_news_title(title: str, source_name: str = "") -> str:
     """按标题关键词分类，避免新闻卡片长期被科技/AI占满。"""
     text = _normalize_news_title(title)
-    for category in _CATEGORY_ORDER:
+    for category in _CLASSIFICATION_ORDER:
         if any(keyword in text for keyword in _CATEGORY_KEYWORDS.get(category, ())):
             return category
     return _SOURCE_CATEGORY.get(source_name, "综合")
 
 
+def get_active_news_sources() -> list[dict]:
+    """返回当前生产新闻源清单；供诊断和回归测试复核，不暴露给最终用户。"""
+    return [dict(item) for item in _ACTIVE_NEWS_SOURCE_SPECS]
+
+
 def _select_balanced_news(items: list[dict], limit: int = 12) -> list[str]:
-    """从多个新闻源中均衡挑选，科技类最多2条，单源最多3条。"""
+    """综合头条优先：科技最多1条、财经最多2条、单源常态最多2条。"""
     seen_titles = set()
     buckets: dict[str, list[dict]] = {category: [] for category in _CATEGORY_ORDER}
     for item in items:
@@ -109,15 +154,26 @@ def _select_balanced_news(items: list[dict], limit: int = 12) -> list[str]:
             "title": title,
             "source": item.get("source", "未知来源"),
             "category": category,
+            "rank": max(1, int(item.get("rank", 999) or 999)),
+            "priority": int(
+                item.get("priority", _SOURCE_PRIORITY.get(item.get("source", ""), 50))
+            ),
         })
+
+    for bucket in buckets.values():
+        bucket.sort(key=lambda candidate: (
+            -candidate["priority"],
+            candidate["rank"],
+            candidate["title"],
+        ))
 
     selected = []
     source_count: dict[str, int] = {}
     category_cap = {
-        "科技": 2,
-        "文娱": 3,
+        "科技": 1,
+        "文娱": 2,
         "社会": 3,
-        "财经": 3,
+        "财经": 2,
         "生活": 3,
         "国际": 2,
         "体育": 2,
@@ -134,6 +190,13 @@ def _select_balanced_news(items: list[dict], limit: int = 12) -> list[str]:
             current_category_count = sum(1 for item in selected if item["category"] == category)
             if current_category_count >= category_cap.get(category, 3):
                 continue
+            if category in {"科技", "财经"}:
+                vertical_count = sum(
+                    1 for item in selected
+                    if item["category"] in {"科技", "财经"}
+                )
+                if vertical_count >= 3:
+                    continue
             pick = None
             for index, candidate in enumerate(buckets[category]):
                 if source_count.get(candidate["source"], 0) < source_cap:
@@ -147,13 +210,13 @@ def _select_balanced_news(items: list[dict], limit: int = 12) -> list[str]:
         return changed
 
     while len(selected) < limit:
-        changed = _pick_round(source_cap=3)
+        changed = _pick_round(source_cap=2)
         if not changed:
             break
 
-    # 候选源太少时允许适度放宽，但仍避免单源刷满整张卡。
-    while len(selected) < min(limit, 8):
-        changed = _pick_round(source_cap=5)
+    # 候选源较少时把单源上限放宽到3，但不放宽科技/财经配额。
+    while len(selected) < limit:
+        changed = _pick_round(source_cap=3)
         if not changed:
             break
 
@@ -403,8 +466,9 @@ def _fallback_single_source(cache: set) -> str:
 def fetch_real_news() -> str:
     """
     从网络实时抓取今日热点新闻（多源并行容错）。
-    数据源：百度热搜、微博热搜、今日头条、知乎热榜、抖音热点、36氪、澎湃新闻。
-    七源并行收集，总超时15秒；成功源统一去重、分类、均衡挑选，避免最快源独占。
+    数据源：百度/头条直连 + NewsNow 头条、澎湃、早报及社交热点。
+    多源并行收集，总超时15秒；按榜单位置和来源权重挑选综合头条，
+    科技最多1条、财经最多2条，避免垂直行业内容占满整张卡。
     """
 
     def _dedup(raw_list):
@@ -461,20 +525,16 @@ def fetch_real_news() -> str:
         except Exception:
             return []
 
-    NEWS_SOURCES = [
-        {"name": "百度热搜", "url": "https://top.baidu.com/board?tab=realtime", "timeout": 10, "min_len": 500, "parser": _parse_baidu},
-        {"name": "微博热搜", "url": "https://weibo.com/ajax/side/hotSearch", "timeout": 8, "min_len": 0, "parser": _parse_weibo},
-        {"name": "今日头条", "url": "https://tophub.today/n/KqndgxeLl9", "timeout": 8, "min_len": 1000, "parser": _parse_toutiao},
-        {"name": "知乎热榜", "url": "https://www.zhihu.com/hot", "timeout": 8, "min_len": 500, "parser": _parse_zhihu},
-        {"name": "抖音热点", "url": "https://tophub.today/n/DpQvNABoNE", "timeout": 8, "min_len": 500, "parser": _parse_douyin},
-        {"name": "36氪快讯", "url": "https://36kr.com/newsflashes", "timeout": 8, "min_len": 500, "parser": _parse_36kr},
-        {"name": "澎湃新闻", "url": "https://www.thepaper.cn/", "timeout": 8, "min_len": 500, "parser": _parse_thepaper},
-        {"name": "NewsNow微博", "url": f"{_NEWSNOW_BASE}?id=weibo", "timeout": 6, "min_len": 0, "parser": _parse_newsnow},
-        {"name": "NewsNow抖音", "url": f"{_NEWSNOW_BASE}?id=douyin", "timeout": 6, "min_len": 0, "parser": _parse_newsnow},
-        {"name": "NewsNow知乎", "url": f"{_NEWSNOW_BASE}?id=zhihu", "timeout": 6, "min_len": 0, "parser": _parse_newsnow},
-        {"name": "NewsNowB站", "url": f"{_NEWSNOW_BASE}?id=bilibili", "timeout": 6, "min_len": 0, "parser": _parse_newsnow},
-        {"name": "NewsNow百度", "url": f"{_NEWSNOW_BASE}?id=baidu", "timeout": 6, "min_len": 0, "parser": _parse_newsnow},
-    ]
+    parsers = {
+        "baidu": _parse_baidu,
+        "toutiao": _parse_toutiao,
+        "douyin": _parse_douyin,
+        "36kr": _parse_36kr,
+        "newsnow": _parse_newsnow,
+    }
+    NEWS_SOURCES = get_active_news_sources()
+    for source in NEWS_SOURCES:
+        source["parser"] = parsers[source["parser"]]
 
     def _fetch_news_source(src):
         try:
@@ -517,11 +577,13 @@ def fetch_real_news() -> str:
                 result = f.result()
                 if result:
                     source_name = result["source"]
-                    for title in result["titles"]:
+                    for rank, title in enumerate(result["titles"], 1):
                         collected.append({
                             "source": source_name,
                             "title": title,
                             "category": _classify_news_title(title, source_name),
+                            "rank": rank,
+                            "priority": _SOURCE_PRIORITY.get(source_name, 50),
                         })
         except concurrent.futures.TimeoutError:
             logger.warning("📰 多源新闻收集达到15秒总超时，使用已返回结果")

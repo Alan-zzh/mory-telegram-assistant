@@ -280,6 +280,39 @@ def build_broadcast_html(
 
 
 # ── 新闻播报卡片 ─────────────────────────────────────────────────────────────
+def _parse_news_copy(news_content: str, max_items: int = 10) -> tuple[list[str], list[str]]:
+    """统一解析 AI 文案和真实标题兜底：前10条为新闻，之后为观察。"""
+    import re as _re
+
+    body_lines = [
+        line.strip()
+        for line in normalize_text(news_content).split("\n")
+        if line.strip()
+    ]
+    numbered_re = _re.compile(r"^\s*(\d+)[\.、)]\s*(.+)$")
+    header_re = _re.compile(r"^\s*[📰📌🌟🔥]+\s*(.+新闻|.+速览|.+热点).*$")
+    observation_re = _re.compile(r"^\s*(💡|以上为|以上就是|观察|总结).*$")
+    news_items: list[str] = []
+    observation_parts: list[str] = []
+
+    for line in body_lines:
+        if header_re.match(line):
+            continue
+        if observation_re.match(line):
+            observation_parts.append(line)
+            continue
+        match = numbered_re.match(line)
+        candidate = match.group(2).strip() if match else line
+        if candidate.startswith("📌"):
+            candidate = candidate[1:].strip()
+        if len(news_items) < max_items:
+            news_items.append(candidate)
+        else:
+            observation_parts.append(candidate)
+
+    return news_items, observation_parts
+
+
 def build_news_html(
     time_desc: str,
     news_content: str,
@@ -310,24 +343,16 @@ def build_news_html(
     # source_name 仅用于内部日志和诊断，不能把聚合策略/供应链名称展示给用户。
     _ = source_name
 
-    safe_body = escape_html_text(normalize_text(news_content))
-
-    # 按行号识别：前5行新闻 + 第6行观察
-    body_lines = safe_body.split("\n")
-    formatted_lines = []
-    news_count = 0
-    for line in body_lines:
-        line = line.strip()
-        if not line:
-            formatted_lines.append("")
-            continue
-        news_count += 1
-        if news_count <= 5:
-            formatted_lines.append(f"📌 {line}")
-        elif news_count == 6:
-            formatted_lines.append(
-                f"<blockquote expandable><i>{line}</i></blockquote>"
-            )
+    news_items, observation_parts = _parse_news_copy(news_content, max_items=10)
+    formatted_lines = [
+        f"📌 {escape_html_text(item)}"
+        for item in news_items
+    ]
+    if observation_parts:
+        observation = escape_html_text(" ".join(observation_parts))
+        formatted_lines.append(
+            f"<blockquote expandable><i>{observation}</i></blockquote>"
+        )
 
     formatted_body = "\n".join(formatted_lines)
 
@@ -538,46 +563,15 @@ def build_rich_news_card_message(
     # source_name 仅用于内部日志和诊断，不能把聚合策略/供应链名称展示给用户。
     _ = source_name
 
-    # [v5.32 修复] 智能解析：识别编号、跳过 header/observation
-    import re as _re
-    safe_body = escape_html_text(normalize_text(news_content))
-    body_lines = [ln.strip() for ln in safe_body.split("\n") if ln.strip()]
+    news_items, observation_parts = _parse_news_copy(news_content, max_items=10)
+    safe_news_items = [escape_html_text(item) for item in news_items]
 
-    news_items = []
-    observation_parts = []
-    numbered_re = _re.compile(r"^\s*(\d+)[\.、)]\s*(.+)$")
-    header_re = _re.compile(r"^\s*[📰📌🌟🔥]+\s*(.+新闻|.+速览|.+热点).*$")
-    observation_re = _re.compile(r"^\s*(以上为|以上就是|观察|总结).*$")
-
-    for line in body_lines:
-        # 跳过 header 行（"📰 早间新闻速览（共 5 条）"）
-        if header_re.match(line):
-            continue
-        # observation 行
-        if observation_re.match(line):
-            observation_parts.append(line)
-            continue
-        # 编号行 "1. xxx" → 提取纯标题
-        m = numbered_re.match(line)
-        if m:
-            news_items.append(m.group(2).strip())
-            continue
-        # 📌 前缀行（旧版 build_news_html 兼容）
-        if line.startswith("📌"):
-            news_items.append(line[1:].strip())
-            continue
-        # 还没到 5 条新闻 → 当作新闻
-        if len(news_items) < 5:
-            news_items.append(line)
-        else:
-            observation_parts.append(line)
-
-    if news_items:
-        list_html = "<ol>" + "".join(f"<li>{item}</li>" for item in news_items[:5]) + "</ol>"
+    if safe_news_items:
+        list_html = "<ol>" + "".join(f"<li>{item}</li>" for item in safe_news_items) + "</ol>"
         parts.append(list_html)
 
     if observation_parts:
-        observation = " ".join(observation_parts)
+        observation = escape_html_text(" ".join(observation_parts))
         parts.append(f"<blockquote>{observation}</blockquote>")
 
     parts.append("<hr>")

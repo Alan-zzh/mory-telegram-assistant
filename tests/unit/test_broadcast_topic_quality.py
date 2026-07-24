@@ -13,20 +13,59 @@ def test_news_internal_source_labels_never_render():
         build_rich_news_html,
     )
 
-    news = "\n".join([
-        "第一条真实新闻",
-        "第二条真实新闻",
-        "第三条真实新闻",
-        "第四条真实新闻",
-        "第五条真实新闻",
-        "💡 信息还在继续变化",
-    ])
+    news = "\n".join(
+        [f"第{i}条真实新闻" for i in range(1, 11)]
+        + ["💡 信息还在继续变化"]
+    )
     for renderer in (build_rich_news_html, build_rich_news_card_message):
         rendered = renderer("早间", news, source_name="fallback")
         assert "多源汇总" not in rendered
         assert "均衡筛选" not in rendered
         assert "TrendRadar" not in rendered
         assert "@MorychannelBot" in rendered
+
+
+def test_news_personas_require_ten_headlines_before_observation():
+    from core.ai_engine import AIEngine
+
+    for mode in (
+        "news",
+        "afternoon_news",
+        "evening_news",
+        "trendradar_morning_news",
+        "trendradar_noon_news",
+        "trendradar_evening_news",
+    ):
+        prompt = AIEngine._DEFAULT_PROMPT_TEMPLATES[mode]
+        assert "严格只写10条" in prompt
+        assert "第11行" in prompt
+        assert "5条" not in prompt
+        assert "第6行" not in prompt
+
+
+def test_polling_exception_handler_only_handles_get_updates_5xx(monkeypatch):
+    from core.telebot_compat import TelegramPollingExceptionHandler
+
+    sleeps = []
+    warnings = []
+    handler = TelegramPollingExceptionHandler(
+        sleep_func=sleeps.append,
+        warning_func=warnings.append,
+    )
+
+    class FakeApiError(Exception):
+        function_name = "getUpdates"
+        error_code = 502
+
+    class FakeSendError(Exception):
+        function_name = "sendMessage"
+        error_code = 502
+
+    assert handler.handle(FakeApiError("Bad Gateway")) is True
+    assert sleeps == [1]
+    assert len(warnings) == 1
+    assert "502" in warnings[0]
+    assert handler.handle(FakeSendError("Bad Gateway")) is False
 
 
 def test_broadcast_button_matches_each_user_intent():

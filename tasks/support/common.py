@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 
-from core.broadcast_formatter import build_rich_news_html
+from core.broadcast_formatter import _parse_news_copy, build_rich_news_html
 from core.helpers import can_delete_message, get_broadcast_auto_delete_config
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
@@ -294,11 +294,11 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
 
     重构原则（用户反馈"记流水账一样没有实际"）：
     - 不再用"晚点再补一条更稳的消息"等无价值填充
-    - 不足 5 条时，明确告知"今日 X 条"，不凑数
+    - 不足 10 条时，明确告知实际条数，不凑数
     - 用编号列表 + 时间段 + 简短观察，提供真实阅读价值
     """
     cleaned = []
-    for line in lines[:5]:
+    for line in lines[:10]:
         core = line.split("】", 1)[-1].split("🔥", 1)[0].strip()
         if core:
             cleaned.append(core[:40])
@@ -311,7 +311,7 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
     numbered = [f"{i+1}. {title}" for i, title in enumerate(cleaned)]
     count = len(numbered)
     header = f"📰 {time_desc}新闻速览（共 {count} 条）"
-    observation = f"\n\n以上为 {time_desc}实时热点，有想细聊的随时来戳我。"
+    observation = f"\n\n💡 {time_desc}重点不只一条线，先看事实和后续变化。"
     return header + "\n\n" + "\n".join(numbered) + observation
 
 
@@ -412,6 +412,15 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                     "⚠️",
                 )
                 news = build_news_without_ai(lines, time_desc)
+            else:
+                expected_count = min(10, len(lines))
+                actual_count = len(_parse_news_copy(news, max_items=10)[0])
+                if actual_count != expected_count:
+                    logger.warning(
+                        f"{time_desc}新闻 AI 条数不合格："
+                        f"期望{expected_count}条，实际{actual_count}条，改用真实标题兜底"
+                    )
+                    news = build_news_without_ai(lines, time_desc)
 
             if news:
                 # [v5.32] 同时构建 HTML 卡片和 Rich Message 卡片
