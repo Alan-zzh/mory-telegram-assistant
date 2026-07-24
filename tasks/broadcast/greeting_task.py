@@ -14,7 +14,6 @@ from tasks.base_task import BaseTask, TaskContext
 from tasks.support.common import (
     TaskAbort,
     build_mory_contact_markup,
-    looks_like_ai_fallback,
     retry_task,
     send_greeting,
 )
@@ -74,9 +73,9 @@ class GreetingTask(BaseTask):
                     mode=period,
                     seed=seed,
                 )
-                if not msg or looks_like_ai_fallback(msg):
+                if not MessageTemplates.is_usable_greeting(period, msg):
                     msg = MessageTemplates.get_fallback_greeting(period)
-                    logger.info(f"🌅 {period} 问候使用话术池兜底")
+                    logger.info(f"🌅 {period} 问候未通过质量门禁，使用话术池兜底")
 
                 # v5.35.6：正文与按钮分工，不再追加一段固定“温柔收尾”破坏短文案。
                 msg = msg.strip()[:120]

@@ -11,6 +11,25 @@ from typing import List
 class MessageTemplates:
     """集中管理各类定时任务的文案池。"""
 
+    GREETING_STYLE_BAN: List[str] = [
+        "多源汇总",
+        "TrendRadar",
+        "脑子刚才短路",
+        "刚才走神",
+        "网络有点卡",
+        "刚刚没反应过来",
+        "喝口水缓一缓",
+        "慢慢来",
+        "别把自己逼太紧",
+        "今天会顺一点",
+        "身心",
+        "归位",
+        "允许自己",
+        "外界期待",
+        "安静地存在",
+        "蓝光",
+    ]
+
     # 早安/午安/晚安播报尾语池（[v5.32] 重构：从硬塞转化引导改为场景化温柔收尾）
     # 用户反馈"再加的东西特别尬" → 移除所有"私聊我""来找我""戳我"等生硬营销话术
     MORNING_SUFFIXES: List[str] = [
@@ -205,6 +224,17 @@ class MessageTemplates:
         if pool:
             return random.choice(pool)
         return "你好"
+
+    @classmethod
+    def is_usable_greeting(cls, period: str, text) -> bool:
+        """拦住引擎异常、内部字样和已确认僵硬套路，失败时使用可信话术池。"""
+        if not isinstance(text, str):
+            return False
+        value = text.strip()
+        min_length = 25 if period == "night" else 30
+        if not min_length <= len(value) <= 120:
+            return False
+        return not any(marker in value for marker in cls.GREETING_STYLE_BAN)
 
     @classmethod
     def get_wakeup_fallback(cls) -> str:

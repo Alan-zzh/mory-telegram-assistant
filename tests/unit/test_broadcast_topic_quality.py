@@ -221,3 +221,16 @@ def test_scheduled_broadcast_rejects_ai_failure_copy():
     )
 
     assert content == ""
+
+
+def test_greeting_quality_gate_rejects_cliche_and_accepts_plain_copy():
+    from tasks.support.message_templates import MessageTemplates
+
+    assert MessageTemplates.is_usable_greeting(
+        "morning",
+        "早。先别急着回完所有消息，挑一件真要紧的做，脑子会清楚很多。",
+    )
+    assert not MessageTemplates.is_usable_greeting(
+        "morning",
+        "早安，先喝口水缓一缓，今天会顺一点。",
+    )
