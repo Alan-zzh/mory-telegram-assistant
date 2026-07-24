@@ -2798,15 +2798,33 @@ async function saveEmojiMask() {
 
 // 【v4.17.0新增】关键词触发规则管理
 let _keywordTriggers = [];
+let _topicReplyStats = [];
 
 async function loadKeywordTriggers() {
   try {
     const d = await api('/api/keywords');
     _keywordTriggers = d.data.triggers || [];
+    _topicReplyStats = d.data.topic_stats || [];
     const el = document.getElementById('keywordTriggersContent');
     if (!el) return;
     const typeNames = { static: '静态回复', ai: 'AI智能回复', action: '动作执行' };
     el.innerHTML = `
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="color:#fff; margin-bottom:6px;">关键话题近30天</h3>
+        <p style="color:#94a3b8; font-size:13px; margin-bottom:14px;">只统计命中次数与润色结果，不保存用户原话。</p>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
+          ${_topicReplyStats.length === 0
+            ? '<div style="color:#6b7280;">暂无命中数据</div>'
+            : _topicReplyStats.map(s => `
+              <div style="padding:14px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.08); border-radius:10px;">
+                <div style="font-size:16px; color:#fff; margin-bottom:8px;">${escHtml(s.topic)}</div>
+                <div style="font-size:13px; color:#cbd5e1;">命中 ${s.total} 次 · ${s.users} 人</div>
+                <div style="font-size:12px; color:#94a3b8; margin-top:4px;">AI润色 ${s.polished} · 底稿兜底 ${s.template}</div>
+                <div style="font-size:11px; color:#64748b; margin-top:6px;">${s.last_hit_at ? new Date(s.last_hit_at * 1000).toLocaleString() : '尚无时间'}</div>
+              </div>
+            `).join('')}
+        </div>
+      </div>
       <div class="card" style="margin-bottom:20px;">
         <h3 style="color:#fff; margin-bottom:16px;">新增规则</h3>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">

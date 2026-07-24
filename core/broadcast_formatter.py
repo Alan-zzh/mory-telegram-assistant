@@ -307,17 +307,8 @@ def build_news_html(
     emoji = period_emojis.get(time_desc, "📰")
 
     title = f"<b><i>{emoji} {time_desc}新闻</i></b>"
-    source_badge = ""
-    if source_name:
-        source_label_map = {
-            "fallback": "多源汇总 · 均衡筛选",
-            "real_first": "多源汇总 · 均衡筛选",
-            "trendradar": "TrendRadar · 热点混合",
-            "none": "",
-        }
-        source_label = source_label_map.get(source_name, source_name)
-        if source_label:
-            source_badge = f"<i>{escape_html_text(source_label)}</i>"
+    # source_name 仅用于内部日志和诊断，不能把聚合策略/供应链名称展示给用户。
+    _ = source_name
 
     safe_body = escape_html_text(normalize_text(news_content))
 
@@ -343,10 +334,7 @@ def build_news_html(
     # 底部自然引导（不用分隔线，用折叠区）
     footer = "<i>@MorychannelBot</i>"
 
-    parts = [title]
-    if source_badge:
-        parts.extend(["", source_badge])
-    parts.extend(["", formatted_body, "", footer])
+    parts = [title, "", formatted_body, "", footer]
     return "\n".join(parts)
 
 
@@ -547,17 +535,8 @@ def build_rich_news_card_message(
     safe_title = escape_html_text(f"{time_desc}新闻")
     parts = [f"<h2>{emoji} {safe_title}</h2>"]
 
-    if source_name:
-        source_label_map = {
-            "fallback": "多源汇总 · 均衡筛选",
-            "real_first": "多源汇总 · 均衡筛选",
-            "trendradar": "TrendRadar · 热点混合",
-            "none": "",
-        }
-        source_label = source_label_map.get(source_name, source_name)
-        if source_label:
-            safe_label = escape_html_text(source_label)
-            parts.append(f"<p><i>{safe_label}</i></p>")
+    # source_name 仅用于内部日志和诊断，不能把聚合策略/供应链名称展示给用户。
+    _ = source_name
 
     # [v5.32 修复] 智能解析：识别编号、跳过 header/observation
     import re as _re

@@ -1,6 +1,6 @@
 # 播报富文本与 Bot API 兼容说明
 
-最后更新：2026-07-18 [Trae Solo CN]（v5.32.0 同步 Bot API 10.1 Rich Message）
+最后更新：2026-07-24（v5.35.6 播报与关键话题质量闭环）
 
 ## 目标
 
@@ -8,6 +8,7 @@
 - pyTelegramBotAPI 4.34.0 已支持 Bot API 10.1（Rich Message / sendRichMessage / InputRichMessage）。
 - 双路径排版：HTML parse_mode（旧客户端兼容）+ Rich Message 块级标签（新客户端富文本）。
 - v5.32：移除硬塞营销 footer/button，支持 `ai_generate:true` 动态生成 content。
+- v5.35.6：新闻不展示内部聚合源；问候与新闻所有降级路径统一联系按钮；时段正文不再承担强制营销。
 - v4.0：支持用户画像个性化播报（VIP 专属 emoji、高等级感谢话术、兴趣匹配）
 
 ## v5.32 双路径排版架构
@@ -59,6 +60,15 @@ SCHEDULED_BROADCASTS 配置项新增 `ai_generate: true` 字段：
 - 启用时调用 `ai_engine.ask(mode=period, seed=确定性int)` 动态生成 content
 - AI 失败自动回退静态 content（保证播报不中断）
 - seed 用 `hashlib.md5(broadcast_id + date)` 确定性生成，同一天同一播报内容稳定
+
+### v5.35.6 文案与用户界面边界
+
+- `source_name` 只用于日志、故障定位和来源链路选择，禁止渲染“多源汇总”“均衡筛选”或供应方名称。
+- 早安、午安、晚安与新闻使用统一的 `@MorychannelBot` 联系按钮；Rich Message、HTML 与纯文本降级都必须保留按钮。
+- 时段正文控制在 1–2 句，不虚构天气、行程或刚发生的事，不固定复用咖啡/阳光/窗边场景。
+- 正文负责自然陪伴，按钮负责联系入口；不再要求每条问候强塞营销钩子。
+- AI 失败或返回引擎异常话术时，问候/定点播报都改用可信底稿；异常说明不能成为用户可见正文。
+- `SPECIAL_AUTO_REPLIES` 可为福利、定制等关键话题配置独立 `polish_prompt`。AI 输出不合格时回退业务底稿；统计保留用户 ID 用于去重人数，但不保存用户原话。
 
 
 
@@ -440,6 +450,11 @@ Business updates 兼容：
 
 - 旧逻辑：AI 生成失败时直接放弃发送。
 - 新逻辑：新增 `_GREETING_FALLBACK_POOL` 话术池，AI 失败时随机选择预设话术，保证播报不中断。
+
+### 5. 内部来源泄漏与问候缺按钮（v5.35.6 修正）
+
+- 旧逻辑：新闻来源链路被映射成用户可见角标，问候发送函数不接受按钮，降级路径也可能丢失入口。
+- 新逻辑：来源仅写内部日志；问候和新闻在 Rich Message、HTML、纯文本路径统一透传联系按钮。
 
 ## 风险边界
 

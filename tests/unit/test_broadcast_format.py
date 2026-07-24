@@ -53,8 +53,8 @@ A > B 的测试结果"""
     print("✅ HTML转义测试通过")
 
 
-def test_news_html_source_badge():
-    """新闻富文本展示多源筛选角标。"""
+def test_news_html_hides_internal_source_badge():
+    """新闻富文本不向用户展示聚合策略或供应链名称。"""
     news = """社会新闻一条
 财经新闻一条
 文娱新闻一条
@@ -62,7 +62,9 @@ def test_news_html_source_badge():
 国际新闻一条
 今晚信息面比较散，先看确定的"""
     result = build_rich_news_html("晚间", news, source_name="fallback")
-    assert "多源汇总 · 均衡筛选" in result
+    assert "多源汇总" not in result
+    assert "均衡筛选" not in result
+    assert "TrendRadar" not in result
     assert "<blockquote expandable><i>" in result
 
 

@@ -39,6 +39,24 @@ logger = get_logger("scheduled_broadcast")
 
 _CST = timezone(timedelta(hours=8))
 
+_AI_FALLBACK_MARKERS = (
+    "脑子刚才短路",
+    "刚才走神",
+    "网络有点卡",
+    "刚刚没反应过来",
+    "暂时没法稳定接上模型",
+)
+
+
+def _is_usable_ai_copy(content) -> bool:
+    """防止模型降级提示被当成正式播报正文。"""
+    if not isinstance(content, str):
+        return False
+    text = content.strip()
+    return 20 <= len(text) <= 180 and not any(
+        marker in text for marker in _AI_FALLBACK_MARKERS
+    )
+
 
 def _extract_send_error(e: Exception) -> tuple:
     """从发送异常中提取类型、状态码和摘要，用于结构化日志。"""
@@ -327,7 +345,7 @@ def _try_ai_generate(bc: dict, ai_engine, broadcast_id: str) -> str:
         seed_str = f"broadcast_{broadcast_id}_{today}"
         seed = int(hashlib.md5(seed_str.encode("utf-8")).hexdigest()[:8], 16) % 1000000
         content = ai_engine.ask(ai_msg, mode=period, seed=seed)
-        if content and len(content.strip()) >= 20:
+        if _is_usable_ai_copy(content):
             return content.strip()
         logger.warning(f"[broadcast] AI 生成内容过短或为空 {broadcast_id}, 回退静态")
         return ""

@@ -234,19 +234,25 @@ def _check_avg_write_queue_delay() -> dict:
                 if throughput > 0:
                     avg_delay = pending / throughput
                 else:
-                    # 吞吐为 0：有积压则标记高延迟，无积压则 0
-                    avg_delay = 999.0 if pending > 0 else 0.0
+                    # 两次低频采样之间没有完成写入时，无法从一个 pending 瞬时值
+                    # 推算等待时长。旧逻辑直接记 999 秒，会把刚入队的一条写入
+                    # 误报成“SQLite 已到物理极限”。持续积压由指标 D 单独判断。
+                    return {
+                        "value": None,
+                        "threshold": _THRESHOLD_AVG_WQ_DELAY_SEC,
+                        "exceeded": False,
+                        "message": (
+                            "最近采样吞吐为 0，无法推算平均延迟"
+                            f"（current_pending={pending}，交由持续积压指标判断）"
+                        ),
+                    }
             else:
                 avg_delay = 0.0
         else:
             # 采样不足，无法推算吞吐
             avg_delay = 0.0
 
-        # 上限标记处理
-        if avg_delay >= 999.0:
-            avg_delay_display = 999.0
-        else:
-            avg_delay_display = round(avg_delay, 3)
+        avg_delay_display = round(avg_delay, 3)
 
         exceeded = avg_delay > _THRESHOLD_AVG_WQ_DELAY_SEC
         return {

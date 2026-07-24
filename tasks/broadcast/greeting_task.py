@@ -11,7 +11,13 @@ from core.broadcast_formatter import build_rich_greeting_html, build_rich_greeti
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
-from tasks.support.common import send_greeting, TaskAbort, retry_task
+from tasks.support.common import (
+    TaskAbort,
+    build_mory_contact_markup,
+    looks_like_ai_fallback,
+    retry_task,
+    send_greeting,
+)
 from tasks.support.message_templates import MessageTemplates
 from tasks.support.task_config import get_greeting_time, is_greeting_enabled, get_all_group_ids
 
@@ -68,13 +74,13 @@ class GreetingTask(BaseTask):
                     mode=period,
                     seed=seed,
                 )
-                if not msg:
+                if not msg or looks_like_ai_fallback(msg):
                     msg = MessageTemplates.get_fallback_greeting(period)
                     logger.info(f"🌅 {period} 问候使用话术池兜底")
 
-                # [v5.32] 移除强制单段，保留 AI 生成的多段结构，放宽到 400 字
-                msg = msg.strip()[:400]
-                suffix = MessageTemplates.get_dynamic_suffix(period) if MessageTemplates.needs_suffix(msg) else ""
+                # v5.35.6：正文与按钮分工，不再追加一段固定“温柔收尾”破坏短文案。
+                msg = msg.strip()[:120]
+                suffix = ""
                 # [v5.32] 同时构建 HTML 版本和 Rich Message 版本
                 rich_html = build_rich_greeting_html(period, msg, suffix.strip())
                 rich_message_html = build_rich_greeting_card_message(period, msg, suffix.strip())
@@ -85,6 +91,7 @@ class GreetingTask(BaseTask):
                         sent = send_greeting(
                             self.rm, gid, rich_html, f"greeting_{period}",
                             rich_text=rich_message_html,
+                            reply_markup=build_mory_contact_markup(period),
                         )
                         if sent:
                             sent_any = True

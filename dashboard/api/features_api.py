@@ -301,7 +301,46 @@ def api_keywords():
             ]
         except Exception:
             triggers = []
-        return jsonify({"ok": True, "data": {"triggers": triggers}})
+        try:
+            since = int(time.time()) - 30 * 86400
+            stat_rows = conn.execute(
+                """
+                SELECT variant,
+                       COUNT(*) AS total,
+                       COUNT(DISTINCT user_id) AS users,
+                       SUM(CASE WHEN event_type='reply_polished' THEN 1 ELSE 0 END) AS polished,
+                       SUM(CASE WHEN event_type='reply_template' THEN 1 ELSE 0 END) AS template,
+                       MAX(ts) AS last_hit_at
+                FROM telemetry_events
+                WHERE experiment_id='topic_interest' AND ts>=? AND variant!=''
+                GROUP BY variant
+                ORDER BY total DESC, last_hit_at DESC
+                LIMIT 20
+                """,
+                (since,),
+            ).fetchall()
+            topic_stats = [
+                {
+                    "topic": r[0],
+                    "total": r[1] or 0,
+                    "users": r[2] or 0,
+                    "polished": r[3] or 0,
+                    "template": r[4] or 0,
+                    "last_hit_at": r[5] or 0,
+                }
+                for r in stat_rows
+            ]
+        except Exception as e:
+            logger.warning(f"读取关键话题统计失败: {e}")
+            topic_stats = []
+        return jsonify({
+            "ok": True,
+            "data": {
+                "triggers": triggers,
+                "topic_stats": topic_stats,
+                "stats_window_days": 30,
+            },
+        })
     # POST - 创建新规则
     _adm = _check_admin()
     if _adm:

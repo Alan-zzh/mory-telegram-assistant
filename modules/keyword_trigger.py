@@ -21,6 +21,18 @@ from core.logging_util import get_logger
 
 logger = get_logger("keyword_trigger")
 
+_UNUSABLE_POLISH_MARKERS = (
+    "原模板",
+    "润色后",
+    "提示词",
+    "作为AI",
+    "作为 AI",
+    "脑子刚才短路",
+    "刚才走神",
+    "网络有点卡",
+    "刚刚没反应过来",
+)
+
 
 class KeywordTrigger:
     """
@@ -131,36 +143,108 @@ class KeywordTrigger:
                 return False
 
             final_reply = base_reply
+            was_polished = False
+            user_text = (getattr(message, "text", "") or "").strip()
+            matched_keyword = self._get_matched_keyword(rule, user_text)
             if self.ai and rule.get("ai_polish", True):
-                matched_keywords = rule.get("keywords", [])
-                if isinstance(matched_keywords, list):
-                    matched_keywords = "、".join(str(x) for x in matched_keywords if x)
+                rule_prompt = (rule.get("polish_prompt") or "").strip()
                 polish_prompt = (
-                    "你是Mory的小助理，要把一段固定模板润色成更自然、更像真人聊天的话。\n"
-                    "要求：\n"
-                    "1. 保留原模板的核心意思，不要改成别的业务方向\n"
-                    "2. 语气自然、亲近、有高情商，不要像客服，不要像公告\n"
-                    "3. 可以略带一点撩人的感觉，但不要油腻\n"
-                    "4. 如果模板里本来有转化引导，要保留这种引导，但要更自然\n"
-                    "5. 不要写成太长，控制在2到4行内，适合Telegram直接回复\n"
-                    f"6. 这次触发词大致是：{matched_keywords}\n\n"
-                    f"用户刚说的话：{getattr(message, 'text', '') or ''}\n\n"
-                    f"原模板：{base_reply}\n\n"
-                    "请直接输出润色后的最终回复，不要解释。"
+                    "请按当前已加载的Mory人设，把业务底稿改成一次自然回复。\n"
+                    "硬约束：\n"
+                    "1. 先正面回应用户这句话，再自然带出底稿里的有效信息。\n"
+                    "2. 只写1到2句、25到70个汉字；不要标题、列表、解释或客服腔。\n"
+                    "3. 不编造价格、优惠、库存、权益、交付能力；不确定就保守表达。\n"
+                    "4. 底稿里的必要入口必须保留，其他措辞要换成当下对话的说法。\n"
+                    "5. 禁止输出“原模板”“润色后”“提示词”等内部字样。\n"
+                    f"本规则额外要求：{rule_prompt or '保持清冷自然，不硬推，不油腻。'}\n"
+                    f"命中话题：{matched_keyword or rule.get('name', '业务咨询')}\n"
+                    f"用户原话：{user_text[:180]}\n"
+                    f"业务底稿：{base_reply[:300]}\n"
+                    "直接输出最终回复。"
                 )
-                ai_reply = self.ai.ask(polish_prompt, mode=rule.get("ai_mode", "normal"))
-                if ai_reply and len(ai_reply.strip()) >= 6:
-                    final_reply = ai_reply.strip()
+                ai_reply = self.ai.ask(
+                    polish_prompt,
+                    mode=rule.get("ai_mode", "normal"),
+                    is_priv=chat_id > 0,
+                )
+                if self._is_usable_polish(ai_reply):
+                    final_reply = ai_reply.strip().strip("\"'“”")
+                    was_polished = True
 
             if self.mory_bot:
                 self.mory_bot.reply_and_track(message, final_reply)
             else:
                 bot.reply_to(message, final_reply)
+            self._record_topic_reply(
+                rule,
+                message,
+                chat_id,
+                matched_keyword,
+                was_polished,
+            )
             logger.info(f"🔑 特定词自动回复成功: {rule.get('name', '未命名规则')}")
             return True
         except Exception as e:
             logger.error(f"🔑 特定词自动回复失败: {e}")
             return False
+
+    @staticmethod
+    def _get_matched_keyword(rule, user_text: str) -> str:
+        """返回实际命中的最长关键词，供提示词与统计使用。"""
+        keywords = rule.get("keywords", [])
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        text_lower = user_text.lower()
+        matched = [
+            str(keyword).strip()
+            for keyword in keywords
+            if keyword and str(keyword).lower() in text_lower
+        ]
+        return max(matched, key=len) if matched else ""
+
+    @staticmethod
+    def _is_usable_polish(reply) -> bool:
+        """拒绝过短、过长、降级话术和内部说明，安全回退业务底稿。"""
+        if not isinstance(reply, str):
+            return False
+        text = reply.strip()
+        if not 6 <= len(text) <= 180:
+            return False
+        return not any(marker in text for marker in _UNUSABLE_POLISH_MARKERS)
+
+    def _record_topic_reply(
+        self,
+        rule,
+        message,
+        chat_id: int,
+        matched_keyword: str,
+        was_polished: bool,
+    ):
+        """用现有 telemetry_events 记录关键话题，不保存用户原文。"""
+        try:
+            user = getattr(message, "from_user", None)
+            user_id = int(getattr(user, "id", 0) or 0)
+            topic = str(
+                rule.get("topic")
+                or matched_keyword
+                or rule.get("name")
+                or "未分类"
+            ).strip()[:64]
+            self.db.log_telemetry(
+                user_id,
+                int(chat_id or 0),
+                "topic_interest",
+                topic,
+                "reply_polished" if was_polished else "reply_template",
+                1.0,
+                {
+                    "rule": str(rule.get("name", ""))[:64],
+                    "matched_keyword": matched_keyword[:64],
+                    "ai_mode": str(rule.get("ai_mode", "normal"))[:32],
+                },
+            )
+        except Exception as e:
+            logger.warning(f"🔑 关键话题统计写入失败: {e}")
     
     def _handle_static(self, trigger, chat_id, message, bot):
         reply_text = trigger["reply_text"]

@@ -77,7 +77,31 @@ def send_and_track(rm: ResourceManager, chat_id: int, text: str, parse_mode=None
         return None
 
 
-def send_greeting(rm: ResourceManager, chat_id: int, text: str, category: str = "greeting", rich_text: str = ""):
+def build_mory_contact_markup(period: str = ""):
+    """为新闻和早午晚问候生成一致的用户入口按钮。"""
+    labels = {
+        "morning": "☀️ 和 Mory 说早安",
+        "afternoon": "🍵 找 Mory 聊会儿",
+        "evening": "🌙 和 Mory 说晚安",
+    }
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton(
+            labels.get(period, "💬 找 Mory"),
+            url="https://t.me/MorychannelBot",
+        )
+    )
+    return markup
+
+
+def send_greeting(
+    rm: ResourceManager,
+    chat_id: int,
+    text: str,
+    category: str = "greeting",
+    rich_text: str = "",
+    reply_markup=None,
+):
     """发送早安/午安/晚安问候，支持"发新删旧"链式互删。
 
     [v5.32] 新增 rich_text 参数：当 RICH_MESSAGE_ENABLED=true 且 BROADCAST_FORMAT_VERSION
@@ -114,7 +138,12 @@ def send_greeting(rm: ResourceManager, chat_id: int, text: str, category: str = 
         try:
             with rm.locked('bot'):
                 from core.telebot_compat import send_rich_message_compat
-                sent = send_rich_message_compat(rm.bot, chat_id, rich_text)
+                sent = send_rich_message_compat(
+                    rm.bot,
+                    chat_id,
+                    rich_text,
+                    reply_markup=reply_markup,
+                )
             if sent and hasattr(sent, 'message_id'):
                 schedule_auto_delete(rm, chat_id, sent.message_id, 24 * 3600)
                 if chat_id < 0:
@@ -126,7 +155,13 @@ def send_greeting(rm: ResourceManager, chat_id: int, text: str, category: str = 
 
     # 回退到 HTML parse_mode 路径
     if sent is None:
-        sent = send_and_track(rm, chat_id, text, parse_mode="HTML")
+        sent = send_and_track(
+            rm,
+            chat_id,
+            text,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+        )
 
     if sent and hasattr(sent, 'message_id') and hasattr(rm, "db") and rm.db is not None:
         try:
@@ -374,8 +409,7 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                 rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
                 from core.broadcast_formatter import build_rich_news_card_message
                 rich_news_message = build_rich_news_card_message(time_desc, news, source_name=source_name)
-                markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton("💬 来找Mory聊聊", url="https://t.me/MorychannelBot"))
+                markup = build_mory_contact_markup()
 
                 # [v5.32] 优先尝试 Rich Message 路径
                 cfg = rm.config or {}
@@ -419,10 +453,15 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                         return
                 except Exception as e:
                     logger.warning(f"{time_desc}新闻富文本发送失败，降级纯文本: {e}")
-                    sent = send_and_track(rm, gid, news)
+                    sent = send_and_track(
+                        rm,
+                        gid,
+                        news,
+                        reply_markup=markup,
+                    )
                     if sent:
                         remember_news_lines(lines)
-                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，纯文本降级）")
+                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，纯文本降级+按钮）")
                         return
 
             record_abort(task_name, "新闻发送失败")
