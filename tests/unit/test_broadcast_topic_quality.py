@@ -43,6 +43,24 @@ def test_news_personas_require_ten_headlines_before_observation():
         assert "第6行" not in prompt
 
 
+def test_news_output_gate_rejects_source_labels_and_missing_items():
+    from tasks.support.common import is_usable_news_output
+
+    valid = "\n".join(
+        [f"第{i}条综合头条已经讲清事实和影响" for i in range(1, 11)]
+        + ["💡 今天的重点分散在社会民生和国际变化"]
+    )
+    leaked = valid.replace(
+        "第1条综合头条已经讲清事实和影响",
+        "【社会·NewsNow澎湃】第1条综合头条已经讲清事实和影响",
+    )
+    missing = "\n".join(valid.splitlines()[:9] + [valid.splitlines()[-1]])
+
+    assert is_usable_news_output(valid, expected_count=10) is True
+    assert is_usable_news_output(leaked, expected_count=10) is False
+    assert is_usable_news_output(missing, expected_count=10) is False
+
+
 def test_polling_exception_handler_only_handles_get_updates_5xx(monkeypatch):
     from core.telebot_compat import TelegramPollingExceptionHandler
 

@@ -5,6 +5,7 @@ tasks/support/common.py - 任务模块通用工具函数
 """
 
 import random
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -33,6 +34,22 @@ _AI_FALLBACK_MARKERS = (
     "刚才走神",
     "网络有点卡",
     "刚刚没反应过来",
+)
+_NEWS_INTERNAL_MARKERS = (
+    "NewsNow",
+    "TrendRadar",
+    "多源汇总",
+    "均衡筛选",
+    "真实新闻源",
+    "聚合源",
+    "百度热搜",
+    "微博热搜",
+    "知乎热榜",
+    "抖音热点",
+    "36氪快讯",
+)
+_NEWS_SOURCE_LABEL_RE = re.compile(
+    r"【(?:社会|综合|国际|生活|体育|文娱|财经|科技)[·|｜][^】]+】"
 )
 
 
@@ -289,6 +306,18 @@ def looks_like_ai_fallback(text: str) -> bool:
     return bool(value) and any(marker in value for marker in _AI_FALLBACK_MARKERS)
 
 
+def is_usable_news_output(text: str, expected_count: int = 10) -> bool:
+    """新闻 AI 输出门禁：条数准确且绝不携带内部来源/聚合标签。"""
+    value = (text or "").strip()
+    if not value:
+        return False
+    if any(marker in value for marker in _NEWS_INTERNAL_MARKERS):
+        return False
+    if _NEWS_SOURCE_LABEL_RE.search(value):
+        return False
+    return len(_parse_news_copy(value, max_items=10)[0]) == expected_count
+
+
 def build_news_without_ai(lines: List[str], time_desc: str) -> str:
     """[v5.32] LLM 不可用时，用真实标题生成有信息量的新闻文案。
 
@@ -414,11 +443,12 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                 news = build_news_without_ai(lines, time_desc)
             else:
                 expected_count = min(10, len(lines))
-                actual_count = len(_parse_news_copy(news, max_items=10)[0])
-                if actual_count != expected_count:
+                if not is_usable_news_output(news, expected_count=expected_count):
+                    actual_count = len(_parse_news_copy(news, max_items=10)[0])
                     logger.warning(
-                        f"{time_desc}新闻 AI 条数不合格："
-                        f"期望{expected_count}条，实际{actual_count}条，改用真实标题兜底"
+                        f"{time_desc}新闻 AI 输出未通过门禁："
+                        f"期望{expected_count}条，解析{actual_count}条，"
+                        "或包含内部来源字样；改用真实标题兜底"
                     )
                     news = build_news_without_ai(lines, time_desc)
 
