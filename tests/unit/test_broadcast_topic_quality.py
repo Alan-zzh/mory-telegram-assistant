@@ -43,6 +43,28 @@ def test_news_personas_require_ten_headlines_before_observation():
         assert "第6行" not in prompt
 
 
+def test_legacy_five_item_news_override_cannot_replace_ten_item_contract():
+    from core.ai_engine import AIEngine
+
+    engine = object.__new__(AIEngine)
+    engine.config = {
+        "PROMPT_TEMPLATES": {
+            "news": "旧模板：严格只写5条，第6行总结。",
+        }
+    }
+
+    persona, full_replacement = engine._get_mode_persona(
+        "news",
+        seed=123,
+        news_content="十条真实标题",
+    )
+
+    assert full_replacement is True
+    assert "严格只写10条" in persona
+    assert "第11行" in persona
+    assert "严格只写5条" not in persona
+
+
 def test_news_output_gate_rejects_source_labels_and_missing_items():
     from tasks.support.common import is_usable_news_output
 

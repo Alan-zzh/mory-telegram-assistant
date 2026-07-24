@@ -284,6 +284,14 @@ class AIEngine:
 
     # 默认的6个池名
     POOL_NAMES = ["llm", "vision", "omni", "voice_tts", "voice_asr", "embedding"]
+    _NEWS_PROMPT_MODES = {
+        "news",
+        "afternoon_news",
+        "evening_news",
+        "trendradar_morning_news",
+        "trendradar_noon_news",
+        "trendradar_evening_news",
+    }
 
     _DEFAULT_PROMPT_TEMPLATES = {
         "tarot":    "\n【塔罗师模式】：用神秘、宿命的语调给出运势占卜，末尾加一张大阿卡那卡牌名及简短解读。",
@@ -1681,11 +1689,29 @@ class AIEngine:
         modes = dict(self._DEFAULT_PROMPT_TEMPLATES)
         configured_modes = self.config.get("PROMPT_TEMPLATES", {})
         if isinstance(configured_modes, dict):
-            modes.update(configured_modes)
+            legacy_news_modes = []
+            for configured_mode, configured_prompt in configured_modes.items():
+                if configured_mode in self._NEWS_PROMPT_MODES:
+                    prompt_text = str(configured_prompt or "")
+                    if (
+                        "严格只写10条" not in prompt_text
+                        or "第11行" not in prompt_text
+                    ):
+                        legacy_news_modes.append(configured_mode)
+                        continue
+                modes[configured_mode] = configured_prompt
+            if (
+                legacy_news_modes
+                and not getattr(self, "_legacy_news_prompt_warned", False)
+            ):
+                logger.warning(
+                    "检测到旧版5条新闻提示词覆盖，已自动忽略并使用10条综合头条模板："
+                    + ",".join(sorted(legacy_news_modes))
+                )
+                self._legacy_news_prompt_warned = True
         if mode not in modes:
             return ("", False)
-        if mode in ("news", "afternoon_news", "evening_news",
-                    "trendradar_morning_news", "trendradar_noon_news", "trendradar_evening_news"):
+        if mode in self._NEWS_PROMPT_MODES:
             persona = modes[mode].replace("{SEED}", f"种子{seed}")
             persona = persona.replace("{NEWS_CONTENT}", news_content or "（无新闻数据）")
             return (persona, True)
