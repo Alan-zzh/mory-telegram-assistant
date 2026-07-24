@@ -11,7 +11,7 @@ CONFIG_VERSION = "5.35.8"
 __version__ = VERSION
 
 VERSION_HISTORY = [
-    "v5.35.8: [Codex] 新闻头条与轮询韧性修复 - 移除生产稳定403的微博/知乎/澎湃直连，改用VPS实测200的NewsNow头条/澎湃/早报；新闻完整展示10条并以综合头条、榜单位置和来源权重排序，科技最多1条、财经最多2条；AI条数不合格自动回退真实标题。Telegram getUpdates 5xx/连接超时改为限域分级退避和去重日志，业务发送异常不被吞掉。",
+    "v5.35.8: [Codex] 新闻头条与轮询韧性修复 - 移除生产稳定403的微博/知乎/澎湃直连，改用VPS实测200的NewsNow头条/澎湃/早报；NewsNow同域并发限制为2且部分源失败只记汇总，候选类目集中或首源不足时继续补齐10条；新闻完整展示10条并以综合头条、榜单位置和来源权重排序，科技最多1条、财经最多2条；AI条数不合格或复述内部来源时自动回退真实标题。Telegram getUpdates 5xx/连接超时改为限域分级退避和去重日志，业务发送异常不被吞掉。",
     "v5.35.7: [Codex] 修正播报与关键话题的机器人身份和场景分流 - @Moryfansbot 仅用于联系 Mory，@MorychannelBot 仅用于自助下单和自助订阅；晨间/晚间及定制确认走联系入口，午间/新闻/夜间及福利开通走自助入口，文案与实际目标一致。",
     "v5.35.6: [Codex] 生产播报与关键话题闭环修复 - 新闻排版不再泄露聚合策略/供应链名称；早午晚问候与所有降级路径统一携带 Mory 联系按钮；缩短并去模板化四时段提示词，修复部分 PROMPT_TEMPLATES 覆盖导致默认模式丢失；模型池声明思考能力，实时场景跳过仅思考模型并显式关闭兼容模型思考，消除连续 30 秒超时；福利/定制支持规则约束下的 AI 润色、可靠底稿回退与 Dashboard 30 天无原文命中统计；修复零吞吐瞬时积压被估算为 999 秒的数据库迁移假警报。",
     "v5.35.5: [Codex] 整仓闭环复验修复 - 纠正 VPS 反向同步覆盖已修代码导致的 anti_raid/group_members/punishment_center/crypto_detector 断链回归，固化 50 个既有回归测试；监控版本改为读取 version.py，L1-L6 任一 WARN 均进入 NEEDS_REVIEW，watchdog cron 缺失不再误报 all normal；恢复 Windows 非 UTF-8 下 DB 注册与 Alembic 门禁；隔离空 Python 3.14 环境和无依赖 uv.lock，按 requirements.lock 重建 Python 3.12 .venv。生产恢复 root watchdog cron并保留 crontab 备份。验证 360 passed / 7 skipped / 0 failed、DB 179/179、doc_consistency 7/7、pip check 通过。",

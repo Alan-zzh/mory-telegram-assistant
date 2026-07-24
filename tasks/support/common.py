@@ -361,12 +361,28 @@ def get_preferred_news_lines(time_desc: str, config: dict) -> Tuple[List[str], s
             ("trendradar", fetch_trendradar_news, f"{time_desc}新闻-TrendRadar"),
         ]
 
+    combined_lines = []
+    combined_keys = set()
+    best_source = "none"
     for source_name, fetcher, source_hint in source_chain:
         raw_news = fetcher() or ""
         lines = prepare_news_lines(raw_news, source_hint)
-        if lines:
+        if len(lines) >= 10:
             return lines, source_name
-    return [], "none"
+        if len(lines) > len(combined_lines):
+            best_source = source_name
+        for line in lines:
+            key = _extract_news_key(line)
+            if key and key not in combined_keys:
+                combined_keys.add(key)
+                combined_lines.append(line)
+        if lines:
+            logger.warning(
+                f"📰 {source_hint}: 仅{len(lines)}条，未达到10条，继续尝试下一来源"
+            )
+    if len(combined_lines) >= 10:
+        return combined_lines[:10], "fallback"
+    return combined_lines, best_source
 
 
 def retry_task(rm: ResourceManager, task_func, task_name: str, delay_sec: int = 300):

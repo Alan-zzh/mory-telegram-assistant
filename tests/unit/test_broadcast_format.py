@@ -133,6 +133,40 @@ def test_active_news_sources_avoid_known_403_direct_endpoints():
     assert {"NewsNow头条", "NewsNow澎湃", "NewsNow早报"} <= names
 
 
+def test_newsnow_sources_use_a_bounded_domain_pool():
+    """同一聚合域禁止8路齐发，避免触发整域超时/限流。"""
+    from core.trendradar_news import (
+        _group_news_sources,
+        get_active_news_sources,
+    )
+
+    groups = _group_news_sources(get_active_news_sources())
+    workers = {name: max_workers for name, _, max_workers in groups}
+    newsnow_sources = next(sources for name, sources, _ in groups if name == "newsnow")
+
+    assert workers["newsnow"] == 2
+    assert len(newsnow_sources) <= 5
+
+
+def test_balanced_selection_still_fills_ten_when_sources_are_sparse():
+    """类目或来源暂时变少时仍优先凑足10条非科技/财经头条。"""
+    from core.trendradar_news import _select_balanced_news
+
+    items = [
+        {
+            "source": "百度热搜" if index % 2 else "今日头条",
+            "title": f"第{index}条社会公共事件出现新进展",
+            "category": "社会" if index % 2 else "综合",
+            "rank": index,
+        }
+        for index in range(1, 13)
+    ]
+    selected = _select_balanced_news(items, limit=10)
+
+    assert len(selected) == 10
+    assert not any("【科技" in line or "【财经" in line for line in selected)
+
+
 if __name__ == "__main__":
     # 手动导入
     from core.broadcast_formatter import escape_html_text

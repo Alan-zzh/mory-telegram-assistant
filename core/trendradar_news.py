@@ -8,7 +8,9 @@ import threading
 import concurrent.futures
 import re
 import json
+import time
 from datetime import datetime, timezone, timedelta
+import requests
 from core.logging_util import get_logger
 from core.http_client import get_http_client, HTTPRequestError
 
@@ -75,9 +77,6 @@ _ACTIVE_NEWS_SOURCE_SPECS = [
     {"name": "NewsNow早报", "url": f"{_NEWSNOW_BASE}?id=zaobao", "timeout": 6, "min_len": 0, "parser": "newsnow"},
     {"name": "NewsNow微博", "url": f"{_NEWSNOW_BASE}?id=weibo", "timeout": 6, "min_len": 0, "parser": "newsnow"},
     {"name": "NewsNow知乎", "url": f"{_NEWSNOW_BASE}?id=zhihu", "timeout": 6, "min_len": 0, "parser": "newsnow"},
-    {"name": "NewsNow抖音", "url": f"{_NEWSNOW_BASE}?id=douyin", "timeout": 6, "min_len": 0, "parser": "newsnow"},
-    {"name": "NewsNowB站", "url": f"{_NEWSNOW_BASE}?id=bilibili", "timeout": 6, "min_len": 0, "parser": "newsnow"},
-    {"name": "NewsNow百度", "url": f"{_NEWSNOW_BASE}?id=baidu", "timeout": 6, "min_len": 0, "parser": "newsnow"},
 ]
 _CATEGORY_KEYWORDS = {
     "社会": (
@@ -108,7 +107,7 @@ _CATEGORY_KEYWORDS = {
     ),
     "体育": (
         "世界杯", "欧冠", "中超", "NBA", "CBA", "网球", "足球", "篮球",
-        "比赛", "夺冠", "奥运", "运动员",
+        "比赛", "联赛", "夺冠", "奥运", "运动员", "女排", "男足", "男篮",
     ),
 }
 
@@ -136,6 +135,18 @@ def _classify_news_title(title: str, source_name: str = "") -> str:
 def get_active_news_sources() -> list[dict]:
     """返回当前生产新闻源清单；供诊断和回归测试复核，不暴露给最终用户。"""
     return [dict(item) for item in _ACTIVE_NEWS_SOURCE_SPECS]
+
+
+def _group_news_sources(sources: list[dict]) -> list[tuple[str, list[dict], int]]:
+    """按域名隔离并发：直连可4路，NewsNow同域最多2路。"""
+    direct = [item for item in sources if not item["url"].startswith(_NEWSNOW_BASE)]
+    newsnow = [item for item in sources if item["url"].startswith(_NEWSNOW_BASE)]
+    groups = []
+    if direct:
+        groups.append(("direct", direct, min(4, len(direct))))
+    if newsnow:
+        groups.append(("newsnow", newsnow, min(2, len(newsnow))))
+    return groups
 
 
 def _select_balanced_news(items: list[dict], limit: int = 12) -> list[str]:
@@ -219,6 +230,44 @@ def _select_balanced_news(items: list[dict], limit: int = 12) -> list[str]:
         changed = _pick_round(source_cap=3)
         if not changed:
             break
+
+    # 上游部分失效、类目变少时逐级放宽类目/单源限制，但科技/财经硬上限不变。
+    # 这样有10条真实候选就尽量发满10条，不会因“综合/社会”类目集中被截成6条。
+    remaining = [
+        candidate
+        for category in _CATEGORY_ORDER
+        for candidate in buckets[category]
+    ]
+    remaining.sort(key=lambda candidate: (
+        -candidate["priority"],
+        candidate["rank"],
+        candidate["title"],
+    ))
+    for source_cap in (4, 5, limit):
+        if len(selected) >= limit:
+            break
+        for candidate in list(remaining):
+            if len(selected) >= limit:
+                break
+            if source_count.get(candidate["source"], 0) >= source_cap:
+                continue
+            if candidate["category"] == "科技":
+                if sum(item["category"] == "科技" for item in selected) >= 1:
+                    continue
+            if candidate["category"] == "财经":
+                if sum(item["category"] == "财经" for item in selected) >= 2:
+                    continue
+            if candidate["category"] in {"科技", "财经"}:
+                if sum(
+                    item["category"] in {"科技", "财经"}
+                    for item in selected
+                ) >= 3:
+                    continue
+            selected.append(candidate)
+            source_count[candidate["source"]] = (
+                source_count.get(candidate["source"], 0) + 1
+            )
+            remaining.remove(candidate)
 
     return [f"【{item['category']}·{item['source']}】{item['title']}" for item in selected[:limit]]
 
@@ -467,7 +516,7 @@ def fetch_real_news() -> str:
     """
     从网络实时抓取今日热点新闻（多源并行容错）。
     数据源：百度/头条直连 + NewsNow 头条、澎湃、早报及社交热点。
-    多源并行收集，总超时15秒；按榜单位置和来源权重挑选综合头条，
+    不同域并行、NewsNow同域最多2路，总超时15秒；按榜单位置和来源权重挑选综合头条，
     科技最多1条、财经最多2条，避免垂直行业内容占满整张卡。
     """
 
@@ -537,10 +586,11 @@ def fetch_real_news() -> str:
         source["parser"] = parsers[source["parser"]]
 
     def _fetch_news_source(src):
+        started_at = time.monotonic()
         try:
-            client = get_http_client()
-            # 使用 raw_text=True 获取原始响应文本，供 parser 解析
-            resp_text = client.get(
+            # 新闻源允许部分失败，直接用 requests 获取并在汇总层统一记健康结果，
+            # 避免每个可降级源分别打 ERROR/WARNING 污染生产日志。
+            response = requests.get(
                 src["url"],
                 timeout=src["timeout"],
                 headers={
@@ -548,45 +598,60 @@ def fetch_real_news() -> str:
                                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                 },
-                raw_text=True
             )
+            response.raise_for_status()
+            resp_text = response.text
             if src["min_len"] and len(resp_text) < src["min_len"]:
                 return None
             titles = src["parser"](resp_text)
             unique = _dedup(titles)
             if unique:
-                logger.info(f"📰 {src['name']}成功：{min(len(unique), 12)}条")
                 return {
                     "source": src["name"],
                     "titles": unique[:12],
+                    "elapsed": time.monotonic() - started_at,
                 }
-        except HTTPRequestError as e:
-            logger.warning(f"📰 {src['name']}失败：{e}")
         except Exception as e:
-            logger.warning(f"📰 {src['name']}失败：{e}")
+            logger.debug(f"📰 {src['name']}本轮不可用：{type(e).__name__}")
         return None
 
     collected = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(NEWS_SOURCES)) as executor:
-        futures = {
-            executor.submit(_fetch_news_source, src): src["name"]
-            for src in NEWS_SOURCES
-        }
+    failed_sources = set()
+    executors = []
+    futures = {}
+    try:
+        for _, sources, max_workers in _group_news_sources(NEWS_SOURCES):
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+            executors.append(executor)
+            for source in sources:
+                futures[executor.submit(_fetch_news_source, source)] = source["name"]
         try:
-            for f in concurrent.futures.as_completed(futures, timeout=15):
-                result = f.result()
-                if result:
-                    source_name = result["source"]
-                    for rank, title in enumerate(result["titles"], 1):
-                        collected.append({
-                            "source": source_name,
-                            "title": title,
-                            "category": _classify_news_title(title, source_name),
-                            "rank": rank,
-                            "priority": _SOURCE_PRIORITY.get(source_name, 50),
-                        })
+            for future in concurrent.futures.as_completed(futures, timeout=15):
+                result = future.result()
+                if not result:
+                    failed_sources.add(futures[future])
+                    continue
+                source_name = result["source"]
+                for rank, title in enumerate(result["titles"], 1):
+                    collected.append({
+                        "source": source_name,
+                        "title": title,
+                        "category": _classify_news_title(title, source_name),
+                        "rank": rank,
+                        "priority": _SOURCE_PRIORITY.get(source_name, 50),
+                    })
         except concurrent.futures.TimeoutError:
-            logger.warning("📰 多源新闻收集达到15秒总超时，使用已返回结果")
+            failed_sources.update(
+                source_name
+                for future, source_name in futures.items()
+                if not future.done()
+            )
+    finally:
+        for future in futures:
+            if not future.done():
+                future.cancel()
+        for executor in executors:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     if collected:
         balanced = _select_balanced_news(collected, limit=12)
@@ -594,7 +659,10 @@ def fetch_real_news() -> str:
         for line in balanced:
             category = line.split("】", 1)[0].lstrip("【").split("·", 1)[0]
             categories[category] = categories.get(category, 0) + 1
-        logger.info(f"📰 多源新闻汇总成功：源{len(set(i['source'] for i in collected))}个，类目{categories}")
+        logger.info(
+            f"📰 多源新闻汇总成功：候选源{len(set(i['source'] for i in collected))}个，"
+            f"失败源{len(failed_sources)}个，输出{len(balanced)}条，类目{categories}"
+        )
         return "\n".join(f"{i}. {title}" for i, title in enumerate(balanced, 1))
 
     logger.error(f"📰 所有{len(NEWS_SOURCES)}个新闻源均失败")
