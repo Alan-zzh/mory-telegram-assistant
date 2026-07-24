@@ -182,6 +182,7 @@ def test_partial_prompt_config_keeps_default_greeting_modes():
     prompt, is_replacement = engine._get_mode_persona("morning", seed=123)
 
     assert "给熟悉的群友发一条早安" in prompt
+    assert "不要写Mory本人做了什么" in prompt
     assert "随机种子123" in prompt
     assert is_replacement is True
 
