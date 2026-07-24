@@ -78,8 +78,10 @@
       "keywords": ["福利", "有什么福利", "福利在哪", "更多福利"],
       "ai_polish": true,
       "ai_mode": "normal",
-      "polish_prompt": "先回应用户想看福利的意图，保留 @MorychannelBot 入口，不承诺未配置的赠品、优惠或时效。",
-      "base_reply": "群里放的是比较轻的一部分，更完整的内容在 @MorychannelBot，按自己的喜好慢慢看就行。"
+      "polish_prompt": "先回应用户想看福利的意图，保留 @MorychannelBot 入口，不承诺未配置的赠品、优惠或时效。不要把“一部分”改写成轻食、试吃或免费版。",
+      "required_terms": ["@MorychannelBot"],
+      "forbidden_terms": ["轻食", "试吃", "免费", "赠送", "优惠", "限时"],
+      "base_reply": "群里只放了一部分，更完整的内容在 @MorychannelBot，按自己的喜好慢慢看就行。"
     },
     {
       "name": "定制咨询",
@@ -88,7 +90,9 @@
       "keywords": ["定制", "专属定制", "怎么定制", "定做"],
       "ai_polish": true,
       "ai_mode": "normal",
-      "polish_prompt": "说明定制需要先确认方向与可接程度，引导去 @MorychannelBot 说需求，不承诺必接、价格或交付时间。",
+      "polish_prompt": "说明定制需要先确认方向与可接程度，引导去 @MorychannelBot 说需求，不承诺必接、价格或交付时间。必须写成由Mory确认，不要说成小助理本人接单。",
+      "required_terms": ["@MorychannelBot", "Mory"],
+      "forbidden_terms": ["我再确认", "我能不能接", "一定能接"],
       "base_reply": "定制要先看你想要的方向，群里不展开聊。去 @MorychannelBot 把需求说清楚，Mory再确认能不能接。"
     }
   ],

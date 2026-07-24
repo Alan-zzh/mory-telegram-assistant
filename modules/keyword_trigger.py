@@ -31,6 +31,7 @@ _UNUSABLE_POLISH_MARKERS = (
     "刚才走神",
     "网络有点卡",
     "刚刚没反应过来",
+    "轻食版",
 )
 
 
@@ -167,7 +168,7 @@ class KeywordTrigger:
                     mode=rule.get("ai_mode", "normal"),
                     is_priv=chat_id > 0,
                 )
-                if self._is_usable_polish(ai_reply):
+                if self._is_usable_polish(ai_reply, rule):
                     final_reply = ai_reply.strip().strip("\"'“”")
                     was_polished = True
 
@@ -203,14 +204,25 @@ class KeywordTrigger:
         return max(matched, key=len) if matched else ""
 
     @staticmethod
-    def _is_usable_polish(reply) -> bool:
+    def _is_usable_polish(reply, rule=None) -> bool:
         """拒绝过短、过长、降级话术和内部说明，安全回退业务底稿。"""
         if not isinstance(reply, str):
             return False
         text = reply.strip()
         if not 6 <= len(text) <= 180:
             return False
-        return not any(marker in text for marker in _UNUSABLE_POLISH_MARKERS)
+        if any(marker in text for marker in _UNUSABLE_POLISH_MARKERS):
+            return False
+        rule = rule if isinstance(rule, dict) else {}
+        required_terms = rule.get("required_terms", [])
+        forbidden_terms = rule.get("forbidden_terms", [])
+        if isinstance(required_terms, str):
+            required_terms = [required_terms]
+        if isinstance(forbidden_terms, str):
+            forbidden_terms = [forbidden_terms]
+        if any(str(term) not in text for term in required_terms if term):
+            return False
+        return not any(str(term) in text for term in forbidden_terms if term)
 
     def _record_topic_reply(
         self,

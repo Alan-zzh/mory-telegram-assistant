@@ -124,6 +124,8 @@ def _topic_config():
             "ai_polish": True,
             "ai_mode": "normal",
             "polish_prompt": "不要承诺未配置优惠。",
+            "required_terms": ["@MorychannelBot"],
+            "forbidden_terms": ["轻食"],
             "base_reply": "更完整的内容在 @MorychannelBot。",
         }]
     }
@@ -169,6 +171,23 @@ def test_special_topic_reply_rejects_internal_ai_fallback():
     )
 
     assert trigger.handle_message(message.text, 43, message, object()) is True
+    assert mory_bot.replies == ["更完整的内容在 @MorychannelBot。"]
+    assert db.telemetry[0][4] == "reply_template"
+
+
+def test_special_topic_reply_rejects_rule_specific_hallucination():
+    from modules.keyword_trigger import KeywordTrigger
+
+    db = _FakeDb()
+    mory_bot = _FakeMoryBot()
+    ai = _FakeAi("想看福利就去 @MorychannelBot，群里只是轻食版。")
+    trigger = KeywordTrigger(db, mory_bot=mory_bot, ai=ai, config=_topic_config())
+    message = SimpleNamespace(
+        text="福利在哪",
+        from_user=SimpleNamespace(id=44),
+    )
+
+    assert trigger.handle_message(message.text, 44, message, object()) is True
     assert mory_bot.replies == ["更完整的内容在 @MorychannelBot。"]
     assert db.telemetry[0][4] == "reply_template"
 

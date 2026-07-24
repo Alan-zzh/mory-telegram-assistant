@@ -70,7 +70,7 @@ SCHEDULED_BROADCASTS 配置项新增 `ai_generate: true` 字段：
 - AI 失败或返回引擎异常话术时，问候/定点播报都改用可信底稿；异常说明不能成为用户可见正文。
 - 输出质量门禁同时拦截已确认的固定套话与抒情疗愈腔；不合格 AI 文案不发送，直接使用经过人工约束的时段底稿。
 - 模型池用 `enable_thinking` 声明能力：实时问候、新闻与业务回复跳过仅思考模型，对兼容模型显式关闭思考，避免连续 30 秒超时。
-- `SPECIAL_AUTO_REPLIES` 可为福利、定制等关键话题配置独立 `polish_prompt`。AI 输出不合格时回退业务底稿；统计保留用户 ID 用于去重人数，但不保存用户原话。
+- `SPECIAL_AUTO_REPLIES` 可为福利、定制等关键话题配置独立 `polish_prompt`、`required_terms` 与 `forbidden_terms`。AI 输出不合格时回退业务底稿；统计保留用户 ID 用于去重人数，但不保存用户原话。
 
 
 
