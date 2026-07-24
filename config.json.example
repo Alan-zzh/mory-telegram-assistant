@@ -1,6 +1,6 @@
 {
-  "_CONFIG_VERSION": "5.35.9",
-  "_CONFIG_UPDATED": "2026-07-24",
+  "_CONFIG_VERSION": "5.35.11",
+  "_CONFIG_UPDATED": "2026-07-25",
   "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。",
   "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
   "API_KEY": "YOUR_DASHSCOPE_API_KEY",
@@ -72,9 +72,33 @@
   },
   "SPECIAL_AUTO_REPLIES": [
     {
+      "name": "助理唤醒",
+      "topic": "助理唤醒",
+      "enabled": true,
+      "keywords": ["小助理出来", "助理出来", "小助理在吗", "助理在吗"],
+      "ai_polish": true,
+      "ai_mode": "normal",
+      "polish_prompt": "按当前人设自然应答，先让对方知道你在，再问他想了解福利、订阅还是定制；自然保留 @MorychannelBot 自助下单入口，不要像客服报菜单。",
+      "required_terms": ["@MorychannelBot"],
+      "forbidden_terms": ["亲", "客服", "限时", "优惠"],
+      "base_reply": "在。想问福利、订阅还是定制？说吧，我帮你理，确定了就去 @MorychannelBot 自助下单。"
+    },
+    {
+      "name": "签到积分福利",
+      "topic": "签到积分",
+      "enabled": true,
+      "keywords": ["签到积分有什么福利", "签到积分能换什么", "积分有什么福利", "积分能换什么", "签到有什么福利", "签到福利"],
+      "ai_polish": true,
+      "ai_mode": "normal",
+      "polish_prompt": "明确说明签到积分是群福利积分，可兑换订阅VIP月卡等福利；具体库存和兑换条件以当前商城为准，也可以联系 @Moryfansbot 问 Mory。",
+      "required_terms": ["积分", "VIP月卡", "@Moryfansbot"],
+      "forbidden_terms": ["现金", "返现", "保证", "免费"],
+      "base_reply": "签到积分就是群里的福利积分，可以兑换订阅VIP月卡等福利。具体能换什么以当前商城为准，也可以去 @Moryfansbot 问 Mory。"
+    },
+    {
       "name": "福利咨询",
       "topic": "福利",
-      "enabled": false,
+      "enabled": true,
       "keywords": ["福利", "有什么福利", "福利在哪", "更多福利"],
       "ai_polish": true,
       "ai_mode": "normal",
@@ -86,8 +110,8 @@
     {
       "name": "定制咨询",
       "topic": "定制",
-      "enabled": false,
-      "keywords": ["定制", "专属定制", "怎么定制", "定做"],
+      "enabled": true,
+      "keywords": ["定制", "专属定制", "怎么定制", "定做", "定制视频", "可以定制视频吗", "能定制视频吗", "是定制视频的美女博主吗"],
       "ai_polish": true,
       "ai_mode": "normal",
       "polish_prompt": "说明定制需要先确认方向与可接程度，引导去 @Moryfansbot 联系 Mory 并说明需求，不承诺必接、价格或交付时间。最终回复必须包含“Mory确认”四个字，严禁用“我”代替Mory。",
@@ -573,7 +597,7 @@
     "only_in_group_id": false
   },
   "FAQ_TRACKING_ENABLED": true,
-  "FAQ_AUTO_REPLY_ENABLED": false,
+  "FAQ_AUTO_REPLY_ENABLED": true,
   "FAQ_DISTILL_INTERVAL": 86400,
   "FAQ_MIN_FREQUENCY": 3,
   "RELAY_MODE_ENABLED": false,

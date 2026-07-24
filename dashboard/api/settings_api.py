@@ -399,16 +399,40 @@ def api_settings_checkin():
     """签到配置"""
     if request.method == "GET":
         cfg = read_config()
-        d = cfg.get("CHECKIN_CONFIG", {"enabled": False, "base_points": 5, "streak_bonus": {"3": 5, "7": 15}})
+        raw = cfg.get("CHECKIN_CONFIG") or {}
+        d = dict(raw)
+        d["enabled"] = bool(raw.get("enabled", raw.get("enable", False)))
+        d["base_points"] = int(raw.get("base_points", 5))
+        d["streak_bonus"] = dict(raw.get("streak_bonus") or {})
+        for days, default in ((3, 5), (7, 15), (15, 30), (30, 50)):
+            d["streak_bonus"].setdefault(
+                str(days),
+                int(raw.get(f"bonus_{days}d", default)),
+            )
         return jsonify({"ok": True, "data": d})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    val = cfg.get("CHECKIN_CONFIG", {})
-    val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
+    val = cfg.get("CHECKIN_CONFIG") or {}
+    enabled = bool(data.get("enabled", val.get("enabled", val.get("enable", False))))
+    val["enabled"] = enabled
+    val["enable"] = enabled
     val["base_points"] = int(data.get("base_points", val.get("base_points", 5)))
+    streak_bonus = data.get("streak_bonus", val.get("streak_bonus", {}))
+    if isinstance(streak_bonus, dict):
+        normalized_bonus = {}
+        for days, points in streak_bonus.items():
+            if not str(days).isdigit():
+                continue
+            try:
+                normalized_bonus[str(days)] = int(points)
+            except (TypeError, ValueError):
+                continue
+        val["streak_bonus"] = normalized_bonus
+        for days, points in normalized_bonus.items():
+            val[f"bonus_{days}d"] = points
     cfg["CHECKIN_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})

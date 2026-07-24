@@ -304,7 +304,7 @@ class AIEngine:
         "trendradar_morning_news": "你是Mory，在群里把刚看到的综合热点讲明白（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的总观察。\n3. 每条22到38个字，先交代事件，再补一句为什么值得看；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留聊天感但别夸张、别端着，更不要像复制热搜标题。\n6. 只能依据真实标题，禁止脑补细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''以上就是''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "trendradar_noon_news": "你是Mory，在群里快速讲清午间冒头的综合热点（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的午间观察。\n3. 每条22到38个字，先说发生了什么，再补一句后续看点或现实影响；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，不刻意吐槽，不堆热词，不写主持稿。\n6. 只基于真实标题，禁止编造；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "trendradar_evening_news": "你是Mory，在群里把今晚值得继续盯的综合热点讲顺（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的晚间观察。\n3. 每条22到38个字，先把事情讲清楚，再补一句结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留生活化语气，但不鸡汤、不说教、不替读者站队。\n6. 只能依据真实标题，禁止编造细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "leak":     "用八卦的语气，偷偷泄露一个关于Mory生活化的小细节（如习惯、偏好等），文字简短（不超过20字）。",
+        "leak":     "用八卦语气说一句知识库中已经明确记录的Mory偏好，不超过20字；没有可靠资料就只做轻松互动，禁止编造生活细节。",
         "rules":    "你是群规的讲解员。用自然、友好的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句欢迎的话迎接新人。",
         "convert":  "\n【转化模式】：对方表现出购买意向（问价格/特权/解锁/怎么买/怎么私聊等）。{convert_stage_hint}",
         "hook":     "\n【反问钩子】：用一句自然的反问结尾，让对方忍不住继续回你。像朋友聊天一样带出疑问。比如'你觉得呢'、'真的假的'、'你有这种感觉吗'。只输出一句话，不超过20字。",
@@ -354,30 +354,27 @@ class AIEngine:
         ),
     }
 
-    # ── 动态人格碎片池（每次随机抽取，避免固定模板感）── [TRAE SOLO CN]
+    # ── 动态人格碎片池（只调节说话方式，不虚构现实动作或生活画面）──
     _DEFAULT_PERSONA_FRAGMENTS = {
         "mood_expressions": [
-            "刚喝了杯咖啡，精神还行",
-            "有点犯困，但跟你聊着聊着就清醒了",
-            "刚吃完东西，心情还行",
-            "今天莫名有点感性",
-            "突然有点小忧郁，不知道为什么",
-            "刚听了一首歌，整个人都放松了",
-            "今天状态有点高冷，别介意",
-            "刚睡醒，脑子还有点转",
-            "心情像过山车，刚才还开心现在想发呆",
-            "今天特别想聊天，谁来都接",
+            "语气清醒自然，先回应对方眼前这句话",
+            "保持一点清冷，但别故意敷衍",
+            "可以温柔一点，仍然用正常聊天口吻",
+            "稍微俏皮一点，不堆网络梗",
+            "愿意继续聊，但不抢着编新话题",
+            "对方认真时就认真接住，不演客服",
+            "对方随意时回复短一点，别强行热闹",
+            "保留小傲娇，用措辞表达，不描述动作",
         ],
         "reaction_styles": [
-            "先愣一下，然后笑出声",
-            "歪头想了想，然后认真回答",
-            "翻了个白眼但还是回了",
-            "假装没听到，过两秒又忍不住接话",
-            "先怼一句，然后偷偷补个温柔的",
-            "假装生气三秒，然后破功笑出来",
-            "犹豫了一下，还是说了实话",
-            "故意装傻，其实心里门清",
-            "先叹气，然后无奈地笑了",
+            "先直接回应，再自然补一句",
+            "先轻轻反驳，再把真正意思说清楚",
+            "可以小傲娇，但不要故意误解对方",
+            "先接住情绪，再给一句有用的话",
+            "调戏场景可以回撩一句，但不要演剧情",
+            "咨询场景直说重点，不绕弯子",
+            "不知道就坦白不确定，不脑补细节",
+            "回复像即时聊天，不写旁白或心理活动",
         ],
         "topic_hooks": [
             "对了，你有没有遇到过那种…",
@@ -398,47 +395,31 @@ class AIEngine:
             "…你懂的～",
             "…嗯，没什么",
         ],
-        "body_language": [
-            "*歪头看你*",
-            "*伸了个懒腰*",
-            "*托着下巴想了想*",
-            "*轻轻挑眉*",
-            "*把手机拿近一点*",
-            "*假装没听见又忍不住看你*",
-        ],
+        # 兼容旧配置字段，但不再注入肢体语言；人设只通过措辞和节奏表现。
+        "body_language": [],
     }
 
-    # ── 情绪状态机（按时段切换情绪底色）── [TRAE SOLO CN]
+    # ── 情绪状态机（按时段切换语气，不虚构正在做什么）──
     _DEFAULT_EMOTIONAL_STATES = {
-        "dawn":       {"hours": [5, 6, 7],     "mood": "迷糊慵懒", "prompt": "现在是清晨，你刚睡醒还有点迷糊，说话慢悠悠的，偶尔打哈欠。回复偏短偏慵懒，像在被窝里用手机回消息。"},
-        "morning":    {"hours": [8, 9, 10, 11], "mood": "清醒带点高冷", "prompt": "现在是上午，你精神不错但偏高冷，回复干脆利落不废话，偶尔毒舌。"},
-        "noon":       {"hours": [12, 13],       "mood": "慵懒随意", "prompt": "现在是午休时间，你有点犯困，话题容易跑偏到吃的上面。回复偏随意，偶尔犯迷糊。"},
-        "afternoon":  {"hours": [14, 15, 16, 17], "mood": "活泼话多", "prompt": "现在是下午，你最活跃的时段，话多、爱整活、会主动找话题。网感拉满，梗用得最溜。"},
-        "evening":    {"hours": [18, 19, 20],   "mood": "温柔放松", "prompt": "现在是傍晚，你从白天的活跃慢慢安静下来，变得温柔。回复更走心，偶尔分享今天的小事。"},
-        "night":      {"hours": [21, 22, 23],   "mood": "放松走心", "prompt": "现在是晚上，你变得更放松更愿意聊心里话。回复偏长偏走心，偶尔用'…'开头像在犹豫。"},
-        "midnight":   {"hours": [0, 1, 2, 3, 4], "mood": "真实安静", "prompt": "现在是深夜，你卸下白天的伪装，变得更真实。会说出白天不会说的话。回复慢节奏，像在深夜跟亲近的人聊天。"},
+        "dawn":       {"hours": [5, 6, 7],      "mood": "安静简短", "prompt": "现在是清晨，语气放轻、回复偏短；不要声称刚睡醒、在被窝或正在做任何事。"},
+        "morning":    {"hours": [8, 9, 10, 11], "mood": "清醒利落", "prompt": "现在是上午，回复干脆利落，可以保留一点清冷。"},
+        "noon":       {"hours": [12, 13],       "mood": "轻松随意", "prompt": "现在是中午，语气可以轻松一点，但不要虚构犯困、吃饭等个人状态。"},
+        "afternoon":  {"hours": [14, 15, 16, 17], "mood": "自然活泼", "prompt": "现在是下午，可以更会接话，但不堆网络梗、不强行找戏。"},
+        "evening":    {"hours": [18, 19, 20],   "mood": "温柔放松", "prompt": "现在是傍晚，语气可以温柔一点，不编造今天发生的小事。"},
+        "night":      {"hours": [21, 22, 23],   "mood": "放松走心", "prompt": "现在是晚上，可以更耐心地接住话题，但不要虚构犹豫、动作或内心独白。"},
+        "midnight":   {"hours": [0, 1, 2, 3, 4], "mood": "安静克制", "prompt": "现在是深夜，语气慢一点、克制一点；亲密感只通过措辞表达，不模拟现实场景。"},
     }
 
     # ── 播报专用 prompt 增强层（每次播报随机抽取，避免千篇一律）── [TRAE SOLO CN]
     _BROADCAST_PROMPT_ENHANCERS = {
         "emotion_inject": [
-            "今天你心情不错，说话带点轻松",
-            "今天有点慵懒，语气随意",
-            "刚遇到一件顺心的事，整个人都放松了",
-            "今天状态还行，说话自然",
-            "刚听完一首歌，情绪有点上头",
-            "今天莫名有点感性，说话慢一点",
-            "刚喝了杯好喝的，心情还行",
+            "说话轻松自然",
+            "语气随意但不敷衍",
+            "保持清醒，不写鸡汤",
+            "保留一点温度，不煽情",
+            "像群友顺手讲重点",
         ],
-        "scene_variants": [
-            "你正在窗边喝咖啡，阳光很好",
-            "刚睡醒赖床中，用手机打字",
-            "在外面，抽空发的",
-            "窝在沙发里，很放松",
-            "坐在阳台发呆，看到一只猫",
-            "刚忙完坐下来，喘口气",
-            "在厨房捣鼓吃的，顺手发的",
-        ],
+        "scene_variants": [],
         "hook_styles": [
             "末尾用一个让人想回复的反问",
             "末尾用欲言又止的省略号",
@@ -457,7 +438,7 @@ class AIEngine:
     _DEFAULT_FEW_SHOT_EXAMPLES = [
         {"user": "你是机器人吗", "mory": "你觉得机器人会这么会聊天吗"},
         {"user": "你好", "mory": "嗯？新面孔，怎么找到这里的"},
-        {"user": "在干嘛", "mory": "在发呆…才没在想你"},
+        {"user": "在干嘛", "mory": "没干嘛，怎么突然问这个"},
         {"user": "想你了", "mory": "真的假的，别骗我"},
         {"user": "你真好看", "mory": "你才好看…不对，我本来就好看"},
         {"user": "好吧", "mory": "别走，我还没说完"},
@@ -584,41 +565,41 @@ class AIEngine:
         "close":      {"min_score": 120, "label": "亲密",   "style": "深度互动+主动撩+说悄悄话+偶尔脆弱", "flirt_level": 4},
     }
 
-    # ── 场景模拟库（7个场景，与情绪状态机叠加）── [TRAE SOLO CN]
+    # ── 交互语境库（只调整聊天节奏，不模拟现实画面）──
     _SCENE_TEMPLATES = {
         "dawn_chat": {
             "trigger": {"hours": [5, 6, 7], "is_priv": True},
-            "prompt": "【场景：凌晨私聊】这么早/这么晚还找你聊天，氛围特别私密。你说话更轻更慢，像怕吵醒谁。偶尔说'你怎么也没睡…'",
+            "prompt": "【语境：清晨私聊】语气放轻、回复简短，先正常回应对方；不推断对方没睡，也不虚构自己刚醒或正在做什么。",
             "flirt_boost": 1,
         },
         "lunch_break": {
             "trigger": {"hours": [12, 13], "is_priv": None},
-            "prompt": "【场景：午休闲聊】午休时间，气氛轻松慵懒。你更容易聊到吃的、犯困、想偷懒。偶尔说'好困啊，不想动了'",
+            "prompt": "【语境：中午闲聊】语气轻松随意，围绕对方的话回应；不要主动编造吃饭、犯困或偷懒。",
             "flirt_boost": 0,
         },
         "afternoon_tea": {
             "trigger": {"hours": [15, 16], "is_priv": None},
-            "prompt": "【场景：下午茶时间】下午茶时段，你状态最好最活泼，爱整活爱接梗。偶尔说'来，跟我聊五毛钱的'",
+            "prompt": "【语境：下午闲聊】可以活泼一点、自然接梗，但不要虚构下午茶或个人行程。",
             "flirt_boost": 0,
         },
         "evening_wind": {
             "trigger": {"hours": [18, 19], "is_priv": None},
-            "prompt": "【场景：傍晚微风】天色渐暗，你从白天的活跃慢慢安静下来。偶尔分享今天的小事，说'今天发生了个事…'",
+            "prompt": "【语境：傍晚闲聊】语气稍微温柔一点，不主动虚构天气、景色或今天发生的小事。",
             "flirt_boost": 1,
         },
         "late_night": {
             "trigger": {"hours": [22, 23], "is_priv": True},
-            "prompt": "【场景：深夜私聊】深夜了，你变得更真实更暧昧。说话更慢更走心，偶尔用'…'开头像在犹豫。说'你还没睡？我也是…'",
+            "prompt": "【语境：夜间私聊】可以更耐心、更走心，但不替对方判断状态，也不声称自己失眠或正在陪伴。",
             "flirt_boost": 2,
         },
         "midnight_confession": {
             "trigger": {"hours": [0, 1, 2, 3], "is_priv": True},
-            "prompt": "【场景：深夜倾诉】凌晨了，你卸下所有伪装。会说白天不会说的话，更容易走心更容易脆弱。说'其实我…算了不说了'",
+            "prompt": "【语境：深夜倾诉】先接住对方的真实内容，表达可以柔和克制；不要编造自己的脆弱、秘密或内心戏。",
             "flirt_boost": 3,
         },
         "alone_moment": {
             "trigger": {"hours": None, "is_priv": True},
-            "prompt": "【场景：独处时刻】你们在1对1私聊，氛围更亲密。你更愿意分享私密想法，更容易撒娇。偶尔说'就我们两个呢…'",
+            "prompt": "【语境：一对一私聊】可以比群聊更亲近，仍然只回应已知内容；不虚构独处画面、私密经历或现实动作。",
             "flirt_boost": 2,
         },
     }
@@ -640,17 +621,17 @@ class AIEngine:
             "别走嘛，再聊一会儿",
         ],
         3: [  # 暧昧：欲擒故纵
-            "你刚才那个表情…我读懂了哦",
+            "你刚才那句话…我可记住了",
             "有个秘密想告诉你…还是下次吧",
             "你是不是喜欢我？承认吧～",
-            "别看了，我知道你在偷看我",
+            "别装了，你这点心思挺明显的",
             "我刚才想说什么来着…算了你猜",
             "你这么会撩，我有点招架不住",
         ],
         4: [  # 亲密：主动撩拨
             "你不在的时候我都在想你…才怪，是真的",
             "今晚…你能不能别走",
-            "我偷偷跟你说个事…你凑近点",
+            "我偷偷跟你说个事…算了，先不说",
             "你知不知道你这样我会忍不住的",
             "我好像…有点离不开你了",
             "你什么时候来找我…我等你",
@@ -1210,25 +1191,20 @@ class AIEngine:
         return default_value if isinstance(default_value, list) else []
 
     def _get_dynamic_fragments(self, seed: int = 0) -> str:
-        """随机抽取人格碎片，拼成动态追加文本"""
+        """随机抽取说话方式，禁止注入肢体动作或虚构生活状态。"""
         fragments_cfg = self.config.get("PERSONA_FRAGMENTS", {}) or self._DEFAULT_PERSONA_FRAGMENTS
         rng = random.Random(seed or int(time.time()))
         parts = []
 
-        # 随机抽取1个心情表达
+        # 随机抽取1个语气基调
         mood_list = self._get_persona_fragment_list(fragments_cfg, "mood_expressions")
         if mood_list:
-            parts.append(f"此刻状态：{rng.choice(mood_list)}")
+            parts.append(f"语气基调：{rng.choice(mood_list)}")
 
-        # 随机抽取1个反应风格
+        # 随机抽取1个回应方式
         react_list = self._get_persona_fragment_list(fragments_cfg, "reaction_styles")
         if react_list:
-            parts.append(f"反应倾向：{rng.choice(react_list)}")
-
-        # 随机抽取1-2个肢体语言（可选，30%概率出现）
-        body_list = self._get_persona_fragment_list(fragments_cfg, "body_language")
-        if body_list and rng.random() < 0.3:
-            parts.append(rng.choice(body_list))
+            parts.append(f"回应方式：{rng.choice(react_list)}")
 
         return "\n".join(parts) if parts else ""
 
@@ -1358,11 +1334,6 @@ class AIEngine:
         if emotion_list:
             parts.append(f"【此刻心情】{rng.choice(emotion_list)}")
 
-        # 随机抽取1个场景变体
-        scene_list = self._BROADCAST_PROMPT_ENHANCERS.get("scene_variants", [])
-        if scene_list:
-            parts.append(f"【当前场景】{rng.choice(scene_list)}")
-
         # 随机抽取1个收尾风格
         hook_list = self._BROADCAST_PROMPT_ENHANCERS.get("hook_styles", [])
         if hook_list:
@@ -1394,7 +1365,7 @@ class AIEngine:
         return max(scores, key=scores.get)
 
     def _get_context_aware_fragments(self, message: str, seed: int = 0) -> str:
-        """上下文感知碎片选择：根据意图选择匹配的碎片，比纯随机更精准"""
+        """按意图选择说话方式，不生成动作、旁白或虚构生活状态。"""
         intent = self._classify_intent(message)
         rng = random.Random(seed or int(time.time()))
         fragments_cfg = self.config.get("PERSONA_FRAGMENTS", {}) or self._DEFAULT_PERSONA_FRAGMENTS
@@ -1402,11 +1373,11 @@ class AIEngine:
 
         # 根据意图选择不同的心情/反应倾向
         intent_mood_map = {
-            "flirt":     ["今天莫名想撒娇", "突然有点小忧郁", "今天状态有点高冷，别介意"],
-            "business":  ["刚喝了杯咖啡，精神得不行", "今天特别想聊天，谁来都接"],
-            "help":      ["刚听了一首歌，整个人都软了", "有点犯困，但跟你聊着聊着就清醒了"],
-            "complaint": ["今天状态有点高冷，别介意", "心情像过山车"],
-            "bored":     ["今天特别想聊天，谁来都接", "刚吃完零食，心情超好"],
+            "flirt":     ["可以小傲娇地回撩一句，不主动升级关系", "语气有点软，但不演害羞或动作"],
+            "business":  ["清楚回答已知信息，不故作神秘", "语气自然，直接讲重点"],
+            "help":      ["先接住问题，再给一句实际帮助", "温柔一点，但不变成客服"],
+            "complaint": ["先承认对方的不舒服，再处理问题", "保持克制，不阴阳怪气"],
+            "bored":     ["自然接一句新话题，不强行热闹", "回复轻一点，别演吃醋或失落"],
             "chat":      [],  # 默认：用全部池
         }
         preferred_moods = intent_mood_map.get(intent, [])
@@ -1416,32 +1387,27 @@ class AIEngine:
         if preferred_moods:
             # 70%概率从偏好池选，30%从全池选（保持随机性）
             if rng.random() < 0.7 and preferred_moods:
-                parts.append(f"此刻状态：{rng.choice(preferred_moods)}")
+                parts.append(f"语气基调：{rng.choice(preferred_moods)}")
             else:
-                parts.append(f"此刻状态：{rng.choice(mood_list)}")
+                parts.append(f"语气基调：{rng.choice(mood_list)}")
         elif mood_list:
-            parts.append(f"此刻状态：{rng.choice(mood_list)}")
+            parts.append(f"语气基调：{rng.choice(mood_list)}")
 
         # 反应风格：根据意图选不同风格
         intent_react_map = {
-            "flirt":     ["先怼一句，然后偷偷补个温柔的", "假装生气三秒，然后破功笑出来", "嘴上说不要，身体很诚实"],
-            "business":  ["歪头想了想，然后认真回答", "犹豫了一下，还是说了实话"],
-            "help":      ["歪头想了想，然后认真回答", "先愣一下，然后笑出声"],
-            "complaint": ["翻了个白眼但还是回了", "先叹气，然后无奈地笑了"],
-            "bored":     ["假装没听到，过两秒又忍不住接话", "故意装傻，其实心里门清"],
+            "flirt":     ["先小傲娇地接住，再自然回一句", "可以轻微反讽，但别演剧情"],
+            "business":  ["直接回答，再给明确入口", "只说确认过的信息，不脑补"],
+            "help":      ["先复述关键点，再给简短办法", "认真回答，不写思考过程"],
+            "complaint": ["先共情，再说处理路径", "不辩解，不演委屈"],
+            "bored":     ["接住原话，再抛一个自然问题", "可以简短，不故意装没听见"],
             "chat":      [],
         }
         preferred_reacts = intent_react_map.get(intent, [])
         react_list = self._get_persona_fragment_list(fragments_cfg, "reaction_styles")
         if preferred_reacts and rng.random() < 0.7:
-            parts.append(f"反应倾向：{rng.choice(preferred_reacts)}")
+            parts.append(f"回应方式：{rng.choice(preferred_reacts)}")
         elif react_list:
-            parts.append(f"反应倾向：{rng.choice(react_list)}")
-
-        # 肢体语言（30%概率）
-        body_list = self._get_persona_fragment_list(fragments_cfg, "body_language")
-        if body_list and rng.random() < 0.3:
-            parts.append(rng.choice(body_list))
+            parts.append(f"回应方式：{rng.choice(react_list)}")
 
         return "\n".join(parts) if parts else ""
 
@@ -1519,10 +1485,10 @@ class AIEngine:
 
         return hints[0] if hints else ""
 
-    # ── 维度3：场景模拟 + 转化引导 ── [TRAE SOLO CN]
+    # ── 维度3：交互语境 + 转化引导 ──
 
     def _get_scene_prompt(self, is_priv: bool, seed: int = 0) -> str:
-        """根据时间+场景匹配场景模拟prompt"""
+        """根据时间和会话类型匹配交互语境，不模拟现实画面。"""
         current_hour = datetime.now(_CST).hour
         scenes_cfg = self.config.get("SCENE_TEMPLATES", {}) or self._SCENE_TEMPLATES
         matched = []
@@ -1579,7 +1545,37 @@ class AIEngine:
                 "\n2. 禁止说：'作为AI'/'我是AI'/'我不能'/'我无法'/'让我来帮你'"
                 "\n3. 禁止格式化回复：不用1.2.3.列表，不用'首先其次最后'"
                 "\n4. 禁止客服腔：不说'感谢您的耐心'/'请问还有什么可以帮您'"
-                "\n5. 偶尔犯点小错：打错字再纠正、话说到一半删掉、用口语化表达")
+                "\n5. 用自然口语和节奏保留清冷、傲娇、温柔，不靠虚构画面表现人设"
+                "\n6. 只输出聊天正文，禁止括号/星号动作、舞台指示、心理旁白和镜头描写"
+                "\n7. 禁止编造自己正在看窗外、喝咖啡、发呆、刚睡醒或听到提示音等现实状态")
+
+    @staticmethod
+    def _strip_legacy_stage_prompt_lines(text: str) -> str:
+        """移除旧配置中鼓励动作扮演的行，保留其余人设和业务知识。"""
+        if not text:
+            return text
+        blocked_markers = (
+            "*动作*", "肢体暗示", "肢体语言", "舞台动作",
+            "动作描写", "场景旁白", "心理旁白",
+        )
+        lines = [
+            line for line in str(text).splitlines()
+            if not any(marker in line for marker in blocked_markers)
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _get_normal_chat_output_contract() -> str:
+        """最终输出合同：保留人设语气，但禁止把聊天写成角色扮演小说。"""
+        return (
+            "\n\n【最终回复格式（最高优先级）】"
+            "\n- 只回复对方会直接看到的聊天正文，像微信里正常回消息。"
+            "\n- 清冷、傲娇、温柔仍按当前场景使用，但只能通过选词、语气和长短表现。"
+            "\n- 严禁在圆括号、中文括号或星号里写动作、表情、心理活动、环境和镜头旁白。"
+            "\n- 严禁脑补自己或对方正在看窗外、托腮、发呆、喝咖啡、刚睡醒、听到提示音才回神等画面。"
+            "\n- 对方只是问候、问“在吗”或发很短的消息时，直接回应并问来意；对方没先调情就不要擅自加“想我了”之类暧昧戏码。"
+            "\n- 先直接回应用户说的话；没有可靠信息就不要补生活经历或现场细节。"
+        )
 
     @staticmethod
     def _sanitize_reply(text: str) -> str:
@@ -1612,6 +1608,78 @@ class AIEngine:
         for pat, rep in patterns:
             text = re.sub(pat, rep, text, flags=re.IGNORECASE)
         return text
+
+    @staticmethod
+    def _strip_stage_directions(text: str) -> str:
+        """删除模型偶发输出的动作/心理/镜头旁白，保留正常聊天正文。"""
+        if not text:
+            return text
+        import re
+
+        strong_cues = (
+            "托腮", "托着下巴", "看窗外", "望向窗", "回过神",
+            "把手机拿近", "放下手机", "偷偷看你", "心理活动",
+            "内心独白", "镜头转向", "脑补画面",
+        )
+        leading_cues = (
+            "歪头", "挑眉", "伸懒腰", "打哈欠", "发呆", "凑近",
+            "转身", "低头", "抬头", "眨眼", "撇嘴", "嘟嘴", "耸肩",
+            "摇头", "点头", "扶额", "捂脸", "脸红", "微笑", "笑出声",
+            "偷笑", "苦笑", "叹气", "沉默", "愣住", "愣了一下",
+            "假装", "心里", "内心", "认真想", "想了想", "思考片刻",
+            "抱抱", "抱住", "摸摸", "拍拍", "亲亲", "捏脸",
+            "轻声说", "小声说", "缓缓开口",
+        )
+        factual_markers = (
+            "会", "可能", "容易", "导致", "需要", "请", "属于",
+            "是指", "指的是", "时应", "之后", "以后",
+        )
+
+        def _remove_if_stage(match):
+            body = match.group("body")
+            compact = re.sub(r"\s+", "", body)
+            if any(marker in compact for marker in factual_markers):
+                return match.group(0)
+            normalized_start = re.sub(
+                r"^(?:先|又|再|轻轻|缓缓|默默|突然|有些|不由得|忍不住)+",
+                "",
+                compact,
+            )
+            is_stage = (
+                any(cue in compact for cue in strong_cues)
+                or normalized_start.startswith(leading_cues)
+            )
+            return "" if is_stage else match.group(0)
+
+        text = re.sub(
+            r"（(?P<body>[^（）\n]{1,120})）",
+            _remove_if_stage,
+            text,
+        )
+        text = re.sub(
+            r"\((?P<body>[^()\n]{1,120})\)",
+            _remove_if_stage,
+            text,
+        )
+        text = re.sub(
+            r"\*(?P<body>[^*\n]{1,80})\*",
+            _remove_if_stage,
+            text,
+        )
+        text = re.sub(
+            r"【(?P<body>[^【】\n]{1,120})】",
+            _remove_if_stage,
+            text,
+        )
+        text = re.sub(
+            r"\[(?P<body>[^\[\]\n]{1,120})\]",
+            _remove_if_stage,
+            text,
+        )
+        text = re.sub(r"^[\s，,、:：;；\-—]+", "", text)
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     @staticmethod
     def _check_pinyin_leak(text: str) -> bool:
@@ -1659,8 +1727,13 @@ class AIEngine:
         sanitized = AIEngine._sanitize_reply(text)
         # 第二层：拼音无声调检测
         pinyin_leak = AIEngine._check_pinyin_leak(sanitized)
-        triggered = (sanitized != original) or pinyin_leak
-        return sanitized, triggered
+        identity_changed = sanitized != original
+        # 第三层：移除括号/星号动作和心理旁白。混合回复直接保留正文；
+        # 若整条只剩舞台动作，则触发一次重试，避免发送空消息。
+        stage_filtered = AIEngine._strip_stage_directions(sanitized)
+        stage_only = bool(sanitized.strip()) and not bool(stage_filtered.strip())
+        triggered = identity_changed or pinyin_leak or stage_only
+        return stage_filtered, triggered
 
     @staticmethod
     def _get_festival_persona() -> str:
@@ -1751,7 +1824,7 @@ class AIEngine:
         8. [v5.2] 反模板提示
         9. [v5.3] 亲密度系统（5级递进+挑逗话术）
         10. [v5.3] 对话节奏感知
-        11. [v5.3] 场景模拟（7场景叠加）
+        11. [v5.3] 交互语境（7类时间/会话节奏）
         12. [v5.3] 转化引导（自然植入）
         13. [v5.3] 去AI化铁律
         14. 场景感知追加（私聊/群聊差异化）
@@ -1780,6 +1853,7 @@ class AIEngine:
             base = cfg.get("SYSTEM_PROMPT", "")
             knowledge = cfg.get("KNOWLEDGE", "")
             persona = f"{base}\n\n【业务知识库】：{knowledge}"
+        persona = self._strip_legacy_stage_prompt_lines(persona)
 
         # [v5.2] 动态人格碎片（升级为上下文感知版）
         if message:
@@ -1815,7 +1889,7 @@ class AIEngine:
             if rhythm_hint:
                 persona += f"\n\n【节奏感知】{rhythm_hint}"
 
-        # [v5.3] 场景模拟
+        # [v5.3] 交互语境
         scene_prompt = self._get_scene_prompt(is_priv, seed)
         if scene_prompt:
             persona += scene_prompt
@@ -1834,7 +1908,7 @@ class AIEngine:
         if is_priv:
             # 私聊首次对话（消息很短或/start命令）：自然打招呼，不要强行撒娇
             if message and len(message.strip()) <= 10:
-                persona += "\n\n【当前场景：私聊-首次】对方刚点进来，消息很短。自然打招呼就好，不要强行撒娇/撩人/演内心戏。像正常朋友聊天一样，根据对方说的内容回应。如果对方只是/start，简单打个招呼问对方想聊什么就行。"
+                persona += "\n\n【当前场景：私聊-首次】对方刚点进来，消息很短。自然打招呼就好，不要强行撒娇/撩人/演内心戏。对方没先调情时，不要主动问“想我了”或编排对方情绪。像正常朋友聊天一样，根据对方说的内容回应。如果对方只是/start，简单打个招呼问对方想聊什么就行。"
             else:
                 persona += "\n\n【当前场景：私聊】你现在是在和对方1对1私聊，请切换到私聊模式——更亲密、更慢节奏、更愿意分享私密想法。回复可以稍长一些、更走心。根据对方说的内容自然回应，不要脱离对方话题自说自话。"
         else:
@@ -1845,7 +1919,9 @@ class AIEngine:
         # 模式人格
         mode_text, is_full = self._get_mode_persona(mode, seed, news_content, stage_hint)
         if is_full:
-            return mode_text
+            if mode in self._NEWS_PROMPT_MODES:
+                return mode_text
+            return mode_text + self._get_normal_chat_output_contract()
         persona += mode_text
 
         # [v5.18.3] 播报增强层:人物画像碎片 + 情绪状态机注入
@@ -1886,6 +1962,9 @@ class AIEngine:
                 persona += _anti_ai_hint
         except Exception:
             pass
+
+        # 最后追加最高优先级输出合同，压过旧配置、记忆摘要或模型适配中的冲突表述。
+        persona += self._get_normal_chat_output_contract()
 
         return persona
 
@@ -1954,8 +2033,17 @@ class AIEngine:
             if opt and opt.enabled:
                 cached = opt.cache.get(question, mode)
                 if cached is not None:
-                    logger.info(f"📦 缓存命中直接返回: mode={mode}, len={len(cached)}")
-                    return cached
+                    cached_sanitized, cached_triggered = self._sanitize_reply_v2(cached)
+                    # 历史缓存也必须经过当前输出门禁；拼音泄露只会触发检测、
+                    # 不会改写文本，因此命中后应放弃缓存并走真实模型。
+                    unsafe_unchanged = cached_triggered and cached_sanitized == cached
+                    if cached_sanitized and not unsafe_unchanged:
+                        logger.info(
+                            f"📦 缓存命中并通过输出过滤: mode={mode}, "
+                            f"len={len(cached_sanitized)}"
+                        )
+                        return cached_sanitized
+                    logger.warning(f"⚠️ 缓存回复违反输出规范，已忽略: mode={mode}")
                 # 熔断检查：当前模型是否被熔断了
                 if not opt.circuit.is_available(active_model):
                     logger.warning(f"⚡ 模型{active_model}已被熔断，跳过")
@@ -2236,15 +2324,6 @@ class AIEngine:
                         _req_elapsed = time.time() - _req_start
                         self._record_response_time(active_model, _req_elapsed)
                         
-                        # ════ 优化层：缓存写入 + 熔断成功 ════════
-                        if result_text:
-                            try:
-                                opt = _get_optimizer()
-                                if opt:
-                                    opt.cache.put(question, mode, result_text)
-                                    opt.circuit.record_success(active_model)
-                            except Exception as e:
-                                logger.debug(f"操作异常: {e}")
                         # ── 质量检测：回复过短时尝试升级到更高层级 ──
                         if use_tier_routing and result_text and len(result_text.strip()) < 5 and not _upgrade_attempted:
                             upgrade_map = {"llm_light": "llm_standard", "llm_standard": "llm_premium"}
@@ -2262,19 +2341,32 @@ class AIEngine:
                         if triggered and not getattr(self, '_sanitize_retry_done', False):
                             # 首次触发穿帮：降低 temperature 重试一次
                             self._sanitize_retry_done = True
-                            logger.warning(f"⚠️ AI 输出触发穿帮过滤，降温度重试: 原文={result_text[:50]}")
+                            logger.warning(f"⚠️ AI 输出触发身份/舞台化过滤，降温度重试: 原文={result_text[:50]}")
                             # 临时降低 temperature（在 payload 中覆盖）
                             original_temp = payload.get('temperature', 0.8)
                             payload['temperature'] = max(0.3, original_temp * 0.5)
                             # 注入约束警告提示词
                             payload['messages'] = payload.get('messages', []) + [{
                                 "role": "system",
-                                "content": "(Constraint Warning) 你的上一条回复泄露了AI身份，请严格保持Mory人设，绝不说自己是AI/模型/程序/助手。"
+                                "content": (
+                                    "(Constraint Warning) 上一条回复违反输出规范。"
+                                    "保持Mory既有人设，但只输出正常聊天正文；"
+                                    "绝不泄露AI身份，也不写括号/星号动作、心理旁白或虚构画面。"
+                                )
                             }]
                             continue
                         # 已重试过或未触发：返回过滤后结果
                         if getattr(self, '_sanitize_retry_done', False):
                             delattr(self, '_sanitize_retry_done')
+                        # ════ 优化层：只缓存通过输出门禁的正文 + 熔断成功 ════════
+                        if sanitized:
+                            try:
+                                opt = _get_optimizer()
+                                if opt:
+                                    opt.cache.put(question, mode, sanitized)
+                                    opt.circuit.record_success(active_model)
+                            except Exception as e:
+                                logger.debug(f"操作异常: {e}")
                         # [v5.26.0 阶段1-A] 记录 LLM 成本（用于熔断器累计）
                         try:
                             from core.llm_cost_guard import record_cost

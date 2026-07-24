@@ -15,6 +15,73 @@ from tasks.support.fault_reporter import get_fault_reporter
 logger = get_logger("tasks.analytics.faq_distill")
 
 
+def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
+    """把最近一天问题整理成老板可直接优化话术的简报。"""
+    if not questions:
+        return ""
+
+    def _question_text(item) -> str:
+        text = " ".join(str(item.get("question_text", "") or "").split())
+        return text[:90]
+
+    def _unique_samples(items, limit):
+        samples = []
+        seen = set()
+        for item in items:
+            text = _question_text(item)
+            normalized = text.lower().strip("？?。！!，, ")
+            if not text or normalized in seen:
+                continue
+            seen.add(normalized)
+            samples.append(text)
+            if len(samples) >= limit:
+                break
+        return samples
+
+    unresolved = [
+        item
+        for item in questions
+        if not str(item.get("ai_reply_summary", "") or "").strip()
+        or str(item.get("ai_reply_summary", "")).startswith("[UNRESOLVED]")
+    ]
+    faq_hits = sum(1 for item in questions if int(item.get("faq_hit_id", 0) or 0) > 0)
+    faq_misses = [
+        item
+        for item in questions
+        if int(item.get("faq_hit_id", 0) or 0) <= 0 and item not in unresolved
+    ]
+
+    lines = [
+        "📋 今日问题汇总",
+        f"共记录 {len(questions)} 条｜FAQ命中 {faq_hits} 条｜待优化 {len(unresolved)} 条",
+    ]
+
+    unresolved_samples = _unique_samples(unresolved, sample_limit)
+    if unresolved_samples:
+        lines.append("")
+        lines.append("待老板优化：")
+        lines.extend(
+            f"{index}. {text}"
+            for index, text in enumerate(unresolved_samples, 1)
+        )
+
+    miss_samples = _unique_samples(
+        faq_misses,
+        max(0, sample_limit - len(unresolved_samples)),
+    )
+    if miss_samples:
+        lines.append("")
+        lines.append("AI已答但FAQ未命中：")
+        lines.extend(
+            f"{index}. {text}"
+            for index, text in enumerate(miss_samples, 1)
+        )
+
+    lines.append("")
+    lines.append("可在 Dashboard 的 FAQ 页面补充或审核话术。")
+    return "\n".join(lines)
+
+
 class FaqDistillTask(BaseTask):
     """FAQ 蒸馏任务（每日一次，间隔从配置读取，默认 86400 秒）。"""
 
@@ -24,21 +91,40 @@ class FaqDistillTask(BaseTask):
 
     def schedule(self) -> List[Dict[str, Any]]:
         interval = self.rm.config.get("FAQ_DISTILL_INTERVAL", 86400)
-        return [{
-            "job_id": "faq_distill",
-            "trigger": "interval",
-            "seconds": interval,
-            "params": {},
-            "options": {
-                "max_instances": 1,
-                "coalesce": True,
-                "misfire_grace_time": 3600,
+        return [
+            {
+                "job_id": "faq_distill",
+                "trigger": "interval",
+                "seconds": interval,
+                "params": {},
+                "options": {
+                    "max_instances": 1,
+                    "coalesce": True,
+                    "misfire_grace_time": 3600,
+                },
             },
-        }]
+            {
+                "job_id": "faq_daily_question_summary",
+                "trigger": "cron",
+                "hour": 23,
+                "minute": 50,
+                "params": {"operation": "daily_summary"},
+                "options": {
+                    "max_instances": 1,
+                    "coalesce": True,
+                    "misfire_grace_time": 3600,
+                },
+            },
+        ]
 
     def execute(self, ctx: TaskContext) -> None:
+        operation = ctx.params.get("operation", "")
         try:
             if not ctx.rm.config.get("FAQ_TRACKING_ENABLED", False):
+                return
+
+            if operation == "daily_summary":
+                self._send_daily_summary(ctx)
                 return
 
             min_frequency = ctx.rm.config.get("FAQ_MIN_FREQUENCY", 3)
@@ -62,5 +148,24 @@ class FaqDistillTask(BaseTask):
         except TaskAbort:
             pass
         except Exception as e:
-            logger.error(f"FAQ蒸馏失败：{e}")
-            get_fault_reporter().report("FAQ蒸馏失败", str(e)[:200], "⚠️")
+            task_name = "FAQ每日问题汇总" if operation == "daily_summary" else "FAQ蒸馏"
+            logger.error(f"{task_name}失败：{e}")
+            get_fault_reporter().report(f"{task_name}失败", str(e)[:200], "⚠️")
+
+    @staticmethod
+    def _send_daily_summary(ctx: TaskContext) -> None:
+        admin_id = int(ctx.rm.config.get("ADMIN_ID", 0) or 0)
+        if not admin_id:
+            logger.warning("FAQ每日问题汇总跳过：未配置 ADMIN_ID")
+            return
+
+        questions = ctx.rm.db.get_questions(limit=200, days=1)
+        summary = _build_daily_question_summary(questions)
+        if not summary:
+            logger.info("📋 FAQ每日问题汇总：今日无问题，跳过发送")
+            return
+
+        ctx.rm.bot.send_message(admin_id, summary)
+        logger.info(
+            f"📋 FAQ每日问题汇总已发送：admin={admin_id} questions={len(questions)}"
+        )

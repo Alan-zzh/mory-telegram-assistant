@@ -39,7 +39,13 @@ def handle_feature_keywords(dctx) -> bool:
     uname = dctx.uname
     chat_id = dctx.chat_id
 
-    # 签到
+    # 签到：兼容旧分发入口时也必须阻止繁体/QD被误认为有效签到。
+    from modules.checkin import CHECKIN_FORMAT_HINT, is_invalid_checkin_command
+    if is_invalid_checkin_command(msg):
+        bot.reply_to(m, CHECKIN_FORMAT_HINT)
+        clear_logging_context()
+        return True
+
     if msg in ("签到", "/签到", "打卡", "/checkin"):
         from modules.checkin import handle_checkin
         from modules.daily_quest import check_quest_completion

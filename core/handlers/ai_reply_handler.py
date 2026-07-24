@@ -39,6 +39,62 @@ _DIRECT_ACCESS_KEYWORDS = (
     "自助机器人", "下单机器人", "订单机器人",
 )
 
+_QUESTION_MARKERS = (
+    "什么", "怎么", "如何", "哪里", "在哪", "多少", "谁", "为何", "为什么",
+    "有没有", "是不是", "能不能", "可不可以", "可以吗", "能吗", "干嘛", "吗",
+)
+
+_UNRESOLVED_REPLY_MARKERS = (
+    "不确定", "不清楚", "不知道", "无法确认", "不能确认", "说不准",
+    "问mory", "问 mory", "联系mory", "联系 mory",
+)
+
+
+def _looks_like_question(text: str) -> bool:
+    """识别群里应主动承接的自然语言问题。"""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    if len(compact) < 3:
+        return False
+    if compact.endswith(("?", "？")):
+        return True
+    return any(marker in compact for marker in _QUESTION_MARKERS)
+
+
+def _should_offer_handoff(
+    response,
+    *,
+    faq_hit_id: int = 0,
+    ai_attempted: bool = False,
+    mode: str = "normal",
+    is_priv: bool = False,
+) -> bool:
+    """FAQ未命中且 AI 无法可靠回答时，给用户明确的人工/自助出口。"""
+    if faq_hit_id or not ai_attempted:
+        return False
+    if response is None:
+        return True
+    if not isinstance(response, str):
+        return False
+    if not response.strip():
+        return True
+    text = response.strip()
+    if text == _final_ai_reply_fallback(mode, is_priv=is_priv):
+        return True
+    lowered = text.lower()
+    return any(marker in lowered for marker in _UNRESOLVED_REPLY_MARKERS)
+
+
+def _build_unresolved_handoff_markup():
+    """构建同一行的“联系 Mory / 自助下单”双按钮。"""
+    from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        InlineKeyboardButton("联系 Mory", url="https://t.me/Moryfansbot"),
+        InlineKeyboardButton("自助下单", url="https://t.me/MorychannelBot"),
+    )
+    return markup
+
 
 def _is_direct_access_request(text: str) -> bool:
     """用户明确要入口/链接时，直接收口，避免 LLM 继续闲聊跑偏。"""
@@ -113,6 +169,10 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         or is_at
         or is_reply
         or mode in _non_normal_modes
+        or (
+            CONFIG.get("FAQ_TRACKING_ENABLED", False)
+            and _looks_like_question(msg)
+        )
         or random.randint(1, 100) <= CONFIG.get("REPLY_CHANCE", 10)
     )
 
@@ -249,8 +309,20 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         resp = _direct_access_reply(is_priv=is_priv)
         logger.info(f"🔗 直接入口回复 uid={uid} mode={mode}")
 
+    ai_attempted = False
     if resp is None:
+        ai_attempted = True
         resp = ai.ask(msg, mode=mode, tools=use_tools, is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile)
+
+    needs_handoff = _should_offer_handoff(
+        resp,
+        faq_hit_id=_faq_hit_id,
+        ai_attempted=ai_attempted,
+        mode=mode,
+        is_priv=is_priv,
+    )
+    if needs_handoff and not resp:
+        resp = "这个我不乱说。你可以直接问 Mory，或者去自助下单看看。"
 
     if resp is None:
         resp = _final_ai_reply_fallback(mode, is_priv=is_priv)
@@ -262,6 +334,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             logger.error(f"故障通知发送失败: {notify_err}")
 
     if resp:
+        handoff_markup = _build_unresolved_handoff_markup() if needs_handoff else None
         if isinstance(resp, dict):
             tool_result = _handle_tool_calls(resp, bot, m, CONFIG, db)
             if tool_result:
@@ -306,11 +379,38 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             if len(parts) == 2:
                 _delayed_reply(bot, chat_id, m, parts[0], delay, mory_bot, is_priv)
                 part2_delay = delay + random.uniform(2.0, 5.0)
-                _delayed_reply(bot, chat_id, m, parts[1], part2_delay, mory_bot, is_priv)
+                _delayed_reply(
+                    bot,
+                    chat_id,
+                    m,
+                    parts[1],
+                    part2_delay,
+                    mory_bot,
+                    is_priv,
+                    reply_markup=handoff_markup,
+                )
             else:
-                _delayed_reply(bot, chat_id, m, resp, delay, mory_bot, is_priv)
+                _delayed_reply(
+                    bot,
+                    chat_id,
+                    m,
+                    resp,
+                    delay,
+                    mory_bot,
+                    is_priv,
+                    reply_markup=handoff_markup,
+                )
         else:
-            _delayed_reply(bot, chat_id, m, resp, delay, mory_bot, is_priv)
+            _delayed_reply(
+                bot,
+                chat_id,
+                m,
+                resp,
+                delay,
+                mory_bot,
+                is_priv,
+                reply_markup=handoff_markup,
+            )
 
         if is_priv:
             try:
@@ -360,7 +460,10 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         # [v5.15.0] FAQ追踪：更新AI回复摘要+FAQ命中ID
         try:
             if _faq_qid and isinstance(resp, str) and resp:
-                db.update_question_reply(_faq_qid, resp[:100], faq_hit_id=_faq_hit_id)
+                summary = resp[:100]
+                if needs_handoff:
+                    summary = f"[UNRESOLVED] {summary}"[:200]
+                db.update_question_reply(_faq_qid, summary, faq_hit_id=_faq_hit_id)
                 logger.debug(f"📋 FAQ追踪：更新回复摘要 id={_faq_qid} faq_hit={_faq_hit_id}")
         except Exception as _faq_err:
             logger.error(f"📋 FAQ追踪更新回复失败（不影响AI回复）：{_faq_err}")

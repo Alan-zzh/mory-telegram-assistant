@@ -34,6 +34,76 @@ _UNUSABLE_POLISH_MARKERS = (
     "轻食版",
 )
 
+_DEFAULT_SPECIAL_AUTO_REPLIES = (
+    {
+        "name": "助理唤醒",
+        "topic": "助理唤醒",
+        "enabled": True,
+        "keywords": ["小助理出来", "助理出来", "小助理在吗", "助理在吗"],
+        "ai_polish": True,
+        "ai_mode": "normal",
+        "polish_prompt": (
+            "按当前人设自然应答，先让对方知道你在，再问他想了解福利、订阅还是定制；"
+            "自然保留 @MorychannelBot 自助下单入口，不要像客服报菜单。"
+        ),
+        "required_terms": ["@MorychannelBot"],
+        "forbidden_terms": ["亲", "客服", "限时", "优惠"],
+        "base_reply": (
+            "在。想问福利、订阅还是定制？说吧，我帮你理，"
+            "确定了就去 @MorychannelBot 自助下单。"
+        ),
+    },
+    {
+        "name": "签到积分福利",
+        "topic": "签到积分",
+        "enabled": True,
+        "keywords": [
+            "签到积分有什么福利",
+            "签到积分能换什么",
+            "积分有什么福利",
+            "积分能换什么",
+            "签到有什么福利",
+            "签到福利",
+        ],
+        "ai_polish": True,
+        "ai_mode": "normal",
+        "polish_prompt": (
+            "明确说明签到积分是群福利积分，可兑换订阅VIP月卡等福利；"
+            "具体库存和兑换条件以当前商城为准，也可以联系 @Moryfansbot 问 Mory。"
+        ),
+        "required_terms": ["积分", "VIP月卡", "@Moryfansbot"],
+        "forbidden_terms": ["现金", "返现", "保证", "免费"],
+        "base_reply": (
+            "签到积分就是群里的福利积分，可以兑换订阅VIP月卡等福利。"
+            "具体能换什么以当前商城为准，也可以去 @Moryfansbot 问 Mory。"
+        ),
+    },
+    {
+        "name": "定制视频咨询",
+        "topic": "定制",
+        "enabled": True,
+        "keywords": [
+            "是定制视频的美女博主吗",
+            "定制视频的美女博主",
+            "可以定制视频吗",
+            "能定制视频吗",
+            "定制视频",
+        ],
+        "ai_polish": True,
+        "ai_mode": "normal",
+        "polish_prompt": (
+            "确认可以沟通专属定制视频，但方向与能否接必须先联系 @Moryfansbot "
+            "说明需求，最终由Mory确认；不承诺价格、尺度、交付时间或一定能接。"
+        ),
+        "required_terms": ["@Moryfansbot", "Mory确认"],
+        "forbidden_terms": ["一定能接", "保证", "我确认"],
+        "base_reply": (
+            "可以沟通专属定制视频。先去 @Moryfansbot 把想法说清楚，"
+            "方向和能不能接最后由Mory确认。"
+        ),
+    },
+)
+
 
 class KeywordTrigger:
     """
@@ -109,10 +179,8 @@ class KeywordTrigger:
             return False
 
     def _match_special_rule(self, text: str):
-        """匹配配置中的特定词自动回复规则"""
-        rules = self.config.get("SPECIAL_AUTO_REPLIES", [])
-        if not isinstance(rules, list):
-            return None
+        """匹配特定词规则；配置可覆盖或关闭同名内置规则。"""
+        rules = self._effective_special_rules()
 
         text_lower = text.lower()
         best_rule = None
@@ -135,6 +203,25 @@ class KeywordTrigger:
                     best_rule = rule
                     best_len = len(keyword_lower)
         return best_rule
+
+    def _effective_special_rules(self):
+        """合并项目内置规则和配置规则，保留 Dashboard 的同名覆盖能力。"""
+        configured = self.config.get("SPECIAL_AUTO_REPLIES", [])
+        if not isinstance(configured, list):
+            configured = []
+
+        configured_names = {
+            str(rule.get("name", "")).strip()
+            for rule in configured
+            if isinstance(rule, dict)
+        }
+        rules = list(configured)
+        rules.extend(
+            dict(rule)
+            for rule in _DEFAULT_SPECIAL_AUTO_REPLIES
+            if rule["name"] not in configured_names
+        )
+        return rules
 
     def _handle_special_rule(self, rule, chat_id, message, bot):
         """处理配置里的特定词自动回复，并交给AI做润色"""

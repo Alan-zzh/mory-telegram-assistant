@@ -674,7 +674,13 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
     chat_id = dctx.chat_id
     is_group = dctx.is_group
 
-    # 签到
+    # 签到：繁体或 QD 只提示正确格式，不执行签到。
+    from modules.checkin import CHECKIN_FORMAT_HINT, is_invalid_checkin_command
+    if is_invalid_checkin_command(msg):
+        bot.reply_to(m, CHECKIN_FORMAT_HINT)
+        clear_logging_context()
+        return True
+
     if msg in ("签到", "/签到", "打卡", "/checkin"):
         from modules.checkin import handle_checkin
         from modules.daily_quest import check_quest_completion

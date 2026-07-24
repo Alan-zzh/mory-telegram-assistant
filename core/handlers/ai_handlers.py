@@ -292,8 +292,14 @@ def _try_faq_match(db, CONFIG, ai, msg: str, mode: str, analysis: dict) -> tuple
         intent = analysis.get("keyword_tag", "") if analysis else ""
 
         # 调用数据库搜索FAQ
-        faq_entry = db.search_faq(msg, mode, intent)
-        if not faq_entry:
+        faq_result = db.search_faq(msg, mode, intent)
+        if not faq_result:
+            return None, 0
+        # QuestionRepo.search_faq() 返回按优先级排序的候选列表；
+        # 兼容旧测试桩或第三方 Repo 直接返回单条字典。
+        faq_entry = faq_result[0] if isinstance(faq_result, (list, tuple)) else faq_result
+        if not isinstance(faq_entry, dict):
+            logger.warning(f"FAQ搜索返回类型异常: {type(faq_entry).__name__}")
             return None, 0
 
         faq_id = faq_entry.get("id", 0)

@@ -198,3 +198,144 @@ def test_realtime_mode_skips_thinking_only_model_and_disables_thinking(monkeypat
     assert result == "早。先挑一件真正要紧的事做。"
     assert [call["model"] for call in calls] == ["fast-model"]
     assert calls[0]["enable_thinking"] is False
+
+
+def test_stage_direction_filter_keeps_only_normal_chat_text():
+    raw = "（托腮看窗外，听到提示音才回过神来）在呀～怎么啦，想我了？还是有什么事想跟我说？"
+
+    cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
+
+    assert cleaned == "在呀～怎么啦，想我了？还是有什么事想跟我说？"
+    # 混合回复可以直接清掉旁白，不需要额外消耗一次模型请求。
+    assert triggered is False
+
+
+def test_stage_direction_filter_preserves_factual_parentheses_and_plain_emphasis():
+    raw = "（北京时间）明天八点开始，*重点*是别迟到；（长期低头会加重颈椎压力）。"
+
+    cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
+
+    assert cleaned == raw
+    assert triggered is False
+
+
+def test_stage_direction_filter_handles_square_bracket_variants():
+    raw = "【轻轻挑眉】[歪头看你]行啊，这次听你的。"
+
+    cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
+
+    assert cleaned == "行啊，这次听你的。"
+    assert triggered is False
+
+
+def test_stage_only_reply_requests_retry_instead_of_sending_empty_text():
+    cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2("*歪头看你*")
+
+    assert cleaned == ""
+    assert triggered is True
+
+
+def test_persona_fragments_ignore_legacy_body_language_config(monkeypatch):
+    cfg = _config()
+    cfg["PERSONA_FRAGMENTS"] = {
+        "mood_expressions": ["语气自然"],
+        "reaction_styles": ["直接回应"],
+        "body_language": ["*托着下巴想了想*"],
+    }
+    monkeypatch.setattr(ai_engine, "init_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine, "_get_optimizer", lambda: None)
+    engine = ai_engine.AIEngine(cfg)
+
+    dynamic = engine._get_dynamic_fragments(seed=1)
+    contextual = engine._get_context_aware_fragments("在吗", seed=1)
+
+    assert "托着下巴" not in dynamic
+    assert "托着下巴" not in contextual
+    assert "语气基调" in dynamic
+    assert "回应方式" in dynamic
+
+
+def test_build_persona_keeps_traits_but_removes_legacy_action_instructions(monkeypatch):
+    cfg = _config()
+    cfg["BASE_PERSONA"] = (
+        "底色是清冷、小傲娇、温柔。\n"
+        "- 偶尔用*动作*模拟肢体语言：*歪头看你*\n"
+        "- 肢体暗示：*凑近* / *假装生气扭头*"
+    )
+    monkeypatch.setattr(ai_engine, "init_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine, "_get_optimizer", lambda: None)
+    engine = ai_engine.AIEngine(cfg)
+
+    prompt = engine._build_persona(
+        "normal",
+        seed=7,
+        is_priv=True,
+        message="在吗",
+        model_name="qwen-plus",
+    )
+
+    assert "清冷、小傲娇、温柔" in prompt
+    assert "偶尔用*动作*" not in prompt
+    assert "肢体暗示" not in prompt
+    assert "最终回复格式（最高优先级）" in prompt
+    assert "只回复对方会直接看到的聊天正文" in prompt
+    assert "对方没先调情就不要擅自加“想我了”" in prompt
+
+
+def test_ask_strips_brain_scene_and_sends_normal_reply(monkeypatch):
+    engine = _engine(monkeypatch)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json)
+        return _FakeResponse(
+            200,
+            {
+                "choices": [{
+                    "message": {
+                        "content": (
+                            "（托腮看窗外，听到提示音才回过神来）"
+                            "在呀～怎么啦，想我了？还是有什么事想跟我说？"
+                        )
+                    }
+                }]
+            },
+        )
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    result = engine.ask("在吗", mode="normal", retry=1, is_priv=True)
+
+    assert result == "在呀～怎么啦，想我了？还是有什么事想跟我说？"
+    assert len(calls) == 1
+    assert "最终回复格式（最高优先级）" in calls[0]["messages"][0]["content"]
+
+
+def test_cached_reply_also_passes_stage_direction_filter(monkeypatch):
+    engine = _engine(monkeypatch)
+
+    class _Cache:
+        @staticmethod
+        def get(_question, _mode):
+            return "（托腮看窗外）在呀，怎么啦？"
+
+    class _Circuit:
+        @staticmethod
+        def is_available(_model):
+            return True
+
+    class _Optimizer:
+        enabled = True
+        cache = _Cache()
+        circuit = _Circuit()
+
+    monkeypatch.setattr(ai_engine, "_get_optimizer", lambda: _Optimizer())
+    monkeypatch.setattr(
+        ai_engine.requests,
+        "post",
+        lambda *_args, **_kwargs: pytest.fail("安全缓存命中时不应请求模型"),
+    )
+
+    result = engine.ask("在吗", mode="normal", retry=1, is_priv=True)
+
+    assert result == "在呀，怎么啦？"

@@ -115,6 +115,51 @@ _FONT_PATHS = [
     "/System/Library/Fonts/STHeitiLight.ttc",          # 黑体
 ]
 
+CHECKIN_FORMAT_HINT = "请直接发送简体“签到”（不要加任何符号）。繁体“簽到”和 QD 都不会生效。"
+
+
+def is_invalid_checkin_command(text: str) -> bool:
+    """识别常见但无效的签到写法，避免用户误以为已经签到。"""
+    compact = "".join(str(text or "").strip().split()).lower()
+    return compact in {
+        "簽到",
+        "/簽到",
+        "qd",
+        "/qd",
+        "q.d",
+        "q-d",
+        "签到。",
+        "簽到。",
+    }
+
+
+def is_checkin_enabled(config: dict) -> bool:
+    """兼容 Dashboard 新键 enabled 与历史运行配置键 enable。"""
+    checkin_cfg = (config or {}).get("CHECKIN_CONFIG", {})
+    if "enabled" in checkin_cfg:
+        return bool(checkin_cfg.get("enabled"))
+    return bool(checkin_cfg.get("enable", False))
+
+
+def _configured_bonus_days(checkin_cfg: dict) -> dict:
+    """读取 Dashboard streak_bonus 与历史 bonus_3d 等配置。"""
+    bonus_days = dict(BONUS_DAYS)
+    for days in (3, 7, 15, 30):
+        legacy_key = f"bonus_{days}d"
+        if legacy_key in checkin_cfg:
+            try:
+                bonus_days[days] = int(checkin_cfg[legacy_key])
+            except (TypeError, ValueError):
+                continue
+    configured = checkin_cfg.get("streak_bonus", {})
+    if isinstance(configured, dict):
+        for days, points in configured.items():
+            try:
+                bonus_days[int(days)] = int(points)
+            except (TypeError, ValueError):
+                continue
+    return bonus_days
+
 
 def handle_checkin(bot, m, config, db):
     """处理签到命令"""
@@ -123,7 +168,7 @@ def handle_checkin(bot, m, config, db):
 
     # 检查签到开关
     checkin_cfg = config.get("CHECKIN_CONFIG", {})
-    if not checkin_cfg.get("enable", False):
+    if not is_checkin_enabled(config):
         # 功能已关闭，静默忽略
         return
 
@@ -160,7 +205,7 @@ def handle_checkin(bot, m, config, db):
         # 计算积分（基础 + 连续签到奖励，取最高档）
         earned = base_points
         bonus = 0
-        for days, pts in sorted(BONUS_DAYS.items()):
+        for days, pts in sorted(_configured_bonus_days(checkin_cfg).items()):
             if continuous >= days:
                 bonus = pts
         earned += bonus
@@ -250,7 +295,7 @@ def handle_makeup_checkin(bot, m, config, db):
 
     # 检查签到开关
     checkin_cfg = config.get("CHECKIN_CONFIG", {})
-    if not checkin_cfg.get("enable", False):
+    if not is_checkin_enabled(config):
         # 功能已关闭，静默忽略
         return
 

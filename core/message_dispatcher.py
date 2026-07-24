@@ -163,7 +163,16 @@ def _calc_humanized_delay(text: str, is_priv: bool, conv_count: int = 0, config:
     return round(max(0.5, min(15.0, base)), 1)
 
 
-def _delayed_reply(bot, chat_id, reply_to_msg, text, delay_seconds, mory_bot, is_priv=False):
+def _delayed_reply(
+    bot,
+    chat_id,
+    reply_to_msg,
+    text,
+    delay_seconds,
+    mory_bot,
+    is_priv=False,
+    reply_markup=None,
+):
     """非阻塞延迟发送回复，期间持续typing状态
 
     用threading.Timer实现延迟，不阻塞线程池。
@@ -172,8 +181,9 @@ def _delayed_reply(bot, chat_id, reply_to_msg, text, delay_seconds, mory_bot, is
     """
     def _do_send():
         try:
-            sent = mory_bot.reply_and_track(reply_to_msg, text)
-            if sent and not is_priv:
+            send_kwargs = {"reply_markup": reply_markup} if reply_markup is not None else {}
+            sent = mory_bot.reply_and_track(reply_to_msg, text, **send_kwargs)
+            if sent and not is_priv and reply_markup is None:
                 try:
                     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
                     fb_markup = InlineKeyboardMarkup()

@@ -1,4 +1,4 @@
-# 用户问题追踪与FAQ蒸馏系统 (v5.15.0)
+# 用户问题追踪、自动承接与FAQ蒸馏系统 (v5.35.11)
 
 > 自动记录用户问题 → 蒸馏高频问题 → 人工审核话术 → AI润色自动回复，实现"变相蒸馏运营者"闭环。
 
@@ -6,18 +6,26 @@
 
 ```
 用户消息 → P10 AI回复
+  ├─ 明显问句 + FAQ_TRACKING_ENABLED=true → 不受随机回复率限制，主动承接
   ├─ [FAQ_TRACKING_ENABLED=true] → db.log_question() 记录问题
   ├─ [FAQ_AUTO_REPLY_ENABLED=true] → _try_faq_match() 匹配FAQ
   │   ├─ 命中 + ai_polish=true → AI润色模板回复
   │   ├─ 命中 + ai_polish=false → 直接模板回复
   │   └─ 未命中 → 正常AI回复
+  ├─ 未命中且AI无可靠答案 → 联系Mory/自助下单同排双按钮
   └─ AI回复后 → db.update_question_reply() 更新摘要+faq_hit_id
+      └─ 无可靠答案 → ai_reply_summary加[UNRESOLVED]标记
 
-每日自动蒸馏 → _job_faq_distill()
+每日自动蒸馏 → tasks/analytics/faq_distill_task.py
   ├─ 扫描7天内user_questions
   ├─ 按(category, mode, intent)分组+文本归一化聚类
   ├─ 频次≥FAQ_MIN_FREQUENCY → 写入faq_candidates(status=pending)
   └─ 通知管理员审核
+
+每日23:50问题汇总 → faq_daily_question_summary
+  ├─ 待老板优化：[UNRESOLVED]或没有回复摘要的问题
+  ├─ AI已答但FAQ未命中：faq_hit_id=0的样本
+  └─ 直接发送给ADMIN_ID，不含用户ID
 
 管理员审核 → Dashboard /api/faq/candidates/:id/approve
   ├─ 编写answer_template话术
@@ -40,7 +48,7 @@
 | keyword_tag | TEXT | 命中的关键词标签 |
 | question_category | TEXT | 问题分类（pricing/troubleshooting/feedback/content/other） |
 | is_convert | INTEGER | 是否转化类（1=是） |
-| ai_reply_summary | TEXT | AI回复摘要（前200字） |
+| ai_reply_summary | TEXT | AI回复摘要（前200字）；`[UNRESOLVED]`前缀表示需人工优化 |
 | faq_hit_id | INTEGER | 命中的FAQ条目ID（0=未命中） |
 | ts | INTEGER | 时间戳 |
 
@@ -106,14 +114,14 @@ P10钩子中根据 mode 自动映射：
    b. match_mode='exact': question_pattern与用户消息完全匹配
    c. 额外匹配: question_category == mode 或 question_category == intent
 3. 按优先级(priority DESC) + 命中数(hit_count DESC) 排序
-4. 返回最高优先级的匹配项
+4. 返回按优先级排序的匹配项列表；调用方取第一条
 ```
 
 ## 5. FAQ回复流程（_try_faq_match）
 
 ```
 1. 检查 FAQ_AUTO_REPLY_ENABLED 开关
-2. 调用 db.search_faq(msg, mode, intent)
+2. 调用 db.search_faq(msg, mode, intent)，兼容列表和旧版单字典返回
 3. 命中时：
    a. db.increment_faq_hit(faq_id) 记录命中
    b. ai_polish=True:
@@ -144,14 +152,24 @@ P10钩子中根据 mode 自动映射：
 
 | 配置键 | 默认值 | 说明 |
 |--------|--------|------|
-| FAQ_TRACKING_ENABLED | false | 问题记录开关（开启后P10自动记录用户问题） |
-| FAQ_AUTO_REPLY_ENABLED | false | FAQ自动回复开关（开启后匹配FAQ时用话术回复） |
+| FAQ_TRACKING_ENABLED | true | 问题记录开关；开启后明显问句会主动进入P10 |
+| FAQ_AUTO_REPLY_ENABLED | true | FAQ自动回复开关（命中FAQ时优先用审核话术） |
 | FAQ_DISTILL_INTERVAL | 86400 | 蒸馏任务间隔（秒，默认每日一次） |
 | FAQ_MIN_FREQUENCY | 3 | 蒸馏最低频次（出现次数≥此值才生成候选） |
 
-**重要**：所有开关默认关闭，需手动开启。建议先开 FAQ_TRACKING_ENABLED 积累数据，再开 FAQ_AUTO_REPLY_ENABLED。
+示例配置已开启追踪和FAQ自动回复；既有环境仍以当前 `config.json` 为准。每日23:50问题汇总复用 `FAQ_TRACKING_ENABLED` 和 `ADMIN_ID`，不新增漂移开关。
 
-## 8. Dashboard API
+## 8. 预置人设化自动回答
+
+`modules/keyword_trigger.py` 在数据库关键词规则之前合并项目内置规则，当前覆盖：
+
+- “助理出来/助理在吗”：按当前人设响应，并自然保留 `@MorychannelBot` 自助下单入口。
+- “签到积分有什么福利/积分能换什么”：说明积分可兑换订阅VIP月卡等福利，具体可问 `@Moryfansbot`。
+- “定制视频/可以定制视频吗”：说明可先沟通需求，是否承接由Mory确认。
+
+`SPECIAL_AUTO_REPLIES` 中的同名配置优先，可通过 `enabled=false` 关闭内置规则。繁体“簽到”、QD、带句号“签到。”不会执行签到，只提示发送无符号简体“签到”。签到运行态优先读 `CHECKIN_CONFIG.enabled`，兼容历史 `enable`；Dashboard保存时同步两者，并把 `streak_bonus` 同步为历史 `bonus_3d/bonus_7d/...`。
+
+## 9. Dashboard API
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -166,7 +184,7 @@ P10钩子中根据 mode 自动映射：
 | /api/faq/knowledge/<id> | DELETE | 删除FAQ条目 |
 | /api/faq/distill | POST | 手动触发FAQ蒸馏 |
 
-## 9. 代码文件清单
+## 10. 代码文件清单
 
 | 文件 | 变更类型 | 说明 |
 |------|---------|------|
@@ -175,12 +193,14 @@ P10钩子中根据 mode 自动映射：
 | core/db_repos/__init__.py | 修改 | 导入QuestionRepo |
 | core/handlers/ai_handlers.py | 修改 | _try_faq_match() FAQ匹配函数 |
 | core/handlers/ai_reply_handler.py | 修改 | P10钩子（记录问题+FAQ匹配+faq_hit_id） |
-| modules/auto_tasks.py | 修改 | _job_faq_distill() 蒸馏任务 |
+| modules/keyword_trigger.py | 修改 | 内置人设化问题回答与配置同名覆盖 |
+| modules/checkin.py | 修改 | 无效签到写法识别与正确格式提示 |
+| tasks/analytics/faq_distill_task.py | 修改 | FAQ蒸馏 + 每日问题汇总 |
 | dashboard/api/faq_api.py | 新增 | 10个API端点 |
 | dashboard/app.py | 修改 | 注册faq_bp蓝图 |
 | config.json.example | 修改 | 4个新配置键 |
 
-## 10. 运营使用流程
+## 11. 运营使用流程
 
 1. **开启记录**：config.json 设置 `"FAQ_TRACKING_ENABLED": true`
 2. **积累数据**：让Bot运行几天，自动记录用户问题
@@ -188,4 +208,5 @@ P10钩子中根据 mode 自动映射：
 4. **审核候选**：系统自动蒸馏后，在 `/api/faq/candidates` 审核高频问题
 5. **编写话术**：为每个候选编写 answer_template，设置 ai_polish 开关
 6. **开启回复**：config.json 设置 `"FAQ_AUTO_REPLY_ENABLED": true`
-7. **持续优化**：根据 `/api/faq/stats` 的 faq_hit_rate 调整话术
+7. **查看日报**：每天23:50读取管理员消息中的待优化问题和未命中样本
+8. **持续优化**：根据日报与 `/api/faq/stats` 的 faq_hit_rate 调整话术
