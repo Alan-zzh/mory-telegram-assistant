@@ -56,7 +56,7 @@ A > B 的测试结果"""
 def test_news_html_hides_internal_source_badge():
     """新闻富文本不向用户展示聚合策略或供应链名称。"""
     news = "\n".join(
-        [f"第{i}条不同方向的真实新闻" for i in range(1, 11)]
+        [f"第{i}条不同方向的真实新闻" for i in range(1, 6)]
         + ["今晚信息面比较散，先看确定的"]
     )
     result = build_rich_news_html("晚间", news, source_name="fallback")
@@ -66,11 +66,11 @@ def test_news_html_hides_internal_source_badge():
     assert "<blockquote expandable><i>" in result
 
 
-def test_news_renderers_keep_ten_headlines_and_one_observation():
-    """当前排版必须完整展示10条头条，第11行才是观察。"""
+def test_news_renderers_keep_five_headlines_and_one_observation():
+    """当前排版只展示5条头条，第6行是观察。"""
     from core.broadcast_formatter import build_rich_news_card_message
 
-    headlines = [f"第{i}条综合头条有明确事实信息" for i in range(1, 11)]
+    headlines = [f"第{i}条综合头条有明确事实信息" for i in range(1, 6)]
     observation = "今天重点分散在民生、国际和社会变化"
     news = "\n".join(headlines + [observation])
 
@@ -80,8 +80,8 @@ def test_news_renderers_keep_ten_headlines_and_one_observation():
     for headline in headlines:
         assert headline in html
         assert headline in rich
-    assert html.count("📌") == 10
-    assert rich.count("<li>") == 10
+    assert html.count("📌") == 5
+    assert rich.count("<li>") == 5
     assert f"<blockquote expandable><i>{observation}</i></blockquote>" in html
     assert f"<blockquote>{observation}</blockquote>" in rich
 

@@ -306,7 +306,7 @@ def looks_like_ai_fallback(text: str) -> bool:
     return bool(value) and any(marker in value for marker in _AI_FALLBACK_MARKERS)
 
 
-def is_usable_news_output(text: str, expected_count: int = 10) -> bool:
+def is_usable_news_output(text: str, expected_count: int = 5) -> bool:
     """新闻 AI 输出门禁：条数准确且绝不携带内部来源/聚合标签。"""
     value = (text or "").strip()
     if not value:
@@ -315,7 +315,8 @@ def is_usable_news_output(text: str, expected_count: int = 10) -> bool:
         return False
     if _NEWS_SOURCE_LABEL_RE.search(value):
         return False
-    return len(_parse_news_copy(value, max_items=10)[0]) == expected_count
+    news_items, observation_parts = _parse_news_copy(value, max_items=5)
+    return len(news_items) == expected_count and len(observation_parts) == 1
 
 
 def build_news_without_ai(lines: List[str], time_desc: str) -> str:
@@ -323,11 +324,11 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
 
     重构原则（用户反馈"记流水账一样没有实际"）：
     - 不再用"晚点再补一条更稳的消息"等无价值填充
-    - 不足 10 条时，明确告知实际条数，不凑数
+    - 最终只展示 5 条，避免消息过长
     - 用编号列表 + 时间段 + 简短观察，提供真实阅读价值
     """
     cleaned = []
-    for line in lines[:10]:
+    for line in lines[:5]:
         core = line.split("】", 1)[-1].split("🔥", 1)[0].strip()
         if core:
             cleaned.append(core[:40])
@@ -460,9 +461,9 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                 )
                 news = build_news_without_ai(lines, time_desc)
             else:
-                expected_count = min(10, len(lines))
+                expected_count = min(5, len(lines))
                 if not is_usable_news_output(news, expected_count=expected_count):
-                    actual_count = len(_parse_news_copy(news, max_items=10)[0])
+                    actual_count = len(_parse_news_copy(news, max_items=5)[0])
                     logger.warning(
                         f"{time_desc}新闻 AI 输出未通过门禁："
                         f"期望{expected_count}条，解析{actual_count}条，"

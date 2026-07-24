@@ -29,17 +29,17 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 配置 | 在用 | `core/settings.py` + `config.json` | 密钥仅 `.env` |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 新闻来源仅内部诊断；新闻完整展示 10 条，第 11 行为观察；联系 Mory 与自助下单/订阅按场景分流；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
+| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 1 句观察；新闻来源仅内部诊断；联系 Mory 与自助下单/订阅按场景分流；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段：morning_nudge(10:00) / afternoon_tease(14:30) / evening_warm(19:00) / night_hook(22:30)；AI 失败回退可信底稿 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 福利/开通走自助售卖入口，定制确认走 Mory 联系入口；支持规则级提示词、AI 润色、安全兜底及匿名统计 |
 
 ## 当前版本
-v5.35.8（2026-07-24）
+v5.35.9（2026-07-24）
 
 ## 最近 3 条大事
-1. 2026-07-24 v5.35.8 新闻头条与轮询韧性修复：移除固定 403 直连，改用实测 200 的头条/澎湃/早报接口；NewsNow 同域最多 2 路，首源不足会继续后备源并补齐；按头条权重和榜单位置选 10 条，科技最多 1 条、财经最多 2 条；Telegram getUpdates 5xx/超时限域退避且不吞业务发送异常。
-2. 2026-07-24 v5.35.7 机器人身份修正并发布：`@Moryfansbot` 负责联系 Mory，`@MorychannelBot` 负责自助下单/订阅；晨间/晚间与定制确认联系本人，午间/新闻/夜间与福利/开通走自助入口。生产双服务、health、六层监控及管理员验收消息 ID 2904 已验证。
-3. 2026-07-24 v5.35.6 生产播报与关键话题闭环：修复新闻内部来源说明泄漏、问候缺按钮、时段话术模板化、局部提示词覆盖默认模式、实时链误用仅思考模型连续超时、福利/定制无法按规则润色及统计、零吞吐瞬时积压触发 999 秒迁移假警报。关键话题统计不保存用户原话。
+1. 2026-07-24 v5.35.9 新闻篇幅优化：后台仍从 10 条均衡候选中选题，用户只看 5 条精炼头条 + 1 句观察；AI 二次按影响力和时效性选最重要 5 条，科技与财经合计最多 2 条；AI、HTML/Rich、门禁和真实标题兜底统一 5+1。
+2. 2026-07-24 v5.35.8 新闻头条与轮询韧性修复：移除固定 403 直连，改用实测 200 的头条/澎湃/早报接口；NewsNow 同域最多 2 路，首源不足会继续后备源并补齐；按头条权重和榜单位置选 10 条，科技最多 1 条、财经最多 2 条；Telegram getUpdates 5xx/超时限域退避且不吞业务发送异常。
+3. 2026-07-24 v5.35.7 机器人身份修正并发布：`@Moryfansbot` 负责联系 Mory，`@MorychannelBot` 负责自助下单/订阅；晨间/晚间与定制确认联系本人，午间/新闻/夜间与福利/开通走自助入口。生产双服务、health、六层监控及管理员验收消息 ID 2904 已验证。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

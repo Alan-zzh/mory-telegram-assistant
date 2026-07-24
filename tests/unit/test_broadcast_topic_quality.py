@@ -14,7 +14,7 @@ def test_news_internal_source_labels_never_render():
     )
 
     news = "\n".join(
-        [f"第{i}条真实新闻" for i in range(1, 11)]
+        [f"第{i}条真实新闻" for i in range(1, 6)]
         + ["💡 信息还在继续变化"]
     )
     for renderer in (build_rich_news_html, build_rich_news_card_message):
@@ -25,7 +25,7 @@ def test_news_internal_source_labels_never_render():
         assert "@MorychannelBot" in rendered
 
 
-def test_news_personas_require_ten_headlines_before_observation():
+def test_news_personas_require_five_headlines_before_observation():
     from core.ai_engine import AIEngine
 
     for mode in (
@@ -37,19 +37,20 @@ def test_news_personas_require_ten_headlines_before_observation():
         "trendradar_evening_news",
     ):
         prompt = AIEngine._DEFAULT_PROMPT_TEMPLATES[mode]
-        assert "严格只写10条" in prompt
-        assert "第11行" in prompt
-        assert "5条" not in prompt
-        assert "第6行" not in prompt
+        assert "严格只写5条" in prompt
+        assert "第6行" in prompt
+        assert "从10条候选中" in prompt
+        assert "严格只写10条" not in prompt
+        assert "第11行" not in prompt
 
 
-def test_legacy_five_item_news_override_cannot_replace_ten_item_contract():
+def test_legacy_ten_item_news_override_cannot_replace_five_item_contract():
     from core.ai_engine import AIEngine
 
     engine = object.__new__(AIEngine)
     engine.config = {
         "PROMPT_TEMPLATES": {
-            "news": "旧模板：严格只写5条，第6行总结。",
+            "news": "旧模板：严格只写10条，第11行总结。",
         }
     }
 
@@ -60,27 +61,33 @@ def test_legacy_five_item_news_override_cannot_replace_ten_item_contract():
     )
 
     assert full_replacement is True
-    assert "严格只写10条" in persona
-    assert "第11行" in persona
-    assert "严格只写5条" not in persona
+    assert "严格只写5条" in persona
+    assert "第6行" in persona
+    assert "从10条候选中" in persona
+    assert "严格只写10条" not in persona
 
 
 def test_news_output_gate_rejects_source_labels_and_missing_items():
     from tasks.support.common import is_usable_news_output
 
     valid = "\n".join(
-        [f"第{i}条综合头条已经讲清事实和影响" for i in range(1, 11)]
+        [f"第{i}条综合头条已经讲清事实和影响" for i in range(1, 6)]
         + ["💡 今天的重点分散在社会民生和国际变化"]
     )
     leaked = valid.replace(
         "第1条综合头条已经讲清事实和影响",
         "【社会·NewsNow澎湃】第1条综合头条已经讲清事实和影响",
     )
-    missing = "\n".join(valid.splitlines()[:9] + [valid.splitlines()[-1]])
+    missing = "\n".join(valid.splitlines()[:4] + [valid.splitlines()[-1]])
+    overlong = "\n".join(
+        [f"第{i}条旧版长新闻输出" for i in range(1, 11)]
+        + ["旧版第十一行观察"]
+    )
 
-    assert is_usable_news_output(valid, expected_count=10) is True
-    assert is_usable_news_output(leaked, expected_count=10) is False
-    assert is_usable_news_output(missing, expected_count=10) is False
+    assert is_usable_news_output(valid, expected_count=5) is True
+    assert is_usable_news_output(leaked, expected_count=5) is False
+    assert is_usable_news_output(missing, expected_count=5) is False
+    assert is_usable_news_output(overlong, expected_count=5) is False
 
 
 def test_news_source_chain_skips_partial_result_when_next_source_has_ten(monkeypatch):

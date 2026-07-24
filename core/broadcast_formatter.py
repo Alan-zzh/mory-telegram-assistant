@@ -280,8 +280,8 @@ def build_broadcast_html(
 
 
 # ── 新闻播报卡片 ─────────────────────────────────────────────────────────────
-def _parse_news_copy(news_content: str, max_items: int = 10) -> tuple[list[str], list[str]]:
-    """统一解析 AI 文案和真实标题兜底：前10条为新闻，之后为观察。"""
+def _parse_news_copy(news_content: str, max_items: int = 5) -> tuple[list[str], list[str]]:
+    """统一解析 AI 文案和真实标题兜底：前5条为新闻，之后为观察。"""
     import re as _re
 
     body_lines = [
@@ -343,7 +343,7 @@ def build_news_html(
     # source_name 仅用于内部日志和诊断，不能把聚合策略/供应链名称展示给用户。
     _ = source_name
 
-    news_items, observation_parts = _parse_news_copy(news_content, max_items=10)
+    news_items, observation_parts = _parse_news_copy(news_content, max_items=5)
     formatted_lines = [
         f"📌 {escape_html_text(item)}"
         for item in news_items
@@ -563,7 +563,7 @@ def build_rich_news_card_message(
     # source_name 仅用于内部日志和诊断，不能把聚合策略/供应链名称展示给用户。
     _ = source_name
 
-    news_items, observation_parts = _parse_news_copy(news_content, max_items=10)
+    news_items, observation_parts = _parse_news_copy(news_content, max_items=5)
     safe_news_items = [escape_html_text(item) for item in news_items]
 
     if safe_news_items:
