@@ -169,6 +169,24 @@ def test_contextual_purchase_reply_skips_preview_and_closes_order():
     ) == "普通闲聊。"
 
 
+def test_rejection_variants_stop_conversion_and_model_claims_are_removed():
+    from core.growth_optimizer import resolve_conversion_target
+    from core.handlers.ai_reply_handler import _sanitize_unverified_sales_claims
+    from core.keyword_manager import is_convert_rejection_message
+
+    for text in ("算了不用了", "先算了", "暂时不用", "不用了谢谢"):
+        assert is_convert_rejection_message(text) is True
+        target, reason = resolve_conversion_target(text, [], mode="convert")
+        assert (target, reason) == ("none", "user_opt_out")
+
+    cleaned = _sanitize_unverified_sales_claims(
+        "具体的群里不太方便细说。至臻精选里都是4K原档和独家动态。"
+    )
+    assert cleaned == "具体的群里不太方便细说。"
+    assert "4K" not in cleaned
+    assert "独家" not in cleaned
+
+
 def test_private_sales_reply_has_no_button_and_group_has_only_one_target():
     from core.handlers.ai_reply_handler import (
         _build_sales_reply_markup,

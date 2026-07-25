@@ -54,6 +54,26 @@ _PREFERENCE_CONFIRM_MARKERS = (
     "风格可以", "就这个", "就这种", "不错", "确定", "安排",
 )
 
+_UNVERIFIED_SALES_CLAIM_PATTERN = re.compile(
+    r"(?:\b4k\b|原档|独家|专属福利|限时福利|保证|包过|一定能|都能做|"
+    r"可以做|能做这个|支持定制|把要求填|提交需求|交付周期|多久出|"
+    r"(?:￥|¥)?\d+(?:\.\d+)?\s*(?:元|块|rmb))",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_unverified_sales_claims(response):
+    """删除模型自行编造的商品事实，入口与已知业务边界由确定性代码补齐。"""
+    if not isinstance(response, str) or not response.strip():
+        return response
+    chunks = re.split(r"(?<=[。！？!?；;\n])", response.strip())
+    kept = [
+        chunk
+        for chunk in chunks
+        if not _UNVERIFIED_SALES_CLAIM_PATTERN.search(chunk)
+    ]
+    return "".join(kept).strip()
+
 
 def _looks_like_question(text: str) -> bool:
     """识别群里应主动承接的自然语言问题。"""
@@ -552,6 +572,8 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             user_profile=user_profile,
             conversation_history=getattr(dctx, "conversation_history", []),
         )
+        if conversion_target in {"preview", "subscribe"}:
+            resp = _sanitize_unverified_sales_claims(resp)
 
     if direct_access_handled and not direct_access_order:
         conversion_target = "preview"
