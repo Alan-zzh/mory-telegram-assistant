@@ -1,0 +1,21 @@
+# Verification 报告
+
+- **task_id**：news-persona-outro-v53513-20260725
+- **执行时间**：2026-07-25 15:48:00 +08:00
+- **truth_surface**：本地 Windows checkout 的新闻提示词、5+1 输出门禁、真实标题兜底和 HTML/Rich Message 渲染链；生产部署待执行。
+- **success_receipt**：
+  - 事实锚定总结“平台整改与中东局势，是这轮最该继续盯的两条线”被新门禁拒绝。
+  - “我不想只做报时的人，更想听你说说今天真正放在心上的事”通过门禁。
+  - 真实标题兜底从温情自白、邀聊、人格表达、定制沟通四类策略随机选尾语，不再引用新闻标题。
+  - v5.35.12 的旧新闻提示词缺少“不得总结新闻 / 随机采用一种策略”契约时自动失效。
+- **persistence_check**：全新 Python 进程重跑目标测试与整仓测试，结果保持一致；生产持久态待部署后补充。
+- **derived_records**：`version.py`、`VERSION.md`、`AGENTS.md`、`CHANGELOG.md`、`AI_DEBUG_HISTORY.md`、`project_snapshot.md`、`config.json.example` 与播报技术文档已同步到 v5.35.13。
+- **验证命令**：
+  - `python -m pytest tests/unit/test_broadcast_topic_quality.py -q` | 通过 | `26 passed`。
+  - `python -m pytest tests -q` | 通过 | `412 passed, 7 skipped`。
+  - `python scripts/verify_db_methods.py` | 通过 | `179` 个委托方法，无缺失、无孤儿。
+  - `python scripts/doc_consistency.py` | 通过 | `7/7` 指标与代码一致。
+  - `python -m py_compile core/ai_engine.py tasks/support/common.py version.py` | 通过。
+  - `python -m json.tool config.json.example`、`git diff --check` | 通过。
+- **安全边界**：未改依赖、数据库、`.env` 或生产配置；当前仅完成本地代码与记录，生产部署将在可信 commit 后执行。
+- **结论**：本地 v5.35.13 行为 verified；生产效果待部署验证。

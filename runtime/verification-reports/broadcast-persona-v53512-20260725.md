@@ -1,13 +1,14 @@
 # Verification 报告
 
 - **task_id**：broadcast-persona-v53512-20260725
-- **执行时间**：2026-07-25 15:25:00 +08:00
-- **truth_surface**：本地 Windows checkout 的新闻/问候生成、质量门禁与 HTML/Rich Message 渲染链；生产 VPS 未部署、未重启。
+- **执行时间**：2026-07-25 15:39:00 +08:00
+- **truth_surface**：本地 Windows checkout；生产 VPS `/home/ubuntu/mory_assistant` 的实际配置、模型、HTML/Rich Message 渲染链和 systemd 双服务；`@MoryMateBot` 管理员私聊。
 - **success_receipt**：
   - 截图原文“民生与国际议题交织，午间资讯折射现实关切”经 `is_usable_news_output(..., source_lines=...)` 返回 `False`。
   - 同组新闻的真实标题兜底观察引用前两条完整事实分句，Rich Message footer 为 `@MoryMateBot`。
-  - 本地真实 LLM 请求连续超时后，code 专用模型未发出请求，最终用户文案回退为走心粉丝群底稿。
-- **persistence_check**：在全新 Python 进程重跑截图样例、定向测试及整仓测试，结果保持一致；生产持久态不适用，因为本轮未获部署授权。
+  - 生产 `qwen3.7-max-2026-06-08` 生成“午安呀，别光顾着忙，也记得喘口气。我在呢，有什么想说的随时丢过来，我都听着。”，质量门禁通过且不含 AI/编程/效率词。
+  - Telegram 实际发送者为 `@MoryMateBot`，Rich Message 新闻/问候管理员验收消息 ID 分别为 `2944` / `2945`，新闻按钮仍独立指向 `@MorychannelBot`。
+- **persistence_check**：提交 `42e6200` 的 5 个运行文件以 commit 字节部署，远端 SHA-256 全部一致；双服务自 15:35:18 起持续 active+enabled，health 与代码版本均为 v5.35.12，近 10 分钟当前服务错误日志为 0，root watchdog cron 恰好 1 条。
 - **derived_records**：`version.py`、`VERSION.md`、`AGENTS.md`、`CHANGELOG.md`、`AI_DEBUG_HISTORY.md`、`project_snapshot.md`、两份技术文档和 `config.json.example` 已同步到 v5.35.12。
 - **文件列表**：
   - `core/ai_engine.py` | 通过 | 主助理人设继承、旧模板隔离、默认路由合并、两层 code/coder 模型门禁。
@@ -24,17 +25,21 @@
   - `python -m py_compile ...` | 通过 | 本轮 Python 文件可编译。
   - `python -m json.tool config.json.example` | 通过 | JSON 合法。
   - `git diff --check` | 通过 | 无空白错误。
+  - 生产行为探针 | 通过 | 错误总结 `False`、事实锚定 `True`、发送者 `True`、问候质量 `True`、技术文案 `False`。
+  - 生产持久复核 | 通过 | 双服务 active+enabled、health/代码 v5.35.12、DB 方法验证退出码 0、当前错误日志为空。
 - **安全扫描**：
   - 敏感明文/API Key/密码：未写入本轮交付文件。
-  - 危险命令检查：通过；未执行删除、生产写入、部署、重启、提交或推送。
+  - 部署边界：仅替换 5 个运行文件；未覆盖 `.env`、`config.json`、`mory.db`，未修改依赖或数据库。
+  - 备份/回滚：部署前备份到 `/home/ubuntu/mory_assistant/backups/v5_35_12_20260725_153504`；原子替换、远端编译、health/版本任一失败即恢复备份并重启。
   - 依赖风险检查：不适用；未变更依赖。
-  - 权限风险检查：通过；生产边界保持只读/未触碰。
+  - 外部动作：仅向管理员私聊发送 1 条验收说明和 2 条业务预览，未向粉丝群广播；未 push 远端 Git。
 - **主编排器自检清单**：
   - [x] 真实修改并重新读取关键文件。
   - [x] 运行 Puzan OS 只读能力发现与项目专项维护流程。
   - [x] 先写失败用例，再完成 red → green。
   - [x] 运行定向与整仓测试。
   - [x] 检查真实 diff、文件列表和工作树。
-  - [x] 标注未部署生产与真实 LLM 超时。
+  - [x] 使用生产真实配置、真实通用模型和 Telegram 管理员私聊验证。
+  - [x] 完成远端备份、增量部署、双服务/health/日志/版本/DB 与消息回执复核。
   - [x] 结论由本地主会话原始回执支持。
-- **结论**：本地修复 verified；生产效果未部署、未验证。
+- **结论**：本地修复与生产部署均 verified；新闻事实锚定、`@MoryMateBot` 署名和走心问候已在真实生产链路生效。

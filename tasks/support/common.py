@@ -55,7 +55,7 @@ _NEWS_INTERNAL_MARKERS = (
 _NEWS_SOURCE_LABEL_RE = re.compile(
     r"【(?:社会|综合|国际|生活|体育|文娱|财经|科技)[·|｜][^】]+】"
 )
-_NEWS_GENERIC_OBSERVATION_MARKERS = (
+_NEWS_SUMMARY_OUTRO_MARKERS = (
     "议题交织",
     "现实关切",
     "值得关注",
@@ -63,11 +63,50 @@ _NEWS_GENERIC_OBSERVATION_MARKERS = (
     "重点不只一条线",
     "先看事实和后续变化",
     "折射现实",
+    "先盯",
+    "继续盯",
+    "后续变化",
+    "这轮",
+    "两条线",
 )
 _NEWS_GROUNDING_STOP_NGRAMS = {
     "今日", "今天", "早间", "午间", "晚间", "新闻", "热点", "信息",
     "重点", "观察", "变化", "继续", "关注", "值得", "现实", "事件",
     "问题", "进展", "影响", "后续", "这轮", "两条", "一条",
+}
+_NEWS_PERSONA_OUTRO_MARKERS = (
+    "我不想",
+    "我更想",
+    "我想被",
+    "我会",
+    "我愿意",
+    "我在听",
+    "来找我",
+    "和我聊",
+    "跟我聊",
+    "找 Mory",
+    "@Moryfansbot",
+    "群里",
+    "定制",
+    "愿意开口",
+)
+_NEWS_PERSONA_OUTRO_POOLS = {
+    "warm_confession": [
+        "比起替你们下结论，我更想听听你今天真正放在心上的事。",
+        "我想被你们记住的，不是几条消息，而是每次愿意认真听你说话。",
+    ],
+    "invite_chat": [
+        "新闻先放这儿，你要是有自己的想法，就来群里和我聊两句。",
+        "看完别急着划走，想吐槽、想分享，都可以来找我聊聊。",
+    ],
+    "persona_position": [
+        "我不想只做报时的人，更想成为你愿意开口说真话的那个小助理。",
+        "我会把消息讲给你听，也会把你认真说过的话放在心上。",
+    ],
+    "custom_invite": [
+        "有想做成专属内容的点子，就去找 Mory 聊聊定制，需求说清楚就好。",
+        "想把自己的想法做成专属内容，可以去 @Moryfansbot 沟通定制。",
+    ],
 }
 
 
@@ -335,30 +374,27 @@ def _news_grounding_ngrams(text: str, size: int) -> set[str]:
     return ngrams
 
 
-def _is_grounded_news_observation(
+def _is_persona_news_outro(
     news_items: List[str],
     observation_parts: List[str],
     source_lines: List[str] | None = None,
 ) -> bool:
-    """观察必须复用新闻里的具体实体/事件词，拒绝任意卡片都能套的空话。"""
-    observation = " ".join(observation_parts).strip()
-    if not observation:
+    """第6行只负责立人设和促互动，不能继续概括前5条新闻。"""
+    outro = " ".join(observation_parts).strip()
+    outro = re.sub(r"^💡\s*", "", outro)
+    if not 18 <= len(outro) <= 80:
         return False
-    if any(marker in observation for marker in _NEWS_GENERIC_OBSERVATION_MARKERS):
+    if any(marker in outro for marker in _NEWS_SUMMARY_OUTRO_MARKERS):
         return False
 
     evidence = "\n".join([*news_items, *(source_lines or [])])
-    shared_trigrams = (
-        _news_grounding_ngrams(observation, 3)
+    shared_fact_trigrams = (
+        _news_grounding_ngrams(outro, 3)
         & _news_grounding_ngrams(evidence, 3)
     )
-    if shared_trigrams:
-        return True
-    shared_bigrams = (
-        _news_grounding_ngrams(observation, 2)
-        & _news_grounding_ngrams(evidence, 2)
-    )
-    return len(shared_bigrams) >= 2
+    if shared_fact_trigrams:
+        return False
+    return any(marker in outro for marker in _NEWS_PERSONA_OUTRO_MARKERS)
 
 
 def is_usable_news_output(
@@ -366,7 +402,7 @@ def is_usable_news_output(
     expected_count: int = 5,
     source_lines: List[str] | None = None,
 ) -> bool:
-    """新闻 AI 输出门禁：5+1 准确、无内部标签，且观察与本卡片事实相关。"""
+    """新闻 AI 输出门禁：5条新闻 + 1句独立人设互动尾语。"""
     value = (text or "").strip()
     if not value:
         return False
@@ -378,12 +414,18 @@ def is_usable_news_output(
     return (
         len(news_items) == expected_count
         and len(observation_parts) == 1
-        and _is_grounded_news_observation(
+        and _is_persona_news_outro(
             news_items,
             observation_parts,
             source_lines=source_lines,
         )
     )
+
+
+def _build_news_persona_outro() -> str:
+    """随机选择温情自白、邀聊、人格表达或定制沟通策略。"""
+    strategy = random.choice(tuple(_NEWS_PERSONA_OUTRO_POOLS))
+    return random.choice(_NEWS_PERSONA_OUTRO_POOLS[strategy])
 
 
 def build_news_without_ai(lines: List[str], time_desc: str) -> str:
@@ -392,7 +434,7 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
     重构原则（用户反馈"记流水账一样没有实际"）：
     - 不再用"晚点再补一条更稳的消息"等无价值填充
     - 最终只展示 5 条，避免消息过长
-    - 用编号列表 + 时间段 + 简短观察，提供真实阅读价值
+    - 第6行不总结新闻，随机用自白/邀聊/人设/定制沟通建立关系
     """
     cleaned = []
     for line in lines[:5]:
@@ -408,17 +450,8 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
     numbered = [f"{i+1}. {title}" for i, title in enumerate(cleaned)]
     count = len(numbered)
     header = f"📰 {time_desc}新闻速览（共 {count} 条）"
-    def _short_anchor(title: str, max_length: int = 18) -> str:
-        first_clause = re.split(r"[，。；！？]", title, maxsplit=1)[0].strip()
-        return first_clause[:max_length].rstrip("，。；、：")
-
-    first_anchor = _short_anchor(cleaned[0])
-    if len(cleaned) > 1:
-        second_anchor = _short_anchor(cleaned[1])
-        observation = f"\n\n💡 先盯这两件事：{first_anchor}；{second_anchor}"
-    else:
-        observation = f"\n\n💡 这条值得继续盯：{first_anchor}"
-    return header + "\n\n" + "\n".join(numbered) + observation
+    outro = _build_news_persona_outro()
+    return header + "\n\n" + "\n".join(numbered) + f"\n\n💡 {outro}"
 
 
 def get_preferred_news_lines(time_desc: str, config: dict) -> Tuple[List[str], str]:

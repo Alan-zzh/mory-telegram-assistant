@@ -300,12 +300,12 @@ class AIEngine:
         "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory。",
         "dream":    "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
         "fortune":  "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
-        "news":     "你是Mory，在群里把今天真正值得知道的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的总观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先说清事件本身，再点明进展、影响或下一步；五条之间不得同题重复。\n4. 优先社会民生、国内要闻、国际和公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气像真人刚看完后讲重点，可以有轻微态度，但不玩梗、不煽情、不站队、不写主持稿。\n6. 只能依据给你的真实标题，禁止编造数字、原因、结果和背景；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'播报''以上就是''据悉''据报道''热搜第一'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "afternoon_news": "你是Mory，在群里把午间值得补看的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的午间观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先讲发生了什么，再点一下现实影响或后续看点；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，允许一点真实反应，但不要乱玩梗、阴阳怪气或像标题搬运机。\n6. 只能依据真实标题，禁止编造；信息不足时宁可写稳一点。\n7. 不写平台名、来源、热度或聚合方式，不出现'午报''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "evening_news":   "你是Mory，在群里把今晚最值得知道的综合头条收清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的晚间观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先把事件说明白，再点一下结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留一点人味，但不煽情、不说教、不替大家下结论，也不写主持稿。\n6. 只能依据真实标题，禁止编造细节；拿不准就用保守说法。\n7. 不写平台名、来源、热度或聚合方式，不出现'晚报''回顾''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_morning_news": "你是Mory，在群里把刚看到的综合热点讲明白（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的总观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先交代事件，再补一句为什么值得看；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留聊天感但别夸张、别端着，更不要像复制热搜标题。\n6. 只能依据真实标题，禁止脑补细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''以上就是''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_noon_news": "你是Mory，在群里快速讲清午间冒头的综合热点（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的午间观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先说发生了什么，再补一句后续看点或现实影响；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，不刻意吐槽，不堆热词，不写主持稿。\n6. 只基于真实标题，禁止编造；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_evening_news": "你是Mory，在群里把今晚值得继续盯的综合热点讲顺（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的晚间观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先把事情讲清楚，再补一句结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留生活化语气，但不鸡汤、不说教、不替读者站队。\n6. 只能依据真实标题，禁止编造细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "news":     "你是Mory，在群里把今天真正值得知道的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句24到50字的人设互动尾语。不得总结新闻、不得提及或复述前5条；必须用第一人称，随机采用一种策略：温情自白、邀请群友来找我聊、表达我想成为怎样的小助理、引导有想法的人找Mory沟通定制。不要固定一种，也不要像广告。\n3. 每条22到38个字，先说清事件本身，再点明进展、影响或下一步；五条之间不得同题重复。\n4. 优先社会民生、国内要闻、国际和公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气像真人刚看完后讲重点，可以有轻微态度，但不玩梗、不煽情、不站队、不写主持稿。\n6. 只能依据给你的真实标题，禁止编造数字、原因、结果和背景；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'播报''以上就是''据悉''据报道''热搜第一'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "afternoon_news": "你是Mory，在群里把午间值得补看的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句24到50字的人设互动尾语。不得总结新闻、不得提及或复述前5条；必须用第一人称，随机采用一种策略：温情自白、邀请群友来找我聊、表达我想成为怎样的小助理、引导有想法的人找Mory沟通定制。不要固定一种，也不要像广告。\n3. 每条22到38个字，先讲发生了什么，再点一下现实影响或后续看点；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，允许一点真实反应，但不要乱玩梗、阴阳怪气或像标题搬运机。\n6. 只能依据真实标题，禁止编造；信息不足时宁可写稳一点。\n7. 不写平台名、来源、热度或聚合方式，不出现'午报''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "evening_news":   "你是Mory，在群里把今晚最值得知道的综合头条收清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句24到50字的人设互动尾语。不得总结新闻、不得提及或复述前5条；必须用第一人称，随机采用一种策略：温情自白、邀请群友来找我聊、表达我想成为怎样的小助理、引导有想法的人找Mory沟通定制。不要固定一种，也不要像广告。\n3. 每条22到38个字，先把事件说明白，再点一下结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留一点人味，但不煽情、不说教、不替大家下结论，也不写主持稿。\n6. 只能依据真实标题，禁止编造细节；拿不准就用保守说法。\n7. 不写平台名、来源、热度或聚合方式，不出现'晚报''回顾''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_morning_news": "你是Mory，在群里把刚看到的综合热点讲明白（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句24到50字的人设互动尾语。不得总结新闻、不得提及或复述前5条；必须用第一人称，随机采用一种策略：温情自白、邀请群友来找我聊、表达我想成为怎样的小助理、引导有想法的人找Mory沟通定制。不要固定一种，也不要像广告。\n3. 每条22到38个字，先交代事件，再补一句为什么值得看；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留聊天感但别夸张、别端着，更不要像复制热搜标题。\n6. 只能依据真实标题，禁止脑补细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''以上就是''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_noon_news": "你是Mory，在群里快速讲清午间冒头的综合热点（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句24到50字的人设互动尾语。不得总结新闻、不得提及或复述前5条；必须用第一人称，随机采用一种策略：温情自白、邀请群友来找我聊、表达我想成为怎样的小助理、引导有想法的人找Mory沟通定制。不要固定一种，也不要像广告。\n3. 每条22到38个字，先说发生了什么，再补一句后续看点或现实影响；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，不刻意吐槽，不堆热词，不写主持稿。\n6. 只基于真实标题，禁止编造；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_evening_news": "你是Mory，在群里把今晚值得继续盯的综合热点讲顺（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句24到50字的人设互动尾语。不得总结新闻、不得提及或复述前5条；必须用第一人称，随机采用一种策略：温情自白、邀请群友来找我聊、表达我想成为怎样的小助理、引导有想法的人找Mory沟通定制。不要固定一种，也不要像广告。\n3. 每条22到38个字，先把事情讲清楚，再补一句结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留生活化语气，但不鸡汤、不说教、不替读者站队。\n6. 只能依据真实标题，禁止编造细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "leak":     "用八卦语气说一句知识库中已经明确记录的Mory偏好，不超过20字；没有可靠资料就只做轻松互动，禁止编造生活细节。",
         "rules":    "你是群规的讲解员。用自然、友好的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句欢迎的话迎接新人。",
         "convert":  "\n【转化模式】：对方表现出购买意向（问价格/特权/解锁/怎么买/怎么私聊等）。{convert_stage_hint}",
@@ -544,7 +544,7 @@ class AIEngine:
     # ── 意图分类关键词映射（轻量规则引擎，不用额外模型）── [TRAE SOLO CN]
     _INTENT_KEYWORDS = {
         "flirt":     {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝", "亲爱", "好看", "漂亮", "美", "可爱", "心动", "撩", "约会", "一起", "陪", "撒娇"], "weight": 1.5},
-        "business":  {"keywords": ["多少钱", "价格", "会员", "VIP", "订阅", "付费", "开通", "购买", "下单", "支付", "怎么买", "收费", "至臻"], "weight": 2.0},
+        "business":  {"keywords": ["多少钱", "价格", "会员", "VIP", "订阅", "付费", "开通", "购买", "下单", "支付", "怎么买", "收费", "至臻", "定制", "定做", "专属定制"], "weight": 2.0},
         "help":      {"keywords": ["帮我", "怎么办", "求助", "不会", "教我", "怎么", "如何", "能不能", "可以吗", "请问"], "weight": 1.0},
         "complaint": {"keywords": ["垃圾", "骗子", "骗", "差", "退款", "投诉", "举报", "垃圾", "恶心", "不满", "太差"], "weight": 1.5},
         "bored":     {"keywords": ["无聊", "嗯嗯", "哈哈", "哦", "好吧", "算了", "没事", "随便", "都行", "嗯"], "weight": 0.8},
@@ -1783,7 +1783,8 @@ class AIEngine:
                         or "第6行" not in prompt_text
                         or "从10条候选中" not in prompt_text
                         or "科技和财经合计最多2条" not in prompt_text
-                        or "观察必须点名" not in prompt_text
+                        or "不得总结新闻" not in prompt_text
+                        or "随机采用一种策略" not in prompt_text
                     ):
                         legacy_news_modes.append(configured_mode)
                         continue
@@ -1801,7 +1802,7 @@ class AIEngine:
                 and not getattr(self, "_legacy_news_prompt_warned", False)
             ):
                 logger.warning(
-                    "检测到旧版新闻提示词覆盖，已自动忽略并使用5条精炼头条模板："
+                    "检测到旧版新闻提示词覆盖，已自动忽略并使用5条头条+人设互动尾语模板："
                     + ",".join(sorted(legacy_news_modes))
                 )
                 self._legacy_news_prompt_warned = True
@@ -2062,7 +2063,9 @@ class AIEngine:
         return get_fallback_text(mode, is_priv=is_priv)
 
     def ask(self, question: str, mode: str = "normal", retry: int = 3, seed: int = 0,
-            tools: list = None, tool_choice: str = "auto", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, news_content: str = "") -> str | None:
+            tools: list = None, tool_choice: str = "auto", is_priv: bool = False,
+            stage_hint: str = "", user_profile: dict = None, news_content: str = "",
+            conversation_history: list[dict] | None = None) -> str | None:
         """
         调用AI，失败时自动重试并切换模型。
         返回字符串；失败会返回兜底文案，不会返回 None。
@@ -2081,6 +2084,22 @@ class AIEngine:
             tools: Function Calling工具定义列表（OpenAI格式）
             tool_choice: "auto"|"none"|"required" 或指定工具名
         """
+
+        # 仅接受 user/assistant 角色，并限制为最近 6 条，避免把遥测字段或超长内容注入模型。
+        normalized_history = []
+        for item in list(conversation_history or [])[-6:]:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            content = str(item.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                normalized_history.append({"role": role, "content": content[:500]})
+        cache_question = question
+        if normalized_history:
+            context_key = "\n".join(
+                f"{item['role']}:{item['content']}" for item in normalized_history
+            )
+            cache_question = f"{context_key}\ncurrent:{question}"
 
         # ── [v5.19.0] 人设引擎：设置情绪桶 context（供 _select_emotion_bucket 读取）──
         self._ctx_is_priv = is_priv
@@ -2101,7 +2120,7 @@ class AIEngine:
         try:
             opt = _get_optimizer()
             if opt and opt.enabled:
-                cached = opt.cache.get(question, mode)
+                cached = opt.cache.get(cache_question, mode)
                 if cached is not None:
                     cached_sanitized, cached_triggered = self._sanitize_reply_v2(cached)
                     # 历史缓存也必须经过当前输出门禁；拼音泄露只会触发检测、
@@ -2351,13 +2370,15 @@ class AIEngine:
             _mem_summary = ""
             if user_profile and isinstance(user_profile, dict):
                 _mem_summary = (user_profile.get("memory_summary") or "").strip()
-            self._last_memory_assisted = bool(_mem_summary)
+            self._last_memory_assisted = bool(_mem_summary or normalized_history)
+            request_messages = [
+                {"role": "system", "content": self._build_persona(mode, seed, news_content if mode in ("news", "afternoon_news", "evening_news") else "", is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile, message=question, model_name=active_model)},
+                *normalized_history,
+                {"role": "user", "content": question},
+            ]
             payload = {
                 "model": req_model,
-                "messages": [
-                    {"role": "system", "content": self._build_persona(mode, seed, news_content if mode in ("news", "afternoon_news", "evening_news") else "", is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile, message=question, model_name=active_model)},
-                    {"role": "user",   "content": question}
-                ],
+                "messages": request_messages,
                 "temperature": dyn_temp,
                 "top_p": dyn_top_p,
                 "max_tokens": self.config.get("MAX_TOKENS", 400),
@@ -2456,7 +2477,7 @@ class AIEngine:
                             try:
                                 opt = _get_optimizer()
                                 if opt:
-                                    opt.cache.put(question, mode, sanitized)
+                                    opt.cache.put(cache_question, mode, sanitized)
                                     opt.circuit.record_success(active_model)
                             except Exception as e:
                                 logger.debug(f"操作异常: {e}")

@@ -29,17 +29,17 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 配置 | 在用 | `core/settings.py` + `config.json` | 密钥仅 `.env` |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 1 句事实锚定观察；卡片署名 `@MoryMateBot`，自助订阅按钮独立指向 `@MorychannelBot`；新闻来源仅内部诊断；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
+| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 1 句随机人设互动尾语；尾语不总结新闻，随机采用温情自白、邀聊、人格表达或定制沟通；卡片署名 `@MoryMateBot`，自助订阅按钮独立指向 `@MorychannelBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段：morning_nudge(10:00) / afternoon_tease(14:30) / evening_warm(19:00) / night_hook(22:30)；AI 失败回退可信底稿 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 内置助理唤醒、签到积分福利、定制视频等人设化回答；福利/开通走自助售卖入口，定制确认走Mory联系入口；配置可同名覆盖或关闭 |
 
 ## 当前版本
-v5.35.12（2026-07-25）
+v5.35.13（2026-07-25）
 
 ## 最近 3 条大事
-1. 2026-07-25 v5.35.12 新闻与问候纠偏：新闻观察必须锚定具体事件，署名改为 `@MoryMateBot`；问候继承主助理人设、拒绝效率/技术文案并跳过 code/coder 模型。
-2. 2026-07-25 v5.35.11 群聊问题自动承接：助理唤醒、签到积分福利和定制视频按人设自动回复；繁体签到/QD提示正确格式；FAQ真实命中修复，答不上来给双按钮并进入每日问题汇总。
-3. 2026-07-25 v5.35.10 AI 正常聊天去舞台化：保留清冷/傲娇/温柔及场景亲密度，但人格碎片和时段语境不再虚构动作/生活画面；旧动作指令自动失效，最终输出合同与后置过滤双层拦截括号/星号动作和心理旁白。
+1. 2026-07-25 v5.35.13 新闻尾语改为随机人设互动：前5条只讲新闻，第6行禁止总结新闻，随机用温情自白、邀聊、人格表达或定制沟通立住小助理人设。
+2. 2026-07-25 v5.35.12 新闻与问候纠偏：卡片署名改为 `@MoryMateBot`；问候继承主助理人设、拒绝效率/技术文案并跳过 code/coder 模型。
+3. 2026-07-25 v5.35.11 群聊问题自动承接：助理唤醒、签到积分福利和定制视频按人设自动回复；繁体签到/QD提示正确格式；FAQ真实命中修复，答不上来给双按钮并进入每日问题汇总。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

@@ -41,7 +41,8 @@ def test_news_personas_require_five_headlines_before_observation():
         assert "严格只写5条" in prompt
         assert "第6行" in prompt
         assert "从10条候选中" in prompt
-        assert "观察必须点名" in prompt
+        assert "不得总结新闻" in prompt
+        assert "随机采用一种策略" in prompt
         assert "严格只写10条" not in prompt
         assert "第11行" not in prompt
 
@@ -69,12 +70,38 @@ def test_legacy_ten_item_news_override_cannot_replace_five_item_contract():
     assert "严格只写10条" not in persona
 
 
+def test_legacy_grounded_summary_prompt_cannot_override_persona_outro():
+    """v5.35.12 的事实总结模板也属于旧配置，生产必须自动换成新人设尾语。"""
+    from core.ai_engine import AIEngine
+
+    engine = object.__new__(AIEngine)
+    engine.config = {
+        "PROMPT_TEMPLATES": {
+            "afternoon_news": (
+                "从10条候选中挑选，严格只写5条，第6行写观察；"
+                "科技和财经合计最多2条，观察必须点名两个具体事件。"
+            ),
+        }
+    }
+
+    persona, full_replacement = engine._get_mode_persona(
+        "afternoon_news",
+        seed=456,
+        news_content="十条真实标题",
+    )
+
+    assert full_replacement is True
+    assert "不得总结新闻" in persona
+    assert "随机采用一种策略" in persona
+    assert "观察必须点名" not in persona
+
+
 def test_news_output_gate_rejects_source_labels_and_missing_items():
     from tasks.support.common import is_usable_news_output
 
     valid = "\n".join(
         [f"第{i}条综合头条已经讲清事实和影响" for i in range(1, 6)]
-        + ["💡 综合头条里的事实和影响还要继续看"]
+        + ["💡 我不想只做报时的人，更想听你说说今天真正放在心上的事"]
     )
     leaked = valid.replace(
         "第1条综合头条已经讲清事实和影响",
@@ -96,8 +123,8 @@ def test_news_output_gate_rejects_source_labels_and_missing_items():
     assert is_usable_news_output(overlong, expected_count=5) is False
 
 
-def test_news_output_gate_rejects_generic_observation_unrelated_to_headlines():
-    """第6行必须复盘本卡片的具体实体或事件，不能放万能空话。"""
+def test_news_output_gate_requires_persona_outro_instead_of_news_summary():
+    """第6行只负责立人设和促互动，不得继续总结前5条新闻。"""
     from tasks.support.common import is_usable_news_output
 
     headlines = [
@@ -113,6 +140,13 @@ def test_news_output_gate_rejects_generic_observation_unrelated_to_headlines():
     grounded = "\n".join(
         headlines + ["平台整改与中东局势，是这轮最该继续盯的两条线"]
     )
+    screenshot_summary = "\n".join(
+        headlines
+        + ["💡 先盯这两件事：携程因垄断被罚没超五十亿元；中东战争风险积聚美或两线作战"]
+    )
+    persona_outro = "\n".join(
+        headlines + ["我不想只做报时的人，更想听你说说今天真正放在心上的事"]
+    )
 
     assert is_usable_news_output(
         generic,
@@ -123,13 +157,29 @@ def test_news_output_gate_rejects_generic_observation_unrelated_to_headlines():
         grounded,
         expected_count=5,
         source_lines=headlines,
+    ) is False
+    assert is_usable_news_output(
+        screenshot_summary,
+        expected_count=5,
+        source_lines=headlines,
+    ) is False
+    assert is_usable_news_output(
+        persona_outro,
+        expected_count=5,
+        source_lines=headlines,
     ) is True
 
 
-def test_news_fallback_observation_uses_complete_headline_clauses():
-    from tasks.support.common import build_news_without_ai
+def test_news_fallback_uses_random_persona_strategy_not_headline_summary(monkeypatch):
+    import tasks.support.common as common
 
-    copy = build_news_without_ai(
+    selections = iter([
+        "custom_invite",
+        "有想做成专属内容的点子，就去找 Mory 聊聊定制，需求说清楚就好。",
+    ])
+    monkeypatch.setattr(common.random, "choice", lambda _items: next(selections))
+
+    copy = common.build_news_without_ai(
         [
             "携程因垄断被罚没超五十亿元，平台合规整改成焦点",
             "中东局势风险继续积聚，多方关注外溢影响",
@@ -140,8 +190,28 @@ def test_news_fallback_observation_uses_complete_headline_clauses():
         "午间",
     )
 
-    assert "先盯这两件事：携程因垄断被罚没超五十亿元；中东局势风险继续积聚" in copy
-    assert "，；" not in copy
+    outro = copy.splitlines()[-1]
+    assert outro == "💡 有想做成专属内容的点子，就去找 Mory 聊聊定制，需求说清楚就好。"
+    assert "携程" not in outro
+    assert "中东" not in outro
+
+
+def test_news_persona_outro_pool_covers_four_random_strategies():
+    from tasks.support.common import (
+        _NEWS_PERSONA_OUTRO_POOLS,
+        _is_persona_news_outro,
+    )
+
+    assert set(_NEWS_PERSONA_OUTRO_POOLS) == {
+        "warm_confession",
+        "invite_chat",
+        "persona_position",
+        "custom_invite",
+    }
+    for pool in _NEWS_PERSONA_OUTRO_POOLS.values():
+        assert len(pool) >= 2
+        for copy in pool:
+            assert _is_persona_news_outro([], [copy], source_lines=[])
 
 
 def test_news_source_chain_skips_partial_result_when_next_source_has_ten(monkeypatch):
