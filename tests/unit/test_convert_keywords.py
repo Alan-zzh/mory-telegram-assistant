@@ -119,12 +119,15 @@ def test_word_boundary_matching():
 
 
 def test_direct_access_request_reply():
-    """明确要入口时直接给预览群和自助下单，不交给LLM闲聊。"""
+    """入口回复按意图只给一个目标，不把预览和下单混在一起。"""
     for text in ("链接给我", "怎么加群", "群入口在哪", "自助机器人链接发我"):
         assert _is_direct_access_request(text) is True
-    reply = _direct_access_reply(is_priv=False)
-    assert "@moryselect" in reply
-    assert "@MorychannelBot" in reply
+    preview_reply = _direct_access_reply("链接给我", is_priv=False)
+    assert "@moryselect" in preview_reply
+    assert "@MorychannelBot" not in preview_reply
+    order_reply = _direct_access_reply("自助机器人链接发我", is_priv=True)
+    assert "MorychannelBot" in order_reply
+    assert "moryselect" not in order_reply.lower()
 
 
 def test_contextual_purchase_reply_skips_preview_and_closes_order():
@@ -138,6 +141,13 @@ def test_contextual_purchase_reply_skips_preview_and_closes_order():
         assert "预览" not in reply
         assert "@moryselect" not in reply.lower()
 
+    followup = _build_contextual_purchase_reply(
+        "就是这个味",
+        include_cta=False,
+    )
+    assert followup == "对，就是这个方向，风格对上了。"
+    assert "MorychannelBot" not in followup
+
     markup = _build_purchase_markup()
     assert markup.keyboard[0][0].text == "🛒 自助下单"
     assert markup.keyboard[0][0].url == "https://t.me/MorychannelBot"
@@ -149,6 +159,31 @@ def test_contextual_purchase_reply_skips_preview_and_closes_order():
         "普通闲聊。",
         conversion_candidate=False,
     ) == "普通闲聊。"
+
+
+def test_private_sales_reply_has_no_button_and_group_has_only_one_target():
+    from core.handlers.ai_reply_handler import (
+        _build_sales_reply_markup,
+        _recent_order_cta_sent,
+    )
+
+    assert _build_sales_reply_markup(
+        is_priv=True,
+        needs_handoff=False,
+        conversion_candidate=True,
+    ) is None
+
+    group_markup = _build_sales_reply_markup(
+        is_priv=False,
+        needs_handoff=False,
+        conversion_candidate=True,
+    )
+    assert len(group_markup.keyboard) == 1
+    assert [button.text for button in group_markup.keyboard[0]] == ["🛒 自助下单"]
+    assert _recent_order_cta_sent([
+        {"role": "assistant", "content": "直接去 @MorychannelBot 自助下单。"},
+        {"role": "user", "content": "就是这个味"},
+    ])
 
 
 if __name__ == "__main__":

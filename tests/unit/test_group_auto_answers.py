@@ -224,10 +224,9 @@ def test_question_detection_and_handoff_rules():
 
     markup = _build_unresolved_handoff_markup()
     assert len(markup.keyboard) == 1
-    assert [button.text for button in markup.keyboard[0]] == ["联系 Mory", "自助下单"]
+    assert [button.text for button in markup.keyboard[0]] == ["联系 Mory"]
     assert [button.url for button in markup.keyboard[0]] == [
         "https://t.me/Moryfansbot",
-        "https://t.me/MorychannelBot",
     ]
 
 

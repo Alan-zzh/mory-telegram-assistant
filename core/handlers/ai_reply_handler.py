@@ -94,13 +94,12 @@ def _should_offer_handoff(
 
 
 def _build_unresolved_handoff_markup():
-    """构建同一行的“联系 Mory / 自助下单”双按钮。"""
+    """未解决问题只给人工入口，禁止和下单入口混在同一轮。"""
     from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    markup = InlineKeyboardMarkup(row_width=2)
+    markup = InlineKeyboardMarkup(row_width=1)
     markup.row(
         InlineKeyboardButton("联系 Mory", url="https://t.me/Moryfansbot"),
-        InlineKeyboardButton("自助下单", url="https://t.me/MorychannelBot"),
     )
     return markup
 
@@ -116,18 +115,64 @@ def _build_purchase_markup():
     return markup
 
 
-def _build_contextual_purchase_reply(text: str) -> str:
+def _build_sales_reply_markup(
+    *,
+    is_priv: bool,
+    needs_handoff: bool,
+    conversion_candidate: bool,
+):
+    """私聊不挂销售按钮；非私聊每轮也只保留一个目标。"""
+    if is_priv:
+        return None
+    if needs_handoff:
+        return _build_unresolved_handoff_markup()
+    if conversion_candidate:
+        return _build_purchase_markup()
+    return None
+
+
+def _recent_order_cta_sent(history) -> bool:
+    """近期助手已给过下单入口时，本轮不再机械重复。"""
+    for item in list(history or [])[-6:]:
+        if not isinstance(item, dict) or item.get("role") != "assistant":
+            continue
+        content = str(item.get("content") or "").lower()
+        if "@morychannelbot" in content or "自助下单" in content:
+            return True
+    return False
+
+
+def _is_order_access_request(text: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or "").lower())
+    return any(
+        marker in compact
+        for marker in (
+            "怎么下单", "我要下单", "下单链接", "下单入口", "自助下单",
+            "自助机器人", "下单机器人", "订单机器人", "怎么买", "我要买",
+        )
+    )
+
+
+def _build_contextual_purchase_reply(text: str, *, include_cta: bool = True) -> str:
     """对截图中的承接短句做确定性收口，避免模型再次失忆或重复预览。"""
     compact = re.sub(r"\s+", "", str(text or ""))
     if any(marker in compact for marker in _PREFERENCE_CONFIRM_MARKERS):
+        if not include_cta:
+            return "对，就是这个方向，风格对上了。"
         return "对，就是这个方向。喜欢的话直接去 @MorychannelBot 自助下单。"
     if any(marker in compact for marker in ("开场", "穿衣服", "服装", "卡点", "变装", "镜头")):
+        if not include_cta:
+            return "这个思路可以，开场、服装和卡点变装都很明确，按这个要求填就好。"
         return (
             "这个思路可以，细节就按你说的来。"
             "定制直接去 @MorychannelBot 自助下单，把要求填进去。"
         )
     if any(marker in compact for marker in _CUSTOM_DETAIL_MARKERS):
+        if not include_cta:
+            return "可以定制，这个方向接得上。"
         return "可以定制。直接去 @MorychannelBot 自助下单，把想要的风格填进去。"
+    if not include_cta:
+        return "这个方向可以，接着按刚才的思路聊。"
     return "这个方向可以。直接去 @MorychannelBot 自助下单，按提示填要求。"
 
 
@@ -156,17 +201,23 @@ def _is_direct_access_request(text: str) -> bool:
     return False
 
 
-def _direct_access_reply(is_priv: bool = False) -> str:
-    if is_priv:
+def _direct_access_reply(text: str, is_priv: bool = False) -> str:
+    """一次只给一个入口：明确下单给订单入口，其余入口请求先给预览。"""
+    compact = re.sub(r"\s+", "", str(text or "").lower())
+    wants_order = any(
+        marker in compact
+        for marker in ("自助下单", "下单链接", "下单入口", "自助机器人", "下单机器人", "订单机器人")
+    )
+    if wants_order:
         return (
-            "给你入口啦，别再兜圈。\n"
-            "预览：https://t.me/moryselect\n"
             "自助下单：https://t.me/MorychannelBot"
+            if is_priv
+            else "自助下单 @MorychannelBot"
         )
     return (
-        "入口给你，自己去看就行。\n"
-        "预览群 @moryselect\n"
-        "自助下单 @MorychannelBot"
+        "预览：https://t.me/moryselect"
+        if is_priv
+        else "预览群 @moryselect"
     )
 
 
@@ -312,6 +363,12 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     _intent = getattr(dctx, "intent", None) or {}
     _intent_label = _intent.get("intent", "chat")
     purchase_ready = bool(getattr(dctx, "contextual_purchase", False))
+    conversation_history = getattr(dctx, "conversation_history", [])
+    repeat_cta_suppressed = (
+        purchase_ready
+        and _recent_order_cta_sent(conversation_history)
+        and not _is_order_access_request(msg)
+    )
     if purchase_ready and _intent_label != "purchase_intent":
         _intent = {
             "intent": "purchase_intent",
@@ -324,7 +381,10 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         if _intent_label == "flirt":
             stage_hint += "\n【意图-调戏】：用户在调戏/撩你。保持清冷傲娇人设，可以适当回撩但不主动，留悬念。"
         elif _intent_label == "purchase_intent":
-            stage_hint += "\n【意图-购买】：用户有明确购买意向。自然引导 @MorychannelBot 自助下单，别催。"
+            if repeat_cta_suppressed:
+                stage_hint += "\n【意图-购买承接】：近期已经给过下单入口。本轮只接住用户确认的风格或新增细节，不重复任何链接、入口或按钮。"
+            else:
+                stage_hint += "\n【意图-购买】：用户有明确购买意向。自然引导 @MorychannelBot 自助下单，别催。"
         elif _intent_label == "complaint":
             stage_hint += "\n【意图-投诉】：用户在抱怨/投诉。先共情安抚，承诺转达 Mory，别辩解。"
         elif _intent_label == "consult":
@@ -358,12 +418,19 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     except Exception as _faq_err:
         logger.debug(f"📋 FAQ匹配异常(静默跳过): {_faq_err}")
 
+    direct_access_handled = False
+    direct_access_order = False
     if resp is None and mode == "convert" and _is_direct_access_request(msg):
-        resp = _direct_access_reply(is_priv=is_priv)
+        direct_access_handled = True
+        direct_access_order = _is_order_access_request(msg)
+        resp = _direct_access_reply(msg, is_priv=is_priv)
         logger.info(f"🔗 直接入口回复 uid={uid} mode={mode}")
 
     if purchase_ready:
-        resp = _build_contextual_purchase_reply(msg)
+        resp = _build_contextual_purchase_reply(
+            msg,
+            include_cta=not repeat_cta_suppressed,
+        )
         logger.info(f"🛒 上下文购买意图确定性收口 uid={uid} mode={mode}")
 
     ai_attempted = False
@@ -383,7 +450,9 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         mode == "convert"
         or _intent_label == "purchase_intent"
         or purchase_ready
-    )
+    ) and not repeat_cta_suppressed
+    if direct_access_handled and not direct_access_order:
+        conversion_candidate = False
     resp = _ensure_conversion_cta(
         resp,
         conversion_candidate=conversion_candidate,
@@ -397,7 +466,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         is_priv=is_priv,
     )
     if needs_handoff and not resp:
-        resp = "这个我不乱说。你可以直接问 Mory，或者去自助下单看看。"
+        resp = "这个我不乱说，直接问 @Moryfansbot。"
 
     if resp is None:
         resp = _final_ai_reply_fallback(mode, is_priv=is_priv)
@@ -409,12 +478,11 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             logger.error(f"故障通知发送失败: {notify_err}")
 
     if resp:
-        if needs_handoff:
-            handoff_markup = _build_unresolved_handoff_markup()
-        elif conversion_candidate:
-            handoff_markup = _build_purchase_markup()
-        else:
-            handoff_markup = None
+        handoff_markup = _build_sales_reply_markup(
+            is_priv=is_priv,
+            needs_handoff=needs_handoff,
+            conversion_candidate=conversion_candidate,
+        )
         if isinstance(resp, dict):
             tool_result = _handle_tool_calls(resp, bot, m, CONFIG, db)
             if tool_result:

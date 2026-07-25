@@ -11,7 +11,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 模块 | 状态 | 入口文件 | 备注 |
 |------|------|----------|------|
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
-| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | 保留清冷/傲娇/温柔与群聊/私聊差异；同一用户/聊天最近30分钟3轮问答进入意图与模型并隔离缓存；定制承接短句保持购买阶段，跳过重复预览并直接给自助下单；FAQ未命中且AI无可靠答案时给联系Mory/自助下单双按钮；最终合同禁止动作旁白和虚构生活画面 |
+| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | 保留清冷/傲娇/温柔与群聊/私聊差异；同一用户/聊天最近30分钟3轮问答进入意图与模型并隔离缓存；首次明确定制可给一次正文下单入口，后续确认和细节补充只承接内容；私聊零按钮，非私聊每轮单目标；FAQ未解决时只给人工入口；最终合同禁止动作旁白和虚构生活画面 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；问候跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 53 个 BaseTask 子类 | FAQ每日23:50汇总待优化问题与未命中样本；`modules/auto_tasks.py` 为 legacy（`_start_with_apscheduler` 死代码，仅保留部分工具函数） |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层 + 营销话术 4 维度 71 条 + AI 辅助决策 4 函数（默认关闭） |
@@ -34,12 +34,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 内置助理唤醒、签到积分福利、定制视频等人设化回答；福利/开通走自助售卖入口，定制确认走Mory联系入口；配置可同名覆盖或关闭 |
 
 ## 当前版本
-v5.35.14（2026-07-25）
+v5.35.15（2026-07-25）
 
 ## 最近 3 条大事
-1. 2026-07-25 v5.35.14 AI 对话上下文与定制转化闭环：最近3轮真实问答进入意图、模型和缓存键；定制承接短句不再失忆/重复预览，直接自助下单。
-2. 2026-07-25 v5.35.13 新闻尾语改为随机人设互动并已部署生产：前5条只讲新闻，第6行禁止总结新闻，随机用温情自白、邀聊、人格表达或定制沟通立住小助理人设；双服务 active+enabled、health v5.35.13，管理员 Rich Message 验收消息 ID 2948。
-3. 2026-07-25 v5.35.12 新闻与问候纠偏：卡片署名改为 `@MoryMateBot`；问候继承主助理人设、拒绝效率/技术文案并跳过 code/coder 模型。
+1. 2026-07-25 v5.35.15 定制转化节奏收口：意图继续承接，但近期已给过下单入口时不重复 CTA；私聊零按钮，预览/下单/人工入口单轮互斥。
+2. 2026-07-25 v5.35.14 AI 对话上下文与定制转化闭环：最近3轮真实问答进入意图、模型和缓存键；定制承接短句不再失忆。
+3. 2026-07-25 v5.35.13 新闻尾语改为随机人设互动并已部署生产：前5条只讲新闻，第6行禁止总结新闻，随机用温情自白、邀聊、人格表达或定制沟通立住小助理人设；双服务 active+enabled、health v5.35.13，管理员 Rich Message 验收消息 ID 2948。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
