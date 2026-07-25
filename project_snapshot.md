@@ -37,7 +37,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.36.0（2026-07-25）
 
-生产状态：v5.36.0 本地实现与独立专家审查修复完成，471 passed / 7 skipped；190 个 DB 委托方法无缺失/孤儿；生产部署回执待本次收口后回填。
+生产状态：v5.36.0 已部署并完成独立代码专家、营销专家双重审查（均 GO）。本地 471 passed / 7 skipped，190 个 DB 委托方法无缺失/孤儿；生产 37/37 个本次运行文件哈希一致，`mory-assistant`/`mory-dashboard` 均 active+enabled、重启 0，health HTTP 200 且版本 v5.36.0，管理员风格样本 API 未鉴权返回 401，当前服务高优先级错误日志为 0。生产已存在 `reply_style_samples`、`business_conversation_context`、`conversation_conversion_state` 三张表，每分钟短期原文物理清理任务生效；ReplyContract 1.0.0 与 nine-case 成交矩阵通过，进化入口启用但强制人工审核、禁止自动应用和保存原始事件文本，夜间主动提醒双开关保持关闭。
 
 ## 最近 3 条大事
 1. 2026-07-25 v5.36.0 ReplyContract v1：双项目统一透明小助理人设、全自动沟通边界、单目标成交与人工审核风格进化。
