@@ -24,6 +24,7 @@ sudo systemctl restart mory-dashboard     # Dashboard，端口 6616
 python deploy_vps.py                       # stop→上传→start→验证（safe_upload_config 保护密钥）
 ```
 部署后验证：`systemctl status` 双 active + `curl localhost:6616/api/health`。
+项目默认把生产部署纳入更新/修复闭环：本地门禁通过并提交可信 Git commit 后直接增量部署；仅限本地、无运行态影响或安全门禁阻断时跳过。完整约束以 `AGENTS.md` 为准。
 
 ## 目录结构
 - `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler。

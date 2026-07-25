@@ -11,7 +11,11 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 
-from core.broadcast_formatter import _parse_news_copy, build_rich_news_html
+from core.broadcast_formatter import (
+    BROADCAST_SENDER_HANDLE,
+    _parse_news_copy,
+    build_rich_news_html,
+)
 from core.helpers import can_delete_message, get_broadcast_auto_delete_config
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
@@ -51,6 +55,20 @@ _NEWS_INTERNAL_MARKERS = (
 _NEWS_SOURCE_LABEL_RE = re.compile(
     r"【(?:社会|综合|国际|生活|体育|文娱|财经|科技)[·|｜][^】]+】"
 )
+_NEWS_GENERIC_OBSERVATION_MARKERS = (
+    "议题交织",
+    "现实关切",
+    "值得关注",
+    "信息面比较散",
+    "重点不只一条线",
+    "先看事实和后续变化",
+    "折射现实",
+)
+_NEWS_GROUNDING_STOP_NGRAMS = {
+    "今日", "今天", "早间", "午间", "晚间", "新闻", "热点", "信息",
+    "重点", "观察", "变化", "继续", "关注", "值得", "现实", "事件",
+    "问题", "进展", "影响", "后续", "这轮", "两条", "一条",
+}
 
 
 class TaskAbort(Exception):
@@ -306,8 +324,49 @@ def looks_like_ai_fallback(text: str) -> bool:
     return bool(value) and any(marker in value for marker in _AI_FALLBACK_MARKERS)
 
 
-def is_usable_news_output(text: str, expected_count: int = 5) -> bool:
-    """新闻 AI 输出门禁：条数准确且绝不携带内部来源/聚合标签。"""
+def _news_grounding_ngrams(text: str, size: int) -> set[str]:
+    """提取中文事实短语，供观察行与本卡片新闻做轻量语义锚定。"""
+    ngrams = set()
+    for chunk in re.findall(r"[\u4e00-\u9fff]{2,}", text or ""):
+        for index in range(max(0, len(chunk) - size + 1)):
+            token = chunk[index:index + size]
+            if token not in _NEWS_GROUNDING_STOP_NGRAMS:
+                ngrams.add(token)
+    return ngrams
+
+
+def _is_grounded_news_observation(
+    news_items: List[str],
+    observation_parts: List[str],
+    source_lines: List[str] | None = None,
+) -> bool:
+    """观察必须复用新闻里的具体实体/事件词，拒绝任意卡片都能套的空话。"""
+    observation = " ".join(observation_parts).strip()
+    if not observation:
+        return False
+    if any(marker in observation for marker in _NEWS_GENERIC_OBSERVATION_MARKERS):
+        return False
+
+    evidence = "\n".join([*news_items, *(source_lines or [])])
+    shared_trigrams = (
+        _news_grounding_ngrams(observation, 3)
+        & _news_grounding_ngrams(evidence, 3)
+    )
+    if shared_trigrams:
+        return True
+    shared_bigrams = (
+        _news_grounding_ngrams(observation, 2)
+        & _news_grounding_ngrams(evidence, 2)
+    )
+    return len(shared_bigrams) >= 2
+
+
+def is_usable_news_output(
+    text: str,
+    expected_count: int = 5,
+    source_lines: List[str] | None = None,
+) -> bool:
+    """新闻 AI 输出门禁：5+1 准确、无内部标签，且观察与本卡片事实相关。"""
     value = (text or "").strip()
     if not value:
         return False
@@ -316,7 +375,15 @@ def is_usable_news_output(text: str, expected_count: int = 5) -> bool:
     if _NEWS_SOURCE_LABEL_RE.search(value):
         return False
     news_items, observation_parts = _parse_news_copy(value, max_items=5)
-    return len(news_items) == expected_count and len(observation_parts) == 1
+    return (
+        len(news_items) == expected_count
+        and len(observation_parts) == 1
+        and _is_grounded_news_observation(
+            news_items,
+            observation_parts,
+            source_lines=source_lines,
+        )
+    )
 
 
 def build_news_without_ai(lines: List[str], time_desc: str) -> str:
@@ -341,7 +408,16 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
     numbered = [f"{i+1}. {title}" for i, title in enumerate(cleaned)]
     count = len(numbered)
     header = f"📰 {time_desc}新闻速览（共 {count} 条）"
-    observation = f"\n\n💡 {time_desc}重点不只一条线，先看事实和后续变化。"
+    def _short_anchor(title: str, max_length: int = 18) -> str:
+        first_clause = re.split(r"[，。；！？]", title, maxsplit=1)[0].strip()
+        return first_clause[:max_length].rstrip("，。；、：")
+
+    first_anchor = _short_anchor(cleaned[0])
+    if len(cleaned) > 1:
+        second_anchor = _short_anchor(cleaned[1])
+        observation = f"\n\n💡 先盯这两件事：{first_anchor}；{second_anchor}"
+    else:
+        observation = f"\n\n💡 这条值得继续盯：{first_anchor}"
     return header + "\n\n" + "\n".join(numbered) + observation
 
 
@@ -462,7 +538,11 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                 news = build_news_without_ai(lines, time_desc)
             else:
                 expected_count = min(5, len(lines))
-                if not is_usable_news_output(news, expected_count=expected_count):
+                if not is_usable_news_output(
+                    news,
+                    expected_count=expected_count,
+                    source_lines=lines,
+                ):
                     actual_count = len(_parse_news_copy(news, max_items=5)[0])
                     logger.warning(
                         f"{time_desc}新闻 AI 输出未通过门禁："
@@ -523,7 +603,7 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                     sent = send_and_track(
                         rm,
                         gid,
-                        news,
+                        news + f"\n\n{BROADCAST_SENDER_HANDLE}",
                         reply_markup=markup,
                     )
                     if sent:

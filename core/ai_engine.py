@@ -38,6 +38,7 @@ import time
 import logging
 import threading
 import random
+import re
 import os
 from datetime import datetime, timezone, timedelta, date as _date_mod
 from collections import deque
@@ -292,18 +293,19 @@ class AIEngine:
         "trendradar_noon_news",
         "trendradar_evening_news",
     }
+    _GREETING_PROMPT_MODES = {"morning", "afternoon", "evening", "night"}
 
     _DEFAULT_PROMPT_TEMPLATES = {
         "tarot":    "\n【塔罗师模式】：用神秘、宿命的语调给出运势占卜，末尾加一张大阿卡那卡牌名及简短解读。",
         "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory。",
         "dream":    "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
         "fortune":  "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
-        "news":     "你是Mory，在群里把今天真正值得知道的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的总观察。\n3. 每条22到38个字，先说清事件本身，再点明进展、影响或下一步；五条之间不得同题重复。\n4. 优先社会民生、国内要闻、国际和公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气像真人刚看完后讲重点，可以有轻微态度，但不玩梗、不煽情、不站队、不写主持稿。\n6. 只能依据给你的真实标题，禁止编造数字、原因、结果和背景；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'播报''以上就是''据悉''据报道''热搜第一'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "afternoon_news": "你是Mory，在群里把午间值得补看的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的午间观察。\n3. 每条22到38个字，先讲发生了什么，再点一下现实影响或后续看点；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，允许一点真实反应，但不要乱玩梗、阴阳怪气或像标题搬运机。\n6. 只能依据真实标题，禁止编造；信息不足时宁可写稳一点。\n7. 不写平台名、来源、热度或聚合方式，不出现'午报''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "evening_news":   "你是Mory，在群里把今晚最值得知道的综合头条收清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的晚间观察。\n3. 每条22到38个字，先把事件说明白，再点一下结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留一点人味，但不煽情、不说教、不替大家下结论，也不写主持稿。\n6. 只能依据真实标题，禁止编造细节；拿不准就用保守说法。\n7. 不写平台名、来源、热度或聚合方式，不出现'晚报''回顾''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_morning_news": "你是Mory，在群里把刚看到的综合热点讲明白（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的总观察。\n3. 每条22到38个字，先交代事件，再补一句为什么值得看；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留聊天感但别夸张、别端着，更不要像复制热搜标题。\n6. 只能依据真实标题，禁止脑补细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''以上就是''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_noon_news": "你是Mory，在群里快速讲清午间冒头的综合热点（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的午间观察。\n3. 每条22到38个字，先说发生了什么，再补一句后续看点或现实影响；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，不刻意吐槽，不堆热词，不写主持稿。\n6. 只基于真实标题，禁止编造；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_evening_news": "你是Mory，在群里把今晚值得继续盯的综合热点讲顺（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到24字的晚间观察。\n3. 每条22到38个字，先把事情讲清楚，再补一句结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留生活化语气，但不鸡汤、不说教、不替读者站队。\n6. 只能依据真实标题，禁止编造细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "news":     "你是Mory，在群里把今天真正值得知道的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的总观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先说清事件本身，再点明进展、影响或下一步；五条之间不得同题重复。\n4. 优先社会民生、国内要闻、国际和公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气像真人刚看完后讲重点，可以有轻微态度，但不玩梗、不煽情、不站队、不写主持稿。\n6. 只能依据给你的真实标题，禁止编造数字、原因、结果和背景；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'播报''以上就是''据悉''据报道''热搜第一'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "afternoon_news": "你是Mory，在群里把午间值得补看的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的午间观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先讲发生了什么，再点一下现实影响或后续看点；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，允许一点真实反应，但不要乱玩梗、阴阳怪气或像标题搬运机。\n6. 只能依据真实标题，禁止编造；信息不足时宁可写稳一点。\n7. 不写平台名、来源、热度或聚合方式，不出现'午报''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "evening_news":   "你是Mory，在群里把今晚最值得知道的综合头条收清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的晚间观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先把事件说明白，再点一下结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留一点人味，但不煽情、不说教、不替大家下结论，也不写主持稿。\n6. 只能依据真实标题，禁止编造细节；拿不准就用保守说法。\n7. 不写平台名、来源、热度或聚合方式，不出现'晚报''回顾''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_morning_news": "你是Mory，在群里把刚看到的综合热点讲明白（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的总观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先交代事件，再补一句为什么值得看；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留聊天感但别夸张、别端着，更不要像复制热搜标题。\n6. 只能依据真实标题，禁止脑补细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''以上就是''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_noon_news": "你是Mory，在群里快速讲清午间冒头的综合热点（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的午间观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先说发生了什么，再补一句后续看点或现实影响；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，不刻意吐槽，不堆热词，不写主持稿。\n6. 只基于真实标题，禁止编造；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "trendradar_evening_news": "你是Mory，在群里把今晚值得继续盯的综合热点讲顺（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行写一句14到28字的晚间观察。观察必须点名本卡片至少两个具体实体、事件或共同变化，禁止“议题交织、现实关切、值得关注”这类万能空话。\n3. 每条22到38个字，先把事情讲清楚，再补一句结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留生活化语气，但不鸡汤、不说教、不替读者站队。\n6. 只能依据真实标题，禁止编造细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "leak":     "用八卦语气说一句知识库中已经明确记录的Mory偏好，不超过20字；没有可靠资料就只做轻松互动，禁止编造生活细节。",
         "rules":    "你是群规的讲解员。用自然、友好的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句欢迎的话迎接新人。",
         "convert":  "\n【转化模式】：对方表现出购买意向（问价格/特权/解锁/怎么买/怎么私聊等）。{convert_stage_hint}",
@@ -311,46 +313,39 @@ class AIEngine:
         "nudge":    "\n【自然植入】：不违和地暗示用户关注Mory。绝不能直接提钱、价格、付费这些字眼。要像不经意间提到'群里老粉都懂那种感觉'、'有些东西只有自己体会过才知道'。只输出一句话，不超过25字。",
         "convert_soft": "\n【轻量转化】：暗示用户可以考虑更进一步了解Mory。不要直接说买/付费/订阅。可以暗示'Mory最近在准备一些更用心的东西'、'有些内容真的值得看看'。只输出一句话，不超过25字。",
         "morning": (
-            "你是Mory，给熟悉的群友发一条早安。\n"
-            "只写35到70个汉字，最多两句，不加标题，不写清单。\n"
-            "用群聊口语直接说，可以回应刚醒、事情多或没状态这类普遍情况，"
-            "不要写成场景小说，也不要替用户断言身体感受。"
-            "不要写Mory本人做了什么，禁止“我刚/我在/我今天”式生活经历；"
-            "不要虚构天气、行程或刚发生的事，不要每次咖啡、阳光、窗边三件套。\n"
-            "按钮会单独提供联系入口，正文不要营销、不要提完整版/圈层/懂的人，"
-            "也不要用“慢慢来”“别把自己逼太紧”“今天会顺一点”这类套话。\n"
-            "禁用“光线、身心、归位、允许自己、外界期待、安静地存在”等抒情疗愈腔。"
-            "像群友随口提醒一句，具体、清醒、不端着。{seed_hint}"
+            "你是Mory，在熟悉的粉丝群里发一条早安，延续主助理人设里的清冷、小傲娇和温柔。\n"
+            "只写35到70个汉字，最多两句，不加标题，不写清单。重点是让群友感到被惦记、愿意冒泡，"
+            "像熟人自然开口，不是客服、公告或生活导师。\n"
+            "不写AI、编程、运维或效率指导，不谈多线程、任务、通知、窗口、待办和工作方法；"
+            "不虚构Mory刚醒、天气、行程或动作场景，也不替群友断言身体和情绪。\n"
+            "按钮会单独提供入口，正文不要营销、不要提完整版/圈层/懂的人。"
+            "允许一点傲娇或亲近感，但不油腻、不撒鸡汤、不写万能安慰。{seed_hint}"
         ),
         "afternoon": (
-            "你是Mory，给熟悉的群友发一条午后问候。\n"
-            "只写35到70个汉字，最多两句，不加标题，不写清单。\n"
-            "用群聊口语说一个下午常见的实际问题，例如注意力被切散、事情卡住，"
-            "再给一句能执行的小提醒；不要写Mory本人做了什么，"
-            "不虚构天气、地点、会议或生活经历。\n"
-            "按钮会单独提供联系入口，正文不要营销，不要强行提私聊、偏爱、后面那层。"
-            "禁用“犯困正常”“喝口水缓一缓”“剩下慢慢推”等模板句。\n"
-            "禁用“光线、呼吸、身心、节奏、归位、允许自己”等抒情疗愈腔。"
-            "允许清冷或小吐槽，但不要撒娇、鸡汤和主持腔。{seed_hint}"
+            "你是Mory，在熟悉的粉丝群里发一条午安，延续主助理人设里的清冷、小傲娇和温柔。\n"
+            "只写35到70个汉字，最多两句，不加标题，不写清单。先自然问候，再用一句走心的话"
+            "让群友感到你真的在意他们、愿意听他们说，像熟人聊天而不是统一群发。\n"
+            "不写AI、编程、运维或效率指导，不谈多线程、任务、通知、窗口、待办和工作方法；"
+            "不虚构天气、地点、会议、Mory生活经历或动作场景，也不替群友判断状态。\n"
+            "按钮会单独提供入口，正文不要营销。允许一点清冷、小傲娇或亲近感，"
+            "但不油腻、不鸡汤、不主持、不写模板化生活建议。{seed_hint}"
         ),
         "evening": (
-            "你是Mory，给熟悉的群友发一条傍晚问候。\n"
-            "只写35到70个汉字，最多两句，不加标题，不写清单。\n"
-            "用群聊口语说一个傍晚常见的实际状态，接一句具体但不过界的提醒；"
-            "不要写Mory本人做了什么，不虚构刚洗澡、刚下班、窗外景色或其他个人经历。\n"
-            "按钮会单独提供联系入口，正文不要营销，不要把关心写成转化钩子。"
-            "禁用“天色慢慢暗下来”“今天辛苦了”“剩下交给明天”等套话。\n"
-            "禁用“夜色、身心、归位、允许自己、外界期待、留一段空隙”等抒情疗愈腔。"
-            "语气清醒、有一点温度，结尾不必每次提问。{seed_hint}"
+            "你是Mory，在熟悉的粉丝群里发一条晚间问候，延续主助理人设里的清冷、小傲娇和温柔。\n"
+            "只写35到70个汉字，最多两句，不加标题，不写清单。像熟人来问一句今天过得怎样，"
+            "有温度、愿意听，但不替大家总结人生，也不端着安慰人。\n"
+            "不写AI、编程、运维或效率指导，不谈任务、进度、复盘、通知、窗口、待办和工作方法；"
+            "不虚构Mory刚下班、洗澡、天气、景色或动作场景，也不替群友判断状态。\n"
+            "按钮会单独提供入口，正文不要营销。可以有一点傲娇或走心，"
+            "但不油腻、不鸡汤、不写“剩下交给明天”之类套话。{seed_hint}"
         ),
         "night": (
-            "你是Mory，给还没睡的群友留一句睡前话。\n"
-            "只写30到65个汉字，最多两句，不加标题，不写清单。\n"
-            "用群聊口语说一个睡前常见的实际问题，再给一句不说教、能执行的收尾；"
-            "不要写Mory本人做了什么，不虚构洗澡、被窝、失眠或窗外城市，不要暧昧营业。\n"
-            "按钮会单独提供联系入口，正文不提私聊、隐藏内容、偏爱或圈层。"
-            "避开“夜深了”“别刷手机”“好梦”“今天的事交给明天”等惯用句；"
-            "禁用“蓝光、眼皮、夜色、身心、归位、允许自己、安静地存在”等抒情疗愈腔。{seed_hint}"
+            "你是Mory，在熟悉的粉丝群里留一句睡前话，延续主助理人设里的清冷、小傲娇和温柔。\n"
+            "只写30到65个汉字，最多两句，不加标题，不写清单。像熟人认真道晚安，"
+            "让群友感到被记得、愿意再说一句，而不是给睡眠或效率建议。\n"
+            "不写AI、编程、运维或效率指导，不谈任务、手机、通知、待办和工作方法；"
+            "不虚构Mory洗澡、被窝、失眠、窗外景色或动作场景，也不替群友判断状态。\n"
+            "按钮会单独提供入口，正文不要营销。可以走心但别煽情，亲近但别演暧昧剧情。{seed_hint}"
         ),
     }
 
@@ -745,7 +740,7 @@ class AIEngine:
         self._pool_indices["chat"] = self.current_idx
             
         # ── 三层智能路由（轻量/标准/旗舰）────────────────────────────
-        self.mode_routing = config.get("MODE_ROUTING", {})
+        configured_mode_routing = config.get("MODE_ROUTING", {})
         self._tier_pools = {}
         omni_text_pool = self.model_pools.get("omni", [])
         for tier_name in ["llm_light", "llm_standard", "llm_premium"]:
@@ -777,6 +772,11 @@ class AIEngine:
             "cart_recovery": "llm_standard", "tarot_interpret": "llm_standard",
             "news": "llm_standard", "afternoon_news": "llm_standard", "evening_news": "llm_standard", "trendradar_morning_news": "llm_standard", "trendradar_noon_news": "llm_standard", "trendradar_evening_news": "llm_standard",
         }
+        # 局部 MODE_ROUTING 只覆盖明确配置的 mode，不能让未列出的午安/晚安
+        # 从 llm_light 意外掉到 llm_standard。
+        self.mode_routing = dict(self._default_mode_routing)
+        if isinstance(configured_mode_routing, dict):
+            self.mode_routing.update(configured_mode_routing)
 
         self._tier_fallback = {
             "llm_premium": ["llm_standard", "llm_light"],
@@ -1112,6 +1112,17 @@ class AIEngine:
     def _mode_prefers_non_thinking(mode: str) -> bool:
         """实时聊天、播报和业务咨询优先走已验证的非思考模型，避免 30 秒假死。"""
         return mode not in {"tarot", "dream"}
+
+    @classmethod
+    def _is_model_suitable_for_mode(cls, model_name: str, mode: str) -> bool:
+        """问候只用通用对话模型，禁止 code/coder 专用模型污染粉丝群文案。"""
+        if mode not in cls._GREETING_PROMPT_MODES:
+            return True
+        return re.search(
+            r"(?:^|[-_/])(code|coder|coding)(?:$|[-_/])",
+            str(model_name or ""),
+            flags=re.IGNORECASE,
+        ) is None
 
     def _ensure_valid_model(self, pool_name: str = "chat"):
         """确保指定池的当前模型可用，如果被拉黑或过期则自动切到下一个"""
@@ -1763,16 +1774,26 @@ class AIEngine:
         configured_modes = self.config.get("PROMPT_TEMPLATES", {})
         if isinstance(configured_modes, dict):
             legacy_news_modes = []
+            legacy_greeting_modes = []
             for configured_mode, configured_prompt in configured_modes.items():
+                prompt_text = str(configured_prompt or "")
                 if configured_mode in self._NEWS_PROMPT_MODES:
-                    prompt_text = str(configured_prompt or "")
                     if (
                         "严格只写5条" not in prompt_text
                         or "第6行" not in prompt_text
                         or "从10条候选中" not in prompt_text
                         or "科技和财经合计最多2条" not in prompt_text
+                        or "观察必须点名" not in prompt_text
                     ):
                         legacy_news_modes.append(configured_mode)
+                        continue
+                if configured_mode in self._GREETING_PROMPT_MODES:
+                    if (
+                        "熟悉的粉丝群" not in prompt_text
+                        or "延续主助理人设" not in prompt_text
+                        or "不写AI、编程、运维或效率指导" not in prompt_text
+                    ):
+                        legacy_greeting_modes.append(configured_mode)
                         continue
                 modes[configured_mode] = configured_prompt
             if (
@@ -1784,6 +1805,15 @@ class AIEngine:
                     + ",".join(sorted(legacy_news_modes))
                 )
                 self._legacy_news_prompt_warned = True
+            if (
+                legacy_greeting_modes
+                and not getattr(self, "_legacy_greeting_prompt_warned", False)
+            ):
+                logger.warning(
+                    "检测到旧版问候提示词覆盖，已自动忽略并使用粉丝群人设模板："
+                    + ",".join(sorted(legacy_greeting_modes))
+                )
+                self._legacy_greeting_prompt_warned = True
         if mode not in modes:
             return ("", False)
         if mode in self._NEWS_PROMPT_MODES:
@@ -1800,6 +1830,39 @@ class AIEngine:
             if stage_hint:
                 base += f"\n{stage_hint}"
             return (base, False)
+
+    def _get_greeting_persona_anchor(self) -> str:
+        """提取主助理人设的稳定身份和性格，供定时问候继承。
+
+        问候不加载业务知识、转化钩子和对话记忆，避免把群内问候写成销售或
+        单人私聊；同时不再用一个孤立模板替换掉 BASE_PERSONA。
+        """
+        cfg = self.config
+        base = str(cfg.get("BASE_PERSONA") or cfg.get("SYSTEM_PROMPT") or "").strip()
+        style = str(cfg.get("STYLE_APPEND") or "").strip()
+        base = self._strip_legacy_stage_prompt_lines(base)
+
+        selected_lines = []
+        current_section = False
+        allowed_sections = {"【身份锚定】", "【性格光谱】"}
+        for line in base.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("【") and stripped.endswith("】"):
+                current_section = stripped in allowed_sections
+            if current_section:
+                selected_lines.append(line)
+
+        identity = "\n".join(selected_lines).strip()
+        if not identity:
+            identity = base[:800].strip()
+        parts = ["【主助理人设底色】", identity]
+        if style:
+            parts.extend(["【当前风格调整】", style])
+        parts.append(
+            "以上只决定说话的性格和亲近感；本次是面向整个粉丝群的定时问候，"
+            "不得写成私聊、销售、效率指导或虚构生活剧情。"
+        )
+        return "\n".join(part for part in parts if part)
 
     def _build_persona(self, mode: str, seed: int = 0, news_content: str = "", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, message: str = "", model_name: str = None) -> str:
         """根据模式动态拼装 system prompt，seed用于防重复
@@ -1921,6 +1984,13 @@ class AIEngine:
         if is_full:
             if mode in self._NEWS_PROMPT_MODES:
                 return mode_text
+            if mode in self._GREETING_PROMPT_MODES:
+                return (
+                    self._get_greeting_persona_anchor()
+                    + "\n\n【本次问候要求】\n"
+                    + mode_text
+                    + self._get_normal_chat_output_contract()
+                )
             return mode_text + self._get_normal_chat_output_contract()
         persona += mode_text
 
@@ -2127,6 +2197,20 @@ class AIEngine:
             else:
                 active_model = self.current_model
 
+            if not self._is_model_suitable_for_mode(active_model, mode):
+                logger.info(
+                    f"⏩ 模型{active_model}是代码专用模型，不用于粉丝群问候，本轮跳过"
+                )
+                local_skip_streak += 1
+                if use_tier_routing:
+                    self._next_tier_model(tier)
+                else:
+                    self._next_available_model()
+                if local_skip_streak >= max_local_skips:
+                    logger.warning("⚠️ 没有适合粉丝群问候的通用对话模型，返回走心话术兜底")
+                    break
+                continue
+
             # 熔断检查必须针对本轮实际要调用的模型，而不是旧的全局current_model。
             try:
                 opt = _get_optimizer()
@@ -2245,6 +2329,15 @@ class AIEngine:
                         logger.info(f"💰 LLM 成本降级: uid={_uid} tier={_cost_tier} reason={_reason}")
             except Exception as _cg_err:
                 logger.debug(f"成本熔断检查异常（不影响主流程）: {_cg_err}")
+
+            # ModelRouter、A/B 或成本降级都可能在初选后再次覆盖模型；
+            # 请求边界复核一次，保证问候最终仍由通用对话模型生成。
+            if not self._is_model_suitable_for_mode(req_model, mode):
+                logger.warning(
+                    f"⏩ 二级路由为问候选择了代码专用模型{req_model}，"
+                    f"已恢复通用对话模型{active_model}"
+                )
+                req_model = active_model
 
             headers = {
                 "Authorization": f"Bearer {req_api_key}",

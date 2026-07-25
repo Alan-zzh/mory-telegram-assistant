@@ -22,7 +22,8 @@ def test_news_internal_source_labels_never_render():
         assert "多源汇总" not in rendered
         assert "均衡筛选" not in rendered
         assert "TrendRadar" not in rendered
-        assert "@MorychannelBot" in rendered
+        assert "@MoryMateBot" in rendered
+        assert "@MorychannelBot" not in rendered
 
 
 def test_news_personas_require_five_headlines_before_observation():
@@ -40,6 +41,7 @@ def test_news_personas_require_five_headlines_before_observation():
         assert "严格只写5条" in prompt
         assert "第6行" in prompt
         assert "从10条候选中" in prompt
+        assert "观察必须点名" in prompt
         assert "严格只写10条" not in prompt
         assert "第11行" not in prompt
 
@@ -72,7 +74,7 @@ def test_news_output_gate_rejects_source_labels_and_missing_items():
 
     valid = "\n".join(
         [f"第{i}条综合头条已经讲清事实和影响" for i in range(1, 6)]
-        + ["💡 今天的重点分散在社会民生和国际变化"]
+        + ["💡 综合头条里的事实和影响还要继续看"]
     )
     leaked = valid.replace(
         "第1条综合头条已经讲清事实和影响",
@@ -84,10 +86,62 @@ def test_news_output_gate_rejects_source_labels_and_missing_items():
         + ["旧版第十一行观察"]
     )
 
-    assert is_usable_news_output(valid, expected_count=5) is True
+    assert is_usable_news_output(
+        valid,
+        expected_count=5,
+        source_lines=valid.splitlines()[:5],
+    ) is True
     assert is_usable_news_output(leaked, expected_count=5) is False
     assert is_usable_news_output(missing, expected_count=5) is False
     assert is_usable_news_output(overlong, expected_count=5) is False
+
+
+def test_news_output_gate_rejects_generic_observation_unrelated_to_headlines():
+    """第6行必须复盘本卡片的具体实体或事件，不能放万能空话。"""
+    from tasks.support.common import is_usable_news_output
+
+    headlines = [
+        "携程因垄断被罚没超五十亿元，平台整改与用户权益保障成焦点",
+        "中东战争风险积聚美或两线作战，地区局势外溢效应值得持续警惕",
+        "南岸情书在链条征百分之十税，高净值人群资产配置逻辑生变",
+        "王小洪会见美联邦调查局局长，中美执法合作释放务实沟通信号",
+        "基层干部服务群众本领被强调，治理效能提升关键在落地执行",
+    ]
+    generic = "\n".join(
+        headlines + ["民生与国际议题交织，午间资讯折射现实关切"]
+    )
+    grounded = "\n".join(
+        headlines + ["平台整改与中东局势，是这轮最该继续盯的两条线"]
+    )
+
+    assert is_usable_news_output(
+        generic,
+        expected_count=5,
+        source_lines=headlines,
+    ) is False
+    assert is_usable_news_output(
+        grounded,
+        expected_count=5,
+        source_lines=headlines,
+    ) is True
+
+
+def test_news_fallback_observation_uses_complete_headline_clauses():
+    from tasks.support.common import build_news_without_ai
+
+    copy = build_news_without_ai(
+        [
+            "携程因垄断被罚没超五十亿元，平台合规整改成焦点",
+            "中东局势风险继续积聚，多方关注外溢影响",
+            "基层服务能力被再次强调，后续看治理落地",
+            "中美执法合作释放信号，双方保持务实沟通",
+            "资产配置逻辑出现变化，高净值人群重新评估",
+        ],
+        "午间",
+    )
+
+    assert "先盯这两件事：携程因垄断被罚没超五十亿元；中东局势风险继续积聚" in copy
+    assert "，；" not in copy
 
 
 def test_news_source_chain_skips_partial_result_when_next_source_has_ten(monkeypatch):
@@ -381,10 +435,56 @@ def test_partial_prompt_config_keeps_default_greeting_modes():
 
     prompt, is_replacement = engine._get_mode_persona("morning", seed=123)
 
-    assert "给熟悉的群友发一条早安" in prompt
-    assert "不要写Mory本人做了什么" in prompt
+    assert "在熟悉的粉丝群里发一条早安" in prompt
+    assert "不虚构Mory刚醒" in prompt
     assert "随机种子123" in prompt
     assert is_replacement is True
+
+
+def test_legacy_productivity_greeting_override_is_ignored():
+    """旧配置不能继续把粉丝群问候写成效率教练或编程运维提醒。"""
+    from core.ai_engine import AIEngine
+
+    engine = object.__new__(AIEngine)
+    engine.config = {
+        "PROMPT_TEMPLATES": {
+            "afternoon": "午安。别硬撑多线程，把通知静音，只留当前任务窗口。",
+        }
+    }
+
+    prompt, is_replacement = engine._get_mode_persona("afternoon", seed=321)
+
+    assert is_replacement is True
+    assert "熟悉的粉丝群" in prompt
+    assert "延续主助理人设" in prompt
+    assert "别硬撑多线程" not in prompt
+    assert "只留当前任务窗口" not in prompt
+
+
+def test_greeting_full_persona_keeps_configured_mory_identity():
+    """问候专用提示词仍应继承 BASE_PERSONA 的人设底色。"""
+    from core.ai_engine import AIEngine
+
+    engine = object.__new__(AIEngine)
+    engine.config = {
+        "BASE_PERSONA": "你是Mory，底色是清冷、小傲娇和温柔。",
+        "STYLE_APPEND": "像熟悉的群友说话，走心但不演戏。",
+        "PROMPT_TEMPLATES": {},
+    }
+    engine.model_pool = [{"name": "test-model"}]
+    engine.current_idx = 0
+
+    persona = engine._build_persona(
+        "afternoon",
+        seed=456,
+        is_priv=False,
+        message="午安",
+        model_name="test-model",
+    )
+
+    assert "清冷、小傲娇和温柔" in persona
+    assert "像熟悉的群友说话" in persona
+    assert "熟悉的粉丝群" in persona
 
 
 def test_zero_throughput_single_pending_write_does_not_trigger_migration_alert(monkeypatch):
@@ -423,14 +523,28 @@ def test_scheduled_broadcast_rejects_ai_failure_copy():
     assert content == ""
 
 
-def test_greeting_quality_gate_rejects_cliche_and_accepts_plain_copy():
+def test_greeting_quality_gate_rejects_productivity_copy_and_accepts_fan_copy():
     from tasks.support.message_templates import MessageTemplates
 
     assert MessageTemplates.is_usable_greeting(
-        "morning",
-        "早。先别急着回完所有消息，挑一件真要紧的做，脑子会清楚很多。",
+        "afternoon",
+        "午安呀。忙到现在也该歇口气了，你们在群里冒个泡，我看到就会回。",
     )
     assert not MessageTemplates.is_usable_greeting(
         "morning",
         "早安，先喝口水缓一缓，今天会顺一点。",
     )
+    assert not MessageTemplates.is_usable_greeting(
+        "afternoon",
+        "下午脑子容易被弹窗切得稀碎，别硬撑多线程。把无关通知全静音，只留当前任务窗口就行。",
+    )
+
+
+def test_greeting_fallbacks_are_fan_group_copy_not_task_coaching():
+    from tasks.support.message_templates import MessageTemplates
+
+    technical_markers = ("多线程", "任务", "待办", "通知", "窗口", "效率", "开机")
+    for pool in MessageTemplates.GREETING_FALLBACK_POOL.values():
+        for copy in pool:
+            assert not any(marker in copy for marker in technical_markers)
+            assert any(marker in copy for marker in ("你们", "群里", "大家", "我"))

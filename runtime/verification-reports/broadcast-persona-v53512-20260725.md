@@ -1,0 +1,40 @@
+# Verification 报告
+
+- **task_id**：broadcast-persona-v53512-20260725
+- **执行时间**：2026-07-25 15:25:00 +08:00
+- **truth_surface**：本地 Windows checkout 的新闻/问候生成、质量门禁与 HTML/Rich Message 渲染链；生产 VPS 未部署、未重启。
+- **success_receipt**：
+  - 截图原文“民生与国际议题交织，午间资讯折射现实关切”经 `is_usable_news_output(..., source_lines=...)` 返回 `False`。
+  - 同组新闻的真实标题兜底观察引用前两条完整事实分句，Rich Message footer 为 `@MoryMateBot`。
+  - 本地真实 LLM 请求连续超时后，code 专用模型未发出请求，最终用户文案回退为走心粉丝群底稿。
+- **persistence_check**：在全新 Python 进程重跑截图样例、定向测试及整仓测试，结果保持一致；生产持久态不适用，因为本轮未获部署授权。
+- **derived_records**：`version.py`、`VERSION.md`、`AGENTS.md`、`CHANGELOG.md`、`AI_DEBUG_HISTORY.md`、`project_snapshot.md`、两份技术文档和 `config.json.example` 已同步到 v5.35.12。
+- **文件列表**：
+  - `core/ai_engine.py` | 通过 | 主助理人设继承、旧模板隔离、默认路由合并、两层 code/coder 模型门禁。
+  - `tasks/support/common.py` | 通过 | 新闻观察事实锚定、真实标题兜底和纯文本署名。
+  - `core/broadcast_formatter.py` | 通过 | HTML/Rich Message footer 均为 `@MoryMateBot`。
+  - `tasks/support/message_templates.py` | 通过 | 技术词质量门禁和走心粉丝群兜底池。
+  - `tests/unit/test_broadcast_topic_quality.py` | 通过 | 覆盖截图原文、署名、旧配置、人设继承及兜底。
+  - `tests/unit/test_ai_engine_resilience.py` | 通过 | 覆盖初选模型与二级路由模型的 code/coder 双层拦截。
+- **验证命令**：
+  - `python -m pytest tests -q` | 通过 | `410 passed, 7 skipped`。
+  - `python scripts/verify_db_methods.py` | 通过 | `179` 个委托方法，无缺失、无孤儿。
+  - `python scripts/doc_consistency.py` | 通过 | `7/7` 指标与代码一致。
+  - `records-drift-check.py` | 通过 | `version.py` 与 `VERSION.md`、`AGENTS.md`、`project_snapshot.md`、`config.json.example` 四组版本事实一致。
+  - `python -m py_compile ...` | 通过 | 本轮 Python 文件可编译。
+  - `python -m json.tool config.json.example` | 通过 | JSON 合法。
+  - `git diff --check` | 通过 | 无空白错误。
+- **安全扫描**：
+  - 敏感明文/API Key/密码：未写入本轮交付文件。
+  - 危险命令检查：通过；未执行删除、生产写入、部署、重启、提交或推送。
+  - 依赖风险检查：不适用；未变更依赖。
+  - 权限风险检查：通过；生产边界保持只读/未触碰。
+- **主编排器自检清单**：
+  - [x] 真实修改并重新读取关键文件。
+  - [x] 运行 Puzan OS 只读能力发现与项目专项维护流程。
+  - [x] 先写失败用例，再完成 red → green。
+  - [x] 运行定向与整仓测试。
+  - [x] 检查真实 diff、文件列表和工作树。
+  - [x] 标注未部署生产与真实 LLM 超时。
+  - [x] 结论由本地主会话原始回执支持。
+- **结论**：本地修复 verified；生产效果未部署、未验证。

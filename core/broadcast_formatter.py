@@ -164,6 +164,9 @@ _ALERT_LEVEL_EMOJI = {
     "success": "✅",
 }
 
+# 卡片署名代表当前发送消息的机器人身份；自助订阅入口由独立按钮承载。
+BROADCAST_SENDER_HANDLE = "@MoryMateBot"
+
 
 def build_alert_card_html(
     title: str,
@@ -357,7 +360,7 @@ def build_news_html(
     formatted_body = "\n".join(formatted_lines)
 
     # 底部自然引导（不用分隔线，用折叠区）
-    footer = "<i>@MorychannelBot</i>"
+    footer = f"<i>{BROADCAST_SENDER_HANDLE}</i>"
 
     parts = [title, "", formatted_body, "", footer]
     return "\n".join(parts)
@@ -542,7 +545,7 @@ def build_rich_news_card_message(
         </ol>
         <blockquote>观察行</blockquote>
         <hr>
-        <footer>@MorychannelBot</footer>
+        <footer>@MoryMateBot</footer>
 
     [v5.32 修复] 解析逻辑：
     - 识别 "N. xxx" 或 "N、 xxx" 编号格式，提取纯标题作为 <li>
@@ -575,7 +578,7 @@ def build_rich_news_card_message(
         parts.append(f"<blockquote>{observation}</blockquote>")
 
     parts.append("<hr>")
-    parts.append("<footer>@MorychannelBot</footer>")
+    parts.append(f"<footer>{BROADCAST_SENDER_HANDLE}</footer>")
 
     return "\n".join(parts)
 

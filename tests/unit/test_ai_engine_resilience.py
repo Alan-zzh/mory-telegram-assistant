@@ -200,6 +200,69 @@ def test_realtime_mode_skips_thinking_only_model_and_disables_thinking(monkeypat
     assert calls[0]["enable_thinking"] is False
 
 
+def test_greeting_mode_skips_code_specialized_models(monkeypatch):
+    """粉丝群问候不能降级到 code/coder 专用模型。"""
+    cfg = _config()
+    cfg["MODEL_POOLS"]["llm_light"] = [
+        {"name": "kimi-k2.7-code", "expire": "2099-12-31"},
+        {"name": "qwen-chat", "expire": "2099-12-31"},
+    ]
+    monkeypatch.setattr(ai_engine, "init_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine, "_get_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine.time, "sleep", lambda _seconds: None)
+    engine = ai_engine.AIEngine(cfg)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json["model"])
+        return _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": "午安呀，你们今天过得怎么样？来群里跟我说句话。"}}]},
+        )
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    result = engine.ask("午安", mode="afternoon", retry=1)
+
+    assert result == "午安呀，你们今天过得怎么样？来群里跟我说句话。"
+    assert calls == ["qwen-chat"]
+
+
+def test_greeting_rejects_code_model_from_secondary_router(monkeypatch):
+    """ModelRouter/A-B/成本覆盖也不能在请求前把问候改回 code 模型。"""
+    import core.model_router as model_router
+
+    cfg = _config()
+    cfg["MODEL_ROUTER_ENABLED"] = True
+    cfg["MODEL_POOLS"]["llm_light"] = [
+        {"name": "qwen-chat", "expire": "2099-12-31"},
+    ]
+    monkeypatch.setattr(ai_engine, "init_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine, "_get_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        model_router,
+        "route_model",
+        lambda *_args: ("https://example.invalid/v1/chat/completions", "", "kimi-k2.7-code"),
+    )
+    engine = ai_engine.AIEngine(cfg)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json["model"])
+        return _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": "午安。今天过得怎么样，来群里跟我说说。"}}]},
+        )
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    result = engine.ask("午安", mode="afternoon", retry=1)
+
+    assert result == "午安。今天过得怎么样，来群里跟我说说。"
+    assert calls == ["qwen-chat"]
+
+
 def test_stage_direction_filter_keeps_only_normal_chat_text():
     raw = "（托腮看窗外，听到提示音才回过神来）在呀～怎么啦，想我了？还是有什么事想跟我说？"
 

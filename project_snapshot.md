@@ -11,8 +11,8 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 模块 | 状态 | 入口文件 | 备注 |
 |------|------|----------|------|
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
-| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | 保留清冷/傲娇/温柔与群聊/私聊差异；明显问题主动承接；FAQ未命中且AI无可靠答案时给联系Mory/自助下单双按钮并标记待优化；最终合同禁止动作旁白和虚构生活画面 |
-| 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
+| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | 保留清冷/傲娇/温柔与群聊/私聊差异；定时问候继承主助理身份/性格但不加载销售和效率指导；明显问题主动承接；FAQ未命中且AI无可靠答案时给联系Mory/自助下单双按钮并标记待优化；最终合同禁止动作旁白和虚构生活画面 |
+| 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；问候跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 53 个 BaseTask 子类 | FAQ每日23:50汇总待优化问题与未命中样本；`modules/auto_tasks.py` 为 legacy（`_start_with_apscheduler` 死代码，仅保留部分工具函数） |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层 + 营销话术 4 维度 71 条 + AI 辅助决策 4 函数（默认关闭） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
@@ -29,17 +29,17 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 配置 | 在用 | `core/settings.py` + `config.json` | 密钥仅 `.env` |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 1 句观察；新闻来源仅内部诊断；联系 Mory 与自助下单/订阅按场景分流；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
+| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 1 句事实锚定观察；卡片署名 `@MoryMateBot`，自助订阅按钮独立指向 `@MorychannelBot`；新闻来源仅内部诊断；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段：morning_nudge(10:00) / afternoon_tease(14:30) / evening_warm(19:00) / night_hook(22:30)；AI 失败回退可信底稿 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 内置助理唤醒、签到积分福利、定制视频等人设化回答；福利/开通走自助售卖入口，定制确认走Mory联系入口；配置可同名覆盖或关闭 |
 
 ## 当前版本
-v5.35.11（2026-07-25）
+v5.35.12（2026-07-25）
 
 ## 最近 3 条大事
-1. 2026-07-25 v5.35.11 群聊问题自动承接：助理唤醒、签到积分福利和定制视频按人设自动回复；繁体签到/QD提示正确格式；FAQ真实命中修复，答不上来给双按钮并进入每日问题汇总。
-2. 2026-07-25 v5.35.10 AI 正常聊天去舞台化：保留清冷/傲娇/温柔及场景亲密度，但人格碎片和时段语境不再虚构动作/生活画面；旧动作指令自动失效，最终输出合同与后置过滤双层拦截括号/星号动作和心理旁白。
-3. 2026-07-24 v5.35.9 新闻篇幅优化：后台仍从 10 条均衡候选中选题，用户只看 5 条精炼头条 + 1 句观察；AI 二次按影响力和时效性选最重要 5 条，科技与财经合计最多 2 条；AI、HTML/Rich、门禁和真实标题兜底统一 5+1。
+1. 2026-07-25 v5.35.12 新闻与问候纠偏：新闻观察必须锚定具体事件，署名改为 `@MoryMateBot`；问候继承主助理人设、拒绝效率/技术文案并跳过 code/coder 模型。
+2. 2026-07-25 v5.35.11 群聊问题自动承接：助理唤醒、签到积分福利和定制视频按人设自动回复；繁体签到/QD提示正确格式；FAQ真实命中修复，答不上来给双按钮并进入每日问题汇总。
+3. 2026-07-25 v5.35.10 AI 正常聊天去舞台化：保留清冷/傲娇/温柔及场景亲密度，但人格碎片和时段语境不再虚构动作/生活画面；旧动作指令自动失效，最终输出合同与后置过滤双层拦截括号/星号动作和心理旁白。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
