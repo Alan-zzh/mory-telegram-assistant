@@ -96,22 +96,22 @@ class TestGetFallbackText:
         self._get = get_fallback_text
 
     def test_convert_private(self):
-        """convert 模式 + 私聊：应返回带 URL 的入口文案"""
+        """convert 兜底不自行混入两个入口，具体目标由调用方校正。"""
         text = self._get("convert", is_priv=True)
-        assert "https://t.me/moryselect" in text
-        assert "https://t.me/MorychannelBot" in text
+        assert "moryselect" not in text.lower()
+        assert "morychannelbot" not in text.lower()
         assert len(text) > 20  # 非空
 
     def test_convert_group(self):
-        """convert 模式 + 群聊：应返回带 @username 的入口文案"""
+        """群聊 convert 兜底同样不混入口。"""
         text = self._get("convert", is_priv=False)
-        assert "@moryselect" in text
-        assert "@MorychannelBot" in text
+        assert "moryselect" not in text.lower()
+        assert "morychannelbot" not in text.lower()
 
     def test_contact_mory_private(self):
         """contact_mory 模式 + 私聊：应返回入口文案"""
         text = self._get("contact_mory", is_priv=True)
-        assert "https://t.me/moryselect" in text
+        assert "https://t.me/Moryfansbot" in text
 
     def test_default_returns_empty(self):
         """default/未知 模式：应返回空串（静默，不暴露系统异常）"""

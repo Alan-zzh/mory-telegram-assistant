@@ -14,7 +14,6 @@ core/message_dispatcher.py  ·  消息分发器
 """
 
 import os, time, random, traceback, threading
-import concurrent.futures
 from datetime import datetime, timezone, timedelta
 from threading import Lock
 from dataclasses import dataclass, field
@@ -32,7 +31,7 @@ from core.handlers.command_handlers import (
 )
 from core.handlers.ai_reply_handler import (
     _dispatch_p10_ai, _build_convert_hint, _build_emotional_hint,
-    _build_normal_hint, _append_conv_response, _notify_admin_for_deep_conversation,
+    _build_normal_hint, _notify_admin_for_deep_conversation,
 )
 
 logger = get_logger("message_dispatcher")
@@ -55,13 +54,6 @@ _radar_cooldown = {}  # key=uid, value=上次触发时间戳
 _radar_lock = Lock()  # 防止多线程并发修改字典导致RuntimeError
 _RADAR_COOLDOWN = 3600  # 1小时冷却时间
 _radar_last_cleanup = 0  # 上次清理时间戳
-
-# ── 追加线程池（连续对话追加AI回复用）──
-# 【v5.31.2 修复】移除死代码：此 _append_pool 创建后从未被使用（实际使用的在
-# core/handlers/ai_reply_handler.py），仅浪费 2 个空线程。concurrent.futures
-# import 保留以备未来使用。
-# _append_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="append")
-
 
 # ═══════════════════════════════════════════════════════════════════════
 #  辅助工具函数

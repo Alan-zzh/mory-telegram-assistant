@@ -25,7 +25,7 @@ def count_py_non_init(rel_dir: str) -> int:
     return sum(
         1
         for p in d.rglob("*.py")
-        if p.name != "__init__.py"
+        if p.name != "__init__.py" and ".sync-conflict-" not in p.name
     )
 
 

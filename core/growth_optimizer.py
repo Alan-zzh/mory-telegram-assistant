@@ -41,22 +41,60 @@ PRODUCTS = {
     "album": "精选图集",
 }
 
-_PURCHASE_TOPIC_MARKERS = (
-    "定制", "定做", "专属", "订阅", "会员", "开通", "购买", "下单",
-    "付款", "支付", "价格", "多少钱", "套餐", "权益", "预览", "moryselect",
-    "morychannelbot", "定制舞", "卡点", "变装",
-)
-
-_PURCHASE_CONTINUATION_MARKERS = (
-    "就是这个", "这个味", "这种风格", "这个风格", "风格可以", "挺喜欢",
-    "喜欢这种", "就这个", "就这种", "就按这个", "确定这个", "安排这个",
-    "想要这个", "要这个", "按这个", "做这个", "开场", "穿衣服", "服装", "卡点",
-    "变装", "舞蹈", "跳舞",
-)
-
 _DIRECT_CUSTOM_ORDER_MARKERS = (
-    "定制", "定做", "专属定制", "定制舞", "卡点变装",
+    "定制舞", "定制视频", "定制写真", "定制自拍", "定制内容", "私人定制",
+    "专属定制", "专属舞", "专属视频", "给我跳", "给我拍", "按我的要求",
+    "按我说的", "定做一个", "定制一个", "我要定制", "想定制", "要定制",
+    "需要定制",
 )
+
+_CUSTOM_INFORMATION_MARKERS = (
+    "是什么", "什么意思", "怎么理解", "介绍一下", "科普一下", "你知道",
+)
+
+_CUSTOM_THIRD_PARTY_MARKERS = (
+    "她在", "他在", "别人", "看到有人", "听说有人", "好看吗",
+)
+
+_CUSTOM_REQUIREMENT_MARKERS = (
+    "舞", "风格", "开场", "穿衣服", "脱衣服", "卡点", "变装", "动作",
+    "音乐", "时长", "镜头", "服装", "结尾", "节奏", "姿势",
+)
+
+_CUSTOM_AFFIRMATION_MARKERS = (
+    "就是这个味", "就是这种", "对就是", "这个方向", "风格可以",
+    "挺喜欢", "很喜欢", "喜欢这种", "这个可以", "就按这个", "就这样",
+)
+
+_SUBSCRIBE_READY_MARKERS = (
+    "怎么下单", "我要下单", "直接下单", "下单吧", "怎么买", "我要买",
+    "怎么购买", "我要购买", "怎么付费", "我要付费", "怎么订阅", "我要订阅",
+    "订阅吧", "怎么开通", "我要开通", "怎么解锁", "我要解锁", "解锁吧",
+    "充值", "续费", "就要这个", "选这个", "就这个档位",
+)
+
+_SUBSCRIPTION_PLAN_MARKERS = ("包月", "包季", "包年", "月付", "季付", "年付")
+
+_PREVIEW_SEEN_MARKERS = (
+    "看过预览", "看了预览", "预览看了", "预览看过", "看完预览", "预览看完",
+    "预览群看过", "我看过了", "我已经看了", "刚看了", "看完了",
+)
+
+_PREVIEW_REQUEST_MARKERS = (
+    "预览", "试看", "样片", "照片", "自拍", "视频", "图集", "写真",
+    "什么内容", "有什么内容", "能看什么", "有多少", "先看看", "想看看", "想看",
+    "靠谱吗", "不放心", "怕被骗", "多少钱", "价格", "贵不贵", "太贵",
+    "套餐", "档位", "权益", "区别", "群里有什么",
+)
+
+_PREVIEW_POSITIVE_MARKERS = (
+    "挺喜欢", "很喜欢", "喜欢这个", "喜欢这种", "这个不错", "这个可以",
+    "挺不错", "挺好的", "满意", "就它了",
+)
+
+CONVERSION_TARGET_NONE = "none"
+CONVERSION_TARGET_PREVIEW = "preview"
+CONVERSION_TARGET_SUBSCRIBE = "subscribe"
 
 
 @dataclass
@@ -130,31 +168,108 @@ def is_direct_custom_order_request(text: str) -> bool:
     return (
         bool(compact)
         and not is_convert_rejection_message(compact)
+        and not any(marker in compact for marker in _CUSTOM_INFORMATION_MARKERS)
+        and not any(marker in compact for marker in _CUSTOM_THIRD_PARTY_MARKERS)
         and any(marker in compact for marker in _DIRECT_CUSTOM_ORDER_MARKERS)
     )
 
 
-def is_contextual_purchase_intent(text: str, history: list[dict[str, Any]] | None) -> bool:
-    """识别“就是这个味/这种风格/卡点变装”等承接式购买意图。"""
-    compact = re.sub(r"\s+", "", str(text or "")).lower()
-    if not compact or is_convert_rejection_message(compact):
-        return False
-    if is_direct_custom_order_request(compact):
+def _recent_assistant_has_entry(
+    history: list[dict[str, Any]] | None,
+    *entries: str,
+) -> bool:
+    normalized_entries = tuple(entry.lower() for entry in entries)
+    for item in list(history or [])[-6:]:
+        if not isinstance(item, dict) or item.get("role") != "assistant":
+            continue
+        content = str(item.get("content") or "").lower()
+        if any(entry in content for entry in normalized_entries):
+            return True
+    return False
+
+
+def _looks_like_custom_requirements(text: str, has_custom_context: bool) -> bool:
+    marker_count = sum(1 for marker in _CUSTOM_REQUIREMENT_MARKERS if marker in text)
+    actions = ("要", "想", "给我", "按", "做", "拍", "跳", "开场", "结尾", "穿衣服", "脱衣服")
+    if marker_count >= 3 and any(action in text for action in actions):
         return True
+    return has_custom_context and marker_count >= 2
+
+
+def resolve_conversion_target(
+    text: str,
+    history: list[dict[str, Any]] | None = None,
+    *,
+    mode: str = "normal",
+) -> tuple[str, str]:
+    """统一判定本轮唯一成交目标：无入口、先看预览或自助订阅。"""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    if not compact:
+        return CONVERSION_TARGET_NONE, "empty_message"
+    if is_convert_rejection_message(compact):
+        return CONVERSION_TARGET_NONE, "user_opt_out"
 
     recent = list(history or [])[-6:]
-    prior_user_turns = [
-        item for item in recent
-        if item.get("role") == "user" and str(item.get("content") or "").strip()
-    ]
-    has_purchase_anchor = any(
-        item.get("intent") == "purchase_intent"
-        or any(marker in str(item.get("content") or "").lower() for marker in _PURCHASE_TOPIC_MARKERS)
-        for item in prior_user_turns
+    recent_order_cta = _recent_assistant_has_entry(
+        recent, "@morychannelbot", "自助下单", "自助订阅"
     )
-    if not has_purchase_anchor:
-        return False
-    return any(marker in compact for marker in _PURCHASE_CONTINUATION_MARKERS)
+
+    if any(marker in compact for marker in _SUBSCRIBE_READY_MARKERS):
+        return CONVERSION_TARGET_SUBSCRIBE, "explicit_purchase"
+    if any(plan in compact for plan in _SUBSCRIPTION_PLAN_MARKERS) and any(
+        action in compact for action in ("我要", "我选", "就选", "决定要", "开这个", "订这个", "下单")
+    ):
+        return CONVERSION_TARGET_SUBSCRIBE, "explicit_plan_choice"
+    if any(marker in compact for marker in _PREVIEW_SEEN_MARKERS):
+        if recent_order_cta:
+            return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
+        return CONVERSION_TARGET_SUBSCRIBE, "preview_confirmed"
+
+    prior_user_texts = [
+        str(item.get("content") or "").lower()
+        for item in recent
+        if isinstance(item, dict) and item.get("role") == "user"
+    ]
+    recent_custom_context = any(
+        is_direct_custom_order_request(previous)
+        or _looks_like_custom_requirements(previous, has_custom_context=False)
+        for previous in prior_user_texts
+    )
+    recent_preview_context = any(
+        any(marker in previous for marker in _PREVIEW_REQUEST_MARKERS)
+        or any(marker in previous for marker in _PREVIEW_SEEN_MARKERS)
+        for previous in prior_user_texts
+    ) or _recent_assistant_has_entry(recent, "@moryselect", "预览群")
+
+    if any(marker in compact for marker in _CUSTOM_INFORMATION_MARKERS):
+        return CONVERSION_TARGET_NONE, "custom_information_only"
+    if is_direct_custom_order_request(compact):
+        if recent_order_cta:
+            return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
+        return CONVERSION_TARGET_SUBSCRIBE, "explicit_custom_order"
+    if _looks_like_custom_requirements(compact, recent_custom_context):
+        if recent_order_cta:
+            return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
+        return CONVERSION_TARGET_SUBSCRIBE, "custom_requirements"
+    if recent_custom_context and any(marker in compact for marker in _CUSTOM_AFFIRMATION_MARKERS):
+        if recent_order_cta:
+            return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
+        return CONVERSION_TARGET_SUBSCRIBE, "positive_after_custom"
+    if recent_preview_context and any(marker in compact for marker in _PREVIEW_POSITIVE_MARKERS):
+        if recent_order_cta:
+            return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
+        return CONVERSION_TARGET_SUBSCRIBE, "positive_after_preview"
+    if any(marker in compact for marker in _PREVIEW_REQUEST_MARKERS):
+        return CONVERSION_TARGET_PREVIEW, "preview_or_objection"
+    if mode == "convert":
+        return CONVERSION_TARGET_PREVIEW, "conversion_needs_preview"
+    return CONVERSION_TARGET_NONE, "no_conversion_signal"
+
+
+def is_contextual_purchase_intent(text: str, history: list[dict[str, Any]] | None) -> bool:
+    """识别“就是这个味/这种风格/卡点变装”等承接式购买意图。"""
+    target, _ = resolve_conversion_target(text, history, mode="normal")
+    return target == CONVERSION_TARGET_SUBSCRIBE
 
 
 def is_enabled(config: dict[str, Any] | None) -> bool:
@@ -229,7 +344,15 @@ def build_growth_context(dctx: Any, mode: str, conv_count: int, user_profile: di
     variant = assign_variant(getattr(dctx, "uid", 0), experiment_id, config)
     event = event_for_intent(intent, mode, text)
     source = "private" if getattr(dctx, "is_priv", False) else "group"
-    stage_hint = build_stage_hint(experiment_id, variant, intent, mode, product, conv_count)
+    stage_hint = build_stage_hint(
+        experiment_id,
+        variant,
+        intent,
+        mode,
+        product,
+        conv_count,
+        conversion_target=getattr(dctx, "conversion_target", "none"),
+    )
     return GrowthContext(
         experiment_id=experiment_id,
         experiment_name=EXPERIMENTS.get(experiment_id, experiment_id),
@@ -242,28 +365,48 @@ def build_growth_context(dctx: Any, mode: str, conv_count: int, user_profile: di
     )
 
 
-def build_stage_hint(experiment_id: str, variant: str, intent: str, mode: str, product: str, conv_count: int) -> str:
+def build_stage_hint(
+    experiment_id: str,
+    variant: str,
+    intent: str,
+    mode: str,
+    product: str,
+    conv_count: int,
+    *,
+    conversion_target: str = "subscribe",
+) -> str:
     product_name = PRODUCTS.get(product, PRODUCTS["select"])
     prefix = f"\n【增长实验-{EXPERIMENTS.get(experiment_id, experiment_id)}-{variant}】"
+    if conversion_target == "preview":
+        return (
+            prefix
+            + "当前仍是了解阶段：先回答问题，只自然带一次 @moryselect 预览入口；"
+            "不要出现下单入口、价格承诺或催促。"
+        )
+    if conversion_target == "none":
+        return (
+            prefix
+            + "当前没有成交目标：保持人设并承接正在聊的话题，不因轮数或实验分组硬塞私聊、预览或下单入口。"
+        )
     if experiment_id == "purchase_capture":
-        return prefix + "用户有购买意向。先给清楚路径：去 @MorychannelBot 自助下单；再用一句自然话术降低犹豫，不催不硬卖。"
+        return prefix + "用户已明确要继续。回应当前需求后只带一次 @MorychannelBot 查看当前选项并自助完成，不催不硬卖。"
     if experiment_id == "product_recommendation":
         if variant == "A":
-            return prefix + f"优先推荐{product_name}。先解释适合谁，再补一句可去 @MorychannelBot 选对应档位。"
-        return prefix + f"优先推荐{product_name}。先用用户利益点表达，再轻带 @MorychannelBot，不列太多价格。"
+            return prefix + f"结合现有事实说明{product_name}适合谁，再补一句可去 @MorychannelBot 看当前档位；不能编造价格或权益。"
+        return prefix + f"围绕用户当前需求说明{product_name}，再轻带 @MorychannelBot；不列未经确认的价格或福利。"
     if experiment_id == "private_handoff":
         if variant == "A":
             return prefix + "私聊承接用温柔直接型：简短回答问题，再给下一步入口。"
         return prefix + "私聊承接用悬念型：给一点信息但保留空间，引导继续问或去 @MorychannelBot。"
     if experiment_id == "entertainment_conversion":
-        return prefix + "先完成当前塔罗/树洞/解梦体验，结尾只轻轻带一句更多内容可去 @MorychannelBot，不能破坏情绪。"
+        return prefix + "先完整回应当前体验；只有本轮成交目标明确时才轻带 @MorychannelBot，不能破坏情绪。"
     if experiment_id == "persona_quality":
         return prefix + "优先自然、共情、人设稳定。不要像客服，不要长篇解释；投诉先安抚再给处理路径。"
     if experiment_id == "button_style":
-        return prefix + "用户在找入口。明确说 @MorychannelBot 是入口，回复短、按钮/链接说明清楚。"
+        return prefix + "用户明确索要下单入口。只给 @MorychannelBot，回复短且与按钮一致。"
     if experiment_id == "funnel_optimization":
         if conv_count >= 3:
-            return prefix + "用户已有多轮互动。自然把关系推进到私聊或 @MorychannelBot，不要重复闲聊打转。"
+            return prefix + "用户已有多轮互动。继续承接当前话题；本轮已明确要下单时才带 @MorychannelBot，不靠聊天轮数硬推。"
         return prefix + "记录当前漏斗阶段，回复保持真人感，避免过早强推。"
     return prefix + "回复保持自然，并留下可追踪的下一步行动。"
 

@@ -43,6 +43,7 @@ __pycache__/
 *.tmp
 *.zip
 *.bak
+*.sync-conflict-*
 reload_flag
 fault_dedup_state.json
 data/
@@ -67,6 +68,7 @@ scripts/upload_and_ban.py
 node_modules/
 venv/
 .venv/
+uv.lock
 _quarantine_*/
 *.egg-info/
 

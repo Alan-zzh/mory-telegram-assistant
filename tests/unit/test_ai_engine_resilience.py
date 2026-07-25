@@ -230,7 +230,7 @@ def test_ask_does_not_emit_humanized_failure_phrase(monkeypatch):
         assert "等会儿再接" not in result
 
 
-def test_ask_convert_failure_returns_fixed_access_entry(monkeypatch):
+def test_ask_convert_failure_defers_single_entry_to_handler(monkeypatch):
     engine = _engine(monkeypatch)
 
     def fake_post(_url, json, headers, timeout):
@@ -240,8 +240,9 @@ def test_ask_convert_failure_returns_fixed_access_entry(monkeypatch):
 
     result = engine.ask("怎么买", mode="convert", retry=1, is_priv=False)
 
-    assert "@MorychannelBot" in result
-    assert "@moryselect" in result
+    assert "@MorychannelBot" not in result
+    assert "@moryselect" not in result
+    assert "对应入口" in result
     assert "走神" not in result
 
 
@@ -320,6 +321,22 @@ def test_greeting_mode_skips_code_specialized_models(monkeypatch):
 
     assert result == "午安呀，你们今天过得怎么样？来群里跟我说句话。"
     assert calls == ["qwen-chat"]
+
+
+def test_normal_persona_chat_also_skips_code_specialized_models():
+    """普通人设聊天不能因前序模型超时降级到代码专用模型。"""
+    assert not ai_engine.AIEngine._is_model_suitable_for_mode(
+        "kimi-k2.7-code",
+        "normal",
+    )
+    assert not ai_engine.AIEngine._is_model_suitable_for_mode(
+        "some-coder-model",
+        "convert",
+    )
+    assert ai_engine.AIEngine._is_model_suitable_for_mode(
+        "kimi-k2.7-code",
+        "code",
+    )
 
 
 def test_greeting_rejects_code_model_from_secondary_router(monkeypatch):

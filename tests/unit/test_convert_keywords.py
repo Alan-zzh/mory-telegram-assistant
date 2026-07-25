@@ -13,12 +13,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from modules.group_mgr import _is_convert_message, _CONVERT_KEYWORDS_SUBSTR
 from core.keyword_manager import KeywordManager
 from core.handlers.ai_reply_handler import (
+    _align_conversion_reply,
     _build_contextual_purchase_reply,
+    _build_normal_hint,
     _build_purchase_markup,
+    _build_preview_markup,
     _direct_access_reply,
-    _ensure_conversion_cta,
     _is_direct_access_request,
+    _should_offer_proactive_preview,
 )
+from core.growth_optimizer import resolve_conversion_target
 
 
 def test_original_keywords_still_work():
@@ -140,6 +144,8 @@ def test_contextual_purchase_reply_skips_preview_and_closes_order():
         assert "@MorychannelBot" in reply
         assert "预览" not in reply
         assert "@moryselect" not in reply.lower()
+        assert "可以做" not in reply
+        assert "把要求填进去" not in reply
 
     followup = _build_contextual_purchase_reply(
         "就是这个味",
@@ -151,13 +157,15 @@ def test_contextual_purchase_reply_skips_preview_and_closes_order():
     markup = _build_purchase_markup()
     assert markup.keyboard[0][0].text == "🛒 自助下单"
     assert markup.keyboard[0][0].url == "https://t.me/MorychannelBot"
-    assert _ensure_conversion_cta(
+    assert "@MorychannelBot" in _align_conversion_reply(
         "这种风格挺适合你。",
-        conversion_candidate=True,
-    ).endswith("@MorychannelBot 自助下单。")
-    assert _ensure_conversion_cta(
+        conversion_target="subscribe",
+        conversion_reason="explicit_custom_order",
+    )
+    assert _align_conversion_reply(
         "普通闲聊。",
-        conversion_candidate=False,
+        conversion_target="none",
+        conversion_reason="no_conversion_signal",
     ) == "普通闲聊。"
 
 
@@ -170,13 +178,13 @@ def test_private_sales_reply_has_no_button_and_group_has_only_one_target():
     assert _build_sales_reply_markup(
         is_priv=True,
         needs_handoff=False,
-        conversion_candidate=True,
+        conversion_target="subscribe",
     ) is None
 
     group_markup = _build_sales_reply_markup(
         is_priv=False,
         needs_handoff=False,
-        conversion_candidate=True,
+        conversion_target="subscribe",
     )
     assert len(group_markup.keyboard) == 1
     assert [button.text for button in group_markup.keyboard[0]] == ["🛒 自助下单"]
@@ -184,6 +192,70 @@ def test_private_sales_reply_has_no_button_and_group_has_only_one_target():
         {"role": "assistant", "content": "直接去 @MorychannelBot 自助下单。"},
         {"role": "user", "content": "就是这个味"},
     ])
+
+    preview_markup = _build_preview_markup()
+    assert len(preview_markup.keyboard) == 1
+    assert preview_markup.keyboard[0][0].url == "https://t.me/moryselect"
+
+    private_fallback = _align_conversion_reply(
+        "预览：https://t.me/moryselect",
+        conversion_target="preview",
+        conversion_reason="preview_or_objection",
+    )
+    assert private_fallback.lower().count("moryselect") == 1
+
+
+def test_conversion_target_matrix_keeps_funnel_order_and_context():
+    assert resolve_conversion_target("定制舞是什么？介绍一下", mode="convert") == (
+        "none", "custom_information_only"
+    )
+    assert resolve_conversion_target("订阅一个月有多少视频", mode="convert")[0] == "preview"
+    assert resolve_conversion_target("价格和权益有什么区别", mode="convert")[0] == "preview"
+    assert resolve_conversion_target("我要下单", mode="convert")[0] == "subscribe"
+    assert resolve_conversion_target("定制舞", mode="convert")[0] == "subscribe"
+    assert resolve_conversion_target("我想定制一段暗黑港风视频", mode="convert")[0] == "subscribe"
+    assert resolve_conversion_target("不定制了", mode="convert")[0] == "none"
+
+    history = [
+        {"role": "user", "content": "定制舞"},
+        {"role": "assistant", "content": "去 @MorychannelBot 看当前选项。"},
+    ]
+    assert resolve_conversion_target("就是这个味", history, mode="convert") == (
+        "none", "recent_order_cta_suppressed"
+    )
+    reply = _align_conversion_reply(
+        "对，这种风格很搭。再去 @MorychannelBot 下单吧。",
+        conversion_target="none",
+        conversion_reason="recent_order_cta_suppressed",
+    )
+    assert "MorychannelBot" not in reply
+
+
+def test_normal_chat_does_not_hard_sell_by_round_count(monkeypatch):
+    hint, _ = _build_normal_hint(6, proactive_preview=False)
+    assert "@MorychannelBot" not in hint
+    assert "@moryselect" not in hint
+
+    monkeypatch.setattr("core.handlers.ai_reply_handler.random.randint", lambda *_: 100)
+    assert not _should_offer_proactive_preview(
+        mode="normal",
+        conv_count=6,
+        history=[],
+        text="今天忙完了吗",
+    )
+    monkeypatch.setattr("core.handlers.ai_reply_handler.random.randint", lambda *_: 1)
+    assert _should_offer_proactive_preview(
+        mode="normal",
+        conv_count=4,
+        history=[],
+        text="今天忙完了吗",
+    )
+    assert not _should_offer_proactive_preview(
+        mode="normal",
+        conv_count=4,
+        history=[{"role": "assistant", "content": "先看 @moryselect"}],
+        text="继续聊",
+    )
 
 
 if __name__ == "__main__":

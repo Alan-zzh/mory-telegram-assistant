@@ -1115,14 +1115,15 @@ class AIEngine:
 
     @classmethod
     def _is_model_suitable_for_mode(cls, model_name: str, mode: str) -> bool:
-        """问候只用通用对话模型，禁止 code/coder 专用模型污染粉丝群文案。"""
-        if mode not in cls._GREETING_PROMPT_MODES:
+        """用户可见自然对话统一跳过 code/coder 专用模型。"""
+        if mode in {"code", "coding"}:
             return True
-        return re.search(
+        is_code_model = re.search(
             r"(?:^|[-_/])(code|coder|coding)(?:$|[-_/])",
             str(model_name or ""),
             flags=re.IGNORECASE,
-        ) is None
+        ) is not None
+        return not is_code_model
 
     def _ensure_valid_model(self, pool_name: str = "chat"):
         """确保指定池的当前模型可用，如果被拉黑或过期则自动切到下一个"""
@@ -1568,12 +1569,15 @@ class AIEngine:
 
     @staticmethod
     def _strip_legacy_stage_prompt_lines(text: str) -> str:
-        """移除旧配置中鼓励动作扮演的行，保留其余人设和业务知识。"""
+        """移除旧配置中会压过当前聊天/成交合同的冲突行。"""
         if not text:
             return text
         blocked_markers = (
             "*动作*", "肢体暗示", "肢体语言", "舞台动作",
             "动作描写", "场景旁白", "心理旁白",
+            "所有对话的终极目标", "用小钩子留悬念", "私聊引导转化",
+            "第3-4轮：可以稍微暗示", "第5轮+：自然带一句",
+            "立即引导 @MorychannelBot", "价格/业务 →", "被问价格 →",
         )
         lines = [
             line for line in str(text).splitlines()
@@ -1592,6 +1596,9 @@ class AIEngine:
             "\n- 严禁脑补自己或对方正在看窗外、托腮、发呆、喝咖啡、刚睡醒、听到提示音才回神等画面。"
             "\n- 对方只是问候、问“在吗”或发很短的消息时，直接回应并问来意；对方没先调情就不要擅自加“想我了”之类暧昧戏码。"
             "\n- 先直接回应用户说的话；没有可靠信息就不要补生活经历或现场细节。"
+            "\n- 对话轮数只影响熟悉度和语气，不能因为聊到第3/5/6轮就突然塞销售、私聊或收网话术。"
+            "\n- 成交入口只服从本轮 stage_hint 的唯一目标：了解价格/内容先预览，明确购买才自助；目标为空就不带入口。"
+            "\n- 不承诺未由知识库确认的定制能力、表单、价格、福利、交付或人工回访。"
         )
 
     @staticmethod
@@ -2633,14 +2640,20 @@ def get_fallback_text(reason: str = "default", is_priv: bool = False) -> str:
     Returns:
         统一兜底文案；普通/未知模式返回空串（静默，不暴露系统异常）
     """
-    if reason in ("convert", "contact_mory"):
-        if is_priv:
-            return ("给你入口啦，别再兜圈。\n"
-                    "预览：https://t.me/moryselect\n"
-                    "自助下单：https://t.me/MorychannelBot")
-        return ("入口给你，自己去看就行。\n"
-                "预览群 @moryselect\n"
-                "自助下单 @MorychannelBot")
+    if reason == "convert":
+        # 具体入口由调用方依据本轮 none/preview/subscribe 单目标补齐；
+        # 此处不能再次把预览与下单混在一起。
+        return (
+            "这条我不乱说，你按当前问题继续看对应入口。"
+            if is_priv
+            else "这条我不乱说，按当前问题看对应入口就行。"
+        )
+    if reason == "contact_mory":
+        return (
+            "这个需要 Mory 看一下：https://t.me/Moryfansbot"
+            if is_priv
+            else "这个需要 Mory 看一下，联系 @Moryfansbot。"
+        )
     # 普通模式失败：静默，不暴露系统异常，也不硬凑拟人化故障文案
     return ""
 

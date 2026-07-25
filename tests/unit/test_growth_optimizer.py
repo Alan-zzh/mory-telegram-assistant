@@ -10,6 +10,7 @@ from core.growth_optimizer import (
     load_recent_conversation,
     log_attribution_event,
     record_growth_reply,
+    resolve_conversion_target,
     summarize_growth,
     GrowthContext,
 )
@@ -66,7 +67,19 @@ def test_assign_variant_stable_when_enabled():
 def test_stage_hint_mentions_purchase_path():
     hint = build_stage_hint("purchase_capture", "A", "purchase_intent", "convert", "select", 1)
     assert "@MorychannelBot" in hint
-    assert "购买意向" in hint
+    assert "明确要继续" in hint
+
+    preview_hint = build_stage_hint(
+        "purchase_capture",
+        "A",
+        "purchase_intent",
+        "convert",
+        "select",
+        1,
+        conversion_target="preview",
+    )
+    assert "@moryselect" in preview_hint
+    assert "@MorychannelBot" not in preview_hint
 
 
 def test_log_attribution_event_adds_columns_and_row():
@@ -118,10 +131,22 @@ def test_screenshot_followups_inherit_custom_purchase_intent():
     ]
 
     assert is_direct_custom_order_request("定制舞") is True
+    assert is_direct_custom_order_request("定制舞是什么？介绍一下") is False
     assert is_contextual_purchase_intent("就是这个味", history) is True
     history.append({"role": "user", "content": "就是这个味", "intent": "purchase_intent"})
     assert is_contextual_purchase_intent("风格可以 挺喜欢这种风格", history) is True
     assert is_contextual_purchase_intent("打港舞 开场穿衣服 卡点变装", history) is True
+
+
+def test_recent_order_entry_suppresses_repeated_custom_cta():
+    history = [
+        {"role": "user", "content": "定制舞"},
+        {"role": "assistant", "content": "去 @MorychannelBot 看当前选项。"},
+    ]
+    assert resolve_conversion_target("就是这个味", history, mode="convert") == (
+        "none",
+        "recent_order_cta_suppressed",
+    )
 
 
 def test_contextual_purchase_excludes_unrelated_and_rejection_messages():

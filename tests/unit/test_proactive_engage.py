@@ -23,8 +23,16 @@ class _FakeMoryBot:
 
 
 class _FakeBot:
+    def __init__(self):
+        self.sent = []
+        self.edited_markups = []
+
     def send_message(self, *args, **kwargs):
+        self.sent.append((args, kwargs))
         return _FakeMessage(0)
+
+    def edit_message_reply_markup(self, *args, **kwargs):
+        self.edited_markups.append((args, kwargs))
 
 
 class _FakeMessage:
@@ -116,6 +124,16 @@ def test_should_engage_no_keyword():
     print("✓ 无关消息不搭讪")
 
 
+def test_custom_concept_question_is_not_treated_as_order():
+    pe = make_pe(enabled=True)
+    ok, _ = pe.should_engage(
+        uid=123,
+        msg="定制舞是什么？先介绍一下",
+        is_admin=False,
+    )
+    assert ok is False
+
+
 def test_cooldown_blocks_repeat():
     """冷却期内不搭讪"""
     pe = make_pe(enabled=True, cooldown_minutes=30)
@@ -188,6 +206,10 @@ def test_engage_success_writes_log():
     assert pe.db.logged[0]["uid"] == 111
     assert pe.db.logged[0]["matched_keyword"] == "订阅"
     assert (111, "proactive_engaged") in pe.db.events
+    assert len(pe.mory_bot.bot.sent) == 1
+    markup = pe.mory_bot.bot.edited_markups[0][1]["reply_markup"]
+    assert len(markup.keyboard) == 1
+    assert markup.keyboard[0][0].url == "https://t.me/moryselect"
     print("✓ engage 成功写库 + 事件")
 
 
@@ -213,15 +235,15 @@ def test_engage_exception_silent():
     print("✓ engage 异常静默不崩")
 
 
-def test_old_private_prompt_is_invalidated_and_reply_closes_order():
+def test_old_private_prompt_is_invalidated_and_reply_follows_single_target():
     from modules.proactive_engage import ProactiveEngage
 
     class _FakeAI:
         def __init__(self):
-            self.prompts = []
+            self.calls = []
 
-        def ask(self, prompt, mode="normal"):
-            self.prompts.append(prompt)
+        def ask(self, prompt, mode="normal", **kwargs):
+            self.calls.append((prompt, mode, kwargs))
             return "先去预览看看。"
 
     ai = _FakeAI()
@@ -237,11 +259,17 @@ def test_old_private_prompt_is_invalidated_and_reply_closes_order():
         },
     )
 
-    reply = pe._generate_reply("订阅多少钱", "订阅", "测试用户")
+    preview_reply = pe._generate_reply("订阅多少钱", "订阅", "测试用户")
 
-    assert "不要再引导私聊" in ai.prompts[0]
-    assert "@MorychannelBot" in reply
-    assert "预览" not in reply
+    assert ai.calls[0][0] == "订阅多少钱"
+    assert ai.calls[0][1] == "convert"
+    assert "不要引导私聊" in ai.calls[0][2]["stage_hint"]
+    assert "@moryselect" in preview_reply
+    assert "@MorychannelBot" not in preview_reply
+
+    order_reply = pe._generate_reply("我要下单", "下单", "测试用户")
+    assert "@MorychannelBot" in order_reply
+    assert "@moryselect" not in order_reply.lower()
 
 
 if __name__ == "__main__":

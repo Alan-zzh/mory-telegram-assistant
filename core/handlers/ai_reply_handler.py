@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 import random
-import concurrent.futures
 import re
 from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
@@ -17,9 +16,6 @@ if TYPE_CHECKING:
     from core.message_dispatcher import DispatchContext
 
 logger = get_logger("ai_reply_handler")
-
-_append_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="append")
-
 
 def _final_ai_reply_fallback(mode: str, is_priv: bool = False) -> str:
     """处理失败时给用户的兜底回复。
@@ -115,19 +111,32 @@ def _build_purchase_markup():
     return markup
 
 
+def _build_preview_markup():
+    """了解、价格和内容咨询只给预览入口。"""
+    from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.row(
+        InlineKeyboardButton("👀 查看预览", url="https://t.me/moryselect"),
+    )
+    return markup
+
+
 def _build_sales_reply_markup(
     *,
     is_priv: bool,
     needs_handoff: bool,
-    conversion_candidate: bool,
+    conversion_target: str,
 ):
     """私聊不挂销售按钮；非私聊每轮也只保留一个目标。"""
     if is_priv:
         return None
     if needs_handoff:
         return _build_unresolved_handoff_markup()
-    if conversion_candidate:
+    if conversion_target == "subscribe":
         return _build_purchase_markup()
+    if conversion_target == "preview":
+        return _build_preview_markup()
     return None
 
 
@@ -138,6 +147,17 @@ def _recent_order_cta_sent(history) -> bool:
             continue
         content = str(item.get("content") or "").lower()
         if "@morychannelbot" in content or "自助下单" in content:
+            return True
+    return False
+
+
+def _recent_conversion_cta_sent(history) -> bool:
+    """近期已有任一成交入口时，普通闲聊不再随机追加销售话术。"""
+    for item in list(history or [])[-6:]:
+        if not isinstance(item, dict) or item.get("role") != "assistant":
+            continue
+        content = str(item.get("content") or "").lower()
+        if "@morychannelbot" in content or "@moryselect" in content:
             return True
     return False
 
@@ -154,35 +174,96 @@ def _is_order_access_request(text: str) -> bool:
 
 
 def _build_contextual_purchase_reply(text: str, *, include_cta: bool = True) -> str:
-    """对截图中的承接短句做确定性收口，避免模型再次失忆或重复预览。"""
+    """模型不可用时的最小承接兜底，不承诺未经业务证实的定制能力。"""
     compact = re.sub(r"\s+", "", str(text or ""))
     if any(marker in compact for marker in _PREFERENCE_CONFIRM_MARKERS):
         if not include_cta:
             return "对，就是这个方向，风格对上了。"
-        return "对，就是这个方向。喜欢的话直接去 @MorychannelBot 自助下单。"
+        return "对，就是这个方向。想继续的话去 @MorychannelBot 看当前可选内容和档位。"
     if any(marker in compact for marker in ("开场", "穿衣服", "服装", "卡点", "变装", "镜头")):
         if not include_cta:
-            return "这个思路可以，开场、服装和卡点变装都很明确，按这个要求填就好。"
+            return "开场、服装和卡点这些细节我接住了。"
         return (
-            "这个思路可以，细节就按你说的来。"
-            "定制直接去 @MorychannelBot 自助下单，把要求填进去。"
+            "开场、服装和卡点这些细节我接住了。"
+            "想继续的话去 @MorychannelBot 看当前可选内容和档位。"
         )
     if any(marker in compact for marker in _CUSTOM_DETAIL_MARKERS):
         if not include_cta:
-            return "可以定制，这个方向接得上。"
-        return "可以定制。直接去 @MorychannelBot 自助下单，把想要的风格填进去。"
+            return "这个方向接得上，你可以继续说具体偏好。"
+        return "这个方向接得上。想继续的话去 @MorychannelBot 看当前可选内容和档位。"
     if not include_cta:
         return "这个方向可以，接着按刚才的思路聊。"
-    return "这个方向可以。直接去 @MorychannelBot 自助下单，按提示填要求。"
+    return "想继续的话去 @MorychannelBot 看当前可选内容和档位。"
 
 
-def _ensure_conversion_cta(response, *, conversion_candidate: bool):
-    """所有商业承接都必须给出可执行下一步，不能只聊风格或反复发预览。"""
-    if not conversion_candidate or not isinstance(response, str) or not response.strip():
+def _strip_entry_sentence(text: str, entries: tuple[str, ...]) -> str:
+    chunks = re.split(r"(?<=[。！？!?\n])", str(text or ""))
+    kept = [
+        chunk for chunk in chunks
+        if not any(entry in chunk.lower() for entry in entries)
+    ]
+    return "".join(kept).strip()
+
+
+def _align_conversion_reply(
+    response,
+    *,
+    conversion_target: str,
+    conversion_reason: str,
+):
+    """保留模型的人设承接，只校正本轮唯一入口。"""
+    if not isinstance(response, str) or not response.strip():
         return response
-    if "@morychannelbot" in response.lower():
-        return response
-    return f"{response.rstrip()} 直接去 @MorychannelBot 自助下单。"
+    text = response.strip()
+    if conversion_target == "none":
+        text = _strip_entry_sentence(
+            text,
+            ("morychannelbot", "moryselect", "自助下单", "自助订阅", "下单入口", "订阅入口"),
+        )
+        if text:
+            return text
+        if conversion_reason == "recent_order_cta_suppressed":
+            return "对，这个方向接得上，细节继续按你说的来。"
+        return "你先说说具体想了解哪一部分，我按你问的讲。"
+
+    if conversion_target == "subscribe":
+        text = _strip_entry_sentence(text, ("moryselect", "预览群"))
+        if "morychannelbot" not in text.lower():
+            prefix = text.rstrip()
+            if prefix and prefix[-1] not in "。！？!?～~\n":
+                prefix += "。"
+            text = (
+                f"{prefix}想继续的话去 @MorychannelBot "
+                "看看当前可选内容和档位，按提示自助完成就行。"
+            )
+        return text
+
+    if conversion_target == "preview":
+        text = _strip_entry_sentence(text, ("morychannelbot", "自助下单", "自助订阅"))
+        if "moryselect" not in text.lower():
+            prefix = text.rstrip()
+            if prefix and prefix[-1] not in "。！？!?～~\n":
+                prefix += "。"
+            text = f"{prefix}想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+        return text
+
+    return text
+
+
+def _should_offer_proactive_preview(
+    *,
+    mode: str,
+    conv_count: int,
+    history,
+    text: str,
+) -> bool:
+    """普通聊天只在关系已热且没有近期入口时低频推进到预览。"""
+    if mode != "normal" or conv_count < 4 or _recent_conversion_cta_sent(history):
+        return False
+    from core.keyword_manager import is_convert_rejection_message
+    if is_convert_rejection_message(str(text or "")):
+        return False
+    return random.randint(1, 100) <= 15
 
 
 def _is_direct_access_request(text: str) -> bool:
@@ -351,24 +432,53 @@ def _dispatch_p10_ai(dctx: DispatchContext):
 
     stage_hint = ""
     notify_admin_reason = ""
+    conversation_history = getattr(dctx, "conversation_history", [])
+    from core.growth_optimizer import resolve_conversion_target
+    conversion_target, conversion_reason = resolve_conversion_target(
+        msg,
+        conversation_history,
+        mode=mode,
+    )
+    current_thread_turns = 1 + sum(
+        1
+        for item in conversation_history
+        if isinstance(item, dict) and item.get("role") == "user"
+    )
+    if (
+        conversion_target == "none"
+        and _should_offer_proactive_preview(
+            mode=mode,
+            conv_count=current_thread_turns,
+            history=conversation_history,
+            text=msg,
+        )
+    ):
+        conversion_target = "preview"
+        conversion_reason = "proactive_preview_after_warmup"
+    dctx.conversion_target = conversion_target
+    dctx.conversion_reason = conversion_reason
 
     if mode == "convert":
-        stage_hint, notify_admin_reason = _build_convert_hint(db, uid, conv_count)
+        stage_hint, notify_admin_reason = _build_convert_hint(
+            db,
+            uid,
+            conv_count,
+            conversion_target=conversion_target,
+            conversion_reason=conversion_reason,
+        )
     elif mode in ("treehole", "dream"):
         stage_hint, notify_admin_reason = _build_emotional_hint(conv_count)
     elif mode == "normal":
-        stage_hint, notify_admin_reason = _build_normal_hint(conv_count)
+        stage_hint, notify_admin_reason = _build_normal_hint(
+            conv_count,
+            proactive_preview=conversion_reason == "proactive_preview_after_warmup",
+        )
 
     # [TRAE SOLO CN] v5.19.0 意图路由联动：根据 dctx.intent 增强 stage_hint
     _intent = getattr(dctx, "intent", None) or {}
     _intent_label = _intent.get("intent", "chat")
-    purchase_ready = bool(getattr(dctx, "contextual_purchase", False))
-    conversation_history = getattr(dctx, "conversation_history", [])
-    repeat_cta_suppressed = (
-        purchase_ready
-        and _recent_order_cta_sent(conversation_history)
-        and not _is_order_access_request(msg)
-    )
+    purchase_ready = conversion_target == "subscribe"
+    repeat_cta_suppressed = conversion_reason == "recent_order_cta_suppressed"
     if purchase_ready and _intent_label != "purchase_intent":
         _intent = {
             "intent": "purchase_intent",
@@ -383,8 +493,12 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         elif _intent_label == "purchase_intent":
             if repeat_cta_suppressed:
                 stage_hint += "\n【意图-购买承接】：近期已经给过下单入口。本轮只接住用户确认的风格或新增细节，不重复任何链接、入口或按钮。"
+            elif conversion_target == "none":
+                stage_hint += "\n【意图-不推进】：规则判定本轮只需解释或停止转化，正常回答当前问题，不带任何成交入口。"
+            elif conversion_target == "preview":
+                stage_hint += "\n【意图-了解】：先回答用户当前问题，只自然带一次 @moryselect 预览入口，不催下单。"
             else:
-                stage_hint += "\n【意图-购买】：用户有明确购买意向。自然引导 @MorychannelBot 自助下单，别催。"
+                stage_hint += "\n【意图-购买】：用户已明确要继续。自然带一次 @MorychannelBot 自助入口，别催，不承诺未确认的服务、价格或交付。"
         elif _intent_label == "complaint":
             stage_hint += "\n【意图-投诉】：用户在抱怨/投诉。先共情安抚，承诺转达 Mory，别辩解。"
         elif _intent_label == "consult":
@@ -426,13 +540,6 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         resp = _direct_access_reply(msg, is_priv=is_priv)
         logger.info(f"🔗 直接入口回复 uid={uid} mode={mode}")
 
-    if purchase_ready:
-        resp = _build_contextual_purchase_reply(
-            msg,
-            include_cta=not repeat_cta_suppressed,
-        )
-        logger.info(f"🛒 上下文购买意图确定性收口 uid={uid} mode={mode}")
-
     ai_attempted = False
     if resp is None:
         ai_attempted = True
@@ -446,16 +553,16 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             conversation_history=getattr(dctx, "conversation_history", []),
         )
 
-    conversion_candidate = (
-        mode == "convert"
-        or _intent_label == "purchase_intent"
-        or purchase_ready
-    ) and not repeat_cta_suppressed
     if direct_access_handled and not direct_access_order:
-        conversion_candidate = False
-    resp = _ensure_conversion_cta(
+        conversion_target = "preview"
+        conversion_reason = "direct_preview_access"
+    elif direct_access_handled:
+        conversion_target = "subscribe"
+        conversion_reason = "direct_order_access"
+    resp = _align_conversion_reply(
         resp,
-        conversion_candidate=conversion_candidate,
+        conversion_target=conversion_target,
+        conversion_reason=conversion_reason,
     )
 
     needs_handoff = _should_offer_handoff(
@@ -465,8 +572,19 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         mode=mode,
         is_priv=is_priv,
     )
-    if needs_handoff and not resp:
-        resp = "这个我不乱说，直接问 @Moryfansbot。"
+    if needs_handoff:
+        conversion_target = "none"
+        conversion_reason = "unresolved_handoff"
+        resp = _align_conversion_reply(
+            resp or "",
+            conversion_target=conversion_target,
+            conversion_reason=conversion_reason,
+        )
+        if "@moryfansbot" not in str(resp or "").lower():
+            prefix = str(resp or "").strip()
+            if prefix and prefix[-1] not in "。！？!?～~\n":
+                prefix += "。"
+            resp = f"{prefix}这个我不乱说，直接问 @Moryfansbot。"
 
     if resp is None:
         resp = _final_ai_reply_fallback(mode, is_priv=is_priv)
@@ -481,7 +599,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         handoff_markup = _build_sales_reply_markup(
             is_priv=is_priv,
             needs_handoff=needs_handoff,
-            conversion_candidate=conversion_candidate,
+            conversion_target=conversion_target,
         )
         if isinstance(resp, dict):
             tool_result = _handle_tool_calls(resp, bot, m, CONFIG, db)
@@ -504,11 +622,6 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             except Exception as e:
                 # 【v5.31.2 修复】记忆缓冲写入失败会导致长上下文记忆退化，必须 warning
                 logger.warning(f"记录 assistant 回复到记忆缓冲失败 uid={uid}: {e}")
-
-        if is_group and mode == "normal" and conv_count >= 2:
-            append_text = _append_conv_response(dctx, conv_count)
-            if append_text:
-                resp += append_text
 
         delay = _calc_humanized_delay(resp, is_priv, conv_count, CONFIG)
 
@@ -620,35 +733,44 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     clear_logging_context()
 
 
-def _build_convert_hint(db, uid, conv_count) -> tuple:
-    stage_hint = ""
+def _build_convert_hint(
+    db,
+    uid,
+    conv_count,
+    *,
+    conversion_target: str = "preview",
+    conversion_reason: str = "",
+) -> tuple:
+    """成交话术只描述本轮目标，随机性留给人设措辞而不是跳步。"""
     notify_admin_reason = ""
     consult_count = db.get_user_consult_count(uid)
 
-    if consult_count <= 1:
-        _variants = random.choice([1, 2, 3])
-        if _variants == 1:
-            stage_hint = "\n【转化-首次-A】：用户第一次问消费类问题。直接告诉他：找 @MorychannelBot，自己看。别啰嗦，带点小傲娇就行。"
-        elif _variants == 2:
-            stage_hint = "\n【转化-首次-B】：用户第一次问。给路径：@MorychannelBot 自助下单，按提示来。语气温柔带点撩，别太生硬。"
-        else:
-            stage_hint = "\n【转化-首次-C】：第一次问消费的事。简洁说：@MorychannelBot 下单，很简单。像随口说的，不是客服回答问题。"
-    elif consult_count == 2:
-        _variants = random.choice([1, 2, 3])
-        if _variants == 1:
-            stage_hint = "\n【转化-二次-A】：又来问了？带点绿茶的小暧昧：你这么好奇呀…@MorychannelBot 那边都有啦，自己去看嘛～"
-        elif _variants == 2:
-            stage_hint = "\n【转化-二次-B】：还在问？说明心动了嘛。故意吊一下胃口：群里不方便说啦，@MorychannelBot 那边有你想看的，嗯？"
-        else:
-            stage_hint = "\n【转化-二次-C】：问两遍了哦...用撒娇带点小抱怨的语气：哎呀你怎么这么磨叽～去 @MorychannelBot 看一眼不就知道了嘛。"
+    if conversion_reason == "recent_order_cta_suppressed":
+        stage_hint = (
+            "\n【转化-继续聊】：近期已给过下单入口。只承接当前细节和口味，"
+            "不要重复任何入口、链接或按钮，也不要像客服催单。"
+        )
+    elif conversion_reason in {"user_opt_out", "custom_information_only"}:
+        stage_hint = (
+            "\n【转化-不推进】：按用户当前问题正常回答；概念咨询只解释，拒绝则停止推销。"
+            "本轮不得出现预览、下单、订阅或人工承诺。"
+        )
+    elif conversion_target == "subscribe":
+        stage_hint = random.choice((
+            "\n【转化-自助】：先接住用户刚说的具体需求，再自然带一次 @MorychannelBot；只说可查看当前可选内容和档位并按提示自助完成，不承诺未确认的定制能力、价格或交付。",
+            "\n【转化-自助】：语气保持清冷、自然，回应当前话题后只给一个 @MorychannelBot 入口；不要再发预览，不要催促，也不要编造表单或服务承诺。",
+            "\n【转化-自助】：用户已明确要继续。用一两句人话承接，再轻带 @MorychannelBot 查看当前选项；不写客服流程，不同时出现其他入口。",
+        ))
+    elif conversion_target == "preview":
+        stage_hint = random.choice((
+            "\n【转化-先预览】：先回答价格、内容或权益问题，再自然带一次 @moryselect 让用户自己看预览；不要直接催下单。",
+            "\n【转化-先预览】：用户仍在了解阶段。保持人设正常接话，只给 @moryselect 这一个入口，让他看完再判断。",
+            "\n【转化-先预览】：先解决当前疑问，再轻带 @moryselect；不出现 @MorychannelBot，不制造稀缺感或压力。",
+        ))
     else:
-        _variants = random.choice([1, 2, 3])
-        if _variants == 1:
-            stage_hint = "\n【转化-多次-A】：你问题好多哦。行吧，我帮你问Mory，你等着。语气温柔带点无奈。"
-        elif _variants == 2:
-            stage_hint = "\n【转化-多次-B】：好吧好吧，我帮你跟她说一声，你别催啦。像哄小孩一样，但别太假。"
-        else:
-            stage_hint = "\n【转化-多次-C】：真能问...我转达一下，你等我消息嘛。带点小嫌弃但还是会帮忙的感觉。"
+        stage_hint = "\n【转化-仅回答】：当前没有可执行成交目标，只回答用户正在问的内容，不塞入口。"
+
+    if consult_count >= 3:
         notify_admin_reason = "convert_stuck"
 
     return stage_hint, notify_admin_reason
@@ -661,81 +783,39 @@ def _build_emotional_hint(conv_count) -> tuple:
     if conv_count >= 4:
         _variants = random.choice([1, 2, 3])
         if _variants == 1:
-            stage_hint = "\n【情感-深度-A】：用户聊了好几轮，情绪复杂。温柔安慰完，带点心疼的语气：你这样我都心疼了…要不我帮你跟Mory说一声？她看到会来找你的。"
+            stage_hint = "\n【情感-深度-A】：用户聊了好几轮，情绪复杂。先温柔接住，不虚构已经转达或承诺谁会来回复；确实需要真人时再给联系 Mory 的真实入口。"
         elif _variants == 2:
-            stage_hint = "\n【情感-深度-B】：多轮对话了，用户需要真人支持。软下来：别难过啦好不好？Mory人超nice的，要不我帮你转达给她？她会帮你的。"
+            stage_hint = "\n【情感-深度-B】：多轮对话需要真人支持。语气软一点，先听对方说完；只建议可联系 Mory，不说“我已转达”或“她一定会回复”。"
         else:
-            stage_hint = "\n【情感-深度-C】：聊了挺久了，用户情绪低落。用绿茶式的关心：你这样我都不知道怎么说了…等下我帮你告诉Mory好不好？她一定会回你的。"
+            stage_hint = "\n【情感-深度-C】：用户情绪低落，先共情并问清最需要什么；需要人工时给真实联系入口，不表演转交流程，不许诺结果。"
         notify_admin_reason = "emotional_deep"
     elif conv_count >= 2:
         _variants = random.choice([1, 2])
         if _variants == 1:
-            stage_hint = "\n【情感-引导-A】：用户情绪有点down。安慰完轻描淡写：其实Mory人真的超好的，你有啥想不开的也可以找她说说的。自然带出，不硬推。"
+            stage_hint = "\n【情感-引导-A】：用户情绪有点低落。先共情，再围绕他刚说的内容回应；不急着转人工，也不转成销售话题。"
         else:
-            stage_hint = "\n【情感-引导-B】：聊了两轮了，氛围挺走心。顺带一提：对了Mory平时也在的，你要是想找人说话，找她也行呀。像不经意提一个朋友。"
+            stage_hint = "\n【情感-引导-B】：氛围走心时保持温柔和克制，继续听对方说；只有对方明确需要真人帮助时再给联系入口。"
 
     return stage_hint, notify_admin_reason
 
 
-def _build_normal_hint(conv_count) -> tuple:
-    stage_hint = ""
-    notify_admin_reason = ""
-
-    if conv_count >= 6:
-        _variants = random.choice([1, 2, 3])
-        if _variants == 1:
-            stage_hint = "\n【闲聊-收网-A】：聊了很多轮了，该自然收尾了。带点不舍：跟你聊天好开心呀…对了@MorychannelBot 那边还有好多好玩的，你不去看看嘛？"
-        elif _variants == 2:
-            stage_hint = "\n【闲聊-收网-B】：聊了好久了，别硬聊下去。用撒娇收尾：哎呀不跟你说了啦，再说我都不想干活了～想看更多去 @MorychannelBot 自己解锁哦。"
-        else:
-            stage_hint = "\n【闲聊-收网-C】：多轮闲聊，温和引导。自然收：好啦今天先这样嘛，你要是想看点别的…@MorychannelBot 那边都有。像随口提一句。"
-        notify_admin_reason = "chat_deep"
-    elif conv_count >= 5:
-        _variants = random.choice([1, 2])
-        if _variants == 1:
-            stage_hint = "\n【闲聊-深度-A】：聊了5轮以上，关系升温了。带点小暧昧：跟你聊天还挺有意思的…对了@MorychannelBot 那边还有更多有意思的哦？"
-        else:
-            stage_hint = "\n【闲聊-深度-B】：聊了好几轮，气氛不错。不经意说：你要是喜欢跟我聊的话…@MorychannelBot 那边还有群里不发的东西呢，你懂的。"
-    elif conv_count >= 3:
-        _variants = random.choice([1, 2])
-        if _variants == 1:
-            stage_hint = "\n【闲聊-升温-A】：聊了好几轮，气氛不错。故意神秘一点：对了，有个事一直没跟你说…@MorychannelBot 那边有些群里不发的，你不好奇嘛？"
-        else:
-            stage_hint = "\n【闲聊-升温-B】：聊了几轮，可以轻推一下。随口说：聊这么久了，要不要看点好东西？@MorychannelBot 那边自己去翻，我不说啦。像推荐小秘密。"
-
+def _build_normal_hint(conv_count, *, proactive_preview: bool = False) -> tuple:
+    """多轮闲聊优先延续当前话题；只有已决策的低频轮次才推进预览。"""
+    notify_admin_reason = "chat_deep" if conv_count >= 6 else ""
+    if proactive_preview:
+        stage_hint = random.choice((
+            "\n【闲聊-低频推进】：先回应当前话题，再像分享一个顺手入口一样轻带 @moryselect；只去预览，不催下单。",
+            "\n【闲聊-低频推进】：保持刚才的语气和话题连贯，结尾自然提一次 @moryselect 可以先看看；不要突然变客服。",
+            "\n【闲聊-低频推进】：承接当前内容后轻轻把话题连到预览，只有 @moryselect 一个入口，不夸大、不施压。",
+        ))
+    elif conv_count >= 2:
+        stage_hint = (
+            "\n【闲聊-连续承接】：继续回答对方刚才的话，沿用最近上下文和人设语气；"
+            "不要因为聊天轮数增加就突然销售、收网或另起一个无关话题。"
+        )
+    else:
+        stage_hint = ""
     return stage_hint, notify_admin_reason
-
-
-def _append_conv_response(dctx: DispatchContext, conv_count: int) -> str:
-    ai = dctx.ctx.ai
-    seed_h = random.randint(100000, 999999)
-
-    append_mode = None
-    append_prompt = ""
-    if conv_count >= 5 and random.randint(1, 10) <= 3:
-        append_mode = "convert_soft"
-        append_prompt = f"用户已和你连续聊了{conv_count}轮，自然收尾引导"
-    elif conv_count >= 3 and random.randint(1, 10) <= 3:
-        append_mode = "nudge"
-        append_prompt = "用户和你聊得不错，不经意间植入暗示"
-    elif random.randint(1, 10) <= 6:
-        append_mode = "hook"
-        append_prompt = "基于刚才的对话，用绿茶风反问结尾让对话继续"
-
-    if append_mode:
-        try:
-            _append_future = _append_pool.submit(
-                lambda: ai.ask(append_prompt, mode=append_mode, seed=seed_h))
-            try:
-                append_text = _append_future.result(timeout=5)
-                if append_text:
-                    return f"\n\n{append_text.strip()}"
-            except concurrent.futures.TimeoutError:
-                logger.info("连续对话追加超时（5秒），跳过")
-        except Exception as e:
-            logger.warning(f"连续对话追加失败（跳过）：{e}")
-
-    return ""
 
 
 def _notify_admin_for_deep_conversation(dctx: DispatchContext, mode: str, conv_count: int, reason: str):
