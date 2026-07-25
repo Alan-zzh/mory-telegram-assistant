@@ -3,6 +3,21 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+def test_group_verification_numbers_are_filtered_before_chat_pipeline():
+    from core.message_dispatcher import _is_group_verification_number
+
+    assert _is_group_verification_number("123")
+    assert _is_group_verification_number(" 1 2 3 ")
+    assert _is_group_verification_number("１２３")
+    assert not _is_group_verification_number("今天赚了100")
+    assert not _is_group_verification_number("验证码123")
+
+    source = Path("core/message_dispatcher.py").read_text(encoding="utf-8")
+    assert source.index("if is_group and _is_group_verification_number") < source.index(
+        "load_recent_conversation"
+    )
+
+
 class _QuestionDb:
     def __init__(self):
         self.telemetry = []

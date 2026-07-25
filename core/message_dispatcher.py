@@ -36,6 +36,13 @@ from core.handlers.ai_reply_handler import (
 
 logger = get_logger("message_dispatcher")
 
+
+def _is_group_verification_number(text: str) -> bool:
+    """群内纯数字视为新人验证流量，不参与聊天统计、画像或 AI。"""
+    compact = "".join(str(text or "").split())
+    return bool(compact) and compact.isdecimal()
+
+
 # 【v5.31.2 修复】VPS 运行在 UTC，时段/日期相关逻辑必须用 CST（UTC+8）
 _CST = timezone(timedelta(hours=8))
 
@@ -616,6 +623,22 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
                 return
         except Exception as e:
             logger.debug(f"路由检查异常 bot={ctx.bot_id} chat={chat_id}: {e}")
+
+    # 新人算术验证答案优先交给验证码模块；无活动会话的纯数字也静默忽略。
+    # 必须位于历史、last_active、画像、快照、积分和 AI 之前，避免污染真实聊天数据。
+    if is_group and _is_group_verification_number(msg_text):
+        try:
+            from modules.verification import check_verification_answer
+            check_verification_answer(ctx.bot, m, ctx.config)
+        except Exception as e:
+            logger.warning(
+                "群验证数字处理异常 uid=%s chat=%s: %s",
+                uid,
+                chat_id,
+                e,
+            )
+        clear_logging_context()
+        return
 
     # 构建分发上下文
     dctx = DispatchContext(
