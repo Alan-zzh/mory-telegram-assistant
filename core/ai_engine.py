@@ -1363,6 +1363,12 @@ class AIEngine:
     def _classify_intent(self, message: str) -> str:
         """轻量意图分类：根据关键词匹配+权重打分，返回意图标签"""
         msg_lower = message.lower()
+        try:
+            from core.keyword_manager import is_convert_rejection_message
+            if is_convert_rejection_message(msg_lower):
+                return "help"
+        except Exception:
+            pass
         scores = {}
         for intent, cfg in self._INTENT_KEYWORDS.items():
             kws = cfg.get("keywords", [])
@@ -2083,6 +2089,7 @@ class AIEngine:
         参数：
             tools: Function Calling工具定义列表（OpenAI格式）
             tool_choice: "auto"|"none"|"required" 或指定工具名
+            conversation_history: 同一用户/聊天最近的 user/assistant 消息；会限制角色、条数和长度
         """
 
         # 仅接受 user/assistant 角色，并限制为最近 6 条，避免把遥测字段或超长内容注入模型。

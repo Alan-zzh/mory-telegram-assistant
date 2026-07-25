@@ -49,6 +49,15 @@ _UNRESOLVED_REPLY_MARKERS = (
     "问mory", "问 mory", "联系mory", "联系 mory",
 )
 
+_CUSTOM_DETAIL_MARKERS = (
+    "舞", "舞蹈", "开场", "穿衣服", "服装", "卡点", "变装", "镜头", "风格",
+)
+
+_PREFERENCE_CONFIRM_MARKERS = (
+    "就是这个", "这个味", "这种风格", "这个风格", "挺喜欢", "喜欢这种",
+    "风格可以", "就这个", "就这种", "不错", "确定", "安排",
+)
+
 
 def _looks_like_question(text: str) -> bool:
     """识别群里应主动承接的自然语言问题。"""
@@ -94,6 +103,41 @@ def _build_unresolved_handoff_markup():
         InlineKeyboardButton("自助下单", url="https://t.me/MorychannelBot"),
     )
     return markup
+
+
+def _build_purchase_markup():
+    """明确购买/定制意图只给下一步下单，不再把用户送回预览。"""
+    from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.row(
+        InlineKeyboardButton("🛒 自助下单", url="https://t.me/MorychannelBot"),
+    )
+    return markup
+
+
+def _build_contextual_purchase_reply(text: str) -> str:
+    """对截图中的承接短句做确定性收口，避免模型再次失忆或重复预览。"""
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if any(marker in compact for marker in _PREFERENCE_CONFIRM_MARKERS):
+        return "对，就是这个方向。喜欢的话直接去 @MorychannelBot 自助下单。"
+    if any(marker in compact for marker in ("开场", "穿衣服", "服装", "卡点", "变装", "镜头")):
+        return (
+            "这个思路可以，细节就按你说的来。"
+            "定制直接去 @MorychannelBot 自助下单，把要求填进去。"
+        )
+    if any(marker in compact for marker in _CUSTOM_DETAIL_MARKERS):
+        return "可以定制。直接去 @MorychannelBot 自助下单，把想要的风格填进去。"
+    return "这个方向可以。直接去 @MorychannelBot 自助下单，按提示填要求。"
+
+
+def _ensure_conversion_cta(response, *, conversion_candidate: bool):
+    """所有商业承接都必须给出可执行下一步，不能只聊风格或反复发预览。"""
+    if not conversion_candidate or not isinstance(response, str) or not response.strip():
+        return response
+    if "@morychannelbot" in response.lower():
+        return response
+    return f"{response.rstrip()} 直接去 @MorychannelBot 自助下单。"
 
 
 def _is_direct_access_request(text: str) -> bool:
@@ -267,6 +311,15 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     # [TRAE SOLO CN] v5.19.0 意图路由联动：根据 dctx.intent 增强 stage_hint
     _intent = getattr(dctx, "intent", None) or {}
     _intent_label = _intent.get("intent", "chat")
+    purchase_ready = bool(getattr(dctx, "contextual_purchase", False))
+    if purchase_ready and _intent_label != "purchase_intent":
+        _intent = {
+            "intent": "purchase_intent",
+            "confidence": 0.95,
+            "source": "context_rule",
+        }
+        dctx.intent = _intent
+        _intent_label = "purchase_intent"
     if _intent.get("source", "disabled") != "disabled":
         if _intent_label == "flirt":
             stage_hint += "\n【意图-调戏】：用户在调戏/撩你。保持清冷傲娇人设，可以适当回撩但不主动，留悬念。"
@@ -309,10 +362,32 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         resp = _direct_access_reply(is_priv=is_priv)
         logger.info(f"🔗 直接入口回复 uid={uid} mode={mode}")
 
+    if purchase_ready:
+        resp = _build_contextual_purchase_reply(msg)
+        logger.info(f"🛒 上下文购买意图确定性收口 uid={uid} mode={mode}")
+
     ai_attempted = False
     if resp is None:
         ai_attempted = True
-        resp = ai.ask(msg, mode=mode, tools=use_tools, is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile)
+        resp = ai.ask(
+            msg,
+            mode=mode,
+            tools=use_tools,
+            is_priv=is_priv,
+            stage_hint=stage_hint,
+            user_profile=user_profile,
+            conversation_history=getattr(dctx, "conversation_history", []),
+        )
+
+    conversion_candidate = (
+        mode == "convert"
+        or _intent_label == "purchase_intent"
+        or purchase_ready
+    )
+    resp = _ensure_conversion_cta(
+        resp,
+        conversion_candidate=conversion_candidate,
+    )
 
     needs_handoff = _should_offer_handoff(
         resp,
@@ -334,7 +409,12 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             logger.error(f"故障通知发送失败: {notify_err}")
 
     if resp:
-        handoff_markup = _build_unresolved_handoff_markup() if needs_handoff else None
+        if needs_handoff:
+            handoff_markup = _build_unresolved_handoff_markup()
+        elif conversion_candidate:
+            handoff_markup = _build_purchase_markup()
+        else:
+            handoff_markup = None
         if isinstance(resp, dict):
             tool_result = _handle_tool_calls(resp, bot, m, CONFIG, db)
             if tool_result:

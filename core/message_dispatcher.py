@@ -495,6 +495,8 @@ class DispatchContext:
     proactive_eligible: bool = False  # 是否符合主动消息条件
     intent: dict = field(default_factory=lambda: {"intent": "chat", "source": "disabled"})  # [TRAE SOLO CN] v5.19.0 意图路由结果
     _analysis: dict = field(default_factory=dict)  # 中间分析结果
+    conversation_history: list = field(default_factory=list)  # 同一用户/聊天最近几轮真实对话
+    contextual_purchase: bool = False  # 当前短句是否承接上一轮购买/定制意图
     # [TRAE SOLO CN v5.24.0 阶段2-D] 多 Bot 共享上下文（跨 Bot 画像 + 漏斗状态）
     shared_profile: dict = field(default_factory=dict)        # 跨 Bot 用户画像（来自 shared_db）
     shared_funnel_state: str = ""                             # 跨 Bot 漏斗状态（touched/interested/carted/converted/unknown）
@@ -634,6 +636,22 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
         is_group=is_group,
         text=msg_text,
     )
+
+    # 当前轮进入意图路由和 AI 前，先读取同一用户、同一聊天的最近真实对话。
+    # 不能只把历史写进摘要缓冲却不给本轮判断/模型使用。
+    try:
+        from core.growth_optimizer import (
+            is_contextual_purchase_intent,
+            load_recent_conversation,
+        )
+        dctx.conversation_history = load_recent_conversation(
+            ctx.db, uid, chat_id, limit=3, max_age_seconds=1800
+        )
+        dctx.contextual_purchase = is_contextual_purchase_intent(
+            msg_text, dctx.conversation_history
+        )
+    except Exception as e:
+        logger.debug(f"近期对话上下文加载失败 uid={uid} chat={chat_id}: {e}")
 
     # [TRAE SOLO CN v5.24.0 阶段2-D] 多 Bot 共享上下文读取
     # 从 shared_db 读取跨 Bot 画像 + 漏斗状态，注入 dctx 供后续 P9/P10 使用
@@ -1124,7 +1142,10 @@ def _dispatch_p3_6_intent_routing(dctx: DispatchContext) -> bool:
         intent_router = getattr(ctx, "intent_router", None)
         if not intent_router:
             return False
-        dctx.intent = intent_router.classify(dctx.text)
+        dctx.intent = intent_router.classify(
+            dctx.text,
+            conversation_history=getattr(dctx, "conversation_history", []),
+        )
         # 高置信度投诉 → 转人工通知
         if (dctx.intent.get("intent") == "complaint"
                 and dctx.intent.get("confidence", 0.0) > 0.6
@@ -1525,8 +1546,15 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
     # P7：视奸雷达（v5.14.0 扩展：使用扩展的 convert 关键词 + 标志位供 P7.5 消费）
     _cleanup_radar_cooldown()
     from modules.group_mgr import _is_convert_message
+    from core.growth_optimizer import is_direct_custom_order_request
     keyword_manager = getattr(dctx.ctx, 'keyword_manager', None)
-    if is_group and msg and _is_convert_message(msg, keyword_manager):
+    is_direct_custom_order = is_direct_custom_order_request(msg)
+    if (
+        is_group
+        and msg
+        and _is_convert_message(msg, keyword_manager)
+        and not is_direct_custom_order
+    ):
         now_radar = time.time()
         with _radar_lock:
             last_trigger = _radar_cooldown.get(uid, 0)
@@ -1581,6 +1609,11 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
     # P9：用户画像标签提取
     from modules.group_mgr import detect_keywords
     analysis = detect_keywords(msg, CONFIG, keyword_manager)
+    if getattr(dctx, "contextual_purchase", False):
+        analysis["mode"] = "convert"
+        analysis["is_cart"] = True
+        if not analysis.get("keyword_tag"):
+            analysis["keyword_tag"] = "付费意向-上下文承接"
     if analysis["keyword_tag"]:
         db.add_keyword(uid, analysis["keyword_tag"])
     if analysis["is_cart"]:

@@ -213,6 +213,37 @@ def test_engage_exception_silent():
     print("✓ engage 异常静默不崩")
 
 
+def test_old_private_prompt_is_invalidated_and_reply_closes_order():
+    from modules.proactive_engage import ProactiveEngage
+
+    class _FakeAI:
+        def __init__(self):
+            self.prompts = []
+
+        def ask(self, prompt, mode="normal"):
+            self.prompts.append(prompt)
+            return "先去预览看看。"
+
+    ai = _FakeAI()
+    pe = ProactiveEngage(
+        db=_FakeDB(),
+        mory_bot=_FakeMoryBot(),
+        ai=ai,
+        config={
+            "PROMPT_TEMPLATES": {
+                "business_engage": "旧提示：自然引导他私聊了解详情。",
+            },
+            "PROACTIVE_ENGAGE_CONFIG": {"enabled": True},
+        },
+    )
+
+    reply = pe._generate_reply("订阅多少钱", "订阅", "测试用户")
+
+    assert "不要再引导私聊" in ai.prompts[0]
+    assert "@MorychannelBot" in reply
+    assert "预览" not in reply
+
+
 if __name__ == "__main__":
     test_should_engage_disabled()
     test_should_engage_admin_exempt()

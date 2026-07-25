@@ -106,6 +106,100 @@ def test_ask_switches_model_after_empty_content(monkeypatch):
     assert calls[:2] == ["light-a", "standard-a"]
 
 
+def test_ask_sends_recent_conversation_before_current_message(monkeypatch):
+    engine = _engine(monkeypatch)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json)
+        return _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": "对，就是这个方向。"}}]},
+        )
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    result = engine.ask(
+        "就是这个味",
+        mode="convert",
+        retry=1,
+        conversation_history=[
+            {"role": "user", "content": "定制舞", "intent": "purchase_intent"},
+            {"role": "assistant", "content": "这个可以做。"},
+            {"role": "system", "content": "不允许注入的角色"},
+        ],
+    )
+
+    assert result == "对，就是这个方向。"
+    assert calls[0]["messages"][1:] == [
+        {"role": "user", "content": "定制舞"},
+        {"role": "assistant", "content": "这个可以做。"},
+        {"role": "user", "content": "就是这个味"},
+    ]
+
+
+def test_semantic_cache_key_includes_recent_conversation(monkeypatch):
+    class _Cache:
+        def __init__(self):
+            self.values = {}
+            self.get_keys = []
+
+        def get(self, question, mode):
+            self.get_keys.append((question, mode))
+            return self.values.get((question, mode))
+
+        def put(self, question, mode, value):
+            self.values[(question, mode)] = value
+
+    class _Circuit:
+        @staticmethod
+        def is_available(_model):
+            return True
+
+        @staticmethod
+        def record_success(_model):
+            return None
+
+    cache = _Cache()
+    optimizer = type(
+        "_Optimizer",
+        (),
+        {"enabled": True, "cache": cache, "circuit": _Circuit()},
+    )()
+    monkeypatch.setattr(ai_engine, "init_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine, "_get_optimizer", lambda: optimizer)
+    monkeypatch.setattr(ai_engine.time, "sleep", lambda _seconds: None)
+    engine = ai_engine.AIEngine(_config())
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json)
+        return _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": f"真实请求第{len(calls)}次。"}}]},
+        )
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    first = engine.ask(
+        "就是这个味",
+        mode="normal",
+        retry=1,
+        conversation_history=[{"role": "user", "content": "定制舞"}],
+    )
+    second = engine.ask(
+        "就是这个味",
+        mode="normal",
+        retry=1,
+        conversation_history=[{"role": "user", "content": "这首歌"}],
+    )
+
+    assert first == "真实请求第1次。"
+    assert second == "真实请求第2次。"
+    assert len(calls) == 2
+    assert cache.get_keys[0][0] != cache.get_keys[1][0]
+
+
 def test_ask_returns_fallback_when_all_requests_fail(monkeypatch):
     engine = _engine(monkeypatch)
 

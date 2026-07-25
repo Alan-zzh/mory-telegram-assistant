@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
 
 from core.logging_util import get_logger
+from core.keyword_manager import is_convert_rejection_message
 from core.telemetry import _detect_sentiment
 
 logger = get_logger("growth_optimizer")
@@ -39,6 +41,23 @@ PRODUCTS = {
     "album": "精选图集",
 }
 
+_PURCHASE_TOPIC_MARKERS = (
+    "定制", "定做", "专属", "订阅", "会员", "开通", "购买", "下单",
+    "付款", "支付", "价格", "多少钱", "套餐", "权益", "预览", "moryselect",
+    "morychannelbot", "定制舞", "卡点", "变装",
+)
+
+_PURCHASE_CONTINUATION_MARKERS = (
+    "就是这个", "这个味", "这种风格", "这个风格", "风格可以", "挺喜欢",
+    "喜欢这种", "就这个", "就这种", "就按这个", "确定这个", "安排这个",
+    "想要这个", "要这个", "按这个", "做这个", "开场", "穿衣服", "服装", "卡点",
+    "变装", "舞蹈", "跳舞",
+)
+
+_DIRECT_CUSTOM_ORDER_MARKERS = (
+    "定制", "定做", "专属定制", "定制舞", "卡点变装",
+)
+
 
 @dataclass
 class GrowthContext:
@@ -50,6 +69,92 @@ class GrowthContext:
     source: str
     event: str
     stage_hint: str
+
+
+def load_recent_conversation(
+    db: Any,
+    uid: int,
+    chat_id: int,
+    *,
+    limit: int = 3,
+    max_age_seconds: int = 1800,
+) -> list[dict[str, Any]]:
+    """读取同一用户、同一聊天最近几轮真实对话，供当前轮承接。
+
+    conversation_telemetry 在每次 AI 回复后持久化，因此这里既能跨进程重启，
+    也不会把同一用户在其他群或私聊里的内容串进当前会话。
+    """
+    if not db or not uid or not getattr(db, "conn", None):
+        return []
+    safe_limit = max(1, min(int(limit or 3), 6))
+    cutoff = int(time.time()) - max(60, int(max_age_seconds or 1800))
+    sql = (
+        "SELECT message_text, bot_reply_text, intent, ts "
+        "FROM conversation_telemetry "
+        "WHERE user_id=? AND chat_id=? AND ts>=? "
+        "ORDER BY id DESC LIMIT ?"
+    )
+    try:
+        lock = getattr(db, "lock", None)
+        if lock:
+            with lock:
+                rows = db.conn.execute(sql, (uid, chat_id, cutoff, safe_limit)).fetchall()
+        else:
+            rows = db.conn.execute(sql, (uid, chat_id, cutoff, safe_limit)).fetchall()
+    except Exception as e:
+        logger.debug(f"读取近期对话失败 uid={uid} chat={chat_id}: {e}")
+        return []
+
+    history: list[dict[str, Any]] = []
+    for user_text, assistant_text, intent, ts in reversed(rows):
+        if user_text:
+            history.append({
+                "role": "user",
+                "content": str(user_text)[:500],
+                "intent": str(intent or ""),
+                "ts": int(ts or 0),
+            })
+        if assistant_text:
+            history.append({
+                "role": "assistant",
+                "content": str(assistant_text)[:500],
+                "intent": str(intent or ""),
+                "ts": int(ts or 0),
+            })
+    return history
+
+
+def is_direct_custom_order_request(text: str) -> bool:
+    """明确描述定制服务时直接进入下单承接，不先重复发预览。"""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    return (
+        bool(compact)
+        and not is_convert_rejection_message(compact)
+        and any(marker in compact for marker in _DIRECT_CUSTOM_ORDER_MARKERS)
+    )
+
+
+def is_contextual_purchase_intent(text: str, history: list[dict[str, Any]] | None) -> bool:
+    """识别“就是这个味/这种风格/卡点变装”等承接式购买意图。"""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    if not compact or is_convert_rejection_message(compact):
+        return False
+    if is_direct_custom_order_request(compact):
+        return True
+
+    recent = list(history or [])[-6:]
+    prior_user_turns = [
+        item for item in recent
+        if item.get("role") == "user" and str(item.get("content") or "").strip()
+    ]
+    has_purchase_anchor = any(
+        item.get("intent") == "purchase_intent"
+        or any(marker in str(item.get("content") or "").lower() for marker in _PURCHASE_TOPIC_MARKERS)
+        for item in prior_user_turns
+    )
+    if not has_purchase_anchor:
+        return False
+    return any(marker in compact for marker in _PURCHASE_CONTINUATION_MARKERS)
 
 
 def is_enabled(config: dict[str, Any] | None) -> bool:

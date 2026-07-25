@@ -28,6 +28,17 @@ logger = get_logger("keyword_manager")
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DATA_DIR = os.path.join(_BASE_DIR, "data")
 
+_CONVERT_REJECTION_MARKERS = (
+    "不买", "不购买", "不订阅", "取消订阅", "取消购买", "不需要了",
+    "不要了", "不定制", "不用定制", "不做了", "暂时不买", "先不买",
+)
+
+
+def is_convert_rejection_message(msg: str) -> bool:
+    """明确拒绝/取消不应继续进入促销转化。"""
+    compact = "".join(str(msg or "").lower().split())
+    return bool(compact) and any(marker in compact for marker in _CONVERT_REJECTION_MARKERS)
+
 
 class KeywordManager:
     """统一的关键词与静态数据管理器"""
@@ -46,9 +57,12 @@ class KeywordManager:
         # 从 config.json 加载关键词
         self._cache["ad_keywords"] = self._config.get("AD_KEYWORDS", _DEFAULT_AD_KEYWORDS)
         self._cache["auto_mute_names"] = self._config.get("AUTO_MUTE_NAMES", _DEFAULT_AUTO_MUTE_NAMES)
-        self._cache["convert_keywords_substr"] = self._config.get(
+        configured_convert_substr = self._config.get(
             "CONVERT_KEYWORDS", {}
         ).get("substr", _DEFAULT_CONVERT_SUBSTR)
+        self._cache["convert_keywords_substr"] = list(dict.fromkeys(
+            [*configured_convert_substr, *_MANDATORY_CONVERT_SUBSTR]
+        ))
         self._cache["convert_keywords_word"] = self._config.get(
             "CONVERT_KEYWORDS", {}
         ).get("word", _DEFAULT_CONVERT_WORD)
@@ -133,6 +147,8 @@ class KeywordManager:
         """判断消息是否属于商业咨询类（统一入口，替代 _is_convert_message）"""
         if not msg:
             return False
+        if is_convert_rejection_message(msg):
+            return False
         # 子串匹配
         if any(k in msg for k in self.get_convert_keywords_substr()):
             return True
@@ -203,6 +219,8 @@ _DEFAULT_CONVERT_SUBSTR = [
     # 订阅/付费类
     "订阅", "月付", "年付", "季付", "周付", "包月", "包年", "包季",
     "续费", "充值", "解锁", "购买", "付费", "升级", "付款", "支付",
+    # 定制服务本身就是明确消费意图，不能等用户再问价格才进入转化
+    "定制", "定做", "专属定制",
     # 权益/权限类
     "权益", "权限", "会员群", "VIP群",
     # 怎么加入/联系类
@@ -219,6 +237,9 @@ _DEFAULT_CONVERT_SUBSTR = [
     # 内容/观看类
     "视频", "观看",
 ]
+
+# 生产旧配置可能完整覆盖 CONVERT_KEYWORDS；这些核心购买意图不可被旧列表抹掉。
+_MANDATORY_CONVERT_SUBSTR = ["定制", "定做", "专属定制"]
 
 _DEFAULT_CONVERT_WORD = []
 

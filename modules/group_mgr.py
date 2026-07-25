@@ -42,6 +42,7 @@ from core.keyword_manager import (
     _DEFAULT_AUTO_MUTE_NAMES,
     _DEFAULT_CONVERT_SUBSTR,
     _DEFAULT_CONVERT_WORD,
+    is_convert_rejection_message,
 )
 from modules.ad_detector import check_username_suspicious
 from modules.avatar_detector import check_and_ban_if_porn_avatar, check_avatar_ocr_text
@@ -411,6 +412,8 @@ def _is_convert_message(msg: str, keyword_manager=None) -> bool:
         keyword_manager: KeywordManager 实例（可选，优先使用）
     """
     if not msg:
+        return False
+    if is_convert_rejection_message(msg):
         return False
 
     # 优先使用 KeywordManager

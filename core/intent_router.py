@@ -29,7 +29,7 @@ class IntentRouter:
         self.config = config
         self._rule_threshold = float(config.get("INTENT_RULE_THRESHOLD", 2.0))
 
-    def classify(self, text: str) -> Dict:
+    def classify(self, text: str, conversation_history: list[dict] | None = None) -> Dict:
         """两级分类，返回 {intent, confidence, source}。
 
         Returns:
@@ -42,6 +42,24 @@ class IntentRouter:
 
         if not text or not isinstance(text, str):
             return {"intent": "chat", "confidence": 0.0, "source": "rule"}
+
+        try:
+            from core.growth_optimizer import is_contextual_purchase_intent
+            from core.keyword_manager import is_convert_rejection_message
+            if is_convert_rejection_message(text):
+                return {
+                    "intent": "consult",
+                    "confidence": 0.9,
+                    "source": "rejection_rule",
+                }
+            if is_contextual_purchase_intent(text, conversation_history):
+                return {
+                    "intent": "purchase_intent",
+                    "confidence": 0.95,
+                    "source": "context_rule",
+                }
+        except Exception as e:
+            logger.debug(f"上下文购买意图判断失败，继续单句分类: {e}")
 
         # Level 1: 规则引擎（零 TOKEN）
         intent, score = self._rule_classify(text)

@@ -8,6 +8,7 @@ import time
 import threading
 import traceback
 import random
+import re
 from typing import Tuple
 from datetime import datetime, timezone, timedelta
 
@@ -21,20 +22,20 @@ _CST = timezone(timedelta(hours=8))
 
 # A/B 群搭讪话术模板（防重复感，30-50字+私聊引导，绿茶自然语气）
 _FALLBACK_TEMPLATES = [
-    "{uname}，这个群里说不太方便啦。",
-    "一句话说不清楚，你私聊我好不好？",
-    "群里人多不好意思说这些，来私聊嘛。",
-    "这个私聊我给你细说呀～",
+    "{uname}，喜欢就直接去 @MorychannelBot 自助下单，按提示选就行。",
+    "这个可以做，直接去 @MorychannelBot 自助下单，把要求填进去。",
+    "方向确定了就别绕啦，去 @MorychannelBot 自助下单。",
+    "想要的话直接走 @MorychannelBot，按提示下单就好。",
 ]
 
 _FALLBACK_BY_INTENT = {
     "price": [
-        "{uname}，价格私聊给你，群里不说价的啦。",
-        "群里不方便报价，私聊我给你发完整价格表哦。",
+        "{uname}，价格和档位去 @MorychannelBot 看，合适就直接自助下单。",
+        "具体档位在 @MorychannelBot，按需要选了直接下单就行。",
     ],
     "rights": [
-        "权益区别讲起来有点多，私聊给你慢慢说。",
-        "区别挺大的，私聊发你对比表嘛。",
+        "权益区别在 @MorychannelBot 写得很清楚，选合适的直接下单。",
+        "先按需要选档位，去 @MorychannelBot 自助下单就行。",
     ],
     "trial": [
         "想先看看？私我给你发预览呀～",
@@ -45,8 +46,8 @@ _FALLBACK_BY_INTENT = {
         "下单走Bot哦，群里不方便说这个。",
     ],
     "repeat": [
-        "你刚才问过啦，私聊我给你说过了哦。",
-        "这个刚才说过了嘛，看私聊就好啦。",
+        "方向已经聊清楚了，直接去 @MorychannelBot 自助下单。",
+        "不用再绕预览啦，喜欢就去 @MorychannelBot 自助下单。",
     ],
 }
 
@@ -56,6 +57,12 @@ _PRIVATE_TEMPLATES = [
     "群里没细说，这边给你慢慢讲。\n\n想看什么/问什么直接说，下单也找 @MorychannelBot 就好啦。",
     "来啦来啦，群里人多不方便说，这边都可以问。\n\n下单直接走 @MorychannelBot，很简单的。",
 ]
+
+_DEFAULT_BUSINESS_ENGAGE_PROMPT = (
+    "【商业搭讪模式】：先承接用户刚才说的商品、定制或购买需求，"
+    "再明确引导 @MorychannelBot 自助下单。不要重复发预览，不要引导私聊，"
+    "不要催促或用客服腔，保持自然短句。"
+)
 
 
 class ProactiveEngage:
@@ -230,6 +237,12 @@ class ProactiveEngage:
                 return
             fb_markup = InlineKeyboardMarkup()
             fb_markup.row(
+                InlineKeyboardButton(
+                    "🛒 自助下单",
+                    url="https://t.me/MorychannelBot",
+                ),
+            )
+            fb_markup.row(
                 InlineKeyboardButton("👍", callback_data=f"fb_like_{sent_msg.message_id}"),
                 InlineKeyboardButton("👎", callback_data=f"fb_dislike_{sent_msg.message_id}"),
             )
@@ -255,21 +268,32 @@ class ProactiveEngage:
                     f"用户 {uname} 在群里说：\"{msg}\"\n"
                     f"他可能在问商业相关问题（命中关键词：{matched_keyword}）。\n"
                     f"用户咨询阶段：{stage_hint}；问题类型：{intent}。\n"
-                    f"请用30-50字回复，先简短回应他，再自然引导他私聊。\n"
+                    f"请用30-50字回复，先简短回应他，再明确引导 @MorychannelBot 自助下单。\n"
                     f"要求：温柔不直白营销、不称'老板'、不重复固定模板、\n"
-                    f"自然结束，不要每次都加引导句，保持清冷。\n"
+                    f"不要重复叫用户看预览，不要再引导私聊，保持清冷。\n"
                     f"绝对不要使用'老板'称谓。\n"
                 )
                 sys_prompt = self.config.get("PROMPT_TEMPLATES", {}).get(
                     "business_engage",
-                    _FALLBACK_TEMPLATES[0],
+                    _DEFAULT_BUSINESS_ENGAGE_PROMPT,
                 )
+                # 生产可能仍保存旧“引导私聊”覆盖；旧契约会压过本轮下单收口。
+                if "自助下单" not in sys_prompt or "引导私聊" in sys_prompt:
+                    sys_prompt = _DEFAULT_BUSINESS_ENGAGE_PROMPT
                 full_prompt = sys_prompt + "\n\n" + prompt
 
                 # 使用 normal 模式 + 直送 prompt（避免被 ai_engine 改写）
                 ai_reply = self.ai.ask(full_prompt, mode="normal")
                 if ai_reply and len(ai_reply.strip()) > 5:
                     text = ai_reply.strip()
+                    text = re.sub(
+                        r"[^。！？\n]*(?:@?moryselect|预览)[^。！？\n]*[。！？]?",
+                        "",
+                        text,
+                        flags=re.IGNORECASE,
+                    ).strip()
+                    if "@morychannelbot" not in text.lower():
+                        text = f"{text} 去 @MorychannelBot 自助下单。".strip()
                     if len(text) > 300:
                         text = text[:300]
                     return text

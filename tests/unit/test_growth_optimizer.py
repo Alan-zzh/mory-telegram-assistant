@@ -1,9 +1,13 @@
 import sqlite3
 import threading
 
+from core.intent_router import IntentRouter
 from core.growth_optimizer import (
     assign_variant,
     build_stage_hint,
+    is_contextual_purchase_intent,
+    is_direct_custom_order_request,
+    load_recent_conversation,
     log_attribution_event,
     record_growth_reply,
     summarize_growth,
@@ -22,7 +26,7 @@ class DummyDB:
             "CREATE TABLE telemetry_events(user_id INTEGER, chat_id INTEGER, experiment_id TEXT, variant TEXT, event_type TEXT, event_value REAL, event_meta TEXT, ts INTEGER)"
         )
         self.conn.execute(
-            "CREATE TABLE conversation_telemetry(user_id INTEGER, chat_id INTEGER, experiment_id TEXT, variant TEXT, message_text TEXT, bot_reply_text TEXT, intent TEXT, sentiment TEXT, round_num INTEGER, ts INTEGER)"
+            "CREATE TABLE conversation_telemetry(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER, experiment_id TEXT, variant TEXT, message_text TEXT, bot_reply_text TEXT, intent TEXT, sentiment TEXT, round_num INTEGER, ts INTEGER)"
         )
         self.conn.commit()
 
@@ -97,3 +101,92 @@ def test_summarize_growth_returns_ten_tracks():
     assert len(summary) == 10
     purchase = next(x for x in summary if x["experiment_id"] == "purchase_capture")
     assert purchase["events"]["consulted"] == 1
+
+
+def test_screenshot_followups_inherit_custom_purchase_intent():
+    history = [
+        {
+            "role": "user",
+            "content": "定制舞",
+            "intent": "chat",
+        },
+        {
+            "role": "assistant",
+            "content": "先去预览看看。",
+            "intent": "chat",
+        },
+    ]
+
+    assert is_direct_custom_order_request("定制舞") is True
+    assert is_contextual_purchase_intent("就是这个味", history) is True
+    history.append({"role": "user", "content": "就是这个味", "intent": "purchase_intent"})
+    assert is_contextual_purchase_intent("风格可以 挺喜欢这种风格", history) is True
+    assert is_contextual_purchase_intent("打港舞 开场穿衣服 卡点变装", history) is True
+
+
+def test_contextual_purchase_excludes_unrelated_and_rejection_messages():
+    history = [
+        {"role": "user", "content": "定制舞", "intent": "purchase_intent"},
+        {"role": "assistant", "content": "可以定制。", "intent": "purchase_intent"},
+    ]
+
+    assert is_contextual_purchase_intent("今天天气不错", history) is False
+    assert is_contextual_purchase_intent("算了，不需要了", history) is False
+    assert is_contextual_purchase_intent("不定制了", history) is False
+    assert is_direct_custom_order_request("不定制了") is False
+    assert is_contextual_purchase_intent("这种风格不错", []) is False
+
+
+def test_recent_conversation_is_scoped_to_same_chat_and_age(monkeypatch):
+    db = DummyDB()
+    now = 2_000_000
+    monkeypatch.setattr("core.growth_optimizer.time.time", lambda: now)
+    db.conn.executemany(
+        """
+        INSERT INTO conversation_telemetry
+        (user_id, chat_id, experiment_id, variant, message_text, bot_reply_text,
+         intent, sentiment, round_num, ts)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        """,
+        [
+            (123, -100, "", "", "定制舞", "可以做。", "purchase_intent", "", 1, now - 10),
+            (123, -200, "", "", "别的群内容", "别的群回复", "chat", "", 1, now - 10),
+            (123, -100, "", "", "过期内容", "过期回复", "chat", "", 1, now - 4000),
+        ],
+    )
+    db.conn.commit()
+
+    history = load_recent_conversation(db, 123, -100, limit=3, max_age_seconds=1800)
+
+    assert [item["content"] for item in history] == ["定制舞", "可以做。"]
+
+
+def test_intent_router_uses_recent_conversation_for_short_followup():
+    fake_ai = type(
+        "_FakeAI",
+        (),
+        {
+            "_INTENT_KEYWORDS": {},
+            "_classify_intent": staticmethod(lambda _text: "chat"),
+        },
+    )()
+    router = IntentRouter(
+        fake_ai,
+        {
+            "INTENT_ROUTING_ENABLED": True,
+            "INTENT_LLM_ENABLED": False,
+        },
+    )
+
+    result = router.classify(
+        "就是这个味",
+        conversation_history=[
+            {"role": "user", "content": "定制舞", "intent": "chat"},
+        ],
+    )
+
+    assert result == {
+        "intent": "purchase_intent",
+        "confidence": 0.95,
+        "source": "context_rule",
+    }

@@ -11,7 +11,14 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from modules.group_mgr import _is_convert_message, _CONVERT_KEYWORDS_SUBSTR
-from core.handlers.ai_reply_handler import _direct_access_reply, _is_direct_access_request
+from core.keyword_manager import KeywordManager
+from core.handlers.ai_reply_handler import (
+    _build_contextual_purchase_reply,
+    _build_purchase_markup,
+    _direct_access_reply,
+    _ensure_conversion_cta,
+    _is_direct_access_request,
+)
 
 
 def test_original_keywords_still_work():
@@ -74,6 +81,9 @@ def test_non_convert_messages():
     assert _is_convert_message("Mory") is False
     assert _is_convert_message("你好") is False
     assert _is_convert_message("") is False
+    assert _is_convert_message("不定制了") is False
+    assert _is_convert_message("取消订阅") is False
+    assert _is_convert_message("暂时不买") is False
     print("✓ 无关消息不会误判 convert")
 
 
@@ -82,7 +92,21 @@ def test_substr_matching_basic():
     assert _is_convert_message("订阅呀订阅") is True
     assert _is_convert_message("我想购买点东西") is True
     assert _is_convert_message("包月了") is True
+    assert _is_convert_message("定制舞") is True
+    assert _is_convert_message("想定做一个专属视频") is True
     print("✓ 子串匹配正常")
+
+
+def test_old_runtime_keyword_override_cannot_remove_custom_order_intent():
+    manager = KeywordManager({
+        "CONVERT_KEYWORDS": {
+            "substr": ["价格"],
+            "word": [],
+        },
+    })
+
+    assert manager.is_convert_message("定制舞") is True
+    assert manager.is_convert_message("想定做一个视频") is True
 
 
 def test_word_boundary_matching():
@@ -101,6 +125,30 @@ def test_direct_access_request_reply():
     reply = _direct_access_reply(is_priv=False)
     assert "@moryselect" in reply
     assert "@MorychannelBot" in reply
+
+
+def test_contextual_purchase_reply_skips_preview_and_closes_order():
+    for text in (
+        "就是这个味",
+        "风格可以 挺喜欢这种风格",
+        "打港舞 开场穿衣服 卡点变装",
+    ):
+        reply = _build_contextual_purchase_reply(text)
+        assert "@MorychannelBot" in reply
+        assert "预览" not in reply
+        assert "@moryselect" not in reply.lower()
+
+    markup = _build_purchase_markup()
+    assert markup.keyboard[0][0].text == "🛒 自助下单"
+    assert markup.keyboard[0][0].url == "https://t.me/MorychannelBot"
+    assert _ensure_conversion_cta(
+        "这种风格挺适合你。",
+        conversion_candidate=True,
+    ).endswith("@MorychannelBot 自助下单。")
+    assert _ensure_conversion_cta(
+        "普通闲聊。",
+        conversion_candidate=False,
+    ) == "普通闲聊。"
 
 
 if __name__ == "__main__":
