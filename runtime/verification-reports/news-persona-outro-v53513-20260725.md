@@ -1,21 +1,24 @@
 # Verification 报告
 
 - **task_id**：news-persona-outro-v53513-20260725
-- **执行时间**：2026-07-25 15:48:00 +08:00
-- **truth_surface**：本地 Windows checkout 的新闻提示词、5+1 输出门禁、真实标题兜底和 HTML/Rich Message 渲染链；生产部署待执行。
+- **执行时间**：2026-07-25 15:55:00 +08:00
+- **truth_surface**：本地 Windows checkout；生产 VPS `/home/ubuntu/mory_assistant` 的真实配置、模型、5+1 门禁与 Rich Message 渲染链；`@MoryMateBot` 管理员私聊。
 - **success_receipt**：
   - 事实锚定总结“平台整改与中东局势，是这轮最该继续盯的两条线”被新门禁拒绝。
   - “我不想只做报时的人，更想听你说说今天真正放在心上的事”通过门禁。
   - 真实标题兜底从温情自白、邀聊、人格表达、定制沟通四类策略随机选尾语，不再引用新闻标题。
   - v5.35.12 的旧新闻提示词缺少“不得总结新闻 / 随机采用一种策略”契约时自动失效。
-- **persistence_check**：全新 Python 进程重跑目标测试与整仓测试，结果保持一致；生产持久态待部署后补充。
+  - 生产随机抽样 16 次得到 8 种不同尾语，全部通过门禁。
+  - 生产 `qwen3.7-max-2026-06-08` 真实生成“想成为更懂你的小助理，有想法随时找Mory聊聊定制需求呀。”，门禁通过；`@MoryMateBot` Rich Message 管理员验收消息 ID `2948`。
+- **persistence_check**：提交 `1396921` 与门禁补丁 `8ccf710` 均从 commit 字节增量部署并通过远端 SHA-256；双服务自 15:53:06 起持续 active+enabled，health 与代码版本均为 v5.35.13，当前服务错误日志为 0，DB 方法验证退出码 0，root watchdog cron 恰好 1 条。
 - **derived_records**：`version.py`、`VERSION.md`、`AGENTS.md`、`CHANGELOG.md`、`AI_DEBUG_HISTORY.md`、`project_snapshot.md`、`config.json.example` 与播报技术文档已同步到 v5.35.13。
 - **验证命令**：
   - `python -m pytest tests/unit/test_broadcast_topic_quality.py -q` | 通过 | `26 passed`。
   - `python -m pytest tests -q` | 通过 | `412 passed, 7 skipped`。
+  - 门禁补丁后当前工作树整仓复验 | 通过 | `421 passed, 7 skipped`；新增计数来自本轮未部署的其他工作区改动，本次部署严格只取上述两个 commit。
   - `python scripts/verify_db_methods.py` | 通过 | `179` 个委托方法，无缺失、无孤儿。
   - `python scripts/doc_consistency.py` | 通过 | `7/7` 指标与代码一致。
   - `python -m py_compile core/ai_engine.py tasks/support/common.py version.py` | 通过。
   - `python -m json.tool config.json.example`、`git diff --check` | 通过。
-- **安全边界**：未改依赖、数据库、`.env` 或生产配置；当前仅完成本地代码与记录，生产部署将在可信 commit 后执行。
-- **结论**：本地 v5.35.13 行为 verified；生产效果待部署验证。
+- **安全边界**：未改依赖、数据库、`.env` 或生产配置；首次部署前备份 `/home/ubuntu/mory_assistant/backups/v5_35_13_20260725_154930`，门禁补丁备份 `/home/ubuntu/mory_assistant/backups/v5_35_13_gate_20260725_155256`；工作区其他未提交文件未暂存、未部署、未覆盖。
+- **结论**：本地与生产 v5.35.13 均 verified；新闻第6行已从总结新闻切换为随机人设/互动/定制沟通尾语。
