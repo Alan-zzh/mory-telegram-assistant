@@ -10,5 +10,7 @@ from .question_repo import QuestionRepo
 from .relay_repo import RelayRepo
 from .ab_test_repo import ABTestRepo
 from .sales_repo import SalesRepo
+from .reply_evolution_repo import ReplyEvolutionRepo
+from .conversation_context_repo import ConversationContextRepo
 
-__all__ = ['UserRepo', 'GroupRepo', 'PointsRepo', 'TrackingRepo', 'ConfigRepo', 'SocialRepo', 'QuestionRepo', 'RelayRepo', 'ABTestRepo', 'SalesRepo']
+__all__ = ['UserRepo', 'GroupRepo', 'PointsRepo', 'TrackingRepo', 'ConfigRepo', 'SocialRepo', 'QuestionRepo', 'RelayRepo', 'ABTestRepo', 'SalesRepo', 'ReplyEvolutionRepo', 'ConversationContextRepo']

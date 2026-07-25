@@ -57,14 +57,89 @@ _AI_FALLBACK_MARKERS = (
     "蓝光",
 )
 
+# 定点播报属于主动触达，不能因为旧配置或模型临场发挥而回到“真人生活
+# 日记”或双重成交入口。这里是所有 modular 定点播报实际发送前的唯一门禁。
+_UNVERIFIED_LIFE_MARKERS = (
+    "咖啡", "沙发", "吹风", "窗外", "刚醒", "刚洗", "洗澡", "头发",
+    "早餐", "晚饭", "被窝", "敷面膜", "下午茶", "路灯", "外面天气",
+)
+_BROADCAST_PRIVATE_MARKERS = (
+    "私聊", "找我聊", "来找我", "戳我", "悄悄话", "陪你",
+)
+_BROADCAST_ORDER_MARKERS = (
+    "自助下单", "立即下单", "直接下单", "马上下单", "购买", "定制",
+)
+
+
+def _sanitize_scheduled_broadcast_copy(value: object, fallback: str = "") -> str:
+    """确定性清理主动播报中的虚构生活、私聊压力和错误成交入口。"""
+    if not isinstance(value, str):
+        return fallback
+
+    value = value.replace("@MorychannelBot", "@moryselect")
+    value = value.replace("@morychannelbot", "@moryselect")
+    value = value.replace("@Moryfansbot", "@moryselect")
+    value = value.replace("@moryfansbot", "@moryselect")
+    value = value.replace("https://t.me/MorychannelBot", "https://t.me/moryselect")
+    value = value.replace("https://t.me/Moryfansbot", "https://t.me/moryselect")
+
+    safe_lines = []
+    for raw_line in value.splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        if not line:
+            continue
+        if any(marker in line for marker in _UNVERIFIED_LIFE_MARKERS):
+            continue
+        if any(marker in line for marker in _BROADCAST_PRIVATE_MARKERS):
+            continue
+        # 成交类播报只允许保留一个“先看预览”的目标，不能保留直接下单或定制承诺。
+        if any(marker in line for marker in _BROADCAST_ORDER_MARKERS):
+            line = line.replace("自助下单", "先看预览").replace("立即下单", "先看预览")
+            line = line.replace("直接下单", "先看预览").replace("马上下单", "先看预览")
+            line = line.replace("购买", "了解").replace("定制", "了解")
+        if "@moryselect" in lowered or line:
+            safe_lines.append(line)
+
+    return "\n".join(safe_lines).strip() or fallback
+
+
+def _adapt_scheduled_broadcast_item(item: dict) -> dict:
+    """返回不污染原配置的主动播报安全副本。"""
+    safe = dict(item or {})
+    neutral_fallback = "这条提醒先放在这里，大家按自己的节奏来。"
+    for key in ("content", "footer", "caption", "rich_message"):
+        if key in safe:
+            if key == "rich_message" and isinstance(safe.get(key), dict):
+                rich_message = dict(safe[key])
+                if "text" in rich_message:
+                    if isinstance(rich_message["text"], str):
+                        rich_message["text"] = _sanitize_scheduled_broadcast_copy(rich_message.get("text"), "")
+                    elif isinstance(rich_message["text"], dict):
+                        text_payload = dict(rich_message["text"])
+                        if isinstance(text_payload.get("text"), str):
+                            text_payload["text"] = _sanitize_scheduled_broadcast_copy(text_payload["text"], "")
+                        rich_message["text"] = text_payload
+                safe[key] = rich_message
+            else:
+                safe[key] = _sanitize_scheduled_broadcast_copy(safe.get(key), neutral_fallback if key == "content" else "")
+
+    # 定点播报的可点击入口只允许是预览；无按钮的普通提醒保持无按钮。
+    if safe.get("button_text") or safe.get("button_url"):
+        safe["button_text"] = "👀 看看预览"
+        safe["button_url"] = "https://t.me/moryselect"
+    return safe
+
 
 def _is_usable_ai_copy(content) -> bool:
     """防止模型降级提示被当成正式播报正文。"""
     if not isinstance(content, str):
         return False
     text = content.strip()
-    return 20 <= len(text) <= 180 and not any(
-        marker in text for marker in _AI_FALLBACK_MARKERS
+    return (
+        20 <= len(text) <= 180
+        and not any(marker in text for marker in _AI_FALLBACK_MARKERS)
+        and text == _sanitize_scheduled_broadcast_copy(text)
     )
 
 
@@ -94,67 +169,25 @@ def _looks_like_local_path(s: str) -> bool:
 
 _SOFT_TEMPLATE_VARIANTS = {
     "default": [
-        "刚忙完，歇一会儿。",
-        "今天状态还行。",
-        "有点走神，不知道想什么呢。",
-        "刚喝了点水，润润嗓子。",
-        "外面天气一般，懒得动。",
-        "突然想到一个事，等会跟你说。",
-        "今天过得挺快的。",
-        "刚整理了一下东西，舒服多了。",
+        "路过留一句，大家按自己的节奏来。",
+        "这会儿有空的，随便聊两句就行。",
+        "不用赶，先把眼前的事处理好。",
     ],
     "morning": [
-        "今天阳光不错。",
-        "刚醒，还在赖床。",
-        "咖啡刚冲好，闻着很香。",
-        "窗外鸟叫挺吵的，吵醒我了。",
-        "今天有点凉，加了件外套。",
-        "刚刷完牙，精神多了。",
-        "早餐随便吃了点三明治。",
-        "今天闹钟响了两遍才爬起来，好困。",
-        "刚醒，头发乱糟糟的。",
-        "今天醒得比闹钟早，难得。",
+        "早上好，今天按自己的节奏开始。",
+        "新一天先稳稳地过，不用急。",
     ],
     "afternoon": [
-        "刚喝完咖啡，精神还行。",
-        "有点犯困，但跟你聊着聊着就清醒了。",
-        "刚吃完东西，心情不错。",
-        "突然有点想发呆，不知道为什么。",
-        "刚喝完下午茶。",
-        "有点困，想眯一会。",
-        "窗外阳光很好，晒着暖洋洋的。",
-        "今天风挺大的，窗户都响。",
-        "刚站起来活动了一下，坐久了腰有点酸。",
-        "肚子有点饿了，等会吃点东西。",
-        "空调开得有点冷，披了件衣服。",
-        "刚接了杯温水。",
+        "下午好，卡住的话先缓一缓。",
+        "剩下的事一件一件来就好。",
     ],
     "evening": [
-        "刚听了一首歌，整个人都放松了。",
-        "今天状态有点高冷，别介意呀。",
-        "刚忙完，脑子还有点转不过来。",
-        "心情像过山车，刚才还开心现在想发呆。",
-        "今天特别想聊天，谁来都接。",
-        "刚忙完一天，好累。",
-        "天暗下来了，路灯都亮了。",
-        "今天有点累，不想动。",
-        "晚饭刚吃完，有点撑。",
-        "外面路灯亮了，天色很好看。",
-        "刚洗了个澡，舒服多了。",
-        "今天过得挺快的，一晃就晚上了。",
-        "窝在沙发上不想动，好懒。",
+        "晚上好，今天辛苦了。",
+        "把还没做完的事留给明天也没关系。",
     ],
     "night": [
-        "深夜了，还没睡呀？",
-        "今天忙到现在才歇下来。",
-        "刚洗完澡，头发还没干。",
-        "窝在床上刷手机呢。",
-        "今天有点失眠，睡不着。",
-        "夜深了，安静得有点舒服。",
-        "刚敷完面膜，脸滑滑的。",
-        "今天有点emo，不想说话但又想找人聊。",
-        "肚子有点饿，在纠结要不要吃宵夜。",
-        "被窝里好暖和，不想出来。",
+        "夜里就把节奏放慢一点。",
+        "准备休息的话，先照顾好自己。",
     ],
 }
 
@@ -210,7 +243,7 @@ def _build_markup(item: dict, config: dict = None):
 def _pick_soft_template_variant(item: dict, config: dict | None = None) -> str:
     """给旧模板加一个轻微变化句，保留原文案骨架。"""
     cfg = config or {}
-    if cfg.get("BROADCAST_TEMPLATE_VARIATION_ENABLED", True) is False:
+    if cfg.get("BROADCAST_TEMPLATE_VARIATION_ENABLED", False) is False:
         return ""
     if item.get("template_variant") is False:
         return ""
@@ -382,7 +415,8 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
         except Exception as e:
             logger.debug(f"获取用户画像失败（已忽略）: {e}")
 
-    for bc in broadcasts:
+    for raw_bc in broadcasts:
+        bc = _adapt_scheduled_broadcast_item(raw_bc)
         if not bc.get("enabled", False):
             continue
 

@@ -70,7 +70,7 @@ class DB:
         self._real_conn = self.conn  # 保留真实连接引用（供 close/WriteQueue Worker 使用）
         self.conn = WriteQueueConnectionProxy(self._real_conn)
         # 初始化8个Repo实例
-        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo, SalesRepo
+        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo, SalesRepo, ReplyEvolutionRepo, ConversationContextRepo
         self.users = UserRepo(self)
         self.groups = GroupRepo(self)
         self.points = PointsRepo(self)
@@ -81,6 +81,8 @@ class DB:
         self.relay = RelayRepo(self)
         self.ab_test = ABTestRepo(self)
         self.sales = SalesRepo(self)
+        self.reply_evolution = ReplyEvolutionRepo(self)
+        self.conversation_context = ConversationContextRepo(self)
 
         # 【v5.31.1 第一层防御：启动自检】扫描所有 Repo 实例的 public 方法，
         # 验证每个方法都在 _REPO_METHOD_MAP 中注册。缺失则直接启动失败，
@@ -1280,6 +1282,32 @@ class DB:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_conv_telemetry_exp ON conversation_telemetry(experiment_id, variant, ts)")
 
+            # 独立于增长遥测：短期承接文本 + 结构化 CTA/拒绝状态。
+            # raw_event_text=false 时仍可跨重启承接，但不会把原文写入 telemetry。
+            c.execute("""CREATE TABLE IF NOT EXISTS business_conversation_context (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                user_text TEXT NOT NULL DEFAULT '',
+                assistant_text TEXT NOT NULL DEFAULT '',
+                intent TEXT NOT NULL DEFAULT '',
+                conversion_target TEXT NOT NULL DEFAULT 'none',
+                conversion_reason TEXT NOT NULL DEFAULT '',
+                ts INTEGER NOT NULL
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_business_context_recent ON business_conversation_context(user_id, chat_id, ts)")
+            c.execute("""CREATE TABLE IF NOT EXISTS conversation_conversion_state (
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                opt_out_until INTEGER NOT NULL DEFAULT 0,
+                custom_context_until INTEGER NOT NULL DEFAULT 0,
+                preview_context_until INTEGER NOT NULL DEFAULT 0,
+                recent_cta_target TEXT NOT NULL DEFAULT '',
+                recent_cta_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(user_id, chat_id)
+            )""")
+
             c.execute("""CREATE TABLE IF NOT EXISTS weekly_ab_report (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 week_start TEXT NOT NULL,
@@ -1335,6 +1363,21 @@ class DB:
                 UNIQUE(conversation_id)
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_quality_scores_evaluated_at ON interaction_quality_scores(evaluated_at)")
+
+            # 人工审核的风格样本：不保存原始用户事件，也绝不自动改写提示词。
+            c.execute("""CREATE TABLE IF NOT EXISTS reply_style_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL DEFAULT '',
+                style_text TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+                enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+                created_by TEXT NOT NULL DEFAULT '',
+                reviewed_by TEXT NOT NULL DEFAULT '',
+                review_note TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                reviewed_at INTEGER NOT NULL DEFAULT 0
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_reply_style_samples_active ON reply_style_samples(status, enabled, reviewed_at)")
 
             # ── [阶段3-E] RBAC 权限变更审批流表 ──────────────────
             # 记录每次权限变更申请的完整生命周期：申请/审批/拒绝/取消
@@ -1992,6 +2035,19 @@ class DB:
         'create_order': 'sales', 'update_order_status': 'sales', 'get_user_orders': 'sales', 'get_order_stats': 'sales',
         'track_sales_event': 'sales', 'get_funnel_stats': 'sales',
         'add_commission': 'sales', 'get_commission_stats': 'sales',
+        # reply_evolution_repo：管理员审核过的安全风格样本，运行时只读 approved + enabled。
+        'create_reply_style_sample': 'reply_evolution',
+        'list_reply_style_samples': 'reply_evolution',
+        'review_reply_style_sample': 'reply_evolution',
+        'set_reply_style_sample_enabled': 'reply_evolution',
+        'get_approved_reply_style_samples': 'reply_evolution',
+        # conversation_context_repo：短期业务承接与拒绝状态，和遥测原文隔离。
+        'get_recent_business_context': 'conversation_context',
+        'get_conversion_state': 'conversation_context',
+        'set_conversion_opt_out': 'conversation_context',
+        'clear_conversion_opt_out': 'conversation_context',
+        'record_business_context': 'conversation_context',
+        'cleanup_expired_business_context': 'conversation_context',
     }
 
     # ──────────────────────────── v5.31.1 第一层防御：启动自检 ──────────────────────────
@@ -2001,6 +2057,8 @@ class DB:
         'tracking': 'tracking', 'config': 'config', 'social': 'social',
         'questions': 'questions', 'relay': 'relay', 'ab_test': 'ab_test',
         'sales': 'sales',
+        'reply_evolution': 'reply_evolution',
+        'conversation_context': 'conversation_context',
     }
 
     def _self_check_repo_methods(self):
@@ -2050,7 +2108,8 @@ class DB:
             'users': self.users, 'groups': self.groups, 'points': self.points,
             'tracking': self.tracking, 'config': self.config, 'social': self.social,
             'questions': self.questions, 'relay': self.relay, 'ab_test': self.ab_test,
-            'sales': self.sales,
+            'sales': self.sales, 'reply_evolution': self.reply_evolution,
+            'conversation_context': self.conversation_context,
         }
         for method_name, repo_key in self._REPO_METHOD_MAP.items():
             repo_instance = repo_instances.get(repo_key)

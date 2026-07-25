@@ -240,37 +240,19 @@ def notify_admin_for_deep_conversation(dctx, mode, conv_count, reason):
 # ═══════════════════════════════════════════════════════════════════════
 
 def build_convert_hint(db, uid, conv_count) -> tuple:
-    """构建转化类递进引导提示词"""
-    stage_hint = ""
-    notify_admin_reason = ""
+    """构建兼容旧入口的统一转化提示词。
+
+    旧入口没有传入已解析的 conversion_target，因此这里只给模型明确的
+    ReplyContract v1 判定规则，禁止按咨询次数硬推或切换成交目标。
+    """
     consult_count = db.get_user_consult_count(uid)
-
-    if consult_count <= 1:
-        _v = random.choice([1, 2, 3])
-        if _v == 1:
-            stage_hint = "\n【转化-首次-A】：直接告诉他：找 @MorychannelBot，自己看。别啰嗦。"
-        elif _v == 2:
-            stage_hint = "\n【转化-首次-B】：用户第一次问。给路径：@MorychannelBot 自助下单，按提示来。"
-        else:
-            stage_hint = "\n【转化-首次-C】：第一次问消费的事。简洁说：@MorychannelBot 下单，很简单。"
-    elif consult_count == 2:
-        _v = random.choice([1, 2, 3])
-        if _v == 1:
-            stage_hint = "\n【转化-二次-A】：又来问了？直接去 @MorychannelBot 看不就完了。"
-        elif _v == 2:
-            stage_hint = "\n【转化-二次-B】：还在问？那边都写着的，自己看。"
-        else:
-            stage_hint = "\n【转化-二次-C】：问两遍了...去 @MorychannelBot，别在群里说了。"
-    else:
-        _v = random.choice([1, 2, 3])
-        if _v == 1:
-            stage_hint = "\n【转化-多次-A】：你问题好多。算了我帮你问她，等着。"
-        elif _v == 2:
-            stage_hint = "\n【转化-多次-B】：行吧行吧，我帮你说一声。"
-        else:
-            stage_hint = "\n【转化-多次-C】：真能问...我转达一下，你别催。"
-        notify_admin_reason = "convert_stuck"
-
+    stage_hint = (
+        "\n【统一成交规则】：先自然回答当前问题。价格、内容、权益、套餐或"
+        "了解阶段只给 @moryselect 预览；只有明确购买、下单、订阅或确认"
+        "看过预览才给 @MorychannelBot 自助入口。每轮最多一个目标，"
+        "不发完整价格表，不主动私聊，不承诺未核实商品、定制、福利、价格或交付。"
+    )
+    notify_admin_reason = "convert_stuck" if consult_count >= 3 else ""
     return stage_hint, notify_admin_reason
 
 
@@ -299,32 +281,12 @@ def build_emotional_hint(conv_count) -> tuple:
 
 
 def build_normal_hint(conv_count) -> tuple:
-    """构建闲聊类递进引导提示词"""
-    stage_hint = ""
-    notify_admin_reason = ""
-
-    if conv_count >= 6:
-        _v = random.choice([1, 2, 3])
-        if _v == 1:
-            stage_hint = "\n【闲聊-收网-A】：行了，说这么多够了。@MorychannelBot 那边有事。"
-        elif _v == 2:
-            stage_hint = "\n【闲聊-收网-B】：不聊了。你要是好奇就去那边看。"
-        else:
-            stage_hint = "\n【闲聊-收网-C】：话真多。想更多就找 @MorychannelBot。"
-        notify_admin_reason = "chat_deep"
-    elif conv_count >= 5:
-        _v = random.choice([1, 2])
-        if _v == 1:
-            stage_hint = "\n【闲聊-深度-A】：聊得差不多了。@MorychannelBot 那边有别的东西。"
-        else:
-            stage_hint = "\n【闲聊-深度-B】：你话挺多。那边有些群里不发的。"
-    elif conv_count >= 3:
-        _v = random.choice([1, 2])
-        if _v == 1:
-            stage_hint = "\n【闲聊-升温-A】：对了，有些东西群里不发。"
-        else:
-            stage_hint = "\n【闲聊-升温-B】：想多看点什么找 @MorychannelBot。"
-
+    """构建兼容旧入口的普通聊天提示词；轮数不再触发销售 CTA。"""
+    stage_hint = (
+        "\n【普通聊天】：只承接当前话题，保持简短自然，不因聊天轮数添加"
+        "预览、下单、私聊或任何销售入口。"
+    )
+    notify_admin_reason = "chat_deep" if conv_count >= 6 else ""
     return stage_hint, notify_admin_reason
 
 
@@ -333,20 +295,17 @@ def build_normal_hint(conv_count) -> tuple:
 # ═══════════════════════════════════════════════════════════════════════
 
 def append_conv_response(ai, conv_count: int) -> str:
-    """连续对话追加：清冷反问 + 转化引导，返回追加文本"""
+    """连续对话只追加自然承接，不根据轮数植入销售引导。"""
     seed_h = random.randint(100000, 999999)
 
     append_mode = None
     append_prompt = ""
-    if conv_count >= 5 and random.randint(1, 10) <= 3:
-        append_mode = "convert_soft"
-        append_prompt = f"聊了好几轮了，清冷收个尾，自然提一句私聊就行。"
-    elif conv_count >= 3 and random.randint(1, 10) <= 3:
-        append_mode = "nudge"
-        append_prompt = "聊得还行，随口提一句那边有别的内容，别硬推。"
-    elif random.randint(1, 10) <= 6:
+    if random.randint(1, 10) <= 6:
         append_mode = "hook"
-        append_prompt = "用一句清冷的反问或半句话收尾，让对方想接话，不要卖萌撒娇，不要绿茶风。"
+        append_prompt = (
+            "用一句自然的追问或简短承接收尾，让对方愿意继续聊；"
+            "不要添加预览、下单、私聊或销售入口。"
+        )
 
     if append_mode:
         try:

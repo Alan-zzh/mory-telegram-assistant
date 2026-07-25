@@ -317,44 +317,12 @@ def _get_late_night_fallback(uname):
 # ═══════════════════════════════════════════════════════════════════════
 
 def _get_function_tools():
-    """返回AI可用的工具列表（OpenAI function calling格式）"""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "send_price_list",
-                "description": "主动发送价格表给用户。当用户表现出购买意向（问价格、问怎么买、犹豫不决、比较方案）时调用。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "category": {
-                            "type": "string",
-                            "description": "推荐的商品类别，如：至臻精选/至臻全享/社交解锁/原味/定制",
-                            "enum": ["至臻精选", "至臻全享", "精选图集", "社交解锁", "原味", "定制", "全部"]
-                        }
-                    },
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "send_private_guide",
-                "description": "引导用户私聊了解详情。当用户表现出兴趣但还在犹豫时调用。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "reason": {
-                            "type": "string",
-                            "description": "引导私聊的理由，如：'详情太多群里说不完'、'有专属福利'、'私聊更方便'"
-                        }
-                    },
-                    "required": []
-                }
-            }
-        },
-    ]
+    """返回 AI 可用工具。
+
+    ReplyContract v1 禁止模型绕过统一阶段判定主动发价格表或私聊推销，
+    因此普通回复不再暴露销售类 Function Calling 工具。
+    """
+    return []
 
 
 def get_function_tools():
@@ -395,15 +363,13 @@ def _handle_tool_calls(message: dict, bot, m, config: dict, db) -> str | None:
                 except Exception:
                     args = {}
 
-            if func_name == "send_price_list":
-                result = _exec_send_price_list(bot, m, config, args)
-                tool_outputs.append(result)
-                logger.info(f"🔧 Function Calling: send_price_list uid={m.from_user.id}")
-
-            elif func_name == "send_private_guide":
-                result = _exec_send_private_guide(bot, m, config, args)
-                tool_outputs.append(result)
-                logger.info(f"🔧 Function Calling: send_private_guide uid={m.from_user.id}")
+            if func_name in {"send_price_list", "send_private_guide"}:
+                # 兼容旧模型/缓存返回的工具调用，但绝不执行外部发送动作。
+                logger.warning(
+                    "🔧 已拦截废弃销售工具 %s uid=%s",
+                    func_name,
+                    m.from_user.id,
+                )
             else:
                 logger.warning(f"🔧 未知工具: {func_name}")
         except Exception as e:
@@ -416,64 +382,13 @@ def _handle_tool_calls(message: dict, bot, m, config: dict, db) -> str | None:
 
 
 def _exec_send_price_list(bot, m, config: dict, args: dict) -> str:
-    """执行发送价格表工具（私聊发送，不在群里发）"""
-    price_list = config.get("PRICE_LIST", {})
-    category = args.get("category", "")
-    uid = m.from_user.id
-
-    # 生成价格表文本
-    text = ""
-    if category and category != "全部" and category in price_list:
-        info = price_list[category]
-        lines = [f"💰 {category}"]
-        for k, v in info.items():
-            if k in ("monthly", "quarterly", "yearly", "price"):
-                lines.append(f"  ¥{v}")
-            elif k == "note":
-                lines.append(f"  📌 {v}")
-        text = "\n".join(lines)
-    elif price_list:
-        lines = ["💰 Mory 价格表"]
-        for cat, info in price_list.items():
-            lines.append(f"\n▸ {cat}")
-            for k, v in info.items():
-                if k in ("monthly", "quarterly", "yearly", "price"):
-                    lines.append(f"  ¥{v}")
-                elif k == "note":
-                    lines.append(f"  📌 {v}")
-        text = "\n".join(lines)
-
-    if not text:
-        return ""
-
-    # 尝试私聊发送
-    try:
-        bot.send_message(uid, text)
-        db = None  # 需要从外部传入，此处简化处理
-        logger.info(f"🔧 FC价格表私聊发送成功 uid={uid}")
-        return ""  # 已私聊发送，群聊不附加任何文字
-    except Exception as e:
-        logger.warning(f"🔧 FC价格表私聊失败 uid={uid}: {e}（用户可能未加bot好友）")
-        return "\n💡 想了解详情吗？先私信小助理，我把完整价格表发给你～"
+    """废弃兼容入口：不发送价格表或私聊，只返回安全的预览目标。"""
+    return "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
 
 
 def _exec_send_private_guide(bot, m, config: dict, args: dict) -> str:
-    """执行引导私聊工具（私聊发送详细引导）"""
-    reason = args.get("reason", "详情太多群里说不完")
-    uid = m.from_user.id
-
-    try:
-        guide_text = (
-            f"💌 嘿，{reason}\n"
-            f"这里不方便细说，私聊我慢慢跟你聊～\n\n"
-            f"💡 你可以直接在这里问我任何关于Mory的问题哦～"
-        )
-        bot.send_message(uid, guide_text)
-        logger.info(f"🔧 FC引导私聊发送成功 uid={uid}")
-        return ""
-    except Exception as e:
-        logger.warning(f"🔧 FC引导私聊失败 uid={uid}: {e}")
-        return f"\n💌 {reason}，私信小助理我慢慢跟你说～"
+    """废弃兼容入口：不主动私聊用户，只返回安全的预览目标。"""
+    return "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1558,6 +1473,29 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
         if _handle_admin_feature_commands(dctx):
             return True
 
+    # 所有后续分支（P7 雷达、P8 固定回复、P10 AI）共用同一拒绝/询价状态。
+    # 这一步在概率回复之前执行，确保“别再推荐”不会被任何旁路或重启丢掉；
+    # 只有当前轮明确询价/购买才会解除既有拒绝。
+    try:
+        from core.growth_optimizer import (
+            get_conversion_state,
+            persist_conversion_decision,
+            resolve_conversion_target,
+        )
+        conversion_state = get_conversion_state(db, uid, chat_id)
+        conversion_target, conversion_reason = resolve_conversion_target(
+            msg,
+            getattr(dctx, "conversation_history", []),
+            mode="normal",
+            state=conversion_state,
+        )
+        dctx.conversion_state = conversion_state
+        dctx.conversion_target = conversion_target
+        dctx.conversion_reason = conversion_reason
+        persist_conversion_decision(db, uid, chat_id, conversion_target, conversion_reason)
+    except Exception as e:
+        logger.debug("预处理转化状态失败 uid=%s: %s", uid, e)
+
     # P7：视奸雷达（v5.14.0 扩展：使用扩展的 convert 关键词 + 标志位供 P7.5 消费）
     _cleanup_radar_cooldown()
     from modules.group_mgr import _is_convert_message
@@ -1660,6 +1598,29 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
 
     return False
 
+def _send_feedback_admin_notification(dctx: DispatchContext, analysis: dict, *, unban_failure: bool = False) -> bool:
+    """只在 Telegram 真正接受通知时返回 True，供用户回复如实说明状态。"""
+    admin_id = dctx.ctx.config.get("ADMIN_ID", 0)
+    if not admin_id:
+        return False
+    try:
+        kind = "用户自助解封失败" if unban_failure else "用户反馈通知"
+        action = "请手动解封" if unban_failure else "请查看并按需处理"
+        dctx.ctx.bot.send_message(
+            admin_id,
+            f"📢 {kind}\n"
+            f"👤 {format_user_mention(dctx.uid, dctx.uname)}\n"
+            f"💬 消息：{dctx.text[:150]}\n"
+            f"🏷 类型：{'用户遇到问题' if analysis['mode'] == 'feedback' else '用户想找Mory'}\n"
+            f"💡 {action}",
+            parse_mode="HTML",
+        )
+        return True
+    except Exception as e:
+        logger.warning("反馈通知发送失败 uid=%s: %s", dctx.uid, e)
+        return False
+
+
 def _handle_feedback(dctx: DispatchContext, analysis: dict) -> bool:
     """P9.7 用户反馈/找Mory（安抚回复 + 通知管理员）"""
     m = dctx.msg
@@ -1676,25 +1637,13 @@ def _handle_feedback(dctx: DispatchContext, analysis: dict) -> bool:
     mory_bot = ctx.mory_bot
 
     if is_group:
-        # 群聊：安抚 + 引导私聊
-        feedback_reply = random.choice([
-            f"{uname}收到啦～你私聊我，我帮你处理哦～",
-            f"{uname}好的～来私聊我吧，这边不太方便说～",
-            f"嗯嗯～直接私聊我就行，我帮你转达Mory～",
-        ])
+        notified = _send_feedback_admin_notification(dctx, analysis)
+        feedback_reply = (
+            f"{uname}收到啦，方便的话私聊我把情况说清楚。已提交给管理员查看。"
+            if notified else
+            f"{uname}收到啦，方便的话私聊我把情况说清楚；我先把情况记下来了。"
+        )
         mory_bot.reply_and_track(m, feedback_reply)
-        # 通知管理员
-        admin_id = CONFIG.get("ADMIN_ID", 0)
-        if admin_id:
-            try:
-                bot.send_message(admin_id,
-                    f"📢 用户反馈通知\n"
-                    f"👤 {uname}({uid})\n"
-                    f"💬 消息：{msg[:150]}\n"
-                    f"🏷 类型：{'用户遇到问题' if analysis['mode'] == 'feedback' else '用户想找Mory'}\n"
-                    f"💡 已引导私聊处理")
-            except Exception as e:
-                logger.warning(f"反馈通知发送失败：{e}")
     else:
         # 私聊：尝试自助解封
         if "解封" in msg or "解禁" in msg or "被封" in msg or "封了" in msg or "禁言" in msg:
@@ -1729,30 +1678,19 @@ def _handle_feedback(dctx: DispatchContext, analysis: dict) -> bool:
                 ])
                 feedback_reply = f"已经帮你解封啦～{blame}现在可以回群里正常发言了！以后有任何问题都可以私聊我哦～"
             else:
-                blame = random.choice([
-                    "这该死的阿福又误判了！",
-                    "阿福那个笨蛋又抽风了！",
-                    "又是阿福的锅！",
-                ])
-                feedback_reply = f"{blame}出了点状况暂时无法解封，我已经通知Mory了，她会尽快来帮你处理的～以后有事直接私聊我就行！"
-                # 通知管理员解封失败
-                admin_id = CONFIG.get("ADMIN_ID", 0)
-                if admin_id:
-                    try:
-                        bot.send_message(admin_id,
-                            f"🚨 用户自助解封失败\n"
-                            f"👤 {uname}({uid})\n"
-                            f"💬 消息：{msg[:150]}\n"
-                            f"💡 请手动解封")
-                    except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                notified = _send_feedback_admin_notification(dctx, analysis, unban_failure=True)
+                feedback_reply = (
+                    "暂时没能自动解封，已提交给管理员查看。"
+                    if notified else
+                    "暂时没能自动解封，我先把情况记下来了；目前不能确认通知是否送达。"
+                )
         else:
-            # 私聊普通反馈（非解封）
-            feedback_reply = random.choice([
-                "收到啦～我已经记下来了，Mory会尽快来处理的！有事随时私聊我哦～",
-                "好的好的～我帮你转达给Mory，她看到就会来处理～以后有事直接找我就行！",
-                "嗯嗯～已经通知Mory了，别着急哦～有任何问题都可以私聊我～",
-            ])
+            notified = _send_feedback_admin_notification(dctx, analysis)
+            feedback_reply = (
+                "收到，已提交给管理员查看。"
+                if notified else
+                "收到，我先把情况记下来了；目前不能确认通知是否送达。"
+            )
         mory_bot.reply_and_track(m, feedback_reply)
 
     clear_logging_context()

@@ -169,14 +169,8 @@ def handle_feedback(dctx, analysis: dict) -> bool:
     is_group = dctx.is_group
 
     if is_group:
-        # 群聊：安抚 + 引导私聊
-        feedback_reply = random.choice([
-            f"{uname}收到啦～你私聊我，我帮你处理哦～",
-            f"{uname}好的～来私聊我吧，这边不太方便说～",
-            f"嗯嗯～直接私聊我就行，我帮你转达Mory～",
-        ])
-        mory_bot.reply_and_track(m, feedback_reply)
-        # 通知管理员
+        # 群聊反馈同样以真实通知结果为准，不先承诺、不强导私聊。
+        admin_notified = False
         admin_id = CONFIG.get("ADMIN_ID", 0)
         if admin_id:
             try:
@@ -184,22 +178,43 @@ def handle_feedback(dctx, analysis: dict) -> bool:
                     f"📢 用户反馈通知\n"
                     f"👤 {format_user_mention(uid, uname)}\n"
                     f"💬 消息：{msg[:150]}\n"
-                    f"🏷 类型：{'用户遇到问题' if analysis['mode'] == 'feedback' else '用户想找Mory'}\n"
-                    f"💡 已引导私聊处理",
+                    f"🏷 类型：{'用户遇到问题' if analysis['mode'] == 'feedback' else '用户想找Mory'}",
                     parse_mode="HTML")
+                admin_notified = True
             except Exception as e:
                 logger.warning(f"反馈通知发送失败：{e}")
+        feedback_reply = (
+            f"{uname}，收到，已经提交给管理员；具体处理结果以实际回复为准。"
+            if admin_notified
+            else f"{uname}，收到，我先记录下来了；目前不能确认通知是否送达。"
+        )
+        mory_bot.reply_and_track(m, feedback_reply)
     else:
         # 私聊：尝试自助解封
         if _handle_private_feedback(dctx, analysis):
             pass  # 已处理
         else:
-            # 私聊普通反馈（非解封）
-            feedback_reply = random.choice([
-                "收到啦～我已经记下来了，Mory会尽快来处理的！有事随时私聊我哦～",
-                "好的好的～我帮你转达给Mory，她看到就会来处理～以后有事直接找我就行！",
-                "嗯嗯～已经通知Mory了，别着急哦～有任何问题都可以私聊我～",
-            ])
+            # 私聊普通反馈：只有真实通知成功才能说“已提交”，不承诺处理时效。
+            admin_notified = False
+            admin_id = CONFIG.get("ADMIN_ID", 0)
+            if admin_id:
+                try:
+                    bot.send_message(
+                        admin_id,
+                        f"📢 用户反馈通知\n"
+                        f"👤 {format_user_mention(uid, uname)}\n"
+                        f"💬 消息：{msg[:150]}\n"
+                        f"🏷 类型：{'用户遇到问题' if analysis['mode'] == 'feedback' else '用户想找Mory'}",
+                        parse_mode="HTML",
+                    )
+                    admin_notified = True
+                except Exception as e:
+                    logger.warning(f"反馈通知发送失败：{e}")
+            feedback_reply = (
+                "收到，已经提交给管理员了；具体处理结果以实际回复为准。"
+                if admin_notified
+                else "收到，我先把问题记录下来了；目前不能确认人工处理时间。"
+            )
             mory_bot.reply_and_track(m, feedback_reply)
 
     clear_logging_context()
@@ -250,13 +265,7 @@ def _handle_private_feedback(dctx, analysis: dict) -> bool:
         tracking_note = "可疑追踪记录也一起清掉了。" if tracking_cleared else "没有发现额外的可疑追踪记录。"
         feedback_reply = f"已经帮你解封了。{blame}现在可以回群里正常发言，{tracking_note}"
     else:
-        blame = random.choice([
-            "我这边没能自动恢复。",
-            "自动解封没有成功。",
-            "这次需要管理员手动看一下。",
-        ])
-        feedback_reply = f"{blame}我已经通知管理员，请稍等一下。"
-        # 通知管理员解封失败
+        admin_notified = False
         admin_id = CONFIG.get("ADMIN_ID", 0)
         if admin_id:
             try:
@@ -266,8 +275,14 @@ def _handle_private_feedback(dctx, analysis: dict) -> bool:
                     f"💬 消息：{msg[:150]}\n"
                     f"💡 请手动解封",
                     parse_mode="HTML")
+                admin_notified = True
             except Exception as e:
-                logger.debug(f"操作异常: {e}")
+                logger.warning(f"解封失败通知发送失败: {e}")
+        feedback_reply = (
+            "自动解封没有成功，已经提交给管理员；具体处理结果以实际回复为准。"
+            if admin_notified
+            else "自动解封没有成功，我已记录；目前不能确认人工通知是否送达。"
+        )
     mory_bot.reply_and_track(m, feedback_reply)
     return True
 

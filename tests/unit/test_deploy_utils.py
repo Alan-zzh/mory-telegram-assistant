@@ -61,3 +61,8 @@ def test_deploy_manifest_excludes_sync_conflicts_and_includes_truth_docs():
         "VERSION.md",
         "project_snapshot.md",
     }.issubset(set(deploy_vps.UPLOAD_FILES))
+    assert {
+        "migrations/versions/0002_reply_style_samples.py",
+        "migrations/versions/0003_business_conversation_context.py",
+        "tasks/maintenance/conversation_context_cleanup_task.py",
+    }.issubset(set(deploy_vps.UPLOAD_FILES))

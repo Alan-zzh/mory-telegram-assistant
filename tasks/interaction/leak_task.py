@@ -1,8 +1,4 @@
-"""
-tasks/interaction/leak_task.py - 背刺泄密任务
-
-每周一次在群里"偷偷"爆料关于 Mory 的小秘密，增强人设真实感。
-"""
+"""每周轻互动任务（默认关闭，不编造 Mory 的生活或隐私）。"""
 
 import random
 from datetime import datetime, timezone, timedelta
@@ -20,38 +16,12 @@ _CST = timezone(timedelta(hours=8))
 
 
 def _generate_leak_text(rm) -> str:
-    """AI 生成背刺泄密文案。"""
-    seed = random.randint(100000, 999999)
-    scene_hint = random.choice([
-        "在便利店买东西", "一个人看电视剧", "刷手机的时候",
-        "发呆的时候", "跟闺蜜聊天", "自拍的时候", "做饭的时候",
-        "洗澡前", "刚睡醒", "走路的时候", "吃零食的时候",
-        "整理房间", "加班的时候", "逛街的时候", "坐地铁的时候",
-        "打视频电话", "化妆的时候", "喝奶茶的时候", "拍照片",
-    ])
-    prompt = (
-        f"种子{seed}，场景：{scene_hint}。"
-        f"用极度八卦、偷偷摸摸的语气，泄露一个关于Mory非常可爱、"
-        f"生活化的小癖好或小秘密。要求：\n"
-        f"1. 必须是全新的、独特的内容，绝对不能重复\n"
-        f"2. 要有画面感和生活气息\n"
-        f"3. 控制在25字以内\n"
-        f"4. 不要出现任何编号、序号或列表格式\n"
-        f"5. 只说Mory，不以任何'老板/boss'自称"
-    )
-
-    try:
-        with rm.locked('ai'):
-            leak = rm.ai.ask(prompt, mode="leak", seed=seed)
-        if leak:
-            return leak.strip()
-    except Exception as e:
-        logger.debug(f"AI生成背刺泄密文案失败: {e}")
-    return ""
+    """从已审阅的非事实问题池取值，不让模型编造生活信息。"""
+    return MessageTemplates.get_weekly_interaction_question()
 
 
 class LeakTask(BaseTask):
-    """背刺泄密任务（每周一次）。"""
+    """每周轻互动（默认关闭）。"""
 
     @property
     def task_id(self) -> str:
@@ -74,6 +44,10 @@ class LeakTask(BaseTask):
 
     def execute(self, ctx: TaskContext) -> None:
         try:
+            cfg = self.rm.config.get("LEAK_CONFIG", {})
+            if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+                logger.info("每周轻互动未开启，跳过")
+                return
             with TaskTransactionManager("leak", self.rm.db, resources=None,
                                         min_interval_sec=86400) as tx:
                 if not tx.claimed:
@@ -100,9 +74,9 @@ class LeakTask(BaseTask):
                 save_fn = self.rm.save_config_fn
                 if save_fn:
                     save_fn()
-                logger.info(f"🤫 背刺泄密触发(周{current_week})：{leak[:30]}")
+                logger.info(f"每周轻互动触发(周{current_week})：{leak[:30]}")
         except TaskAbort:
             pass
         except Exception as e:
-            logger.error(f"背刺泄密失败：{e}")
+            logger.error(f"每周轻互动失败：{e}")
             retry_task(self.rm, self.run, "leak")

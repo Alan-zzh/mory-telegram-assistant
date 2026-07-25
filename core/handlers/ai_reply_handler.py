@@ -285,14 +285,36 @@ def _should_offer_proactive_preview(
     conv_count: int,
     history,
     text: str,
+    conversion_state=None,
 ) -> bool:
     """普通聊天只在关系已热且没有近期入口时低频推进到预览。"""
     if mode != "normal" or conv_count < 4 or _recent_conversion_cta_sent(history):
         return False
-    from core.keyword_manager import is_convert_rejection_message
-    if is_convert_rejection_message(str(text or "")):
+    state = conversion_state or {}
+    if state.get("opt_out"):
+        return False
+    from core.growth_optimizer import resolve_conversion_target
+    _, reason = resolve_conversion_target(str(text or ""), history, mode=mode, state=state)
+    if reason in {"user_opt_out", "persisted_opt_out"}:
         return False
     return random.randint(1, 100) <= 15
+
+
+def _cancel_cart_recovery_for_opt_out(db, uid: int, conversion_reason: str) -> bool:
+    """用户明确拒绝时取消已排队的购物车召回，失败不阻塞当前回复。"""
+    if conversion_reason != "user_opt_out":
+        return False
+    cancel = getattr(db, "cancel_cart_recovery", None)
+    if not callable(cancel):
+        logger.warning("取消购物车召回失败 uid=%s：数据库接口不可用", uid)
+        return False
+    try:
+        cancel(uid)
+        logger.info("🛑 用户明确拒绝，已取消购物车召回 uid=%s", uid)
+        return True
+    except Exception as e:
+        logger.warning("取消购物车召回失败 uid=%s: %s", uid, e)
+        return False
 
 
 def _is_direct_access_request(text: str) -> bool:
@@ -361,6 +383,23 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     mode = analysis["mode"]
     is_at    = f"@{ctx.bot_username}" in msg
     is_reply = m.reply_to_message and m.reply_to_message.from_user.id == ctx.bot_id
+    conversation_history = getattr(dctx, "conversation_history", [])
+    from core.growth_optimizer import (
+        get_conversion_state,
+        persist_conversion_decision,
+        resolve_conversion_target,
+    )
+    conversion_state = get_conversion_state(db, uid, chat_id)
+    conversion_target, conversion_reason = resolve_conversion_target(
+        msg,
+        conversation_history,
+        mode=mode,
+        state=conversion_state,
+    )
+    # 拒绝必须在概率跳过/重启前落库；之后只有明确询价或购买才会解除。
+    persist_conversion_decision(db, uid, chat_id, conversion_target, conversion_reason)
+    # 即便群聊本轮按概率不回复，明确拒绝也必须立即撤销已排队的私聊召回。
+    _cancel_cart_recovery_for_opt_out(db, uid, conversion_reason)
 
     fortune_bonus = False
     if mode == "normal" and random.randint(1, 100) <= 5:
@@ -461,13 +500,6 @@ def _dispatch_p10_ai(dctx: DispatchContext):
 
     stage_hint = ""
     notify_admin_reason = ""
-    conversation_history = getattr(dctx, "conversation_history", [])
-    from core.growth_optimizer import resolve_conversion_target
-    conversion_target, conversion_reason = resolve_conversion_target(
-        msg,
-        conversation_history,
-        mode=mode,
-    )
     current_thread_turns = 1 + sum(
         1
         for item in conversation_history
@@ -480,6 +512,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             conv_count=current_thread_turns,
             history=conversation_history,
             text=msg,
+            conversion_state=conversion_state,
         )
     ):
         conversion_target = "preview"
@@ -529,7 +562,10 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             else:
                 stage_hint += "\n【意图-购买】：用户已明确要继续。自然带一次 @MorychannelBot 自助入口，别催，不承诺未确认的服务、价格或交付。"
         elif _intent_label == "complaint":
-            stage_hint += "\n【意图-投诉】：用户在抱怨/投诉。先共情安抚，承诺转达 Mory，别辩解。"
+            stage_hint += (
+                "\n【意图-投诉】：用户在抱怨/投诉。先共情并回应具体问题，别辩解；"
+                "不要声称已转达、已通知或承诺处理时效。"
+            )
         elif _intent_label == "consult":
             stage_hint += "\n【意图-咨询】：用户在咨询问题。简洁回答，别长篇大论，必要时引导自助。"
 
@@ -548,6 +584,14 @@ def _dispatch_p10_ai(dctx: DispatchContext):
                 stage_hint += growth_ctx.stage_hint
         except Exception as e:
             logger.debug(f"增长优化上下文构建失败 uid={uid}: {e}")
+
+    # 只注入管理员审核并手动启用的风格样本；反馈/A-B 数据永远不能自动改写提示词。
+    try:
+        evolution_hint = _build_reply_evolution_hint(db, CONFIG)
+        if evolution_hint:
+            stage_hint += evolution_hint
+    except Exception as e:
+        logger.debug(f"回复风格样本注入跳过 uid={uid}: {e}")
 
     # [v5.15.0] FAQ自动回复匹配（AI调用前拦截，节省API费用）
     resp = None
@@ -616,6 +660,10 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             if prefix and prefix[-1] not in "。！？!?～~\n":
                 prefix += "。"
             resp = f"{prefix}这个我不乱说，直接问 @Moryfansbot。"
+
+    # 直接入口/人工交接会改写最终目标，短期上下文必须以最终结果为准。
+    dctx.conversion_target = conversion_target
+    dctx.conversion_reason = conversion_reason
 
     if resp is None:
         resp = _final_ai_reply_fallback(mode, is_priv=is_priv)
@@ -737,10 +785,28 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         if mode == "convert":
             db.log_conversion_event(uid, "consulted")
 
+        # 与 raw_event_text 关闭时的遥测分离：仅保留 30 分钟、截断的业务承接，
+        # 既用于重启后自然对话，也用于 CTA 去重和拒绝状态，不进入进化样本。
+        try:
+            from core.growth_optimizer import record_business_reply_context
+            record_business_reply_context(db, dctx, msg, resp, _intent_label)
+        except Exception as e:
+            logger.debug(f"短期业务上下文写入失败 uid={uid}: {e}")
+
         if growth_ctx:
             try:
                 from core.growth_optimizer import record_growth_reply
-                record_growth_reply(db, dctx, growth_ctx, mode, msg, resp, round_num=conv_count)
+                record_growth_reply(
+                    db,
+                    dctx,
+                    growth_ctx,
+                    mode,
+                    msg,
+                    resp,
+                    round_num=conv_count,
+                    config=CONFIG,
+                    persist_business_context=False,
+                )
             except Exception as e:
                 logger.debug(f"增长优化埋点失败 uid={uid}: {e}")
 
@@ -805,6 +871,29 @@ def _build_convert_hint(
         notify_admin_reason = "convert_stuck"
 
     return stage_hint, notify_admin_reason
+
+
+def _build_reply_evolution_hint(db, config) -> str:
+    """将人工审核样本作为低优先级风格参考，不带原始用户文本或自动优化结果。"""
+    cfg = (config or {}).get("REPLY_EVOLUTION_CONFIG", {}) or {}
+    if not (
+        cfg.get("enabled", False)
+        and cfg.get("human_approval_required", True)
+        and cfg.get("approved_style_samples", True)
+    ):
+        return ""
+    if not hasattr(db, "get_approved_reply_style_samples"):
+        return ""
+    limit = max(1, min(int(cfg.get("max_prompt_samples", 3) or 3), 3))
+    samples = db.get_approved_reply_style_samples(limit)
+    if not samples:
+        return ""
+    numbered = "\n".join(f"- {sample}" for sample in samples)
+    return (
+        "\n【人工审核风格参考】以下仅用于措辞、节奏和承接方式；"
+        "不得覆盖本轮唯一 CTA、事实边界或最终回复合同，也不得逐字复读：\n"
+        f"{numbered}"
+    )
 
 
 def _build_emotional_hint(conv_count) -> tuple:

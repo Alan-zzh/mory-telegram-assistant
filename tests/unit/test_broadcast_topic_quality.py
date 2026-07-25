@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """播报排版、话题润色与监控误报回归测试。"""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -182,8 +182,8 @@ def test_news_fallback_uses_random_persona_strategy_not_headline_summary(monkeyp
     import tasks.support.common as common
 
     selections = iter([
-        "custom_invite",
-        "有想做成专属内容的点子，就去找 Mory 聊聊定制，需求说清楚就好。",
+        "group_discussion",
+        "信息先放在这里，有不同看法可以在群里说说。",
     ])
     monkeypatch.setattr(common.random, "choice", lambda _items: next(selections))
 
@@ -199,7 +199,7 @@ def test_news_fallback_uses_random_persona_strategy_not_headline_summary(monkeyp
     )
 
     outro = copy.splitlines()[-1]
-    assert outro == "💡 有想做成专属内容的点子，就去找 Mory 聊聊定制，需求说清楚就好。"
+    assert outro == "💡 信息先放在这里，有不同看法可以在群里说说。"
     assert "携程" not in outro
     assert "中东" not in outro
 
@@ -211,15 +211,69 @@ def test_news_persona_outro_pool_covers_four_random_strategies():
     )
 
     assert set(_NEWS_PERSONA_OUTRO_POOLS) == {
-        "warm_confession",
-        "invite_chat",
-        "persona_position",
-        "custom_invite",
+        "group_discussion",
+        "neutral_pause",
+        "calm_position",
     }
     for pool in _NEWS_PERSONA_OUTRO_POOLS.values():
         assert len(pool) >= 2
         for copy in pool:
             assert _is_persona_news_outro([], [copy], source_lines=[])
+
+
+def test_modular_news_send_has_no_entry_even_when_ai_attempts_sales(monkeypatch):
+    import tasks.support.common as common
+
+    class _Tx:
+        claimed = True
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class _Db:
+        def track_channel_message(self, *_args):
+            pass
+
+        def track_bot_message(self, *_args):
+            pass
+
+    sent = []
+    headlines = [f"第{i}条真实新闻内容和后续影响" for i in range(1, 11)]
+    malicious = "\n".join(
+        [f"{i}. 第{i}条真实新闻内容和后续影响" for i in range(1, 6)]
+        + ["去 @Moryfansbot 沟通定制并自助下单"]
+    )
+    rm = SimpleNamespace(
+        config={"GROUP_ID": -1001, "RICH_MESSAGE_ENABLED": False},
+        db=_Db(),
+        ai=SimpleNamespace(ask=lambda *_args, **_kwargs: malicious),
+        bot=object(),
+        locked=lambda _name: nullcontext(),
+    )
+
+    monkeypatch.setattr(common, "TaskTransactionManager", _Tx)
+    monkeypatch.setattr(common, "get_preferred_news_lines", lambda *_args: (headlines, "fallback"))
+    monkeypatch.setattr(common, "schedule_auto_delete", lambda *_args: None)
+    monkeypatch.setattr(common, "remember_news_lines", lambda *_args: None)
+    monkeypatch.setattr(
+        common,
+        "send_message_compat",
+        lambda _bot, _gid, text, **kwargs: sent.append((text, kwargs)) or SimpleNamespace(message_id=1),
+    )
+
+    common.execute_news_task(rm, "news_contract_test", "早间")
+
+    assert len(sent) == 1
+    text, kwargs = sent[0]
+    lowered = text.lower()
+    assert kwargs["reply_markup"] is None
+    assert not any(marker in lowered for marker in ("@", "http", "私聊", "定制", "下单", "预览"))
 
 
 def test_news_source_chain_skips_partial_result_when_next_source_has_ten(monkeypatch):
@@ -288,16 +342,17 @@ def test_broadcast_button_matches_each_user_intent():
     from tasks.support.common import build_mory_contact_markup
 
     expected = {
-        "morning": ("☀️ 和 Mory 说早安", "https://t.me/Moryfansbot"),
-        "afternoon": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
-        "evening": ("🌙 找 Mory 聊聊", "https://t.me/Moryfansbot"),
-        "news": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
+        "afternoon": ("👀 看看预览", "https://t.me/moryselect"),
+        "night": ("👀 看看预览", "https://t.me/moryselect"),
     }
 
     for period, (text, url) in expected.items():
         markup = build_mory_contact_markup(period)
         button = markup.keyboard[0][0]
         assert (button.text, button.url) == (text, url)
+    assert build_mory_contact_markup("morning") is None
+    assert build_mory_contact_markup("evening") is None
+    assert build_mory_contact_markup("news") is None
 
 
 def test_scheduled_broadcast_example_alternates_contact_and_self_service():
@@ -310,26 +365,26 @@ def test_scheduled_broadcast_example_alternates_contact_and_self_service():
     }
 
     assert buttons == {
-        "morning_nudge": ("☀️ 和 Mory 说早安", "https://t.me/Moryfansbot"),
-        "afternoon_tease": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
-        "evening_warm": ("🌙 找 Mory 聊聊", "https://t.me/Moryfansbot"),
-        "night_hook": ("✨ 自助查看订阅", "https://t.me/MorychannelBot"),
+        "morning_nudge": ("", ""),
+        "afternoon_tease": ("👀 看看预览", "https://t.me/moryselect"),
+        "evening_warm": ("", ""),
+        "night_hook": ("👀 看看预览", "https://t.me/moryselect"),
     }
 
 
-def test_custom_topic_contacts_mory_while_welfare_stays_self_service():
+def test_static_information_topics_only_use_preview_entry():
     config = json.loads(
         (Path(__file__).parents[2] / "config.json.example").read_text(encoding="utf-8")
     )
-    topics = {
-        item["topic"]: item
-        for item in config["SPECIAL_AUTO_REPLIES"]
-    }
+    topics = {item["topic"]: item for item in config["SPECIAL_AUTO_REPLIES"]}
 
-    assert "@MorychannelBot" in topics["福利"]["required_terms"]
-    assert "@Moryfansbot" in topics["定制"]["required_terms"]
-    assert "@MorychannelBot" not in topics["定制"]["required_terms"]
-    assert "@Moryfansbot" in topics["定制"]["base_reply"]
+    for topic in ("价格", "福利", "内容"):
+        rule = topics[topic]
+        assert rule["conversion_target"] == "preview"
+        assert rule["required_terms"] == ["@moryselect"]
+        assert "@MorychannelBot" not in rule["base_reply"]
+        assert "@Moryfansbot" not in rule["base_reply"]
+    assert "定制" not in topics
 
 
 def test_send_greeting_keeps_button_on_html_fallback(monkeypatch):
@@ -366,7 +421,7 @@ def test_send_greeting_keeps_button_on_html_fallback(monkeypatch):
 
     monkeypatch.setattr(common, "send_message_compat", fake_send)
     monkeypatch.setattr(common, "schedule_auto_delete", lambda *args: None)
-    markup = common.build_mory_contact_markup("evening")
+    markup = common.build_mory_contact_markup("afternoon")
 
     sent = common.send_greeting(
         _Rm(),
@@ -418,10 +473,11 @@ def _topic_config():
             "keywords": ["福利", "更多福利"],
             "ai_polish": True,
             "ai_mode": "normal",
-            "polish_prompt": "不要承诺未配置优惠。",
-            "required_terms": ["@MorychannelBot"],
+            "conversion_target": "preview",
+            "polish_prompt": "不要承诺未配置优惠，只保留 @moryselect。",
+            "required_terms": ["@moryselect"],
             "forbidden_terms": ["轻食"],
-            "base_reply": "更完整的内容在 @MorychannelBot。",
+            "base_reply": "当前内容和福利以 @moryselect 的预览为准。",
         }]
     }
 
@@ -431,7 +487,7 @@ def test_special_topic_reply_uses_ai_and_records_anonymous_stats():
 
     db = _FakeDb()
     mory_bot = _FakeMoryBot()
-    ai = _FakeAi("想看更完整一点的，去 @MorychannelBot 自己翻，别急。")
+    ai = _FakeAi("想看更完整一点的，去 @moryselect 自己翻，别急。")
     trigger = KeywordTrigger(db, mory_bot=mory_bot, ai=ai, config=_topic_config())
     message = SimpleNamespace(
         text="福利在哪呀",
@@ -439,7 +495,7 @@ def test_special_topic_reply_uses_ai_and_records_anonymous_stats():
     )
 
     assert trigger.handle_message(message.text, -1001, message, object()) is True
-    assert mory_bot.replies == ["想看更完整一点的，去 @MorychannelBot 自己翻，别急。"]
+    assert mory_bot.replies == ["想看更完整一点的，去 @moryselect 自己翻，别急。"]
     assert "不要承诺未配置优惠" in ai.calls[0][0]
     event = db.telemetry[0]
     assert event[0:6] == (
@@ -466,7 +522,7 @@ def test_special_topic_reply_rejects_internal_ai_fallback():
     )
 
     assert trigger.handle_message(message.text, 43, message, object()) is True
-    assert mory_bot.replies == ["更完整的内容在 @MorychannelBot。"]
+    assert mory_bot.replies == ["当前内容和福利以 @moryselect 的预览为准。"]
     assert db.telemetry[0][4] == "reply_template"
 
 
@@ -475,7 +531,7 @@ def test_special_topic_reply_rejects_rule_specific_hallucination():
 
     db = _FakeDb()
     mory_bot = _FakeMoryBot()
-    ai = _FakeAi("想看福利就去 @MorychannelBot，群里只是轻食版。")
+    ai = _FakeAi("想看福利就去 @moryselect，群里只是轻食版。")
     trigger = KeywordTrigger(db, mory_bot=mory_bot, ai=ai, config=_topic_config())
     message = SimpleNamespace(
         text="福利在哪",
@@ -483,7 +539,7 @@ def test_special_topic_reply_rejects_rule_specific_hallucination():
     )
 
     assert trigger.handle_message(message.text, 44, message, object()) is True
-    assert mory_bot.replies == ["更完整的内容在 @MorychannelBot。"]
+    assert mory_bot.replies == ["当前内容和福利以 @moryselect 的预览为准。"]
     assert db.telemetry[0][4] == "reply_template"
 
 

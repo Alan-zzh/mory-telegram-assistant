@@ -138,7 +138,7 @@ def test_checkin_dashboard_normalizes_and_saves_both_enable_keys(monkeypatch):
     assert store["CHECKIN_CONFIG"]["streak_bonus"] == {"3": 11, "7": 22}
 
 
-def test_builtin_persona_wakeup_replies_and_keeps_conversion_entry():
+def test_builtin_persona_wakeup_replies_without_conversion_entry():
     from modules.keyword_trigger import KeywordTrigger
 
     db = _QuestionDb()
@@ -147,11 +147,13 @@ def test_builtin_persona_wakeup_replies_and_keeps_conversion_entry():
 
     assert trigger.handle_message("助理出来", -1001, _message("助理出来"), object())
     assert recorder.replies
-    assert "@MorychannelBot" in recorder.replies[0][0]
+    assert "@moryselect" not in recorder.replies[0][0]
+    assert "@MorychannelBot" not in recorder.replies[0][0]
+    assert "@Moryfansbot" not in recorder.replies[0][0]
     assert db.telemetry[0][3] == "助理唤醒"
 
 
-def test_builtin_points_and_custom_video_answers_cover_user_examples():
+def test_builtin_points_answer_uses_preview_and_custom_concept_is_not_static_order():
     from modules.keyword_trigger import KeywordTrigger
 
     db = _QuestionDb()
@@ -159,14 +161,37 @@ def test_builtin_points_and_custom_video_answers_cover_user_examples():
     trigger = KeywordTrigger(db, mory_bot=recorder, ai=_NoReplyAi(), config={})
 
     points_msg = "签到积分有什么福利有什么"
-    video_msg = "是定制视频的美女博主吗"
+    video_msg = "定制视频是什么"
     assert trigger.handle_message(points_msg, -1001, _message(points_msg), object())
-    assert trigger.handle_message(video_msg, -1001, _message(video_msg), object())
+    assert not trigger.handle_message(video_msg, -1001, _message(video_msg), object())
 
-    assert "VIP月卡" in recorder.replies[0][0]
-    assert "@Moryfansbot" in recorder.replies[0][0]
-    assert "定制视频" in recorder.replies[1][0]
-    assert "Mory确认" in recorder.replies[1][0]
+    assert "@moryselect" in recorder.replies[0][0]
+    assert "VIP月卡" not in recorder.replies[0][0]
+    assert "@Moryfansbot" not in recorder.replies[0][0]
+    assert len(recorder.replies) == 1
+
+
+def test_static_early_rules_do_not_intercept_explicit_purchase():
+    from modules.keyword_trigger import KeywordTrigger
+
+    trigger = KeywordTrigger(
+        _QuestionDb(),
+        mory_bot=_ReplyRecorder(),
+        ai=_NoReplyAi(),
+        config={"SPECIAL_AUTO_REPLIES": [{
+            "name": "价格咨询",
+            "enabled": True,
+            "keywords": ["多少钱", "定制视频"],
+            "conversion_target": "preview",
+            "base_reply": "以 @moryselect 预览为准。",
+        }]},
+    )
+
+    assert trigger._match_special_rule("我要下单") is None
+    assert trigger._match_special_rule("我要定制视频") is None
+    assert trigger._match_special_rule("定制视频是什么") is None
+    price_rule = trigger._match_special_rule("多少钱")
+    assert price_rule and price_rule["conversion_target"] == "preview"
 
 
 def test_config_can_disable_same_named_builtin_rule():
@@ -360,6 +385,28 @@ def test_example_config_enables_requested_auto_answers():
 
     assert config["FAQ_AUTO_REPLY_ENABLED"] is True
     assert rules["助理唤醒"]["enabled"] is True
-    assert rules["签到积分福利"]["enabled"] is True
-    assert rules["福利咨询"]["enabled"] is True
-    assert rules["定制咨询"]["enabled"] is True
+    assert rules["助理唤醒"]["conversion_target"] == "none"
+    assert {"价格咨询", "福利咨询", "内容咨询"} <= set(rules)
+    for name in ("价格咨询", "福利咨询", "内容咨询"):
+        rule = rules[name]
+        assert rule["enabled"] is True
+        assert rule["conversion_target"] == "preview"
+        assert rule["required_terms"] == ["@moryselect"]
+        rendered = f"{rule['polish_prompt']} {rule['base_reply']}"
+        assert "@MorychannelBot" not in rendered
+        assert "@Moryfansbot" not in rendered
+    assert "定制咨询" not in rules
+
+
+def test_example_static_reply_config_does_not_assert_unverified_product_facts():
+    config = json.loads(
+        (Path(__file__).parents[2] / "config.json.example").read_text(encoding="utf-8")
+    )
+
+    slang_text = " ".join(config["SLANG_DICT"].values())
+    assert all(term not in slang_text for term in ("4K母版", "三群", "1v1", "独家", "手慢无", "会员权益"))
+    special_text = " ".join(
+        f"{item['polish_prompt']} {item['base_reply']}"
+        for item in config["SPECIAL_AUTO_REPLIES"]
+    )
+    assert all(term not in special_text for term in ("VIP月卡", "Mory确认", "手慢无"))

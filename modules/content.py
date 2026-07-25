@@ -13,7 +13,7 @@
 ║    "Mory密码" -> 专属飞吻彩蛋                                           ║
 ║    碎片寻宝  -> 群聊触发暗号攒积分，7次领奖励                          ║
 ║    /叫醒 HH:MM -> 注册每日叫醒服务                                     ║
-║    价格表     -> 显示会员价格（同时触发购物车+转化漏斗）                ║
+║    价格/购买  -> 按阶段给预览或自助订阅入口（不直接展示价格表）         ║
 ║    我的等级   -> 查看个人积分和等级                                     ║
 ║                                                                        ║
 ║  图片打码（handle_photo）：                                            ║
@@ -130,74 +130,19 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
         mory_bot.reply_and_track(m, "⚠️ 格式：/叫醒 08:30")
         return True
 
-    # 价格表查询
+    # 价格/购买入口：在 P8 早返回阶段也必须遵守 ReplyContract v1。
     if msg.strip() in ("价格表", "价格", "多少钱", "怎么买", "门槛"):
-        price_list = config.get("PRICE_LIST", {})
-        lines = [
-            "💎 来啦来啦，价格表给你～\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "📥 订阅类\n"
-        ]
-        # 付费订阅类
-        sub_items = ["至臻精选", "至臻全享", "精选图集"]
-        for item in sub_items:
-            info = price_list.get(item, {})
-            if not info:
-                continue
-            details = []
-            if "monthly" in info:
-                details.append(f"月付¥{info['monthly']}")
-            if "quarterly" in info:
-                details.append(f"季付¥{info['quarterly']}")
-            if "yearly" in info:
-                details.append(f"年付¥{info['yearly']}")
-            price_str = " / ".join(details)
-            note = info.get("note", "")
-            lines.append(f"  ✨ {item}：{price_str}")
-            if note:
-                lines.append(f"     {note}")
+        from core.growth_optimizer import resolve_conversion_target
 
-        lines.append("\n💌 其他")
-        social_items = ["社交解锁1阶", "社交解锁2阶", "社交解锁3阶"]
-        social_desc = ["加QQ/TG，1v1聊天，解锁定制/原味/寄拍权限",
-                       "私人微信朋友圈，更新最真的日常，私密感拉满",
-                       "线下见面资格，支持视频验证，确保真人"]
-        for i, item in enumerate(social_items):
-            info = price_list.get(item, {})
-            if info:
-                desc = social_desc[i] if i < len(social_desc) else ""
-                lines.append(f"  {i+1}⃣ ¥{info['price']} | {desc}")
-
-        lines.append("\n🎬 定制")
-        custom_items = ["不露脸软核定制", "深度剧本演绎", "极致互动狙击"]
-        custom_desc = ["5分钟，指定服装/台词/动作，只要你想我就演绎",
-                       "10分钟，全剧本角色扮演，灵魂演技全场景",
-                       "15分钟，精准狙击XP，非会员不下单"]
-        for i, item in enumerate(custom_items):
-            info = price_list.get(item, {})
-            if info:
-                lines.append(f"  ¥{info['price']} | {custom_desc[i]}")
-
-        lines.append("\n👕 原味")
-        orig_items = ["原味-贴身袜类", "原味-私密内裤", "原味-深度袜类",
-                      "原味-撕裂套装", "原味-精选内裤", "原味-运动Bra", "原味-私藏旧鞋"]
-        orig_desc = ["船袜/短袜/丝袜任选，穿戴1天",
-                     "私密内裤，穿戴1天，保留最真实体味",
-                     "连续穿戴3天，多穿一天+20r，支持天数定制",
-                     "连体袜/袜套装，含撕裂全过程视频",
-                     "蕾丝/丁字裤任选，穿戴2天，支持经期特供+拍摄视频",
-                     "运动出汗后直接打包，最纯正运动汗味",
-                     "高跟鞋/球鞋长期穿戴，老粉丝首选"]
-        for i, item in enumerate(orig_items):
-            info = price_list.get(item, {})
-            if info:
-                lines.append(f"  {i+1}⃣ ¥{info['price']} | {orig_desc[i]}")
-
-        lines.append("\n━━━━━━━━━━━━━━━━━━")
-        lines.append("所有东西找 @MorychannelBot 下单就好啦～")
-        lines.append("未成年不许来哦。理智消费，买了不退换的哦。")
-
-        mory_bot.reply_and_track(m, "\n".join(lines))
+        target, _ = resolve_conversion_target(msg, mode="convert")
+        if target == "subscribe":
+            reply = (
+                "想继续的话去 @MorychannelBot 看当前可选内容和档位，"
+                "按提示自助完成。"
+            )
+        else:
+            reply = "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+        mory_bot.reply_and_track(m, reply)
         db.set_cart(uid)
         db.log_conversion_event(uid, "interested")
         return True
@@ -288,7 +233,7 @@ def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes, mory_bot):
                 except OSError:
                     font = ImageFont.load_default()
 
-        text = "想看完整版？@MorychannelBot 等你哦"
+        text = "想先看看？去 @moryselect 看预览"
         bbox = draw.textbbox((0, 0), text, font=font)
         tw = bbox[2] - bbox[0]
         x = (img.width - tw) / 2
@@ -300,8 +245,11 @@ def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes, mory_bot):
         watermarked.save(bio, "JPEG", quality=88)
         bio.seek(0)
 
-        bot.send_photo(gid, bio,
-                       caption=f"新拍的啦～完整版在 @MorychannelBot 哦 🔥")
+        bot.send_photo(
+            gid,
+            bio,
+            caption="想先了解的话去 @moryselect 看预览，合不合适你自己判断。",
+        )
         mory_bot.reply_and_track(m, "✅ 打码完成并已推群")
         logger.info("📸 图片打码推群成功")
 

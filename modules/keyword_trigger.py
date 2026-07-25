@@ -42,16 +42,14 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "keywords": ["小助理出来", "助理出来", "小助理在吗", "助理在吗"],
         "ai_polish": True,
         "ai_mode": "normal",
+        "conversion_target": "none",
         "polish_prompt": (
-            "按当前人设自然应答，先让对方知道你在，再问他想了解福利、订阅还是定制；"
-            "自然保留 @MorychannelBot 自助下单入口，不要像客服报菜单。"
+            "按当前人设自然应答，先让对方知道你在，再问对方当前想聊什么；"
+            "不要主动带预览、下单、订阅或人工联系入口。"
         ),
-        "required_terms": ["@MorychannelBot"],
+        "required_terms": [],
         "forbidden_terms": ["亲", "客服", "限时", "优惠"],
-        "base_reply": (
-            "在。想问福利、订阅还是定制？说吧，我帮你理，"
-            "确定了就去 @MorychannelBot 自助下单。"
-        ),
+        "base_reply": "在。怎么啦，直接说你想聊什么。",
     },
     {
         "name": "签到积分福利",
@@ -67,40 +65,14 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         ],
         "ai_polish": True,
         "ai_mode": "normal",
+        "conversion_target": "preview",
         "polish_prompt": (
-            "明确说明签到积分是群福利积分，可兑换订阅VIP月卡等福利；"
-            "具体库存和兑换条件以当前商城为准，也可以联系 @Moryfansbot 问 Mory。"
+            "只说明当前可用内容和福利以预览实际展示为准；"
+            "不承诺兑换物、库存、价格、权益或人工处理。"
         ),
-        "required_terms": ["积分", "VIP月卡", "@Moryfansbot"],
+        "required_terms": ["@moryselect"],
         "forbidden_terms": ["现金", "返现", "保证", "免费"],
-        "base_reply": (
-            "签到积分就是群里的福利积分，可以兑换订阅VIP月卡等福利。"
-            "具体能换什么以当前商城为准，也可以去 @Moryfansbot 问 Mory。"
-        ),
-    },
-    {
-        "name": "定制视频咨询",
-        "topic": "定制",
-        "enabled": True,
-        "keywords": [
-            "是定制视频的美女博主吗",
-            "定制视频的美女博主",
-            "可以定制视频吗",
-            "能定制视频吗",
-            "定制视频",
-        ],
-        "ai_polish": True,
-        "ai_mode": "normal",
-        "polish_prompt": (
-            "确认可以沟通专属定制视频，但方向与能否接必须先联系 @Moryfansbot "
-            "说明需求，最终由Mory确认；不承诺价格、尺度、交付时间或一定能接。"
-        ),
-        "required_terms": ["@Moryfansbot", "Mory确认"],
-        "forbidden_terms": ["一定能接", "保证", "我确认"],
-        "base_reply": (
-            "可以沟通专属定制视频。先去 @Moryfansbot 把想法说清楚，"
-            "方向和能不能接最后由Mory确认。"
-        ),
+        "base_reply": "当前可用内容和福利以 @moryselect 的预览为准，你先看一眼再判断。",
     },
 )
 
@@ -182,6 +154,18 @@ class KeywordTrigger:
         """匹配特定词规则；配置可覆盖或关闭同名内置规则。"""
         rules = self._effective_special_rules()
 
+        # 早路由绝不能抢走明确购买或泛定制的统一判定。只有规则声明的目标
+        # 与 resolve_conversion_target 一致时才允许静态/润色回复。
+        try:
+            from core.growth_optimizer import resolve_conversion_target
+            conversion_target, conversion_reason = resolve_conversion_target(text, mode="normal")
+        except Exception as exc:
+            logger.debug("关键词早路由转化判定跳过: %s", exc)
+            conversion_target, conversion_reason = "none", ""
+        # 泛定制/概念解释不能被静态规则截走；必须交给主链按上下文承接。
+        if conversion_target == "subscribe" or conversion_reason == "custom_information_only":
+            return None
+
         text_lower = text.lower()
         best_rule = None
         best_len = -1
@@ -189,6 +173,16 @@ class KeywordTrigger:
             if not isinstance(rule, dict):
                 continue
             if not rule.get("enabled", True):
+                continue
+            rule_target = str(rule.get("conversion_target", "none")).strip().lower()
+            # 价格、内容、福利这类“了解型”静态问法可安全收敛到预览；
+            # 但明确购买必须完整交给主成交链，其他 target 严格一致。
+            allow_preview_from_none = (
+                rule_target == "preview"
+                and conversion_target == "none"
+                and bool(rule.get("allow_preview_from_none", True))
+            )
+            if rule_target != conversion_target and not allow_preview_from_none:
                 continue
 
             keywords = rule.get("keywords", [])

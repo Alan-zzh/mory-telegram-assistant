@@ -83,33 +83,54 @@ _NEWS_PERSONA_OUTRO_MARKERS = (
     "我会",
     "我愿意",
     "我在听",
-    "来找我",
-    "和我聊",
-    "跟我聊",
-    "找 Mory",
-    "@Moryfansbot",
     "群里",
-    "定制",
-    "愿意开口",
+    "说说",
+    "想法",
+    "讨论",
 )
 _NEWS_PERSONA_OUTRO_POOLS = {
-    "warm_confession": [
-        "比起替你们下结论，我更想听听你今天真正放在心上的事。",
-        "我想被你们记住的，不是几条消息，而是每次愿意认真听你说话。",
+    "group_discussion": [
+        "信息先放在这里，有不同看法可以在群里说说。",
+        "先把事实留在这里，大家有想法就在群里讨论。",
     ],
-    "invite_chat": [
-        "新闻先放这儿，你要是有自己的想法，就来群里和我聊两句。",
-        "看完别急着划走，想吐槽、想分享，都可以来找我聊聊。",
+    "neutral_pause": [
+        "这几条信息先放这里，大家的想法可以慢慢说。",
+        "信息量有点多，先记住事实，群里可以慢慢讨论。",
     ],
-    "persona_position": [
-        "我不想只做报时的人，更想成为你愿意开口说真话的那个小助理。",
-        "我会把消息讲给你听，也会把你认真说过的话放在心上。",
-    ],
-    "custom_invite": [
-        "有想做成专属内容的点子，就去找 Mory 聊聊定制，需求说清楚就好。",
-        "想把自己的想法做成专属内容，可以去 @Moryfansbot 沟通定制。",
+    "calm_position": [
+        "先把消息讲清楚，大家的判断可以慢慢讨论。",
+        "不急着下结论，群里有不同想法就说说。",
     ],
 }
+
+_NEWS_ENTRY_MARKERS = (
+    "@", "http://", "https://", "私聊", "定制", "下单", "购买", "订阅", "预览",
+    "价格", "福利", "优惠", "名额", "来找我", "找 mory", "moryfansbot",
+)
+
+
+def sanitize_news_for_send(value: object) -> str:
+    """新闻发送前的确定性门禁：主动资讯不携带任何入口或成交引导。"""
+    if not isinstance(value, str):
+        return ""
+    safe_lines = [
+        line.strip()
+        for line in value.splitlines()
+        if line.strip() and not any(marker in line.lower() for marker in _NEWS_ENTRY_MARKERS)
+    ]
+    return "\n".join(safe_lines).strip()
+
+
+def _strip_news_entry_markup(value: str) -> str:
+    """格式化器的 Bot 署名也不应成为新闻自动触达入口。"""
+    if not isinstance(value, str):
+        return ""
+    return (
+        value.replace(f"<footer>{BROADCAST_SENDER_HANDLE}</footer>", "")
+        .replace(f"<i>{BROADCAST_SENDER_HANDLE}</i>", "")
+        .replace(BROADCAST_SENDER_HANDLE, "")
+        .strip()
+    )
 
 
 class TaskAbort(Exception):
@@ -154,21 +175,15 @@ def send_and_track(rm: ResourceManager, chat_id: int, text: str, parse_mode=None
 
 
 def build_mory_contact_markup(period: str = ""):
-    """按播报场景生成语义一致的联系或自助服务按钮。
-
-    历史函数名保留给现有调用方；@Moryfansbot 用于联系 Mory，
-    @MorychannelBot 仅用于自助下单和自助订阅。
-    """
+    """按播报场景生成低打扰按钮；问候和新闻不夹带成交入口。"""
     actions = {
-        "morning": ("☀️ 和 Mory 说早安", "https://t.me/Moryfansbot"),
-        "afternoon": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
-        "evening": ("🌙 找 Mory 聊聊", "https://t.me/Moryfansbot"),
-        "news": ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
+        "afternoon": ("👀 看看预览", "https://t.me/moryselect"),
+        "night": ("👀 看看预览", "https://t.me/moryselect"),
     }
-    label, url = actions.get(
-        period,
-        ("🛒 自助下单 / 订阅", "https://t.me/MorychannelBot"),
-    )
+    action = actions.get(period)
+    if not action:
+        return None
+    label, url = action
     markup = types.InlineKeyboardMarkup()
     markup.add(
         types.InlineKeyboardButton(
@@ -386,6 +401,8 @@ def _is_persona_news_outro(
     outro = re.sub(r"^💡\s*", "", outro)
     if not 18 <= len(outro) <= 80:
         return False
+    if any(marker in outro.lower() for marker in _NEWS_ENTRY_MARKERS):
+        return False
     if any(marker in outro for marker in _NEWS_SUMMARY_OUTRO_MARKERS):
         return False
 
@@ -410,6 +427,8 @@ def is_usable_news_output(
         return False
     if any(marker in value for marker in _NEWS_INTERNAL_MARKERS):
         return False
+    if sanitize_news_for_send(value) != value:
+        return False
     if _NEWS_SOURCE_LABEL_RE.search(value):
         return False
     news_items, observation_parts = _parse_news_copy(value, max_items=5)
@@ -425,7 +444,7 @@ def is_usable_news_output(
 
 
 def _build_news_persona_outro() -> str:
-    """随机选择温情自白、邀聊、人格表达或定制沟通策略。"""
+    """随机选择不带入口的中性讨论或观察收尾。"""
     strategy = random.choice(tuple(_NEWS_PERSONA_OUTRO_POOLS))
     return random.choice(_NEWS_PERSONA_OUTRO_POOLS[strategy])
 
@@ -436,7 +455,7 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
     重构原则（用户反馈"记流水账一样没有实际"）：
     - 不再用"晚点再补一条更稳的消息"等无价值填充
     - 最终只展示 5 条，避免消息过长
-    - 第6行不总结新闻，随机用自白/邀聊/人设/定制沟通建立关系
+    - 第6行不总结新闻，只用中性讨论或观察收尾，不带入口
     """
     cleaned = []
     for line in lines[:5]:
@@ -587,11 +606,19 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                     news = build_news_without_ai(lines, time_desc)
 
             if news:
+                news = sanitize_news_for_send(news)
+                if not news:
+                    record_abort(task_name, "新闻正文被安全门禁清空")
+                    raise TaskAbort("新闻正文被安全门禁清空")
                 # [v5.32] 同时构建 HTML 卡片和 Rich Message 卡片
-                rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
+                rich_news = _strip_news_entry_markup(
+                    build_rich_news_html(time_desc, news, source_name=source_name)
+                )
                 from core.broadcast_formatter import build_rich_news_card_message
-                rich_news_message = build_rich_news_card_message(time_desc, news, source_name=source_name)
-                markup = build_mory_contact_markup("news")
+                rich_news_message = _strip_news_entry_markup(
+                    build_rich_news_card_message(time_desc, news, source_name=source_name)
+                )
+                markup = None
 
                 # [v5.32] 优先尝试 Rich Message 路径
                 cfg = rm.config or {}
@@ -611,7 +638,7 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                             rm.db.track_channel_message(gid, sent.message_id, "text")
                             rm.db.track_bot_message(gid, sent.message_id)
                             remember_news_lines(lines)
-                            logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，Rich Message+按钮）")
+                            logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，Rich Message，无入口）")
                             return
                     except Exception as e:
                         logger.warning(f"{time_desc}新闻 Rich Message 发送失败，回退 HTML: {e}")
@@ -631,19 +658,19 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                         rm.db.track_channel_message(gid, sent.message_id, "text")
                         rm.db.track_bot_message(gid, sent.message_id)
                         remember_news_lines(lines)
-                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，富文本+按钮）")
+                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，富文本，无入口）")
                         return
                 except Exception as e:
                     logger.warning(f"{time_desc}新闻富文本发送失败，降级纯文本: {e}")
                     sent = send_and_track(
                         rm,
                         gid,
-                        news + f"\n\n{BROADCAST_SENDER_HANDLE}",
+                        news,
                         reply_markup=markup,
                     )
                     if sent:
                         remember_news_lines(lines)
-                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，纯文本降级+按钮）")
+                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，纯文本降级，无入口）")
                         return
 
             record_abort(task_name, "新闻发送失败")

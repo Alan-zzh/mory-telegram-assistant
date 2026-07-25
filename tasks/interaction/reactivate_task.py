@@ -1,8 +1,4 @@
-"""
-tasks/interaction/reactivate_task.py - 醋意挽回任务
-
-每小时检查 3 天未活跃的用户，发送个性化醋意挽回消息。
-"""
+"""非活跃用户问候任务（默认关闭，无销售或关系施压）。"""
 
 import random
 import time
@@ -19,30 +15,44 @@ logger = get_logger("tasks.interaction.reactivate")
 
 _CST = timezone(timedelta(hours=8))
 
+_REACTIVATE_FORBIDDEN_MARKERS = (
+    "@", "http", "下单", "购买", "订阅", "预览", "价格", "福利", "优惠", "名额",
+    "私聊", "定制", "回复我", "回我", "吃醋", "别人", "忘了我", "亏欠", "陪你",
+    "刚醒", "刚洗", "咖啡", "沙发", "窗外", "被窝",
+)
+
+
+def _is_safe_reactivate_message(value: object) -> bool:
+    """主动召回不能接受模型塞入的成交、关系施压或虚构生活。"""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return 10 <= len(text) <= 70 and not any(
+        marker in text.lower() for marker in _REACTIVATE_FORBIDDEN_MARKERS
+    )
+
 
 def _generate_reactivate_message(uid: int, rm) -> str:
-    """AI 生成醋意挽回消息。"""
+    """AI 生成一次中性问候。"""
     seed = uid + int(time.time()) // 86400
-    prompt = f"""你是Mory，一个有点小醋意的小姐姐。
-
-一个用户已经3天没来聊天了，你要写一条消息把他叫回来。
+    prompt = f"""你是公开身份的 Mory 小助理。
+给一位最近没有活跃的用户写一条可忽略的中性问候。
 
 要求：
-1. 40-60字，撒娇吃醋风格
-2. 像闺蜜私聊一样，带点小委屈小醋意
-3. 不要太直白，要撩人要心痒痒
-4. 可以暗示：你是不是有别人了/你是不是把我忘了/是不是我哪里不够好
-5. 结尾要有emoji
-6. seed={seed}，每次必须不同
+1. 20-45字，自然、简短、不要求回复
+2. 只表达关心，不谈购买、预览、福利或价格
+3. 不吃醋、不撒娇、不制造亏欠感，不假装与用户有亲密关系
+4. 不含任何入口、CTA、销售、定制、私聊或关系施压
+5. seed={seed}
 
 禁止：
-- 不要出现"3天"这个具体数字
-- 不要太长，控制在60字以内"""
+- 不提具体未活跃天数
+- 不声称自己是真人，不虚构生活场景"""
 
     try:
         with rm.locked('ai'):
             msg = rm.ai.ask(prompt, mode="reactivate", seed=seed)
-        if msg and len(msg) > 10:
+        if _is_safe_reactivate_message(msg):
             return msg.strip()
     except Exception as e:
         logger.debug(f"AI生成挽回话术失败: {e}")
@@ -50,7 +60,7 @@ def _generate_reactivate_message(uid: int, rm) -> str:
 
 
 class ReactivateTask(BaseTask):
-    """醋意挽回任务（每小时）。"""
+    """非活跃用户问候（默认关闭）。"""
 
     @property
     def task_id(self) -> str:
@@ -71,6 +81,10 @@ class ReactivateTask(BaseTask):
 
     def execute(self, ctx: TaskContext) -> None:
         try:
+            cfg = self.rm.config.get("REACTIVATE_CONFIG", {})
+            if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+                logger.info("非活跃用户问候未开启，跳过")
+                return
             _window = datetime.now(_CST).strftime("%Y-%m-%d_%H")
             task_key = f"reactivate_{_window}"
             with TaskTransactionManager(task_key, self.rm.db, resources=None, min_interval_sec=3600) as tx:
@@ -82,26 +96,28 @@ class ReactivateTask(BaseTask):
                 inactive = self.rm.db.get_inactive_users(three_days_ago, self.rm.config.get("ADMIN_ID", 0))
 
                 sent_count = 0
-                for uid, _name in inactive[:3]:
-                    if random.random() < 0.25:
+                max_per_run = max(0, min(int(cfg.get("max_per_run", 3)), 10))
+                sample_rate = max(0.0, min(float(cfg.get("sample_rate", 0.25)), 1.0))
+                for uid, _name in inactive[:max_per_run]:
+                    if random.random() < sample_rate:
                         try:
                             reactivate_msg = _generate_reactivate_message(uid, self.rm)
                             with self.rm.locked('bot'):
                                 self.rm.bot.send_message(uid, reactivate_msg)
                             self.rm.db.reset_last_active(uid)
                             sent_count += 1
-                            logger.info(f"💌 醋意挽回：{uid}")
+                            logger.info(f"💌 非活跃用户问候：{uid}")
                         except Exception as e:
                             err_str = str(e).lower()
                             if "chat not found" in err_str or "bot was blocked" in err_str or "forbidden" in err_str:
                                 self.rm.db.delete_user(uid)
-                                logger.debug(f"💔 醋意挽回跳过无效用户 uid={uid}（已清理）")
+                                logger.debug(f"非活跃用户问候跳过无效用户 uid={uid}（已清理）")
                             else:
-                                logger.warning(f"醋意挽回发送失败 uid={uid}：{e}")
+                                logger.warning(f"非活跃用户问候发送失败 uid={uid}：{e}")
 
                 if sent_count == 0:
                     raise TaskAbort("无发送目标", expected=True)
         except TaskAbort:
             pass
         except Exception as e:
-            logger.error(f"醋意挽回失败：{e}")
+            logger.error(f"非活跃用户问候失败：{e}")

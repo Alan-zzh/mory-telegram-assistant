@@ -5,7 +5,7 @@
 ║                                                                        ║
 ║  功能：                                                                ║
 ║    1. 事件埋点 —— 曝光 / 点击 / 转化 / 退群 / 投诉等                   ║
-║    2. 对话埋点 —— 记录用户消息与 Bot 回复，用于后续话术分析             ║
+║    2. 对话埋点 —— 默认只记结构化字段，原文须显式开启                   ║
 ║    3. 轻量情感标记 —— 基于关键词规则的情感极性判断                      ║
 ║    4. 批量异步写入 —— 不阻塞主消息流程                                  ║
 ║                                                                        ║
@@ -58,8 +58,12 @@ class Telemetry:
 
     def __init__(self, db, config: dict):
         self.db = db
-        self.config = config
-        self._enabled = bool(config.get("AB_TEST_CONFIG", {}).get("telemetry_enabled", False))
+        self.config = config or {}
+        self._enabled = bool(
+            self.config.get("AB_TEST_CONFIG", {}).get("telemetry_enabled", False)
+        )
+        evolution_config = self.config.get("REPLY_EVOLUTION_CONFIG", {}) or {}
+        self._raw_event_text = bool(evolution_config.get("raw_event_text", False))
 
     def _async_log(self, method_name: str, *args, **kwargs):
         """异步调用 db 的埋点方法"""
@@ -86,12 +90,14 @@ class Telemetry:
 
     def log_conversation(self, user_id: int, chat_id: int, experiment_id: str, variant: str,
                          message_text: str, bot_reply_text: str, intent: str = "", round_num: int = 0):
-        """记录对话遥测，自动分析情感"""
+        """记录对话遥测；默认仅保留情感、意图、轮次等结构化字段。"""
         if not self._enabled:
             return
         sentiment = _detect_sentiment(message_text)
+        stored_message = message_text if self._raw_event_text else ""
+        stored_reply = bot_reply_text if self._raw_event_text else ""
         self._async_log("log_conversation_telemetry", user_id, chat_id, experiment_id, variant,
-                        message_text, bot_reply_text, intent, sentiment, round_num)
+                        stored_message, stored_reply, intent, sentiment, round_num)
 
     def log_button_click(self, user_id: int, chat_id: int, button_id: str, style: str = "default"):
         """记录按钮点击（兼容现有 button_click_stats）"""
@@ -144,6 +150,7 @@ class TelemetryContext:
         self.experiment_id = experiment_id
         self.variant = variant
         self.round_num = 0
+        self._message_text = ""
 
     def set_experiment(self, experiment_id: str, variant: str):
         """设置当前会话关联的实验"""
@@ -153,6 +160,7 @@ class TelemetryContext:
     def on_user_message(self, message_text: str, intent: str = ""):
         """用户发来消息时调用"""
         self.round_num += 1
+        self._message_text = message_text or ""
         self.telemetry.log_event(self.user_id, self.chat_id, self.experiment_id, self.variant,
                                  "engage")
         return self
@@ -163,7 +171,7 @@ class TelemetryContext:
             return self
         self.telemetry.log_conversation(
             self.user_id, self.chat_id, self.experiment_id, self.variant,
-            "", bot_reply_text, intent, self.round_num
+            self._message_text, bot_reply_text, intent, self.round_num
         )
         return self
 

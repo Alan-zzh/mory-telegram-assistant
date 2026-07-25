@@ -66,18 +66,31 @@ _CUSTOM_AFFIRMATION_MARKERS = (
     "挺喜欢", "很喜欢", "喜欢这种", "这个可以", "就按这个", "就这样",
 )
 
-_SUBSCRIBE_READY_MARKERS = (
-    "怎么下单", "我要下单", "直接下单", "下单吧", "怎么买", "我要买",
-    "怎么购买", "我要购买", "怎么付费", "我要付费", "怎么订阅", "我要订阅",
-    "订阅吧", "怎么开通", "我要开通", "怎么解锁", "我要解锁", "解锁吧",
-    "充值", "续费", "就要这个", "选这个", "就这个档位",
+_STRONG_SUBSCRIBE_READY_MARKERS = (
+    "怎么下单", "我要下单", "直接下单", "下单吧", "怎么付费", "我要付费",
+    "怎么订阅", "我要订阅", "订阅吧", "怎么开通", "我要开通", "怎么解锁",
+    "我要解锁", "解锁吧", "充值", "续费",
+)
+
+# 这些动作短语可用于任何日常商品，必须通过正向业务门禁才允许进入订阅。
+_GENERIC_PURCHASE_ACTION_MARKERS = (
+    "怎么买", "我要买", "怎么购买", "我要购买", "就要这个", "选这个",
+)
+
+_BUSINESS_OBJECT_MARKERS = (
+    "预览", "档位", "订阅", "定制", "mory", "套餐", "权益", "内容群", "频道",
+)
+
+_OPT_OUT_MARKERS = (
+    "不要再推", "别再推", "别再推荐", "不要推荐", "别营销", "不要营销",
+    "别发入口", "不要发入口", "退订提醒", "别提醒", "不要提醒",
 )
 
 _SUBSCRIPTION_PLAN_MARKERS = ("包月", "包季", "包年", "月付", "季付", "年付")
 
 _PREVIEW_SEEN_MARKERS = (
     "看过预览", "看了预览", "预览看了", "预览看过", "看完预览", "预览看完",
-    "预览群看过", "我看过了", "我已经看了", "刚看了", "看完了",
+    "预览群看过", "预览群看了",
 )
 
 _PREVIEW_REQUEST_MARKERS = (
@@ -90,6 +103,10 @@ _PREVIEW_REQUEST_MARKERS = (
 _PREVIEW_POSITIVE_MARKERS = (
     "挺喜欢", "很喜欢", "喜欢这个", "喜欢这种", "这个不错", "这个可以",
     "挺不错", "挺好的", "满意", "就它了",
+)
+
+_PREVIEW_NEGATIVE_MARKERS = (
+    "不喜欢", "不合适", "不想要", "没兴趣", "一般", "算了", "不用了", "不买",
 )
 
 CONVERSION_TARGET_NONE = "none"
@@ -117,13 +134,19 @@ def load_recent_conversation(
     limit: int = 3,
     max_age_seconds: int = 1800,
 ) -> list[dict[str, Any]]:
-    """读取同一用户、同一聊天最近几轮真实对话，供当前轮承接。
+    """读取同一用户、同一聊天的短期业务上下文，供当前轮承接。
 
-    conversation_telemetry 在每次 AI 回复后持久化，因此这里既能跨进程重启，
-    也不会把同一用户在其他群或私聊里的内容串进当前会话。
+    优先使用独立的 ``business_conversation_context``；它不属于遥测，也不受
+    ``raw_event_text`` 开关影响。仅当旧数据库尚未创建该表时才回退读取旧遥测。
     """
     if not db or not uid or not getattr(db, "conn", None):
         return []
+    get_context = getattr(db, "get_recent_business_context", None)
+    if callable(get_context):
+        try:
+            return get_context(uid, chat_id, limit=limit, max_age_seconds=max_age_seconds)
+        except Exception as e:
+            logger.debug(f"读取短期业务上下文失败 uid={uid} chat={chat_id}: {e}")
     safe_limit = max(1, min(int(limit or 3), 6))
     cutoff = int(time.time()) - max(60, int(max_age_seconds or 1800))
     sql = (
@@ -162,6 +185,38 @@ def load_recent_conversation(
     return history
 
 
+def get_conversion_state(db: Any, uid: int, chat_id: int) -> dict[str, Any]:
+    """读取已结构化的拒绝/CTA/阶段状态；数据库不可用时安全降级为空。"""
+    getter = getattr(db, "get_conversion_state", None)
+    if not callable(getter):
+        return {}
+    try:
+        value = getter(uid, chat_id)
+        return value if isinstance(value, dict) else {}
+    except Exception as e:
+        logger.debug("读取转化状态失败 uid=%s chat=%s: %s", uid, chat_id, e)
+        return {}
+
+
+def persist_conversion_decision(
+    db: Any, uid: int, chat_id: int, target: str, reason: str
+) -> None:
+    """立即持久化拒绝；明确询价/购买才解除，避免概率跳过回复时丢状态。"""
+    if not db or not uid:
+        return
+    try:
+        if reason == "user_opt_out":
+            setter = getattr(db, "set_conversion_opt_out", None)
+            if callable(setter):
+                setter(uid, chat_id)
+        elif target in {CONVERSION_TARGET_PREVIEW, CONVERSION_TARGET_SUBSCRIBE}:
+            clearer = getattr(db, "clear_conversion_opt_out", None)
+            if callable(clearer):
+                clearer(uid, chat_id)
+    except Exception as e:
+        logger.debug("持久化转化决策失败 uid=%s chat=%s: %s", uid, chat_id, e)
+
+
 def is_direct_custom_order_request(text: str) -> bool:
     """明确描述定制服务时直接进入下单承接，不先重复发预览。"""
     compact = re.sub(r"\s+", "", str(text or "")).lower()
@@ -196,50 +251,105 @@ def _looks_like_custom_requirements(text: str, has_custom_context: bool) -> bool
     return has_custom_context and marker_count >= 2
 
 
+def _is_opt_out_message(compact: str) -> bool:
+    return is_convert_rejection_message(compact) or any(marker in compact for marker in _OPT_OUT_MARKERS)
+
+
+def _has_explicit_preview_seen(text: str) -> bool:
+    """兼容“预览我已经看过了/预览我刚看完”等自然语序。"""
+    compact = re.sub(r"\s+", "", str(text or "").lower())
+    return bool(
+        re.search(r"预览.{0,8}(?:看过|看了|看完)", compact)
+        or re.search(r"(?:看过|看了|看完).{0,8}预览", compact)
+    )
+
+
+def _is_explicit_generic_purchase_action(
+    compact: str,
+    *,
+    has_business_context: bool,
+) -> bool:
+    """通用购买动词必须靠当前业务对象、已有上下文或纯动作句才能成立。
+
+    不能维护“咖啡/鞋/课程”等无穷黑名单：未知日常商品默认不是本业务购买。
+    """
+    matches_generic = any(marker in compact for marker in _GENERIC_PURCHASE_ACTION_MARKERS)
+    if not matches_generic:
+        return False
+    if any(marker in compact for marker in _BUSINESS_OBJECT_MARKERS):
+        return True
+    if has_business_context:
+        return True
+    return compact in _GENERIC_PURCHASE_ACTION_MARKERS
+
+
 def resolve_conversion_target(
     text: str,
     history: list[dict[str, Any]] | None = None,
     *,
     mode: str = "normal",
+    state: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """统一判定本轮唯一成交目标：无入口、先看预览或自助订阅。"""
     compact = re.sub(r"\s+", "", str(text or "")).lower()
     if not compact:
         return CONVERSION_TARGET_NONE, "empty_message"
-    if is_convert_rejection_message(compact):
+    if _is_opt_out_message(compact):
         return CONVERSION_TARGET_NONE, "user_opt_out"
 
     recent = list(history or [])[-6:]
     recent_order_cta = _recent_assistant_has_entry(
         recent, "@morychannelbot", "自助下单", "自助订阅"
     )
-
-    if any(marker in compact for marker in _SUBSCRIBE_READY_MARKERS):
-        return CONVERSION_TARGET_SUBSCRIBE, "explicit_purchase"
-    if any(plan in compact for plan in _SUBSCRIPTION_PLAN_MARKERS) and any(
-        action in compact for action in ("我要", "我选", "就选", "决定要", "开这个", "订这个", "下单")
-    ):
-        return CONVERSION_TARGET_SUBSCRIBE, "explicit_plan_choice"
-    if any(marker in compact for marker in _PREVIEW_SEEN_MARKERS):
-        if recent_order_cta:
-            return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
-        return CONVERSION_TARGET_SUBSCRIBE, "preview_confirmed"
+    structured_state = state or {}
+    state_order_cta = (
+        structured_state.get("recent_cta_target") == CONVERSION_TARGET_SUBSCRIBE
+        and int(structured_state.get("recent_cta_at") or 0) >= int(time.time()) - 1800
+    )
+    recent_order_cta = recent_order_cta or state_order_cta
 
     prior_user_texts = [
         str(item.get("content") or "").lower()
         for item in recent
         if isinstance(item, dict) and item.get("role") == "user"
     ]
-    recent_custom_context = any(
+    recent_custom_context = bool(structured_state.get("custom_context")) or any(
         is_direct_custom_order_request(previous)
         or _looks_like_custom_requirements(previous, has_custom_context=False)
         for previous in prior_user_texts
     )
-    recent_preview_context = any(
+    recent_preview_context = bool(structured_state.get("preview_context")) or any(
         any(marker in previous for marker in _PREVIEW_REQUEST_MARKERS)
-        or any(marker in previous for marker in _PREVIEW_SEEN_MARKERS)
+        or _has_explicit_preview_seen(previous)
         for previous in prior_user_texts
     ) or _recent_assistant_has_entry(recent, "@moryselect", "预览群")
+    has_business_context = recent_custom_context or recent_preview_context
+    generic_purchase_action = any(marker in compact for marker in _GENERIC_PURCHASE_ACTION_MARKERS)
+    explicit_subscribe = (
+        any(marker in compact for marker in _STRONG_SUBSCRIBE_READY_MARKERS)
+        or _is_explicit_generic_purchase_action(compact, has_business_context=has_business_context)
+    )
+    explicit_preview = any(marker in compact for marker in _PREVIEW_REQUEST_MARKERS)
+    if structured_state.get("opt_out") and not (explicit_subscribe or explicit_preview):
+        return CONVERSION_TARGET_NONE, "persisted_opt_out"
+
+    # 上游关键词路由可能因“鞋怎么买”误判为 convert；未知商品默认不触发。
+    if generic_purchase_action and not explicit_subscribe:
+        return CONVERSION_TARGET_NONE, "ambiguous_purchase_action"
+    if explicit_subscribe:
+        return CONVERSION_TARGET_SUBSCRIBE, "explicit_purchase"
+    if any(plan in compact for plan in _SUBSCRIPTION_PLAN_MARKERS) and any(
+        action in compact for action in ("我要", "我选", "就选", "决定要", "开这个", "订这个", "下单")
+    ):
+        return CONVERSION_TARGET_SUBSCRIBE, "explicit_plan_choice"
+    if any(plan in compact for plan in _SUBSCRIPTION_PLAN_MARKERS):
+        return CONVERSION_TARGET_PREVIEW, "plan_question_needs_preview"
+    if _has_explicit_preview_seen(compact):
+        if any(marker in compact for marker in _PREVIEW_NEGATIVE_MARKERS):
+            return CONVERSION_TARGET_NONE, "preview_not_interested"
+        if recent_order_cta:
+            return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
+        return CONVERSION_TARGET_SUBSCRIBE, "preview_confirmed"
 
     if any(marker in compact for marker in _CUSTOM_INFORMATION_MARKERS):
         return CONVERSION_TARGET_NONE, "custom_information_only"
@@ -259,10 +369,10 @@ def resolve_conversion_target(
         if recent_order_cta:
             return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
         return CONVERSION_TARGET_SUBSCRIBE, "positive_after_preview"
-    if any(marker in compact for marker in _PREVIEW_REQUEST_MARKERS):
+    if explicit_preview:
         return CONVERSION_TARGET_PREVIEW, "preview_or_objection"
-    if mode == "convert":
-        return CONVERSION_TARGET_PREVIEW, "conversion_needs_preview"
+    # ``mode=convert`` 是宽松上游分类，不能单独授权发入口；价格、内容、
+    # 预览、套餐等明确业务信号已在上方逐项判定。
     return CONVERSION_TARGET_NONE, "no_conversion_signal"
 
 
@@ -464,12 +574,16 @@ def log_telemetry_event(db: Any, uid: int, chat_id: int, experiment_id: str, var
 
 
 def record_growth_reply(db: Any, dctx: Any, growth: GrowthContext, mode: str,
-                        user_message: str, bot_reply: str, round_num: int = 0) -> None:
-    """Persist attribution, experiment, and conversation telemetry after a reply."""
+                        user_message: str, bot_reply: str, round_num: int = 0,
+                        config: dict[str, Any] | None = None,
+                        *, persist_business_context: bool = True) -> None:
+    """Persist growth metrics; conversation text requires explicit config opt-in."""
     if not growth:
         return
     uid = getattr(dctx, "uid", 0)
     chat_id = getattr(dctx, "chat_id", 0)
+    if persist_business_context:
+        _record_business_context(db, dctx, user_message, bot_reply, growth.intent)
     log_attribution_event(db, uid, growth.event, mode, growth.source, growth.experiment_id)
     log_telemetry_event(
         db, uid, chat_id, growth.experiment_id, growth.variant,
@@ -478,19 +592,59 @@ def record_growth_reply(db: Any, dctx: Any, growth: GrowthContext, mode: str,
     )
     try:
         if hasattr(db, "log_conversation_telemetry"):
+            evolution_config = (config or {}).get("REPLY_EVOLUTION_CONFIG", {}) or {}
+            raw_event_text = bool(evolution_config.get("raw_event_text", False))
+            stored_message = (user_message or "")[:500] if raw_event_text else ""
+            stored_reply = (bot_reply or "")[:500] if raw_event_text else ""
             db.log_conversation_telemetry(
                 uid,
                 chat_id,
                 growth.experiment_id,
                 growth.variant,
-                (user_message or "")[:500],
-                (bot_reply or "")[:500],
+                stored_message,
+                stored_reply,
                 growth.intent,
                 _detect_sentiment(user_message or ""),
                 int(round_num or 0),
             )
     except Exception as e:
         logger.debug(f"增长对话遥测写入失败 uid={uid}: {e}")
+
+
+def _record_business_context(
+    db: Any,
+    dctx: Any,
+    user_message: str,
+    bot_reply: str,
+    intent: str = "",
+) -> None:
+    """把可回复的短期上下文独立写入业务表，不污染 raw-off 遥测。"""
+    recorder = getattr(db, "record_business_context", None)
+    if not callable(recorder):
+        return
+    try:
+        recorder(
+            getattr(dctx, "uid", 0),
+            getattr(dctx, "chat_id", 0),
+            user_message,
+            bot_reply,
+            intent=intent,
+            conversion_target=getattr(dctx, "conversion_target", "none"),
+            conversion_reason=getattr(dctx, "conversion_reason", ""),
+        )
+    except Exception as e:
+        logger.debug("短期业务上下文写入失败 uid=%s: %s", getattr(dctx, "uid", 0), e)
+
+
+def record_business_reply_context(
+    db: Any,
+    dctx: Any,
+    user_message: str,
+    bot_reply: str,
+    intent: str = "",
+) -> None:
+    """供增长开关关闭的主回复路径调用；语义与 record_growth_reply 保持一致。"""
+    _record_business_context(db, dctx, user_message, bot_reply, intent)
 
 
 def summarize_growth(db: Any, days: int = 7) -> list[dict[str, Any]]:

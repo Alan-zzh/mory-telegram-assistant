@@ -68,7 +68,14 @@ DEAD_REMOTE_FILES = [
 ]
 
 # 需要动态扫描的目录（递归收集所有 .py 文件）
-SCAN_DIRS = ["core", "modules", "dashboard", "scripts", "tasks"]  # [v5.31.2] 修复：tasks/ 任务调度器模块必须同步部署
+SCAN_DIRS = [
+    "core",
+    "modules",
+    "dashboard",
+    "scripts",
+    "tasks",
+    "migrations",
+]  # 运行代码、自动任务与 Alembic 迁移必须随同一次版本部署
 
 # 根目录下需要上传的文件
 ROOT_FILES = [

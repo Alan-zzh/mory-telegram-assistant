@@ -23,7 +23,22 @@ logger = logging.getLogger(__name__)
 _CST = timezone(timedelta(hours=8))
 
 # 夜间暗示话术种子
-_NIGHT_HINT_SEED = "（深夜 1v1 私聊，针对高意向用户，清冷傲娇带点暧昧暗示，简短一句，别太露骨）"
+_NIGHT_HINT_SEED = (
+    "你是公开身份的 Mory 小助理。写一句可忽略的中性夜间提醒："
+    "不含入口、CTA、购买、预览、私聊、暧昧、关系施压、虚构生活事实；"
+    "不要求回复，只输出正文。"
+)
+_NIGHT_HINT_FORBIDDEN = (
+    "@", "http", "私聊", "下单", "购买", "订阅", "预览", "价格", "福利", "优惠",
+    "名额", "定制", "想你", "陪你", "悄悄话", "暧昧", "咖啡", "沙发", "窗外", "被窝",
+)
+
+
+def _is_safe_neutral_hint(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return 8 <= len(text) <= 60 and not any(term in text.lower() for term in _NIGHT_HINT_FORBIDDEN)
 
 
 class NightHintTrigger(TriggerBase):
@@ -35,6 +50,12 @@ class NightHintTrigger(TriggerBase):
 
     def should_fire(self, rm) -> bool:
         """检查是否在夜间窗口 + 是否有候选用户。"""
+        # 主动私聊是高骚扰风险功能：必须双开关显式同意，默认 fail closed。
+        if not rm.config.get("NIGHT_HINT_TRIGGER_ENABLED", False):
+            return False
+        if not rm.config.get("NIGHT_HINT_NEUTRAL_REMINDER_ENABLED", False):
+            logger.info("夜间中性提醒缺少二次显式开关，保持关闭")
+            return False
         # 【v5.31.2 修复】VPS 运行在 UTC，夜间窗口判断必须用 CST
         hour = datetime.now(_CST).hour
         # 夜间窗口：22-2 点
@@ -63,6 +84,14 @@ class NightHintTrigger(TriggerBase):
         cooldown_cutoff = int(time.time()) - cooldown_hours * 3600
         for row in rows:
             uid = row[0]
+            # 拒绝状态不可用时宁可不发送，退订优先于所有自动提醒。
+            try:
+                state = rm.db.get_conversion_state(uid, uid)
+            except Exception as e:
+                logger.warning(f"夜间提醒拒绝状态不可用，fail closed uid={uid}: {e}")
+                continue
+            if not isinstance(state, dict) or state.get("opt_out"):
+                continue
             # 排除冷却期内已暗示过的用户
             try:
                 recent = rm.db.conn.execute(
@@ -81,7 +110,7 @@ class NightHintTrigger(TriggerBase):
         return True
 
     def execute(self, rm) -> None:
-        """对候选用户发送夜间暗示（私聊）。"""
+        """对双开关且未退订候选发送中性提醒。"""
         users = getattr(self, "_pending_users", [])
         if not users:
             return
@@ -91,7 +120,7 @@ class NightHintTrigger(TriggerBase):
                 # 获取用户画像，传给 AI 做个性化
                 profile = rm.db.get_user_persona_profile(uid)
                 reply = rm.ai.ask(_NIGHT_HINT_SEED, mode="night_hint", user_profile=profile, is_priv=True)
-                if reply and isinstance(reply, str):
+                if _is_safe_neutral_hint(reply):
                     rm.bot.send_message(uid, reply)
                     # 记录冷却
                     try:

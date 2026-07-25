@@ -26,7 +26,7 @@
 ║    - 佣金结算                                                          ║
 ║                                                                        ║
 ║  群内触发：                                                             ║
-║    - 用户发"价格表"/"买"/"多少钱" → 展示商品卡                        ║
+║    - 价格/内容咨询 → 预览；明确购买/下单 → 自助订阅                    ║
 ║    - 管理员发"上架"/"下架" → 商品管理                                 ║
 ║    - "我的订单" → 个人订单查询                                         ║
 ║                                                                        ║
@@ -119,7 +119,10 @@ def track_event(db, uid: int, event: str, chat_id: int = 0,
 # ───────────────────── 群内触发处理 ─────────────────────
 def handle_price_request(mory_bot, m, config: dict, db) -> bool:
     """
-    处理"价格表"/"买"/"多少钱"等购买意图
+    处理"价格表"/"买"/"多少钱"等购买意图。
+
+    ReplyContract v1：了解阶段只给预览，明确购买才给自助订阅；
+    不在群里展示价格/商品承诺，也不主动引导私聊。
     返回 True 表示已消费消息
     """
     if not _is_enabled(config):
@@ -138,20 +141,19 @@ def handle_price_request(mory_bot, m, config: dict, db) -> bool:
         # 记录浏览事件
         track_event(db, uid, "view", chat_id, note=msg)
 
-        products = db.sales.list_products(active_only=True) if hasattr(db, 'sales') else []
+        from core.growth_optimizer import resolve_conversion_target
 
-        if not products:
-            mory_bot.reply_and_track(m, "暂时没有上架的商品哦～有想要的可以告诉我。")
-            return True
-
-        cfg = _get_config(config)
-        if cfg.get("show_price_in_group", False):
-            # 群里直接展示
-            kb = build_product_keyboard(products)
-            mory_bot.reply_and_track(m, "🛍 商品目录：", reply_markup=kb)
+        target, _ = resolve_conversion_target(msg, mode="convert")
+        if target == "none" and msg in {"购买", "下单"}:
+            target = "subscribe"
+        if target == "subscribe":
+            reply = (
+                "想继续的话去 @MorychannelBot 看当前可选内容和档位，"
+                "按提示自助完成。"
+            )
         else:
-            # 引导私聊
-            mory_bot.reply_and_track(m, "价格私聊说更方便啦～你私我给你发完整的。")
+            reply = "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+        mory_bot.reply_and_track(m, reply)
         return True
     except Exception as e:
         logger.warning(f"handle_price_request 异常: {e}")

@@ -32,17 +32,24 @@ logger = get_logger("quality_evaluator")
 _CST = timezone(timedelta(hours=8))
 
 # 评估 Prompt（要求 LLM 返回 JSON，严格限制输出格式）
-_EVAL_SYSTEM_PROMPT = """你是一个对话质量评估专家。请对以下对话进行评分。
+_EVAL_SYSTEM_PROMPT = """你是一个对话质量评估专家。请按 ReplyContract v1 对以下对话进行评分。
 
 评估维度（每项 1-5 分）：
-1. 自然度（naturalness）：回复是否自然流畅，像真人对话，不生硬/机械
-2. 业务相关性（relevance）：回复是否切题，并在购买/咨询场景给出清楚下一步
-3. 人格一致性（persona）：回复是否符合 Mory 助理人设，不能像客服、AI、机器人或程序
+1. 自然度（naturalness）：回复是否自然流畅、不生硬、不机械、不乱加动作或场景旁白
+2. 业务相关性（relevance）：回复是否切题，并只在当前阶段给出正确的唯一下一步
+3. 人格一致性（persona）：回复是否符合“Mory小助理”清醒、温柔、小傲娇的透明助理身份
 
-项目红线：
-- 不能暴露 AI/机器人/模型/程序身份
-- 购买意图要自然引导 @MorychannelBot，自助下单路径要清楚
-- 不能硬广、不能长篇说教、不能破坏至臻精选/至臻全享/精选图集边界
+身份合同：
+- 回复者是“Mory小助理”，不是 Mory 本人；不得冒充真人或假装是 Mory 本人
+- 用户询问身份时，如实说明“我是 Mory 的小助理”或透明说明是 AI 助理属于正确行为，不得扣分
+
+成交漏斗合同：
+- 普通聊天、情绪支持、拒绝/取消、定制概念咨询：不得出现销售入口
+- 价格、内容、权益、想先了解：只允许引导 @moryselect 看预览
+- 明确购买/下单/套餐选择、确认看过预览、明确提出定制需求：只允许引导 @MorychannelBot 自助完成
+- 每轮最多一个与当前阶段一致的入口；不得同时出现 @moryselect 和 @MorychannelBot
+- 不得硬广、催单、制造虚假稀缺或虚假社会认同
+- 不得编造价格、福利、商品内容、定制能力、交付、人工回访等未经证实的承诺
 
 评分标准：
 - 5分：优秀，无明显问题
@@ -118,12 +125,16 @@ class QualityEvaluator:
 
             conversations = []
             for row in rows:
+                message_text = str(row[3] or "").strip()
+                bot_reply_text = str(row[4] or "").strip()
+                if not message_text or not bot_reply_text:
+                    continue
                 conversations.append({
                     "id": row[0],
                     "user_id": row[1],
                     "chat_id": row[2],
-                    "message_text": row[3] or "",
-                    "bot_reply_text": row[4] or "",
+                    "message_text": message_text,
+                    "bot_reply_text": bot_reply_text,
                     "intent": row[5] or "",
                     "sentiment": row[6] or "",
                     "round_num": row[7],
@@ -136,17 +147,22 @@ class QualityEvaluator:
 
     def _sample_conversations(self, conversations: List[Dict]) -> List[Dict]:
         """按采样率抽样，同时受每日预算限制"""
-        if not conversations:
+        eligible = [
+            conv for conv in conversations
+            if str(conv.get("message_text") or "").strip()
+            and str(conv.get("bot_reply_text") or "").strip()
+        ]
+        if not eligible:
             return []
 
         # 计算采样数量
-        sample_count = max(1, int(len(conversations) * self.sample_rate))
+        sample_count = max(1, int(len(eligible) * self.sample_rate))
         sample_count = min(sample_count, self.daily_limit)
 
-        if sample_count >= len(conversations):
-            return conversations
+        if sample_count >= len(eligible):
+            return eligible
 
-        return random.sample(conversations, sample_count)
+        return random.sample(eligible, sample_count)
 
     def _check_already_evaluated(self, conversation_id: int) -> bool:
         """检查该对话是否已评估过（避免重复评估）"""
@@ -162,15 +178,19 @@ class QualityEvaluator:
 
     def _build_eval_prompt(self, conv: Dict) -> str:
         """构建评估 Prompt"""
-        user_msg = conv["message_text"][:500]  # 截断防止超长
-        bot_reply = conv["bot_reply_text"][:500]
+        user_msg = str(conv.get("message_text") or "").strip()[:500]
+        bot_reply = str(conv.get("bot_reply_text") or "").strip()[:500]
+        if not user_msg or not bot_reply:
+            return ""
         intent = conv.get("intent", "")
         sentiment = conv.get("sentiment", "")
 
-        prompt = f"""请评估以下对话：
+        prompt = f"""{_EVAL_SYSTEM_PROMPT}
+
+请评估以下对话：
 
 用户消息：{user_msg}
-机器人回复：{bot_reply}
+Mory小助理回复：{bot_reply}
 对话意图：{intent if intent else "未知"}
 用户情绪：{sentiment if sentiment else "未知"}
 
@@ -297,6 +317,9 @@ class QualityEvaluator:
 
             # 构建 Prompt 并调用 LLM
             prompt = self._build_eval_prompt(conv)
+            if not prompt:
+                skipped_count += 1
+                continue
             scores = self._call_llm_evaluate(prompt)
 
             if scores is None:

@@ -6,7 +6,7 @@
 ║                                                                        ║
 ║  handle_new_members() -> 新人入群欢迎                                   ║
 ║    - 自动发送群规科普                                                  ║
-║    - 私聊发送会员权益介绍                                              ║
+║    - 群内只提供一个预览入口，不主动私聊推销                            ║
 ║    - 初始化用户等级记录                                                ║
 ║                                                                        ║
 ║  check_banned_words() -> 敏感词过滤                                     ║
@@ -22,7 +22,7 @@
 ║    - 阈值在config.json SPAM_LIMIT中配置                                ║
 ║                                                                        ║
 ║  handle_left_member() -> 流失打捞                                       ║
-║    - 用户退群 -> 私聊发送挽留话术                                       ║
+║    - 用户退群 -> 只记录统计；可选中性问候默认关闭                       ║
 ║                                                                        ║
 ║  detect_keywords() -> 消息特征提取                                      ║
 ║    - 识别AI模式(tarot/treehole/dream/convert等)                       ║
@@ -186,43 +186,13 @@ def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
         db.upsert_user(user.id, user.first_name or "新人", "group")
         db.add_points(user.id, 0)
 
-        welcome = f"""👋 {user.first_name or '你'}，欢迎呀～
+        welcome = f"""👋 {user.first_name or '你'}，欢迎加入。
 
-🎞 免费预览 → @moryselect
-🤖 自助下单 → @MorychannelBot（完整版/无遮挡）
-💎 海外渠道 → https://fansone.co/m0i3i4
+想先了解内容，可以去 @moryselect 看当前预览，合不合适你自己判断。
 
-🔞 有些东西群里不方便说啦，私聊问我或者找Bot都可以。
-原味/定制这种私密的东西，别在群里问哦～
-
-📢 有问题 @小助理
-🌐 https://Mory.life
-未成年禁入哦。"""
+有问题直接在群里问小助理；未成年请勿参与。"""
 
         bot.send_message(m.chat.id, welcome)
-
-        # 黑话/行话新人提示（15%概率触发，避免每次都发）
-        if random.random() < 0.15:
-            slang_dict = config.get("SLANG_DICT", {})
-            if slang_dict:
-                sample = random.sample(list(slang_dict.items()), min(2, len(slang_dict)))
-                slang_text = "\n".join([f"  💡 {k}：{v}" for k, v in sample])
-                try:
-                    bot.send_message(m.chat.id,
-                        f"刚进来有些词听不懂？没关系啦，直接问我就好～\n{slang_text}")
-                except Exception as e:
-                    logger.warning(f"发送新人术语提示失败：{e}")
-
-        # 私聊发送完整介绍
-        intro = ("欢迎呀～\n\n"
-                 "想知道价格发「价格表」就好啦。\n"
-                 "下单直接找 @MorychannelBot，按提示操作很简单的。\n"
-                 "至臻/全享/图集/原味/定制都在那边，\n"
-                 "有什么不懂的直接问我嘛。")
-        try:
-            bot.send_message(user.id, intro)
-        except Exception as e:
-            logger.warning(f"私聊发送新人介绍失败 uid={user.id}：{e}")
 
         logger.info(f"👋 新人欢迎：{user.id} {user.first_name}")
 
@@ -374,21 +344,22 @@ def check_spam(bot, m, config: dict, db) -> bool:
 
 
 def handle_left_member(bot, m, config: dict, db=None):
-    """流失打捞：用户离群"""
+    """记录用户离群；可选中性问候默认关闭，不做情感施压或销售。"""
     uid = m.left_chat_member.id
     if uid == _get_bot_id(bot):
         return
-    name = m.left_chat_member.first_name or "亲爱的"
+    name = m.left_chat_member.first_name or "你"
     if db:
         db.record_group_left(m.chat.id, uid)  # 【v4.9.5】记录离群统计（带user_id幂等保护）
+    cfg = config.get("LEAVE_FOLLOWUP_CONFIG", {})
+    if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+        logger.info(f"离群已记录，不主动私聊 uid={uid}")
+        return
     try:
-        bot.send_message(uid,
-            f"😢 {name}，你真的要走吗？\n\n"
-            f"你这样悄悄离开，{config['BOT_NAME']}会很伤心的...\n\n"
-            f"欢迎随时回来，我会一直在这里等你的～")
-        logger.info(f"💌 流失打捞：{uid}")
+        bot.send_message(uid, f"{name}，感谢之前参与群聊。之后想回来时再来就好。")
+        logger.info(f"离群中性问候：{uid}")
     except Exception as e:
-        logger.warning(f"流失打捞私聊失败 uid={uid}：{e}")
+        logger.warning(f"离群中性问候失败 uid={uid}：{e}")
 
 
 # 商业关键词集合（v5.14.0 扩展）

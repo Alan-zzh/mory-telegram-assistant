@@ -12,9 +12,9 @@
 ║    3. 叫醒服务（每分钟检查）                                           ║
 ║    4. 阅后即焚探测（每3分钟一次）                                      ║
 ║    5. 阅后即焚孤儿清理（每小时一次）                                   ║
-║    6. 醋意挽回（每小时一次）                                           ║
-║    7. 购物车挽回（每小时一次）                                         ║
-║    8. 背刺泄密（每周一次）                                             ║
+║    6. 非活跃问候（默认关闭）                                           ║
+║    7. 购物车单次预览提醒（默认关闭）                                   ║
+║    8. 每周非事实轻互动（默认关闭）                                     ║
 ║    9. 数据库备份（每小时一次）                                         ║
 ║    10. TTL历史数据清理（每小时一次）                                    ║
 ║    11. 配置保存（仅模型索引变化时）                                     ║
@@ -31,6 +31,7 @@ import random
 import glob
 import os
 import json
+import copy
 import threading
 import html
 from typing import Any, Dict
@@ -40,7 +41,7 @@ from core.helpers import can_delete_message, can_orphan_cleanup, get_broadcast_a
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
 from core.task_transaction import TaskTransactionManager
-from telebot import types
+from tasks.support.message_templates import MessageTemplates
 from core.telebot_compat import send_message_compat
 from modules.redpacket import check_expired_redpackets
 
@@ -1159,17 +1160,40 @@ def _do_delete_message(rm, chat_id, message_id):
         logger.debug(f"定时消息删除失败（可能已被手动删除）: {e}")
 
 
+_AUTOMATIC_CTA_MARKERS = (
+    "@morychannelbot",
+    "@moryselect",
+    "自助下单",
+    "自助订阅",
+    "来找mory",
+    "私聊我",
+    "找我私聊",
+    "戳我",
+)
+
+
+def _sanitize_automatic_broadcast_text(text: str) -> str:
+    """移除普通新闻/问候里意外生成的销售或私聊 CTA 行。"""
+    if not isinstance(text, str):
+        return ""
+    safe_lines = [
+        line for line in text.splitlines()
+        if not any(marker in line.lower() for marker in _AUTOMATIC_CTA_MARKERS)
+    ]
+    return "\n".join(safe_lines).strip()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # APScheduler 版本：独立 Job，互不干扰
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _execute_news_task(rm, task_name: str, time_desc: str):
     """
-    执行新闻播报任务的公共函数（v2.0 - 富文本排版 + 转化按钮）。
+    执行新闻播报任务的公共函数（富文本排版，不附带成交 CTA）。
 
     【v5.9.0】使用 TaskTransactionManager 替代手动 _try_claim_and_lock / _release_task / _confirm_task_done
     【v5.11.0】abort 原因记录到 _ABORT_HISTORY，连续 3 次触发 P0 告警
-    【v5.18.1】v2.0：使用 build_rich_news_html 富文本排版，添加 @MorychannelBot 转化按钮
+    新闻只承担信息播报，不借新闻强塞预览或下单。
     """
     try:
         with TaskTransactionManager(task_name, rm.db, resources=None, min_interval_sec=7200) as tx:
@@ -1204,23 +1228,18 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
                 news = _build_news_without_ai(lines, time_desc)
 
             if news:
+                news = _sanitize_automatic_broadcast_text(news)
+                if not news:
+                    news = _build_news_without_ai(lines, time_desc)
                 # 使用 v1.0 富文本新闻排版（自动 HTML 转义 + emoji 点缀 + 观察行 blockquote）
                 rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
 
-                # 构建转化按钮 → @MorychannelBot
-                markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton(
-                    "💬 来找Mory聊聊",
-                    url="https://t.me/MorychannelBot"
-                ))
-
-                # 发送富文本新闻 + 按钮
+                # 新闻不附带销售或私聊按钮。
                 try:
                     with rm.locked('bot'):
                         sent = send_message_compat(
                             rm.bot, gid, rich_news,
                             parse_mode="HTML",
-                            reply_markup=markup,
                             disable_web_page_preview=True,
                             link_preview_options={"is_disabled": True},
                         )
@@ -1229,7 +1248,7 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
                         rm.db.track_channel_message(gid, sent.message_id, "text")
                         rm.db.track_bot_message(gid, sent.message_id)
                         _remember_news_lines(lines)
-                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，富文本+按钮）")
+                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，无成交CTA）")
                         return
                 except Exception as e:
                     logger.warning(f"{time_desc}新闻富文本发送失败，降级纯文本: {e}")
@@ -1269,113 +1288,18 @@ def _job_news_evening(rm):
 
 # ── 动态随机话术池（去AI化，与ai_engine人设系统一致）── [TRAE SOLO CN]
 
-# 早安/午安/晚安播报尾语池（自然引导私聊，不硬推）
-# 注意：群聊公开回复只说Mory，不说"老板/boss" [TRAE SOLO CN]
-_MORNING_SUFFIXES = [
-    "\n\n有事来找我，Mory一直在。",
-    "\n\n想聊的随时戳我。",
-    "\n\n不方便群里说的，私聊我。",
-    "\n\n有问题来找我，别自己闷着。",
-    "\n\n找我私聊比群里快。",
-    "\n\n需要帮忙的戳我，看到就回。",
-    "\n\n有什么事私聊说，群里人多。",
-    "\n\n来找我聊聊，今天状态还行。",
-]
+# 旧调度路径复用统一话术池，普通问候不导私聊、不附带成交 CTA。
+_MORNING_SUFFIXES = MessageTemplates.MORNING_SUFFIXES
+_AFTERNOON_SUFFIXES = MessageTemplates.AFTERNOON_SUFFIXES
+_EVENING_SUFFIXES = MessageTemplates.EVENING_SUFFIXES
 
-_AFTERNOON_SUFFIXES = [
-    "\n\n下午有事私聊我，别客气。",
-    "\n\n有问题来私聊，群里说不方便的我都懂。",
-    "\n\n想聊的来私聊，群里我不好意思说太多。",
-    "\n\n有事直接私聊，Mory下午都在。",
-    "\n\n遇到啥问题私聊说，群里太吵了。",
-    "\n\n下午犯困可以来找我聊两句。",
-    "\n\n找不到人？来私聊找Mory。",
-    "\n\n来找我，下午比较闲。",
-]
+_WAKEUP_FALLBACKS = MessageTemplates.WAKEUP_FALLBACKS
 
-_EVENING_SUFFIXES = [
-    "\n\n睡前有事私聊我，晚上我更闲。",
-    "\n\n有问题私聊，深夜我也在的。",
-    "\n\n晚上找我私聊，群里不方便说的都行。",
-    "\n\n睡前想找人说话就来私聊吧。",
-    "\n\n晚上遇到问题私聊我，看到就回。",
-    "\n\n来找我聊，晚上比较放松。",
-    "\n\n有事私聊，晚上回复快。",
-    "\n\n来找我，晚上更适合聊天。",
-]
-
-# 叫醒服务备用文案池（自然，不萌化）
-_WAKEUP_FALLBACKS = [
-    "该起了，再不起床今天又要赶了。",
-    "醒了没？新的一天，别浪费。",
-    "起来了，别赖床，今天还有事。",
-    "早，别睡了，起来干活。",
-    "起床，太阳都晒半天了。",
-    "起来了，咖啡都凉了。",
-    "醒醒，今天也要好好过。",
-    "该起了，别让我说第二遍。",
-]
-
-# 醋意挽回备用文案池（自然，不卑微）
-_REACTIVATE_FALLBACKS = [
-    "你人呢，群里都安静好几天了。",
-    "最近怎么没看到你了，群里都没你？",
-    "最近挺忙的？好久没见你了。",
-    "你是不是把我忘了，群里都没你？",
-    "最近不来找我，是有什么事吗？",
-    "好久没聊了，最近过得怎么样。",
-    "你不在群里说话，我都不知道你在干嘛了。",
-    "最近群里都没你，我还以为你把我删了呢。",
-]
-
-# ════════════════════════ 购物车挽回（时间衰减调度 + 3套人设文案）════════════════════════
-# 挽回阶段: stage=0→15分钟(傲娇催促), stage=1→2小时(利益诱导), stage=2→24小时(清冷关怀)
-# 每阶段对应不同情感强度的文案池，匹配 Mory 人设
-
-_CART_RECOVERY_STAGE_1 = [  # 15分钟 — 傲娇催促（轻撩，带小情绪）
-    "哼，刚才话说到一半人就跑了…是不是又去刷别的群了？",
-    "你刚才问完就跑，我还没说完呢…回来。",
-    "喂，你该不会是在货比三家吧？我感受到了哦。",
-    "刚聊到关键你就消失，故意的吧？回来把话说完。",
-    "你就这么走了？我白跟你聊那么多了…哼。",
-    "问完价格就跑，你是来逗我的吗～回来。",
-    "刚才不是说有兴趣吗？怎么转眼人就没了，回来。",
-    "你这个人…撩完就跑，再来聊两句嘛。",
-]
-
-_CART_RECOVERY_STAGE_2 = [  # 2小时 — 利益诱导（限时积分抵扣券暗示）
-    "悄悄告诉你，今天找我下单的人，我都给了额外福利…你懂的。",
-    "刚才整理了一下，发现还有几张专属优惠没用出去…你想要吗？",
-    "有些东西，越早来的人越划算。你懂的～",
-    "我刚算了一下，你今天来的话，刚好能赶上这一波…",
-    "偷偷跟你说，今天的名额还剩最后几个，过了就没了哦。",
-    "我这边有个小惊喜，只给主动来找我的人…你猜是什么？",
-    "刚才有人来问，我都没给这个价…你不一样。",
-    "今天还有个隐藏福利，就看你来不来了～",
-]
-
-_CART_RECOVERY_STAGE_3 = [  # 24小时 — 清冷关怀（最后唤醒，不纠缠）
-    "一天了，你还没想好呀。没关系，我等你。",
-    "昨天的事，如果你改变主意了，我一直都在。",
-    "其实你不用急着决定，我只是想确认你还好吗。",
-    "不管你最后怎么选，能跟你聊那几句，我已经很开心了。",
-    "有些事不用勉强，但如果你想继续聊，我随时在。",
-    "上次聊到一半你就走了，我其实有点在意。不过没关系。",
-    "如果真的没缘分，那也没关系。只是想说，我还在。",
-    "走了的人很多，但回来的人很少。你是哪一种？",
-]
-
-# 旧版通用备用文案（保留兼容）
-_CART_RECOVERY_FALLBACKS = [
-    "昨天你问的那个事，还想了解吗？来找我聊。",
-    "昨天好像还有话没说完？我在，随时来。",
-    "还在犹豫？有些事慢慢聊就清楚了，来找我。",
-    "昨天聊到一半你就走了，来继续聊？",
-    "你昨天问的那个，我这边还有后续，来聊聊。",
-    "有些事群里不方便细说，来私聊我给你讲。",
-    "昨天没聊完的，我这边还有你感兴趣的，来看看。",
-    "别纠结了，来找我聊聊，说不定有答案。",
-]
+_REACTIVATE_FALLBACKS = MessageTemplates.REACTIVATE_FALLBACKS
+_CART_RECOVERY_STAGE_1 = MessageTemplates.CART_RECOVERY_STAGE_1
+_CART_RECOVERY_STAGE_2 = MessageTemplates.CART_RECOVERY_STAGE_2
+_CART_RECOVERY_STAGE_3 = MessageTemplates.CART_RECOVERY_STAGE_3
+_CART_RECOVERY_FALLBACKS = MessageTemplates.CART_RECOVERY_FALLBACKS
 
 # 挽回阶段 → 文案池映射
 _CART_RECOVERY_POOLS = {
@@ -1384,37 +1308,10 @@ _CART_RECOVERY_POOLS = {
     2: _CART_RECOVERY_STAGE_3,  # 24小时 → 清冷关怀
 }
 
-# 塔罗搭讪转化钩子池（自然引导，不硬推）
-_TAROT_HOOKS = [
-    "这牌后面还有内容，想知道来找我。",
-    "这张牌还有另一层意思，私聊我跟你说。",
-    "有些话这里说不完，来私聊我。",
-    "今天这牌还有后半段，来找我聊。",
-    "你今天的运势还有隐藏内容，来找我看看。",
-    "光看这几行不够，后面还有，来找我。",
-    "这运势只是冰山一角，来私聊我细说。",
-    "今天的好事不止这些，来找我聊聊。",
-    "这牌暗示的东西比表面深，来找我聊。",
-    "想知道这张牌真正想说啥吗，来找我。",
-    "有些缘分得慢慢聊才能懂，来私聊我。",
-    "今天运势后面跟着个小惊喜，来找我。",
-    "这牌的解读嘛，三言两语说不清，来找我。",
-    "有些话得悄悄说才更有味道，来私聊我。",
-    "我还有个更详细的版本，来找我看看。",
-    "这牌的深层含义，私聊我跟你说。",
-    "运势卡片背后还写了句话，来找我聊。",
-]
+_TAROT_HOOKS = MessageTemplates.TAROT_HOOKS
 
-# 背刺泄密前缀池（群聊只说Mory，不说"老板/boss"）[TRAE SOLO CN]
-_LEAK_PREFIXES = [
-    "Mory不在，偷偷跟你们说：\n\n",
-    "嘘——别告诉Mory我说的：\n\n",
-    "趁Mory不注意，偷偷爆料：\n\n",
-    "你们凑过来，我只说一次：\n\n",
-    "偷偷告诉你们一个秘密：\n\n",
-    "她让我保密的，但我想跟你们说：\n\n",
-    "嘘——这个你们肯定不知道：\n\n",
-]
+_LEAK_PREFIXES = MessageTemplates.LEAK_PREFIXES
+_WEEKLY_INTERACTION_QUESTIONS = MessageTemplates.WEEKLY_INTERACTION_QUESTIONS
 
 
 def _get_dynamic_suffix(time_period: str) -> str:
@@ -1429,7 +1326,7 @@ def _get_dynamic_suffix(time_period: str) -> str:
 
 
 # AI主体已包含功能引导时的关键词检测 [TRAE SOLO CN]
-_SUFFIX_TRIGGER_KEYWORDS = ["私聊", "找我", "戳我", "误封", "有问题", "来找我", "找我私"]
+_SUFFIX_TRIGGER_KEYWORDS = MessageTemplates.SUFFIX_TRIGGER_KEYWORDS
 
 
 def _needs_suffix(msg: str) -> bool:
@@ -1437,39 +1334,7 @@ def _needs_suffix(msg: str) -> bool:
     return not any(kw in msg for kw in _SUFFIX_TRIGGER_KEYWORDS)
 
 
-# ── 问候话术池（v3.2 - 自然，不萌化）────────────────────────────────
-_GREETING_FALLBACK_POOL = {
-    "morning": [
-        "早，该起了。",
-        "醒了没？新的一天。",
-        "起来了，别赖床。",
-        "早，别睡了。",
-        "起床，太阳都晒了。",
-        "起来了，咖啡都凉了。",
-        "醒醒，今天也要好好过。",
-        "该起了，别让我说第二遍。",
-    ],
-    "afternoon": [
-        "午安，下午继续。",
-        "午安，别太累了。",
-        "下午了，撑住。",
-        "午安，该干嘛干嘛。",
-        "下午好，别摸鱼了。",
-        "午安，今天过半了。",
-        "下午了，加油。",
-        "午安，别忘了喝水。",
-    ],
-    "evening": [
-        "晚安，今天辛苦了。",
-        "晚安，早点睡。",
-        "晚安，明天见。",
-        "晚安，别熬夜。",
-        "晚安，今天过得还行。",
-        "晚安，该休息了。",
-        "晚安，明天继续。",
-        "晚安，别想太多。",
-    ],
-}
+_GREETING_FALLBACK_POOL = MessageTemplates.GREETING_FALLBACK_POOL
 
 
 def _get_fallback_greeting(period: str) -> str:
@@ -1524,6 +1389,7 @@ def _job_greeting_morning(rm):
 
             seed = random.randint(100000, 999999)
             msg = rm.ai.ask("早安", mode="morning", seed=seed)
+            msg = _sanitize_automatic_broadcast_text(msg)
             if not msg:
                 # AI 生成失败，使用话术池兜底
                 msg = _get_fallback_greeting("morning")
@@ -1570,6 +1436,7 @@ def _job_greeting_afternoon(rm):
 
             seed = random.randint(100000, 999999)
             msg = rm.ai.ask("午安", mode="afternoon", seed=seed)
+            msg = _sanitize_automatic_broadcast_text(msg)
             if not msg:
                 # AI 生成失败，使用话术池兜底
                 msg = _get_fallback_greeting("afternoon")
@@ -1616,6 +1483,7 @@ def _job_greeting_evening(rm):
 
             seed = random.randint(100000, 999999)
             msg = rm.ai.ask("晚安", mode="evening", seed=seed)
+            msg = _sanitize_automatic_broadcast_text(msg)
             if not msg:
                 # AI 生成失败，使用话术池兜底
                 msg = _get_fallback_greeting("evening")
@@ -1646,17 +1514,17 @@ def _generate_wakeup_message(uid: int, now: datetime, rm) -> str:
     seed = uid + int(now.timestamp())
     hour = now.hour
 
-    prompt = f"""你是Mory，一个有血有肉的真人女孩。现在是北京时间{hour}点。
+    prompt = f"""你是公开身份的 Mory 小助理。现在是北京时间{hour}点。
 
 给用户生成一条叫醒消息，要求：
 1. 30-50字，自然利落，像朋友叫你起床
-2. 语气清冷带点傲娇，不撒娇不萌
-3. 随机选择一个场景/理由叫醒他
+2. 语气自然，不撒娇、不调情、不销售
+3. 只根据当前时间提醒，不虚构天气、行程或生活场景
 4. seed={seed}，每次必须不同
 
 禁止：
 - 不要太长，控制在50字以内
-- 不要撒娇卖萌、刻意可爱
+- 不要声明自己是真人，不要撒娇卖萌、刻意可爱
 - 不要重复相同的开头"""
 
     try:
@@ -1889,30 +1757,62 @@ def _handle_orphan_disabled_alert(rm, orphan_count: int):
         logger.error(f"孤儿清理告警发送失败: {e}")
 
 
+_REACTIVATE_FORBIDDEN_MARKERS = (
+    "@", "http", "下单", "购买", "订阅", "预览", "价格", "福利", "优惠", "名额",
+    "私聊", "定制", "回复我", "回我", "吃醋", "别人", "忘了我", "亏欠", "陪你",
+    "刚醒", "刚洗", "咖啡", "沙发", "窗外", "被窝",
+)
+_CART_FORBIDDEN_MARKERS = (
+    "@morychannelbot", "@moryfansbot", "http", "私聊", "定制", "下单", "订阅",
+    "价格", "福利", "优惠", "名额", "限时", "最后", "错过", "稀缺", "大家都",
+    "别人都", "刚醒", "刚洗", "咖啡", "沙发", "窗外", "被窝",
+)
+
+
+def _is_safe_reactivate_message(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return 10 <= len(text) <= 70 and not any(
+        marker in text.lower() for marker in _REACTIVATE_FORBIDDEN_MARKERS
+    )
+
+
+def _is_safe_cart_recovery_message(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    lowered = text.lower()
+    return (
+        10 <= len(text) <= 90
+        and lowered.count("@moryselect") == 1
+        and "@" not in lowered.replace("@moryselect", "")
+        and not any(marker in lowered for marker in _CART_FORBIDDEN_MARKERS)
+    )
+
+
 def _generate_reactivate_message(uid: int, rm) -> str:
-    """AI生成醋意挽回消息"""
+    """生成一次中性、无销售的非活跃用户问候。"""
     seed = uid + int(time.time()) // 86400  # 每天固定
 
-    prompt = f"""你是Mory，一个有点小醋意的小姐姐。
-
-一个用户已经3天没来聊天了，你要写一条消息把他叫回来。
+    prompt = f"""你是公开身份的 Mory 小助理。
+给一位最近没有活跃的用户写一条可忽略的中性问候。
 
 要求：
-1. 40-60字，撒娇吃醋风格
-2. 像闺蜜私聊一样，带点小委屈小醋意
-3. 不要太直白，要撩人要心痒痒
-4. 可以暗示：你是不是有别人了/你是不是把我忘了/是不是我哪里不够好
-5. 结尾要有emoji
-6. seed={seed}，每次必须不同
+1. 20-45字，自然、简短、不要求回复
+2. 只表达关心，不谈购买、预览、福利或价格
+3. 不吃醋、不撒娇、不制造亏欠感，不假装有亲密关系
+4. 不含任何入口、CTA、销售、定制、私聊或关系施压
+5. seed={seed}
 
 禁止：
-- 不要出现"3天"这个具体数字
-- 不要太长，控制在60字以内"""
+- 不提具体未活跃天数
+- 不声称自己是真人，不虚构生活场景"""
 
     try:
         with rm.locked('ai'):
             msg = rm.ai.ask(prompt, mode="reactivate", seed=seed)
-        if msg and len(msg) > 10:
+        if _is_safe_reactivate_message(msg):
             return msg.strip()
     except Exception as e:
         logger.debug(f"AI生成挽回话术失败: {e}")
@@ -1922,8 +1822,12 @@ def _generate_reactivate_message(uid: int, rm) -> str:
 
 
 def _job_reactivate(rm):
-    """醋意挽回（每小时）- AI生成个性化消息"""
+    """非活跃用户问候（默认关闭）。"""
     try:
+        cfg = rm.config.get("REACTIVATE_CONFIG", {})
+        if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+            logger.info("非活跃用户问候未开启，跳过")
+            return
         # 高频任务：每小时一个窗口，避免 task_log UNIQUE 索引拦截
         _window = datetime.now(_CST).strftime("%Y-%m-%d_%H")
         task_key = f"reactivate_{_window}"
@@ -1935,100 +1839,53 @@ def _job_reactivate(rm):
 
             inactive = rm.db.get_inactive_users(three_days_ago, rm.config.get("ADMIN_ID", 0))
             if not inactive:
-                logger.info("💌 醋意挽回本轮无可私聊候选，正常跳过")
+                logger.info("非活跃用户问候本轮无候选，正常跳过")
                 return
 
             sent_count = 0
-            for uid, _name in inactive[:3]:
-                if random.random() < 0.25:
+            max_per_run = max(0, min(int(cfg.get("max_per_run", 3)), 10))
+            sample_rate = max(0.0, min(float(cfg.get("sample_rate", 0.25)), 1.0))
+            for uid, _name in inactive[:max_per_run]:
+                if random.random() < sample_rate:
                     try:
                         reactivate_msg = _generate_reactivate_message(uid, rm)
                         with rm.locked('bot'):
                             rm.bot.send_message(uid, reactivate_msg)
                         rm.db.reset_last_active(uid)
                         sent_count += 1
-                        logger.info(f"💌 醋意挽回：{uid}")
+                        logger.info(f"💌 非活跃用户问候：{uid}")
                     except Exception as e:
                         err_str = str(e).lower()
                         if "chat not found" in err_str or "bot was blocked" in err_str or "forbidden" in err_str:
                             rm.db.delete_user(uid)
-                            logger.debug(f"💔 醋意挽回跳过无效用户 uid={uid}（已清理）")
+                            logger.debug(f"非活跃用户问候跳过无效用户 uid={uid}（已清理）")
                         else:
-                            logger.warning(f"醋意挽回发送失败 uid={uid}：{e}")
+                            logger.warning(f"非活跃用户问候发送失败 uid={uid}：{e}")
             if sent_count == 0:
                 raise _TaskAbort("无发送目标", expected=True)
     except _TaskAbort as e:
         _handle_task_abort("reactivate", e)
     except Exception as e:
-        logger.error(f"醋意挽回失败：{e}")
+        logger.error(f"非活跃用户问候失败：{e}")
 
 
 def _generate_cart_recovery_message(uid: int, rm, stage: int = 0) -> str:
-    """
-    生成购物车挽回消息（按阶段选文案池）。
-    stage: 0=15分钟(傲娇), 1=2小时(利益), 2=24小时(清冷)
-    优先 AI 生成，失败则从对应阶段文案池 fallback。
-    """
+    """生成一次温和的预览提醒；stage 仅用于兼容旧数据。"""
     seed = uid + int(time.time()) // 43200  # 每半天固定
 
-    # 阶段 → 人设风格 prompt
-    stage_prompts = {
-        0: """你是Mory，一个傲娇的小姐姐。
-
-一个用户刚才问了门槛/价格但没付费就走了，你要用傲娇的语气把他叫回来。
-
-要求：
-1. 30-50字，带点小情绪，撩人但不卑微
-2. 像闺蜜私聊一样，带点"哼""喂"这种小语气词
-3. 不要直接提"门槛"或"价格"，用隐晦的方式表达
-4. 要让人感觉你有点在意他，但又不想表现出来
-5. 结尾要有emoji
-6. seed={seed}，每次必须不同
-
-禁止：
-- 不要出现"门槛"、"价格"、"付费"、"钱"这些词
-- 不要太长，控制在50字以内""",
-
-        1: """你是Mory，一个贴心的小姐姐。
-
-一个用户2小时前问了门槛/价格但没付费，你要用"给好处"的方式把他叫回来。
-
-要求：
-1. 40-60字，暗示有专属福利/限时优惠
-2. 像闺蜜私聊一样，神秘兮兮地说有好东西
-3. 不要直接提"门槛"或"价格"或"优惠券"，用"福利""惊喜""名额"等词
-4. 要让人感觉错过了会后悔，但不逼迫
-5. 结尾要有emoji
-6. seed={seed}，每次必须不同
-
-禁止：
-- 不要出现"门槛"、"价格"、"付费"、"钱"、"优惠券"这些词
-- 不要太长，控制在60字以内""",
-
-        2: """你是Mory，一个清冷但温柔的小姐姐。
-
-一个用户昨天问了门槛/价格但没付费，你要用温柔但不纠缠的方式最后说一次。
-
-要求：
-1. 40-60字，清冷温柔，不纠缠不卑微
-2. 像在告别，又像在等
-3. 不要催促，不要施压，表达"我还在"即可
-4. 要让人感觉有点遗憾，但又尊重对方的选择
-5. 结尾要有emoji
-6. seed={seed}，每次必须不同
-
-禁止：
-- 不要出现"门槛"、"价格"、"付费"、"钱"、"优惠券"这些词
-- 不要太长，控制在60字以内""",
-    }
-
-    prompt_template = stage_prompts.get(stage, stage_prompts[0])
-    prompt = prompt_template.format(seed=seed)
+    prompt = f"""你是公开身份的 Mory 小助理。
+用户之前表达过了解意向。写一条一次性的温和提醒：
+1. 只引导先去 @moryselect 看当前预览
+2. 25-55字，明确由用户自行判断，不催促
+3. 不给价格、福利、名额、规格或其他未经证实信息
+4. 不导私聊、不直接导下单，不制造稀缺、后悔、亏欠或亲密关系
+5. seed={seed}
+只输出消息正文。"""
 
     try:
         with rm.locked('ai'):
             msg = rm.ai.ask(prompt, mode="cart_recovery", seed=seed)
-        if msg and len(msg) > 10:
+        if _is_safe_cart_recovery_message(msg):
             return msg.strip()
     except Exception as e:
         logger.debug(f"AI生成购物车挽回话术失败 stage={stage}: {e}")
@@ -2039,20 +1896,12 @@ def _generate_cart_recovery_message(uid: int, rm, stage: int = 0) -> str:
 
 
 def _job_cart_recovery(rm):
-    """
-    购物车挽回（每5分钟检查）—— 时间衰减调度。
-
-    时间线:
-      stage=0 (15分钟): 傲娇催促 → 推进到 stage=1 (2小时)
-      stage=1 (2小时):  利益诱导 → 推进到 stage=2 (24小时)
-      stage=2 (24小时): 清冷关怀 → 终态，不再触发
-
-    并发保护:
-      - TaskTransactionManager 确保分布式环境下只有一个实例执行
-      - 用户级限流器防止同一用户在短时间内被多次挽回
-      - 失败时自动跳过，不阻塞后续用户
-    """
+    """购物车单次预览提醒（默认关闭，成功后立即 cancel）。"""
     try:
+        cfg = rm.config.get("CART_RECOVERY_CONFIG", {})
+        if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+            logger.info("购物车召回未开启，跳过")
+            return
         # 高频任务：每 5 分钟一个窗口，避免 task_log UNIQUE 索引拦截
         _window = datetime.now(_CST).strftime("%Y-%m-%d_%H%M")
         task_key = f"cart_recovery_{_window}"
@@ -2062,13 +1911,14 @@ def _job_cart_recovery(rm):
                 return
 
             sent_count = 0
-            pending = rm.db.get_pending_cart_recoveries(limit=20)
+            max_per_round = max(0, min(int(cfg.get("max_per_round", 10)), 20))
+            pending = rm.db.get_pending_cart_recoveries(limit=max_per_round)
             if not pending:
                 logger.info("🛒 购物车挽回本轮无可私聊候选，正常跳过")
                 return
 
             for uid, stage in pending:
-                if sent_count >= 10:  # 每轮最多发10条，防止突发过载
+                if sent_count >= max_per_round:
                     break
 
                 try:
@@ -2078,19 +1928,8 @@ def _job_cart_recovery(rm):
                         rm.bot.send_message(uid, cart_msg)
                     sent_count += 1
 
-                    # 推进到下一阶段
-                    next_stage = stage + 1
-                    if next_stage <= 2:
-                        rm.db.advance_recovery_stage(uid, next_stage)
-                        stage_names = {0: "傲娇催促", 1: "利益诱导", 2: "清冷关怀"}
-                        logger.info(
-                            f"🛒 购物车挽回 stage={stage}({stage_names.get(stage, '?')}) "
-                            f"→ stage={next_stage}: uid={uid}"
-                        )
-                    else:
-                        # 终态，取消挽回
-                        rm.db.cancel_cart_recovery(uid)
-                        logger.info(f"🛒 购物车挽回终态: uid={uid}")
+                    rm.db.cancel_cart_recovery(uid)
+                    logger.info(f"🛒 购物车单次预览提醒完成并取消: uid={uid} old_stage={stage}")
 
                 except Exception as e:
                     err_str = str(e).lower()
@@ -2116,8 +1955,12 @@ def _job_cart_recovery(rm):
 
 
 def _job_leak(rm):
-    """【v5.9.0】背刺泄密（每周一次）- 使用 TaskTransactionManager"""
+    """每周非事实互动（默认关闭，不编造 Mory 生活信息）。"""
     try:
+        cfg = rm.config.get("LEAK_CONFIG", {})
+        if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+            logger.info("每周轻互动未开启，跳过")
+            return
         with TaskTransactionManager("leak", rm.db, resources=None, min_interval_sec=86400) as tx:
             if not tx.claimed:
                 return
@@ -2130,26 +1973,8 @@ def _job_leak(rm):
             if gid == 0 or current_week == last_leak_week or now.weekday() < 2:
                 raise _TaskAbort("条件不满足", expected=True)
 
-            seed = random.randint(100000, 999999)
-            scene_hint = random.choice([
-                "在便利店买东西", "一个人看电视剧", "刷手机的时候",
-                "发呆的时候", "跟闺蜜聊天", "自拍的时候", "做饭的时候",
-                "洗澡前", "刚睡醒", "走路的时候", "吃零食的时候",
-                "整理房间", "加班的时候", "逛街的时候", "坐地铁的时候",
-                "打视频电话", "化妆的时候", "喝奶茶的时候", "拍照片",
-            ])
-            leak_prompt = (
-                f"种子{seed}，场景：{scene_hint}。"
-                f"用极度八卦、偷偷摸摸的语气，泄露一个关于Mory非常可爱、"
-                f"生活化的小癖好或小秘密。要求：\n"
-                f"1. 必须是全新的、独特的内容，绝对不能重复\n"
-                f"2. 要有画面感和生活气息\n"
-                f"3. 控制在25字以内\n"
-                f"4. 不要出现任何编号、序号或列表格式\n"
-                f"5. 只说Mory，不以任何'老板/boss'自称"
-            )
-
-            leak = rm.ai.ask(leak_prompt, mode="leak")
+            # 只使用已审阅的非事实问题池，不让模型编造生活信息。
+            leak = random.choice(_WEEKLY_INTERACTION_QUESTIONS)
 
             if leak:
                 try:
@@ -2158,15 +1983,15 @@ def _job_leak(rm):
                     if sent:
                         rm.config["_LAST_LEAK_WEEK"] = current_week
                         rm.save_config_fn()
-                        logger.info(f"🤫 背刺泄密触发(周{current_week})：{leak[:30]}")
+                        logger.info(f"每周轻互动触发(周{current_week})：{leak[:30]}")
                         return
                 except Exception as e:
-                    logger.warning(f"背刺泄密发送失败：{e}")
-            raise _TaskAbort("泄密发送失败")
+                    logger.warning(f"每周轻互动发送失败：{e}")
+            raise _TaskAbort("每周轻互动发送失败")
     except _TaskAbort as e:
         _handle_task_abort("leak", e)
     except Exception as e:
-        logger.error(f"背刺泄密失败：{e}")
+        logger.error(f"每周轻互动失败：{e}")
         _retry_task(rm, _job_leak, "leak")
 
 
@@ -3210,7 +3035,7 @@ def _get_tarot_cache(uid: int, dt: datetime) -> Dict:
 
 
 def _get_fallback_hook(theme: str, uname: str) -> str:
-    """撩人转化文案 - 绿茶口吻，隐晦引导（AI失败时的备用）[TRAE SOLO CN] 使用动态话术池"""
+    """群内继续互动的中性钩子，不导私聊或成交。"""
     return random.choice(_TAROT_HOOKS)
 
 
@@ -3242,7 +3067,7 @@ def _generate_tarot_ai_content(tarot: Dict, seed: int, rm) -> Dict:
     """调用AI生成完整的塔罗运势内容（整卡控制在一屏内，约130字）"""
     seed_for_ai = seed or random.randint(100000, 999999)
 
-    prompt = f"""你是Mory，一个撩人的塔罗师，像闺蜜一样亲切。
+    prompt = f"""你是公开身份的 Mory 小助理，正在主持一个娱乐性质的塔罗互动。
 
 根据以下信息生成塔罗运势，全部要浓缩在一屏能看完的长度：
 
@@ -3260,7 +3085,7 @@ def _generate_tarot_ai_content(tarot: Dict, seed: int, rm) -> Dict:
 
 seed={seed_for_ai}
 要求：
-- 语气温柔亲切，像闺蜜聊天
+- 语气自然友好，并提醒这只是轻松互动
 - 禁止空话套话，用画面感语言
 - 解读要有故事感，别超过40字
 - 每次seed不同，内容必须不同"""
@@ -3501,9 +3326,9 @@ def _job_tarot_flirt(rm):
             opener_action = random.choice(['看到你说的', '刷到你这句', '你刚才说'])
 
             convert_seed = random.randint(10000, 99999)
-            convert_prompt = f"""你是Mory，刚给「{uname}」测了「{tarot['theme']}」。
-写一句自然的后续引导，让对方想继续聊。
-要求：20-30字，像闺蜜私聊，勾起好奇心，不提商业词。
+            convert_prompt = f"""你是公开身份的 Mory 小助理，刚在群里给「{uname}」做了「{tarot['theme']}」娱乐互动。
+写一句自然的群内承接问题。
+要求：20-35字，不导私聊、不谈商业、不声称还有隐藏内容。
 seed={convert_seed}"""
 
             try:
@@ -4266,6 +4091,38 @@ def _register_scheduled_broadcasts(scheduler, rm):
         logger.info(f"📢 注册定点播报: {bc_id} ({hour:02d}:{minute:02d})")
 
 
+_COMMERCIAL_BROADCAST_MARKERS = (
+    "下单", "订阅", "购买", "价格", "福利", "内容",
+    "morychannelbot", "fansone",
+)
+
+
+def _build_reply_contract_broadcast_config(config: dict) -> dict:
+    """给旧定点播报做发送前适配：成交类只保留一个预览目标。"""
+    safe = copy.deepcopy(config) if isinstance(config, dict) else {}
+    # 旧模块的随机变体会编造刚起床、喝咖啡、洗澡等生活场景。
+    safe["BROADCAST_TEMPLATE_VARIATION_ENABLED"] = False
+    broadcasts = safe.get("SCHEDULED_BROADCASTS", [])
+    if not isinstance(broadcasts, list):
+        return safe
+    for item in broadcasts:
+        if not isinstance(item, dict):
+            continue
+        combined = " ".join(str(item.get(key, "") or "") for key in (
+            "content", "footer", "button_text", "button_url",
+        )).lower()
+        if not any(marker in combined for marker in _COMMERCIAL_BROADCAST_MARKERS):
+            continue
+        for key in ("content", "footer"):
+            value = str(item.get(key, "") or "")
+            value = value.replace("@MorychannelBot", "@moryselect")
+            value = value.replace("@morychannelbot", "@moryselect")
+            item[key] = value
+        item["button_text"] = "🎞 查看当前预览"
+        item["button_url"] = "https://t.me/moryselect"
+    return safe
+
+
 def _job_scheduled_broadcast(rm, chat_id, broadcast_id):
     """执行定点播报（多群遍历）
 
@@ -4283,8 +4140,9 @@ def _job_scheduled_broadcast(rm, chat_id, broadcast_id):
             return
         for gid in group_ids:
             try:
+                safe_config = _build_reply_contract_broadcast_config(rm.config)
                 execute_scheduled_broadcast(
-                    rm.bot, gid, rm.config, rm.db,
+                    rm.bot, gid, safe_config, rm.db,
                     target_broadcast_id=broadcast_id,
                     ai_engine=getattr(rm, "ai", None),
                 )
@@ -4697,7 +4555,7 @@ def _start_with_apscheduler(rm):
             logger.error(f"投票踢人过期检查异常：{e}")
     scheduler.add_job(_job_vote_kick_check, "cron", minute="*/5", args=[rm], id="vote_kick_check", max_instances=1, coalesce=True, misfire_grace_time=300)
 
-    # 背刺泄密（每周三0点）
+    # 每周非事实轻互动（默认关闭）
     scheduler.add_job(_job_leak, "cron", day_of_week="wed", hour=0, minute=0, args=[rm], id="leak", max_instances=1, misfire_grace_time=3600)
 
     # 任务健康检查（含 23:45 覆盖晚安/夜间播报）
