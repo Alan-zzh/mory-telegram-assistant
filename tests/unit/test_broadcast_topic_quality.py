@@ -147,6 +147,9 @@ def test_news_output_gate_requires_persona_outro_instead_of_news_summary():
     persona_outro = "\n".join(
         headlines + ["我不想只做报时的人，更想听你说说今天真正放在心上的事"]
     )
+    real_model_persona_outro = "\n".join(
+        headlines + ["我想做那个能让你在信息洪流里安心喘口气的小助理呀"]
+    )
 
     assert is_usable_news_output(
         generic,
@@ -165,6 +168,11 @@ def test_news_output_gate_requires_persona_outro_instead_of_news_summary():
     ) is False
     assert is_usable_news_output(
         persona_outro,
+        expected_count=5,
+        source_lines=headlines,
+    ) is True
+    assert is_usable_news_output(
+        real_model_persona_outro,
         expected_count=5,
         source_lines=headlines,
     ) is True
