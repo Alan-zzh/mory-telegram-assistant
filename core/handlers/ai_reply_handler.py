@@ -232,9 +232,18 @@ def _align_conversion_reply(
     conversion_reason: str,
 ):
     """保留模型的人设承接，只校正本轮唯一入口。"""
-    if not isinstance(response, str) or not response.strip():
+    if not isinstance(response, str):
         return response
     text = response.strip()
+    if not text:
+        if conversion_target == "subscribe":
+            return (
+                "想继续的话去 @MorychannelBot 看看当前可选内容和档位，"
+                "按提示自助完成就行。"
+            )
+        if conversion_target == "preview":
+            return "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+        return ""
     if conversion_target == "none":
         text = _strip_entry_sentence(
             text,

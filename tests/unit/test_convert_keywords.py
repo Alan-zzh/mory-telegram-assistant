@@ -185,6 +185,15 @@ def test_rejection_variants_stop_conversion_and_model_claims_are_removed():
     assert cleaned == "具体的群里不太方便细说。"
     assert "4K" not in cleaned
     assert "独家" not in cleaned
+    all_removed = _sanitize_unverified_sales_claims(
+        "至臻精选里都是4K原档和独家动态。"
+    )
+    assert all_removed == ""
+    assert _align_conversion_reply(
+        all_removed,
+        conversion_target="preview",
+        conversion_reason="preview_or_objection",
+    ) == "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
 
 
 def test_private_sales_reply_has_no_button_and_group_has_only_one_target():

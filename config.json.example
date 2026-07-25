@@ -1,5 +1,5 @@
 {
-  "_CONFIG_VERSION": "5.35.17",
+  "_CONFIG_VERSION": "5.35.18",
   "_CONFIG_UPDATED": "2026-07-25",
   "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。",
   "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
