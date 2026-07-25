@@ -16,9 +16,24 @@ import sys
 import time
 from pathlib import Path
 
-# Windows 终端默认 GBK，强制用 UTF-8 输出，防止 emoji 等 Unicode 字符炸裂
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", write_through=True)
+def _configure_stdio():
+    """仅在命令行执行部署时切换 UTF-8，避免被测试导入时破坏捕获流。"""
+    if os.name != "nt":
+        return
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name)
+        buffer = getattr(stream, "buffer", None)
+        if buffer is not None:
+            setattr(
+                sys,
+                name,
+                io.TextIOWrapper(
+                    buffer,
+                    encoding="utf-8",
+                    errors="replace",
+                    write_through=True,
+                ),
+            )
 
 import paramiko
 
@@ -33,6 +48,7 @@ from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_KEY_FILE
 # 绝不上传的文件名（含垃圾/临时/凭据/旧备份，v5.16.5 补）
 EXCLUDE_NAMES = {
     "config.json", ".env", "mory.db", "deploy_vps.py", "__pycache__", ".pyc",
+    ".sync-conflict-",
     # 垃圾/临时/凭据备份
     ".env.bak", "_ssh_known_hosts", "dashboard.log", "fault_alerts.log",
     # 旧部署脚本残留（v5.16.5 删除本地后防御）
@@ -55,7 +71,18 @@ DEAD_REMOTE_FILES = [
 SCAN_DIRS = ["core", "modules", "dashboard", "scripts", "tasks"]  # [v5.31.2] 修复：tasks/ 任务调度器模块必须同步部署
 
 # 根目录下需要上传的文件
-ROOT_FILES = ["main.py", "version.py", "windows_helper.py", "start_dashboard.py"]
+ROOT_FILES = [
+    "main.py",
+    "version.py",
+    "windows_helper.py",
+    "start_dashboard.py",
+    "AGENTS.md",
+    "README.md",
+    "AI_DEBUG_HISTORY.md",
+    "CHANGELOG.md",
+    "VERSION.md",
+    "project_snapshot.md",
+]
 
 # 需要上传到 /etc/systemd/system/ 的服务文件
 # [v5.31.2 整改] 只保留双核心服务；mory-media-* 是引用不存在的 `main.py --media`
@@ -505,5 +532,6 @@ def _handle_cli_args(args) -> bool:
 
 
 if __name__ == "__main__":
+    _configure_stdio()
     if not _handle_cli_args(sys.argv[1:]):
         main()

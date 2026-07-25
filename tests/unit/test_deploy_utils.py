@@ -47,3 +47,17 @@ def test_safe_merge_config_updates_non_protected_fields_from_local():
     assert merged["RELAY_MODE_ENABLED"] is True
     assert merged["BLIND_BOX_COST"] == 35
     assert merged["NEWS_BROADCAST_CONFIG"]["preferred_source"] == "real_first"
+
+
+def test_deploy_manifest_excludes_sync_conflicts_and_includes_truth_docs():
+    import deploy_vps
+
+    assert all(".sync-conflict-" not in path for path in deploy_vps.UPLOAD_FILES)
+    assert {
+        "AGENTS.md",
+        "README.md",
+        "AI_DEBUG_HISTORY.md",
+        "CHANGELOG.md",
+        "VERSION.md",
+        "project_snapshot.md",
+    }.issubset(set(deploy_vps.UPLOAD_FILES))

@@ -26,7 +26,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 157 个路由，端口 6616；关键词页展示关键话题近 30 天无原文命中统计 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 167 张表 |
-| 配置 | 在用 | `core/settings.py` + `config.json` | 密钥仅 `.env` |
+| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本并同步根目录六件套 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
 | Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 1 句随机人设互动尾语；尾语不总结新闻，随机采用温情自白、邀聊、人格表达或定制沟通；卡片署名 `@MoryMateBot`，自助订阅按钮独立指向 `@MorychannelBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
