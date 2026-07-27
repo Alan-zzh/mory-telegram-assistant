@@ -206,6 +206,7 @@ def test_news_fallback_uses_fixed_freshness_outro():
     assert outro == "💡 以上是本次刚刚更新的最新新闻。"
     assert "携程" not in outro
     assert "中东" not in outro
+    assert common.is_usable_news_output(copy, expected_count=5)
 
 
 def test_news_freshness_outro_is_deterministic():

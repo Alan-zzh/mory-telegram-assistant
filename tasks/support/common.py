@@ -352,11 +352,14 @@ def is_usable_news_output(
         return False
     if any(marker in value for marker in _NEWS_INTERNAL_MARKERS):
         return False
-    if sanitize_news_for_send(value) != value:
+    normalized_value = "\n".join(
+        line.strip() for line in value.splitlines() if line.strip()
+    )
+    if sanitize_news_for_send(value) != normalized_value:
         return False
-    if _NEWS_SOURCE_LABEL_RE.search(value):
+    if _NEWS_SOURCE_LABEL_RE.search(normalized_value):
         return False
-    news_items, observation_parts = _parse_news_copy(value, max_items=5)
+    news_items, observation_parts = _parse_news_copy(normalized_value, max_items=5)
     return (
         len(news_items) == expected_count
         and len(observation_parts) == 1
