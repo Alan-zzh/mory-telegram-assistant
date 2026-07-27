@@ -61,6 +61,7 @@ def test_normalize_runtime_config_syncs_greeting_and_news_legacy_keys():
     assert normalized["AUTO_NEWS"] is True
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["enabled"] is False
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["cta_enabled"] is False
+    assert normalized["MYSTIC_BROADCAST_CONFIG"]["private_reply_enabled"] is False
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["morning_mode"] == "almanac"
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["afternoon_mode"] == "tarot"
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["evening_mode"] == "iching"

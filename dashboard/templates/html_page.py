@@ -3752,6 +3752,7 @@ async function loadMysticConfig() {
     el.innerHTML = `<div class="card"><h3>三个时段，三种固定栏目</h3>
       <div class="toggle-row"><span>启用三档栏目</span><label class="toggle-switch"><input type="checkbox" id="mysticEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="toggle-row"><span>启用单按钮引导（每天三档轮换联系 Mory、预览福利、自助订阅）</span><label class="toggle-switch"><input type="checkbox" id="mysticCtaEnable" ${cfg.cta_enabled?'checked':''}><span class="slider"></span></label></div>
+      <div class="toggle-row"><span>启用私聊本地占卜（风水、塔罗、算卦请求自动回复，不调用 LLM）</span><label class="toggle-switch"><input type="checkbox" id="mysticPrivateReplyEnable" ${cfg.private_reply_enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="form-group"><label>📜 早间 · 今日黄历</label><div class="hint-text">真实农历、干支、宜忌、冲煞、值日、星宿、吉神方位、节气与彭祖百忌。</div><input type="time" id="mysticMorningTime" value="${cfg.morning_time || '09:05'}" class="input-field"></div>
       <div class="form-group"><label>🔮 午间 · 三张塔罗</label><div class="hint-text">每天无重复抽取主牌、助力、提醒，包含正逆位、元素与组合解读。</div><input type="time" id="mysticAfternoonTime" value="${cfg.afternoon_time || '13:05'}" class="input-field"></div>
       <div class="form-group"><label>☯️ 晚间 · 易经一卦</label><div class="hint-text">六十四卦中起本卦与动爻，计算真实之卦，并给出一个适合群聊延伸的观察问题。</div><input type="time" id="mysticEveningTime" value="${cfg.evening_time || '20:35'}" class="input-field"></div>
@@ -3761,7 +3762,7 @@ async function loadMysticConfig() {
 }
 async function saveMysticConfig() {
   try {
-    const res = await api('/api/settings/mystic', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('mysticEnable').checked, cta_enabled: document.getElementById('mysticCtaEnable').checked, morning_time: document.getElementById('mysticMorningTime').value, afternoon_time: document.getElementById('mysticAfternoonTime').value, evening_time: document.getElementById('mysticEveningTime').value }) });
+    const res = await api('/api/settings/mystic', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('mysticEnable').checked, cta_enabled: document.getElementById('mysticCtaEnable').checked, private_reply_enabled: document.getElementById('mysticPrivateReplyEnable').checked, morning_time: document.getElementById('mysticMorningTime').value, afternoon_time: document.getElementById('mysticAfternoonTime').value, evening_time: document.getElementById('mysticEveningTime').value }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadMysticConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }

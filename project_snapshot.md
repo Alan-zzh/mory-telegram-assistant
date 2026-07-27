@@ -24,25 +24,25 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 网编会员 | 默认关闭 | `modules/membership.py` | 付费等级/订阅管理/权益体系，`MEMBERSHIP_CONFIG.enabled` 开关 |
 | 孤儿清理 | 在用 | `orphan_api.py`、`burn_orphan_task.py` | 端到端串联 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
-| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 162 个路由，端口 6616；传统文化页配置三档时间和单 CTA 轮换开关，栏目身份固定不可串台 |
+| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 162 个路由，端口 6616；传统文化页配置三档时间、单 CTA 轮换和私聊零 Token 占卜开关，栏目身份固定不可串台 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 170 张表；`reply_style_samples` 由 Alembic 0002 管理；0003 增加独立的 30 分钟短期业务上下文与结构化转化状态，使进化遥测关闭原文后仍可跨重启承接、CTA 去重和持久拒绝 |
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本并同步根目录六件套 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 黄历、三张塔罗、易经使用分区 HTML/Rich 卡片；正文有元信息、主题块、组合解读和边界说明；每天三档轮换单 CTA，卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
+| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 黄历、三张塔罗、易经使用分区 HTML/Rich 卡片；正文有元信息、主题块和组合解读，不重复显示免责声明；每天三档轮换单 CTA，卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段；早晚正文无按钮，午后/睡前如带入口只到预览；AI 失败回退可信底稿 |
-| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；泛定制概念不被静态规则抢占 |
+| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊明确风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token，普通讨论不抢答 |
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.38.0（2026-07-27）
+v5.38.1（2026-07-27）
 
-生产状态：v5.38.0 已由可信提交 `bcd095e` 增量部署，备份为 `/home/ubuntu/mory_assistant/backups/deploy_v5380_20260727_153015`；双服务重启后 active+enabled、health v5.38.0、NRestarts=0、当前进程 error journal 为空。生产 `cnlunar=0.2.4`，45 个任务类/50 个调度项，三档 `mystic_*` 存在且 `news_*=[]`、旧定向 `tarot_*=[]`；新闻双开关关闭、三档与单 CTA 开关开启。管理员 Rich Message 回执为今日黄历 2985、三张塔罗 2986、易经一卦 2987，三张分别只有联系 Mory、预览福利、自助订阅一个按钮并署名 `@MoryMateBot`。本地 492 passed / 7 skipped、生产 DB 190/190、文档 7/7，11 个关键运行文件哈希一致。
+生产状态：v5.38.0 正在运行；v5.38.1 已完成本地实现，待可信提交后按默认发布规则增量部署。目标变更为删除三档卡片重复免责声明，并开启私聊风水/塔罗/算卦本地零 Token 自动回复；其余 v5.38.0 调度、CTA 与服务状态保持不变。
 
 ## 最近 3 条大事
-1. 2026-07-27 v5.38.0 三档栏目产品化：真实黄历、三张塔罗与本卦/动爻/之卦完全分流，新增分区排版和每日单 CTA 轮换。
-2. 2026-07-27 v5.37.1 玄学群播通用化：删除个人心理提问和说教，只保留公共字段。
-3. 2026-07-27 v5.37.0 三档新闻整体下线：三个原新闻时段改为传统文化栏目，旧定向塔罗默认关闭。
+1. 2026-07-27 v5.38.1 删除三档重复免责声明，新增私聊明确占卜请求的本地零 Token 自动回复。
+2. 2026-07-27 v5.38.0 三档栏目产品化：真实黄历、三张塔罗与本卦/动爻/之卦完全分流，新增分区排版和每日单 CTA 轮换。
+3. 2026-07-27 v5.37.1 玄学群播通用化：删除个人心理提问和说教，只保留公共字段。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

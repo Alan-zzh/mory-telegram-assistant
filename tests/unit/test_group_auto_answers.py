@@ -64,6 +64,15 @@ def _message(text, uid=42):
     )
 
 
+def _private_message(text, uid=42):
+    return SimpleNamespace(
+        text=text,
+        from_user=SimpleNamespace(id=uid),
+        chat=SimpleNamespace(id=uid, type="private"),
+        message_id=10,
+    )
+
+
 def test_invalid_checkin_aliases_are_rejected_with_simplified_format():
     from modules.checkin import (
         CHECKIN_FORMAT_HINT,
@@ -151,6 +160,68 @@ def test_builtin_persona_wakeup_replies_without_conversion_entry():
     assert "@MorychannelBot" not in recorder.replies[0][0]
     assert "@Moryfansbot" not in recorder.replies[0][0]
     assert db.telemetry[0][3] == "助理唤醒"
+
+
+def test_private_mystic_reply_short_circuits_ai_with_zero_token():
+    from modules.keyword_trigger import KeywordTrigger
+
+    class _FailIfCalledAi:
+        def ask(self, *_args, **_kwargs):
+            raise AssertionError("私聊本地占卜不应调用 LLM")
+
+    db = _QuestionDb()
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(
+        db,
+        mory_bot=recorder,
+        ai=_FailIfCalledAi(),
+        config={
+            "MYSTIC_BROADCAST_CONFIG": {
+                "private_reply_enabled": True,
+            },
+        },
+    )
+    message = _private_message("帮我算卦看工作")
+
+    assert trigger.handle_message(
+        message.text,
+        message.chat.id,
+        message,
+        object(),
+    )
+    assert recorder.replies[0][0].startswith("☯️ 为你起一卦")
+    assert db.telemetry[0][3] == "mystic_iching"
+    assert db.telemetry[0][6]["ai_mode"] == "local_zero_token"
+
+
+def test_private_mystic_reply_is_default_off_and_group_does_not_trigger():
+    from modules.keyword_trigger import KeywordTrigger
+
+    disabled = KeywordTrigger(
+        _QuestionDb(),
+        mory_bot=_ReplyRecorder(),
+        ai=_NoReplyAi(),
+        config={},
+    )
+    private = _private_message("给我抽一下塔罗")
+    assert not disabled.handle_message(
+        private.text, private.chat.id, private, object()
+    )
+
+    group_recorder = _ReplyRecorder()
+    enabled = KeywordTrigger(
+        _QuestionDb(),
+        mory_bot=group_recorder,
+        ai=_NoReplyAi(),
+        config={
+            "MYSTIC_BROADCAST_CONFIG": {
+                "private_reply_enabled": True,
+            },
+        },
+    )
+    group = _message("给我抽一下塔罗")
+    assert not enabled.handle_message(group.text, group.chat.id, group, object())
+    assert group_recorder.replies == []
 
 
 def test_builtin_points_answer_uses_preview_and_custom_concept_is_not_static_order():

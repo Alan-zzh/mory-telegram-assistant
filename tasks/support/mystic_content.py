@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -99,7 +100,7 @@ _TAROT_ACTIONS = (
     "主牌先看方向，助力牌看可用资源，提醒牌只负责指出盲区。",
     "适合先处理已经有基础的事，再决定要不要开启新线。",
     "今天的牌阵更重视信息核对；直觉可以听，结论要慢一点下。",
-    "把牌意当作观察角度即可，真正的决定仍回到现实条件。",
+    "先写下最在意的一个问题，再看三张牌分别提醒了什么。",
     "若三张牌的信息互相拉扯，先看主牌，再用提醒牌做风险检查。",
 )
 
@@ -190,11 +191,76 @@ _ICHING_QUESTIONS = (
     "哪些是可以主动调整的，哪些更适合顺势观察？",
 )
 
+_PRIVATE_COMMAND_MODES = {
+    "/fengshui": "almanac",
+    "/风水": "almanac",
+    "/tarot": "tarot",
+    "/塔罗": "tarot",
+    "/iching": "iching",
+    "/易经": "iching",
+    "/算卦": "iching",
+}
+_PRIVATE_MODE_KEYWORDS = {
+    "tarot": ("塔罗", "抽牌"),
+    "iching": ("算卦", "起卦", "卜卦", "易经", "卦象"),
+    "almanac": ("风水", "方位", "财位"),
+}
+_PRIVATE_REQUEST_MARKERS = (
+    "帮我",
+    "给我",
+    "替我",
+    "想",
+    "要",
+    "来一个",
+    "来一",
+    "看看",
+    "看一下",
+    "算一下",
+    "测一下",
+    "抽一下",
+    "抽个",
+    "抽一",
+    "起一",
+    "问一",
+)
+
 
 def _stable_rng(date_key: str, period: str, mode: str) -> random.Random:
     raw = f"{date_key}|{period}|{mode}|mory-mystic-v3".encode("utf-8")
     seed = int.from_bytes(hashlib.sha256(raw).digest()[:8], "big")
     return random.Random(seed)
+
+
+def resolve_private_mystic_mode(text: str) -> str | None:
+    """只识别明确的私聊占卜请求，普通话题讨论继续走正常聊天。"""
+    raw = str(text or "").strip().lower()
+    compact = re.sub(r"\s+", "", raw)
+    if not compact:
+        return None
+    command = raw.split(None, 1)[0].split("@", 1)[0].rstrip("：:?!？")
+    if command in _PRIVATE_COMMAND_MODES:
+        return _PRIVATE_COMMAND_MODES[command]
+
+    for mode, keywords in _PRIVATE_MODE_KEYWORDS.items():
+        matched = next((keyword for keyword in keywords if keyword in compact), "")
+        if not matched:
+            continue
+        if compact in keywords or len(compact) <= len(matched) + 2:
+            return mode
+        if any(marker in compact for marker in _PRIVATE_REQUEST_MARKERS):
+            return mode
+    return None
+
+
+def _private_theme_key(text: str, mode: str) -> str:
+    """抽取主题，让同一用户同日同主题稳定，不同主题可重新起盘。"""
+    value = re.sub(r"[/@_\-\s，。！？?、：:]", "", str(text or "").lower())
+    for keyword in _PRIVATE_MODE_KEYWORDS.get(mode, ()):
+        value = value.replace(keyword, "")
+    for marker in _PRIVATE_REQUEST_MARKERS:
+        value = value.replace(marker, "")
+    value = value.replace("我", "").replace("的", "").replace("一下", "")
+    return value[:32] or "daily"
 
 
 def _normalize_now(now: datetime | None) -> datetime:
@@ -252,7 +318,7 @@ def _build_almanac(now: datetime, rng: random.Random) -> dict[str, Any]:
     elif "出行" in good or any("动土" in item for item in good):
         insight = rng.choice((
             "出行或动土出现在「宜」项，更适合推进已经准备充分的安排；临时起意的事仍以现实条件为准。",
-            "今天传统宜忌对行动类事项较友好，适合把计划往前推一步，但不替代天气、合同和安全判断。",
+            "今天传统宜忌对行动类事项较友好，适合把准备充分的计划往前推一步。",
         ))
     else:
         insight = rng.choice((
@@ -296,7 +362,6 @@ def _build_almanac(now: datetime, rng: random.Random) -> dict[str, Any]:
             },
         ],
         "insight": insight,
-        "note": "黄历属于传统民俗参考，不替代天气、安全、医疗或专业决策。",
         "source": "cnlunar-0.2.4",
     }
 
@@ -337,7 +402,6 @@ def _build_tarot(now: datetime, rng: random.Random) -> dict[str, Any]:
             },
         ],
         "insight": insight,
-        "note": "塔罗用于提供观察角度，不预测确定结果，也不替代现实判断。",
         "source": "curated-major-arcana-v1",
     }
 
@@ -371,7 +435,7 @@ def _build_iching(now: datetime, rng: random.Random) -> dict[str, Any]:
     question = rng.choice(_ICHING_QUESTIONS)
     insight = (
         f"本卦看「{primary[3]}」，变化落在{line_label}；之卦转向「{changed[3]}」。"
-        "重点不是追一个绝对答案，而是看清变化从哪一层开始。"
+        "先看清变化从哪一层开始，再决定今天最值得推动的一步。"
     )
     return {
         "mode": "iching",
@@ -399,7 +463,6 @@ def _build_iching(now: datetime, rng: random.Random) -> dict[str, Any]:
             },
         ],
         "insight": insight,
-        "note": "易经栏目用于观察变化，不作确定性断言；个人起卦应先明确一个具体问题。",
         "source": "king-wen-64-v1",
     }
 
@@ -475,6 +538,71 @@ def build_mystic_broadcast(
         "cta": _build_cta(config, date_key, period, mode),
     })
     return payload
+
+
+def build_private_mystic_reply(
+    text: str,
+    user_id: int,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """生成私聊本地占卜回复；不调用 LLM，不产生模型 Token。"""
+    mode = resolve_private_mystic_mode(text)
+    if mode is None or not int(user_id or 0):
+        return None
+    current = _normalize_now(now)
+    theme = _private_theme_key(text, mode)
+    rng = _stable_rng(
+        current.strftime("%Y-%m-%d"),
+        f"private-{int(user_id)}-{theme}",
+        mode,
+    )
+    if mode == "almanac":
+        payload = _build_almanac(current, rng)
+        first = dict(payload["blocks"][0]["lines"])
+        second = dict(payload["blocks"][1]["lines"])
+        lines = [
+            "🧭 你的今日风水参考",
+            payload["meta"],
+            "",
+            f"宜　{first['宜']}",
+            f"忌　{first['忌']}",
+            f"冲煞　{second['冲煞']}",
+            f"吉神方位　{second['吉神方位']}",
+            "",
+            payload["insight"],
+            "想看具体空间，直接发我：所在城市、房间朝向、主要用途和最想调整的问题。",
+        ]
+    elif mode == "tarot":
+        payload = _build_tarot(current, rng)
+        card_lines = [
+            f"{label}　{value}"
+            for label, value in payload["blocks"][0]["lines"]
+        ]
+        lines = [
+            "🔮 你的三张牌阵",
+            *card_lines,
+            "",
+            payload["insight"],
+        ]
+    else:
+        payload = _build_iching(current, rng)
+        hexagram_lines = [
+            f"{label}　{value}"
+            for label, value in payload["blocks"][0]["lines"]
+        ]
+        lines = [
+            "☯️ 为你起一卦",
+            *hexagram_lines,
+            "",
+            payload["insight"],
+        ]
+    return {
+        "mode": mode,
+        "topic": theme,
+        "text": "\n".join(lines),
+        "source": payload["source"],
+        "token_usage": 0,
+    }
 
 
 def is_usable_mystic_broadcast(payload: object) -> bool:

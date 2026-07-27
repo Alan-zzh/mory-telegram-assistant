@@ -62,6 +62,7 @@ def _get_mystic_config(cfg: dict) -> dict:
     raw = dict(cfg.get("MYSTIC_BROADCAST_CONFIG", {}) or {})
     raw.setdefault("enabled", False)
     raw.setdefault("cta_enabled", False)
+    raw.setdefault("private_reply_enabled", False)
     defaults = {
         "morning": ("09:05", "almanac"),
         "afternoon": ("13:05", "tarot"),
@@ -868,6 +869,8 @@ def api_settings_mystic():
         mystic_cfg["enabled"] = bool(data["enabled"])
     if "cta_enabled" in data:
         mystic_cfg["cta_enabled"] = bool(data["cta_enabled"])
+    if "private_reply_enabled" in data:
+        mystic_cfg["private_reply_enabled"] = bool(data["private_reply_enabled"])
     defaults = {
         "morning": ("09:05", "almanac"),
         "afternoon": ("13:05", "tarot"),

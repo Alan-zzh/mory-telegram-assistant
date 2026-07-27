@@ -607,9 +607,6 @@ def build_mystic_html(payload: dict) -> str:
     cta = payload.get("cta")
     if isinstance(cta, dict) and cta.get("closing"):
         parts.extend(["", f"💬 {escape_html_text(cta['closing'])}"])
-    note = str(payload.get("note", "") or "")
-    if note:
-        parts.extend(["", f"<i>※ {escape_html_text(note)}</i>"])
     parts.extend(["", f"<i>{BROADCAST_SENDER_HANDLE}</i>"])
     return "\n".join(parts)
 
@@ -638,9 +635,6 @@ def build_rich_mystic_card_message(payload: dict) -> str:
     cta = payload.get("cta")
     if isinstance(cta, dict) and cta.get("closing"):
         parts.append(f"<p>💬 {escape_html_text(cta['closing'])}</p>")
-    note = str(payload.get("note", "") or "")
-    if note:
-        parts.append(f"<p><i>※ {escape_html_text(note)}</i></p>")
     parts.extend(["<hr>", f"<footer>{BROADCAST_SENDER_HANDLE}</footer>"])
     return "\n".join(parts)
 

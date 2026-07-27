@@ -110,6 +110,9 @@ def normalize_runtime_config(cfg: dict | None) -> dict:
     mystic_cfg = _ensure_dict(cfg, "MYSTIC_BROADCAST_CONFIG")
     mystic_cfg["enabled"] = bool(mystic_cfg.get("enabled", False))
     mystic_cfg["cta_enabled"] = bool(mystic_cfg.get("cta_enabled", False))
+    mystic_cfg["private_reply_enabled"] = bool(
+        mystic_cfg.get("private_reply_enabled", False)
+    )
     mystic_cfg["morning_time"] = mystic_cfg.get("morning_time", "09:05")
     mystic_cfg["morning_mode"] = "almanac"
     mystic_cfg["afternoon_time"] = mystic_cfg.get("afternoon_time", "13:05")

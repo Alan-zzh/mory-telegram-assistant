@@ -234,6 +234,7 @@ def test_mystic_endpoint_disables_news_and_saves_three_columns(monkeypatch):
     resp = client.post("/api/settings/mystic", json={
         "enabled": True,
         "cta_enabled": True,
+        "private_reply_enabled": True,
         "morning_time": "09:15",
         "morning_mode": "feng_shui",
         "afternoon_time": "13:15",
@@ -245,6 +246,7 @@ def test_mystic_endpoint_disables_news_and_saves_three_columns(monkeypatch):
     assert resp.status_code == 200
     assert store["MYSTIC_BROADCAST_CONFIG"]["enabled"] is True
     assert store["MYSTIC_BROADCAST_CONFIG"]["cta_enabled"] is True
+    assert store["MYSTIC_BROADCAST_CONFIG"]["private_reply_enabled"] is True
     assert store["MYSTIC_BROADCAST_CONFIG"]["morning_mode"] == "almanac"
     assert store["MYSTIC_BROADCAST_CONFIG"]["afternoon_mode"] == "tarot"
     assert store["MYSTIC_BROADCAST_CONFIG"]["evening_mode"] == "iching"

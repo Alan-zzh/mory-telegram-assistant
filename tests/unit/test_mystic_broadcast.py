@@ -14,6 +14,7 @@ def _config(enabled=True, cta_enabled=True):
         "MYSTIC_BROADCAST_CONFIG": {
             "enabled": enabled,
             "cta_enabled": cta_enabled,
+            "private_reply_enabled": False,
             "morning_time": "09:05",
             "morning_mode": "almanac",
             "afternoon_time": "13:05",
@@ -110,7 +111,6 @@ def test_iching_has_all_patterns_and_moving_line_produces_changed_hexagram():
     assert rows["本卦"] != rows["之卦"]
     assert "第" in rows["动爻"] and "爻变" in rows["动爻"]
     assert "本卦看" in payload["insight"]
-    assert "一个具体问题" in payload["note"]
 
 
 def test_cta_is_exactly_one_daily_rotation_and_can_be_disabled():
@@ -168,10 +168,61 @@ def test_renderers_have_structured_layout_sender_and_matching_cta_copy():
         assert payload["cta"]["closing"] in text
         assert "新闻" not in text
         assert payload["cta"]["url"] not in text
+        assert "不替代现实判断" not in text
+        assert "传统民俗参考" not in text
+        assert "不作确定性断言" not in text
     assert "<h2>" in rich
     assert rich.count("<h3>") == len(payload["blocks"])
     assert "<blockquote>" in rich
     assert "<footer>@MoryMateBot</footer>" in rich
+
+
+def test_private_mystic_requests_are_local_daily_and_topic_aware():
+    from tasks.support.mystic_content import (
+        build_private_mystic_reply,
+        resolve_private_mystic_mode,
+    )
+
+    day1 = datetime(2026, 7, 27, 16, 0, tzinfo=_CST)
+    day2 = datetime(2026, 7, 28, 16, 0, tzinfo=_CST)
+    cases = {
+        "帮我看看风水": ("almanac", "🧭 你的今日风水参考"),
+        "给我抽一下塔罗看感情": ("tarot", "🔮 你的三张牌阵"),
+        "想算卦问工作": ("iching", "☯️ 为你起一卦"),
+        "/tarot 感情": ("tarot", "🔮 你的三张牌阵"),
+        "/iching@MoryMateBot 工作": ("iching", "☯️ 为你起一卦"),
+    }
+    for text, (mode, title) in cases.items():
+        assert resolve_private_mystic_mode(text) == mode
+        first = build_private_mystic_reply(text, 42, day1)
+        retry = build_private_mystic_reply(text, 42, day1)
+        assert first == retry
+        assert first["mode"] == mode
+        assert first["token_usage"] == 0
+        assert first["text"].startswith(title)
+        assert "不替代" not in first["text"]
+        assert "传统民俗参考" not in first["text"]
+        assert "不作确定性断言" not in first["text"]
+
+    assert build_private_mystic_reply("想算卦问工作", 42, day1) != (
+        build_private_mystic_reply("想算卦问工作", 42, day2)
+    )
+    assert build_private_mystic_reply("想算卦问工作", 42, day1) != (
+        build_private_mystic_reply("想算卦问感情", 42, day1)
+    )
+
+
+def test_private_mystic_intent_does_not_hijack_general_discussion():
+    from tasks.support.mystic_content import resolve_private_mystic_mode
+
+    for text in (
+        "塔罗是不是一种心理投射",
+        "你怎么看易经",
+        "这家店的风水说法可信吗",
+        "今天看到一篇占卜文章",
+        "方位这个词怎么解释",
+    ):
+        assert resolve_private_mystic_mode(text) is None
 
 
 def test_mystic_schedule_replaces_news_and_legacy_targeted_tarot_is_off():

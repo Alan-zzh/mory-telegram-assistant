@@ -108,6 +108,9 @@ class KeywordTrigger:
             if not text or len(text.strip()) == 0:
                 return False
 
+            if self._handle_private_mystic(text, chat_id, message, bot):
+                return True
+
             special_rule = self._match_special_rule(text)
             if special_rule:
                 return self._handle_special_rule(special_rule, chat_id, message, bot)
@@ -148,6 +151,48 @@ class KeywordTrigger:
         except Exception as e:
             logger.error(f"🔑 关键词触发处理异常: {e}")
             logger.error(traceback.format_exc())
+            return False
+
+    def _handle_private_mystic(self, text: str, chat_id: int, message, bot) -> bool:
+        """私聊明确占卜请求走本地引擎，在进入 LLM 前直接承接。"""
+        chat = getattr(message, "chat", None)
+        chat_type = str(getattr(chat, "type", "") or "")
+        is_private = chat_type == "private" or (not chat_type and int(chat_id or 0) > 0)
+        cfg = self.config.get("MYSTIC_BROADCAST_CONFIG", {})
+        if not is_private or not isinstance(cfg, dict):
+            return False
+        if not bool(cfg.get("private_reply_enabled", False)):
+            return False
+        try:
+            from tasks.support.mystic_content import build_private_mystic_reply
+
+            user = getattr(message, "from_user", None)
+            user_id = int(getattr(user, "id", 0) or 0)
+            reply = build_private_mystic_reply(text, user_id)
+            if not reply:
+                return False
+            if self.mory_bot:
+                self.mory_bot.reply_and_track(message, reply["text"])
+            else:
+                bot.reply_to(message, reply["text"])
+            self._record_topic_reply(
+                {
+                    "name": "私聊本地占卜",
+                    "topic": f"mystic_{reply['mode']}",
+                    "ai_mode": "local_zero_token",
+                },
+                message,
+                chat_id,
+                reply["mode"],
+                False,
+            )
+            logger.info(
+                "🔮 私聊本地占卜回复成功: mode=%s token=0",
+                reply["mode"],
+            )
+            return True
+        except Exception as e:
+            logger.error(f"🔮 私聊本地占卜回复失败: {e}")
             return False
 
     def _match_special_rule(self, text: str):

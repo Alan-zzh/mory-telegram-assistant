@@ -243,6 +243,7 @@ BROADCAST_KEYS = {
     # 三时段传统文化播报
     "mystic_enabled":        {"path": "MYSTIC_BROADCAST_CONFIG.enabled", "type": "toggle", "label": "传统文化播报", "default": False},
     "mystic_cta_enabled":    {"path": "MYSTIC_BROADCAST_CONFIG.cta_enabled", "type": "toggle", "label": "传统文化单按钮引导", "default": False},
+    "mystic_private_reply":  {"path": "MYSTIC_BROADCAST_CONFIG.private_reply_enabled", "type": "toggle", "label": "私聊本地占卜（零Token）", "default": False},
     "mystic_morning_time":   {"path": "MYSTIC_BROADCAST_CONFIG.morning_time", "type": "set", "label": "早间今日黄历", "default": "09:05"},
     "mystic_afternoon_time": {"path": "MYSTIC_BROADCAST_CONFIG.afternoon_time", "type": "set", "label": "午间三张塔罗", "default": "13:05"},
     "mystic_evening_time":   {"path": "MYSTIC_BROADCAST_CONFIG.evening_time", "type": "set", "label": "晚间易经一卦", "default": "20:35"},
