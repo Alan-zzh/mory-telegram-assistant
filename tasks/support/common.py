@@ -59,7 +59,7 @@ _NEWS_FRESHNESS_OUTRO = "以上是本次刚刚更新的最新新闻。"
 
 _NEWS_ENTRY_MARKERS = (
     "@", "http://", "https://", "私聊", "定制", "下单", "购买", "订阅", "预览",
-    "价格", "福利", "优惠", "名额", "来找我", "找 mory", "moryfansbot",
+    "来找我", "找 mory", "moryfansbot",
 )
 
 

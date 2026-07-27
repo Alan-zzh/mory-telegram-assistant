@@ -221,6 +221,23 @@ def test_news_freshness_outro_is_deterministic():
     assert not _is_news_freshness_outro(["不急着下结论，群里有不同想法就说说。"])
 
 
+def test_news_safety_gate_keeps_factual_price_and_benefit_words():
+    """价格/福利等普通事实词不能脱离入口语境就被当成销售 CTA 删除。"""
+    from tasks.support.common import is_usable_news_output, sanitize_news_for_send
+
+    copy = "\n".join([
+        "媒体追问爱心西瓜价格被压低，相关交易规则受到关注",
+        "公共福利政策今日更新，办理条件以正式通知为准",
+        "景区优惠活动调整，游客退改安排同步公布",
+        "赛事候补名额重新确认，主办方发布最新名单",
+        "国际公共事件出现新进展，多方继续保持沟通",
+        "💡 以上是本次刚刚更新的最新新闻。",
+    ])
+
+    assert sanitize_news_for_send(copy) == copy
+    assert is_usable_news_output(copy, expected_count=5)
+
+
 def test_modular_news_send_has_no_entry_even_when_ai_attempts_sales(monkeypatch):
     import tasks.support.common as common
 
