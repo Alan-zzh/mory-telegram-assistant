@@ -57,7 +57,7 @@ def test_news_html_hides_internal_source_badge():
     """新闻富文本不向用户展示聚合策略或供应链名称。"""
     news = "\n".join(
         [f"第{i}条不同方向的真实新闻" for i in range(1, 6)]
-        + ["今晚信息面比较散，先看确定的"]
+        + ["以上是本次刚刚更新的最新新闻。"]
     )
     result = build_rich_news_html("晚间", news, source_name="fallback")
     assert "多源汇总" not in result
@@ -66,12 +66,12 @@ def test_news_html_hides_internal_source_badge():
     assert "<blockquote expandable><i>" in result
 
 
-def test_news_renderers_keep_five_headlines_and_one_observation():
-    """当前排版只展示5条头条，第6行是观察。"""
+def test_news_renderers_keep_five_headlines_and_freshness_outro():
+    """当前排版只展示5条头条，第6行是固定时效说明。"""
     from core.broadcast_formatter import build_rich_news_card_message
 
     headlines = [f"第{i}条综合头条有明确事实信息" for i in range(1, 6)]
-    observation = "今天重点分散在民生、国际和社会变化"
+    observation = "以上是本次刚刚更新的最新新闻。"
     news = "\n".join(headlines + [observation])
 
     html = build_rich_news_html("早间", news)
@@ -146,6 +146,29 @@ def test_newsnow_sources_use_a_bounded_domain_pool():
 
     assert workers["newsnow"] == 2
     assert len(newsnow_sources) <= 5
+
+
+def test_newsnow_requests_bypass_intermediary_cache(monkeypatch):
+    """每轮播报都带 no-cache 与时间戳，避免沿用上一轮聚合响应。"""
+    import core.trendradar_news as news_sources
+
+    captured = {}
+
+    class _Client:
+        def get(self, url, **kwargs):
+            captured["url"] = url
+            captured.update(kwargs)
+            return {"items": [{"title": "本轮刚刚更新的真实热点"}]}
+
+    monkeypatch.setattr(news_sources, "get_http_client", lambda: _Client())
+    monkeypatch.setattr(news_sources.time, "time", lambda: 1785128766)
+
+    lines = news_sources._fetch_source_news("weibo", limit=1)
+
+    assert lines == ["【微博】本轮刚刚更新的真实热点"]
+    assert captured["params"] == {"id": "weibo", "_": 1785128766}
+    assert captured["headers"]["Cache-Control"] == "no-cache"
+    assert captured["headers"]["Pragma"] == "no-cache"
 
 
 def test_balanced_selection_still_fills_ten_when_sources_are_sparse():

@@ -55,53 +55,7 @@ _NEWS_INTERNAL_MARKERS = (
 _NEWS_SOURCE_LABEL_RE = re.compile(
     r"【(?:社会|综合|国际|生活|体育|文娱|财经|科技)[·|｜][^】]+】"
 )
-_NEWS_SUMMARY_OUTRO_MARKERS = (
-    "议题交织",
-    "现实关切",
-    "值得关注",
-    "信息面比较散",
-    "重点不只一条线",
-    "先看事实和后续变化",
-    "折射现实",
-    "先盯",
-    "继续盯",
-    "后续变化",
-    "这轮",
-    "两条线",
-)
-_NEWS_GROUNDING_STOP_NGRAMS = {
-    "今日", "今天", "早间", "午间", "晚间", "新闻", "热点", "信息",
-    "重点", "观察", "变化", "继续", "关注", "值得", "现实", "事件",
-    "问题", "进展", "影响", "后续", "这轮", "两条", "一条",
-}
-_NEWS_PERSONA_OUTRO_MARKERS = (
-    "我不想",
-    "我更想",
-    "我想被",
-    "我想做",
-    "我想成为",
-    "我会",
-    "我愿意",
-    "我在听",
-    "群里",
-    "说说",
-    "想法",
-    "讨论",
-)
-_NEWS_PERSONA_OUTRO_POOLS = {
-    "group_discussion": [
-        "信息先放在这里，有不同看法可以在群里说说。",
-        "先把事实留在这里，大家有想法就在群里讨论。",
-    ],
-    "neutral_pause": [
-        "这几条信息先放这里，大家的想法可以慢慢说。",
-        "信息量有点多，先记住事实，群里可以慢慢讨论。",
-    ],
-    "calm_position": [
-        "先把消息讲清楚，大家的判断可以慢慢讨论。",
-        "不急着下结论，群里有不同想法就说说。",
-    ],
-}
+_NEWS_FRESHNESS_OUTRO = "以上是本次刚刚更新的最新新闻。"
 
 _NEWS_ENTRY_MARKERS = (
     "@", "http://", "https://", "私聊", "定制", "下单", "购买", "订阅", "预览",
@@ -380,40 +334,11 @@ def looks_like_ai_fallback(text: str) -> bool:
     return bool(value) and any(marker in value for marker in _AI_FALLBACK_MARKERS)
 
 
-def _news_grounding_ngrams(text: str, size: int) -> set[str]:
-    """提取中文事实短语，供观察行与本卡片新闻做轻量语义锚定。"""
-    ngrams = set()
-    for chunk in re.findall(r"[\u4e00-\u9fff]{2,}", text or ""):
-        for index in range(max(0, len(chunk) - size + 1)):
-            token = chunk[index:index + size]
-            if token not in _NEWS_GROUNDING_STOP_NGRAMS:
-                ngrams.add(token)
-    return ngrams
-
-
-def _is_persona_news_outro(
-    news_items: List[str],
-    observation_parts: List[str],
-    source_lines: List[str] | None = None,
-) -> bool:
-    """第6行只负责立人设和促互动，不能继续概括前5条新闻。"""
+def _is_news_freshness_outro(observation_parts: List[str]) -> bool:
+    """第6行只允许固定的时效说明，不再要求群友互动或表达观点。"""
     outro = " ".join(observation_parts).strip()
     outro = re.sub(r"^💡\s*", "", outro)
-    if not 18 <= len(outro) <= 80:
-        return False
-    if any(marker in outro.lower() for marker in _NEWS_ENTRY_MARKERS):
-        return False
-    if any(marker in outro for marker in _NEWS_SUMMARY_OUTRO_MARKERS):
-        return False
-
-    evidence = "\n".join([*news_items, *(source_lines or [])])
-    shared_fact_trigrams = (
-        _news_grounding_ngrams(outro, 3)
-        & _news_grounding_ngrams(evidence, 3)
-    )
-    if shared_fact_trigrams:
-        return False
-    return any(marker in outro for marker in _NEWS_PERSONA_OUTRO_MARKERS)
+    return outro == _NEWS_FRESHNESS_OUTRO
 
 
 def is_usable_news_output(
@@ -421,7 +346,7 @@ def is_usable_news_output(
     expected_count: int = 5,
     source_lines: List[str] | None = None,
 ) -> bool:
-    """新闻 AI 输出门禁：5条新闻 + 1句独立人设互动尾语。"""
+    """新闻 AI 输出门禁：5条新闻 + 1句固定的本轮时效说明。"""
     value = (text or "").strip()
     if not value:
         return False
@@ -435,18 +360,8 @@ def is_usable_news_output(
     return (
         len(news_items) == expected_count
         and len(observation_parts) == 1
-        and _is_persona_news_outro(
-            news_items,
-            observation_parts,
-            source_lines=source_lines,
-        )
+        and _is_news_freshness_outro(observation_parts)
     )
-
-
-def _build_news_persona_outro() -> str:
-    """随机选择不带入口的中性讨论或观察收尾。"""
-    strategy = random.choice(tuple(_NEWS_PERSONA_OUTRO_POOLS))
-    return random.choice(_NEWS_PERSONA_OUTRO_POOLS[strategy])
 
 
 def build_news_without_ai(lines: List[str], time_desc: str) -> str:
@@ -455,7 +370,7 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
     重构原则（用户反馈"记流水账一样没有实际"）：
     - 不再用"晚点再补一条更稳的消息"等无价值填充
     - 最终只展示 5 条，避免消息过长
-    - 第6行不总结新闻，只用中性讨论或观察收尾，不带入口
+    - 第6行固定说明本轮为刚刚更新的最新新闻，不互动、不评价
     """
     cleaned = []
     for line in lines[:5]:
@@ -471,8 +386,7 @@ def build_news_without_ai(lines: List[str], time_desc: str) -> str:
     numbered = [f"{i+1}. {title}" for i, title in enumerate(cleaned)]
     count = len(numbered)
     header = f"📰 {time_desc}新闻速览（共 {count} 条）"
-    outro = _build_news_persona_outro()
-    return header + "\n\n" + "\n".join(numbered) + f"\n\n💡 {outro}"
+    return header + "\n\n" + "\n".join(numbered) + f"\n\n💡 {_NEWS_FRESHNESS_OUTRO}"
 
 
 def get_preferred_news_lines(time_desc: str, config: dict) -> Tuple[List[str], str]:

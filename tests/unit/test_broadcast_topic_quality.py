@@ -26,7 +26,7 @@ def test_news_internal_source_labels_never_render():
         assert "@MorychannelBot" not in rendered
 
 
-def test_news_personas_require_five_headlines_before_observation():
+def test_news_personas_require_five_headlines_and_fixed_freshness_outro():
     from core.ai_engine import AIEngine
 
     for mode in (
@@ -41,8 +41,9 @@ def test_news_personas_require_five_headlines_before_observation():
         assert "严格只写5条" in prompt
         assert "第6行" in prompt
         assert "从10条候选中" in prompt
-        assert "不得总结新闻" in prompt
-        assert "随机采用一种策略" in prompt
+        assert "以上是本次刚刚更新的最新新闻。" in prompt
+        assert "不得添加互动、观点、总结、建议或引导" in prompt
+        assert "随机采用一种策略" not in prompt
         assert "严格只写10条" not in prompt
         assert "第11行" not in prompt
 
@@ -70,8 +71,8 @@ def test_legacy_ten_item_news_override_cannot_replace_five_item_contract():
     assert "严格只写10条" not in persona
 
 
-def test_legacy_grounded_summary_prompt_cannot_override_persona_outro():
-    """v5.35.12 的事实总结模板也属于旧配置，生产必须自动换成新人设尾语。"""
+def test_legacy_persona_outro_prompt_cannot_override_fixed_freshness_outro():
+    """旧的人设互动模板必须自动换成固定的新闻时效说明。"""
     from core.ai_engine import AIEngine
 
     engine = object.__new__(AIEngine)
@@ -91,8 +92,9 @@ def test_legacy_grounded_summary_prompt_cannot_override_persona_outro():
     )
 
     assert full_replacement is True
-    assert "不得总结新闻" in persona
-    assert "随机采用一种策略" in persona
+    assert "以上是本次刚刚更新的最新新闻。" in persona
+    assert "不得添加互动、观点、总结、建议或引导" in persona
+    assert "随机采用一种策略" not in persona
     assert "观察必须点名" not in persona
 
 
@@ -101,7 +103,7 @@ def test_news_output_gate_rejects_source_labels_and_missing_items():
 
     valid = "\n".join(
         [f"第{i}条综合头条已经讲清事实和影响" for i in range(1, 6)]
-        + ["💡 我不想只做报时的人，更想听你说说今天真正放在心上的事"]
+        + ["💡 以上是本次刚刚更新的最新新闻。"]
     )
     leaked = valid.replace(
         "第1条综合头条已经讲清事实和影响",
@@ -123,8 +125,8 @@ def test_news_output_gate_rejects_source_labels_and_missing_items():
     assert is_usable_news_output(overlong, expected_count=5) is False
 
 
-def test_news_output_gate_requires_persona_outro_instead_of_news_summary():
-    """第6行只负责立人设和促互动，不得继续总结前5条新闻。"""
+def test_news_output_gate_only_accepts_fixed_freshness_outro():
+    """第6行只说明本次内容刚刚更新，不互动、不评价、不总结。"""
     from tasks.support.common import is_usable_news_output
 
     headlines = [
@@ -147,8 +149,11 @@ def test_news_output_gate_requires_persona_outro_instead_of_news_summary():
     persona_outro = "\n".join(
         headlines + ["我不想只做报时的人，更想听你说说今天真正放在心上的事"]
     )
-    real_model_persona_outro = "\n".join(
-        headlines + ["我想做那个能让你在信息洪流里安心喘口气的小助理呀"]
+    screenshot_outro = "\n".join(
+        headlines + ["💡 不急着下结论，群里有不同想法就说说。"]
+    )
+    fixed_freshness_outro = "\n".join(
+        headlines + ["💡 以上是本次刚刚更新的最新新闻。"]
     )
 
     assert is_usable_news_output(
@@ -170,22 +175,21 @@ def test_news_output_gate_requires_persona_outro_instead_of_news_summary():
         persona_outro,
         expected_count=5,
         source_lines=headlines,
-    ) is True
+    ) is False
     assert is_usable_news_output(
-        real_model_persona_outro,
+        screenshot_outro,
+        expected_count=5,
+        source_lines=headlines,
+    ) is False
+    assert is_usable_news_output(
+        fixed_freshness_outro,
         expected_count=5,
         source_lines=headlines,
     ) is True
 
 
-def test_news_fallback_uses_random_persona_strategy_not_headline_summary(monkeypatch):
+def test_news_fallback_uses_fixed_freshness_outro():
     import tasks.support.common as common
-
-    selections = iter([
-        "group_discussion",
-        "信息先放在这里，有不同看法可以在群里说说。",
-    ])
-    monkeypatch.setattr(common.random, "choice", lambda _items: next(selections))
 
     copy = common.build_news_without_ai(
         [
@@ -199,26 +203,21 @@ def test_news_fallback_uses_random_persona_strategy_not_headline_summary(monkeyp
     )
 
     outro = copy.splitlines()[-1]
-    assert outro == "💡 信息先放在这里，有不同看法可以在群里说说。"
+    assert outro == "💡 以上是本次刚刚更新的最新新闻。"
     assert "携程" not in outro
     assert "中东" not in outro
 
 
-def test_news_persona_outro_pool_covers_four_random_strategies():
+def test_news_freshness_outro_is_deterministic():
     from tasks.support.common import (
-        _NEWS_PERSONA_OUTRO_POOLS,
-        _is_persona_news_outro,
+        _NEWS_FRESHNESS_OUTRO,
+        _is_news_freshness_outro,
     )
 
-    assert set(_NEWS_PERSONA_OUTRO_POOLS) == {
-        "group_discussion",
-        "neutral_pause",
-        "calm_position",
-    }
-    for pool in _NEWS_PERSONA_OUTRO_POOLS.values():
-        assert len(pool) >= 2
-        for copy in pool:
-            assert _is_persona_news_outro([], [copy], source_lines=[])
+    assert _NEWS_FRESHNESS_OUTRO == "以上是本次刚刚更新的最新新闻。"
+    assert _is_news_freshness_outro([_NEWS_FRESHNESS_OUTRO])
+    assert _is_news_freshness_outro(["💡 " + _NEWS_FRESHNESS_OUTRO])
+    assert not _is_news_freshness_outro(["不急着下结论，群里有不同想法就说说。"])
 
 
 def test_modular_news_send_has_no_entry_even_when_ai_attempts_sales(monkeypatch):
@@ -274,6 +273,9 @@ def test_modular_news_send_has_no_entry_even_when_ai_attempts_sales(monkeypatch)
     lowered = text.lower()
     assert kwargs["reply_markup"] is None
     assert not any(marker in lowered for marker in ("@", "http", "私聊", "定制", "下单", "预览"))
+    assert "以上是本次刚刚更新的最新新闻。" in text
+    assert "不同想法" not in text
+    assert "群里说说" not in text
 
 
 def test_news_source_chain_skips_partial_result_when_next_source_has_ten(monkeypatch):

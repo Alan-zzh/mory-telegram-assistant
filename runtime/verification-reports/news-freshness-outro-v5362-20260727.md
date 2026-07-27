@@ -1,0 +1,21 @@
+# Verification 报告
+
+- **task_id**：news-freshness-outro-v5362-20260727
+- **执行时间**：2026-07-27 13:50 +08:00
+- **truth_surface**：本地 Windows checkout；生产 VPS `/home/ubuntu/mory_assistant` 的真实配置、systemd、journal 与实时新闻源；生产 Telegram 管理员验收待部署后补齐。
+- **success_receipt**：
+  - 生产日志证明截图午间卡片走的是“AI 不可用 → 真实标题兜底”路径，尴尬句来自本地随机兜底池而非新闻事实。
+  - 生产在 13:42 重新请求新闻源，返回标题与截图一致；运行配置为 `real_first`，早/午/晚每次执行都会重新抓取。
+  - 截图句“不急着下结论，群里有不同想法就说说”被新门禁拒绝。
+  - AI 与真实标题兜底只接受“以上是本次刚刚更新的最新新闻。”。
+  - NewsNow 与直连请求均附带 no-cache 请求头和当前时间戳参数。
+- **persistence_check**：本地全新 pytest 进程复验通过；生产部署、重启后 health、版本、journal、实时抓取和 Telegram 卡片回执待补。
+- **derived_records**：`version.py`、`config.json.example`、`VERSION.md`、`AGENTS.md`、`README.md`、`CHANGELOG.md`、`AI_DEBUG_HISTORY.md`、`project_snapshot.md`、`docs/technical/broadcast-rich-format.md`。
+- **验证命令**：
+  - `python -m pytest tests -q`：`480 passed, 7 skipped`。
+  - `python scripts/verify_db_methods.py`：190 个委托方法，无缺失、无孤儿。
+  - `python scripts/doc_consistency.py`：7/7 指标一致。
+  - `python -m py_compile core/ai_engine.py core/trendradar_news.py tasks/support/common.py version.py`：通过。
+  - `python -m json.tool config.json.example`、`git diff --check`：通过。
+- **安全边界**：未修改 `.env`、生产 `config.json`、数据库、依赖或定时开关；八卦、塔罗、风水栏目仅完成现有能力评估，本轮未擅自切换。
+- **当前结论**：本地 v5.36.2 verified；生产效果待可信提交与增量部署后验证。

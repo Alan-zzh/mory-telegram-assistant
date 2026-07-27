@@ -29,20 +29,20 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本并同步根目录六件套 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 1 句自然互动尾语；新闻不夹带销售 CTA；卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
+| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 固定“本次刚刚更新”时效说明；新闻不夹带互动或销售 CTA；卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段；早晚正文无按钮，午后/睡前如带入口只到预览；AI 失败回退可信底稿 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；泛定制概念不被静态规则抢占 |
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；新闻/问候/叫醒无销售；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.36.1（2026-07-27）
+v5.36.2（2026-07-27）
 
-本地状态：v5.36.1 已通过 479 passed / 7 skipped，190 个 DB 委托方法无缺失/孤儿，文档 7/7 一致；截图两条广告原文均 `is_ad=true / score=3 / action=ban`，三条正常反例均不命中。生产当前仍为 v5.36.0，待本次可信提交后增量部署并回填双服务、health、版本、日志和生产规则回执。
+本地状态：v5.36.2 已通过 480 passed / 7 skipped、DB 190/190、文档 7/7；截图尴尬句已被门禁拒绝，真实标题兜底固定显示“以上是本次刚刚更新的最新新闻。”，新闻源请求带 no-cache 与时间戳。生产当前仍为 v5.36.0，待可信提交和增量部署后回填双服务、health、版本、日志与真实卡片回执。
 
 ## 最近 3 条大事
-1. 2026-07-27 v5.36.1 广告黑话补漏：繁体收益引流显示名和“1天1w米 / 日1w米”进入统一封禁链，保留正常语境反例。
-2. 2026-07-25 v5.36.0 ReplyContract v1：双项目统一透明小助理人设、全自动沟通边界、单目标成交与人工审核风格进化。
-3. 2026-07-25 v5.35.19 群验证数字降噪：纯数字优先验证并在全部聊天统计与 AI 前短路，正常含数字聊天不误伤。
+1. 2026-07-27 v5.36.2 新闻去尴尬：第 6 行固定说明本次为刚刚更新的最新新闻，不再随机要求群友讨论；每轮抓取主动绕过中间缓存。
+2. 2026-07-27 v5.36.1 广告黑话补漏：繁体收益引流显示名和“1天1w米 / 日1w米”进入统一封禁链，保留正常语境反例。
+3. 2026-07-25 v5.36.0 ReplyContract v1：双项目统一透明小助理人设、全自动沟通边界、单目标成交与人工审核风格进化。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

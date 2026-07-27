@@ -301,10 +301,12 @@ def _fetch_source_news(source_id: str, limit: int = 10) -> list[str]:
         client = get_http_client()
         data = client.get(
             _NEWSNOW_BASE,
-            params={"id": source_id},
+            params={"id": source_id, "_": int(time.time())},
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "application/json",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
             },
             timeout=6,
         )
@@ -411,9 +413,12 @@ def _fetch_main_news(cache: set, max_count: int = 8) -> list[str]:
         client = get_http_client()
         data = client.get(
             _NEWSNOW_BASE,
+            params={"_": int(time.time())},
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "application/json",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
             },
             timeout=8,
         )
@@ -592,11 +597,14 @@ def fetch_real_news() -> str:
             # 避免每个可降级源分别打 ERROR/WARNING 污染生产日志。
             response = requests.get(
                 src["url"],
+                params={"_": int(time.time())},
                 timeout=src["timeout"],
                 headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
                 },
             )
             response.raise_for_status()
