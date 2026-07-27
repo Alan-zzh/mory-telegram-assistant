@@ -244,7 +244,7 @@ BROADCAST_KEYS = {
     "mystic_enabled":        {"path": "MYSTIC_BROADCAST_CONFIG.enabled", "type": "toggle", "label": "风水塔罗播报", "default": False},
     "mystic_morning_time":   {"path": "MYSTIC_BROADCAST_CONFIG.morning_time", "type": "set", "label": "早间风水", "default": "09:05"},
     "mystic_afternoon_time": {"path": "MYSTIC_BROADCAST_CONFIG.afternoon_time", "type": "set", "label": "午间塔罗", "default": "13:05"},
-    "mystic_evening_time":   {"path": "MYSTIC_BROADCAST_CONFIG.evening_time", "type": "set", "label": "晚间能量签", "default": "20:35"},
+    "mystic_evening_time":   {"path": "MYSTIC_BROADCAST_CONFIG.evening_time", "type": "set", "label": "晚间宜忌播报", "default": "20:35"},
     # 定点播报
     "broadcasts":            {"path": "_list_broadcasts",                  "type": "list", "label": "定点播报列表"},
     # 定时消息

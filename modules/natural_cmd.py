@@ -215,7 +215,7 @@ ALL_CONFIGS = {
         "name": "风水塔罗播报",
         "type": "boolean",
         "default": False,
-        "desc": "早间风水、午间塔罗与晚间能量签",
+        "desc": "群公共口吻的早间风水、午间塔罗与晚间宜忌",
         "examples": ["开启风水播报", "关闭塔罗播报"]
     },
     
@@ -301,12 +301,12 @@ ALL_CONFIGS = {
     
     "MYSTIC_HOUR_EVENING": {
         "category": "时间调度",
-        "name": "晚间能量签时间",
+        "name": "晚间宜忌时间",
         "type": "hour",
         "min": 0, "max": 23,
         "default": 20,
-        "desc": "晚间能量签时间(小时)",
-        "examples": ["把晚间能量签时间改成21点"]
+        "desc": "晚间宜忌播报时间(小时)",
+        "examples": ["把晚间宜忌时间改成21点"]
     },
     
     "SIGNUP_RESET_HOUR": {
@@ -643,6 +643,7 @@ def _find_config_key(msg: str) -> str | None:
         "晚安": "AUTO_GOODNIGHT",
         "早间风水时间": "MYSTIC_HOUR_MORNING",
         "午间塔罗时间": "MYSTIC_HOUR_AFTERNOON",
+        "晚间宜忌时间": "MYSTIC_HOUR_EVENING",
         "晚间能量签时间": "MYSTIC_HOUR_EVENING",
         "风水": "MYSTIC_BROADCAST_ENABLED",
         "塔罗播报": "MYSTIC_BROADCAST_ENABLED",
@@ -1069,6 +1070,7 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None
         "挽回": "RECOVER_ENABLED",
         "早间风水": "MYSTIC_BROADCAST_ENABLED",
         "午间塔罗": "MYSTIC_BROADCAST_ENABLED",
+        "晚间宜忌": "MYSTIC_BROADCAST_ENABLED",
         "晚间能量签": "MYSTIC_BROADCAST_ENABLED",
     }
     
@@ -1617,6 +1619,7 @@ def _handle_task_control(msg: str, config: dict, bot, m, save_config_fn, mory_bo
         "晚安": "AUTO_GOODNIGHT",
         "早间风水": "MYSTIC_BROADCAST_ENABLED",
         "午间塔罗": "MYSTIC_BROADCAST_ENABLED",
+        "晚间宜忌": "MYSTIC_BROADCAST_ENABLED",
         "晚间能量签": "MYSTIC_BROADCAST_ENABLED",
         "风水播报": "MYSTIC_BROADCAST_ENABLED",
         "塔罗播报": "MYSTIC_BROADCAST_ENABLED",

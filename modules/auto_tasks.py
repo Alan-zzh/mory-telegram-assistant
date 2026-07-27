@@ -1302,7 +1302,7 @@ def _job_mystic_afternoon(rm):
 
 
 def _job_mystic_evening(rm):
-    """晚间能量签栏目。"""
+    """晚间宜忌栏目。"""
     from tasks.broadcast.mystic_broadcast_task import execute_mystic_broadcast_task
     execute_mystic_broadcast_task(rm, "mystic_evening", "evening")
 
@@ -3929,7 +3929,7 @@ def _build_critical_tasks(config: dict, today: str) -> list[dict]:
         for period, task_key, desc in (
             ("morning", "mystic_morning", "早间风水"),
             ("afternoon", "mystic_afternoon", "午间塔罗"),
-            ("evening", "mystic_evening", "晚间能量签"),
+            ("evening", "mystic_evening", "晚间宜忌播报"),
         ):
             hour, minute = _get_mystic_time(config, period)
             deadline_hour, deadline_minute = _deadline_after(hour, minute, 60)

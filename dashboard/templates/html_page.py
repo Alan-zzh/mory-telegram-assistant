@@ -1142,7 +1142,7 @@ function renderPage() {
       content.innerHTML = `<div class="page-header"><div><h2>问候配置</h2><p>早安/午安/晚安定时播报</p></div></div><div id="greetingContent" class="loading">加载中...</div>`;
       loadGreetingConfig(); break;
     case 'mystic':
-      content.innerHTML = `<div class="page-header"><div><h2>风水塔罗播报</h2><p>早间风水、午间塔罗与晚间能量签</p></div></div><div id="mysticContent" class="loading">加载中...</div>`;
+      content.innerHTML = `<div class="page-header"><div><h2>风水塔罗播报</h2><p>群公共口吻的早间风水、午间塔罗与晚间宜忌</p></div></div><div id="mysticContent" class="loading">加载中...</div>`;
       loadMysticConfig(); break;
     case 'exchangerate':
       content.innerHTML = `<div class="page-header"><div><h2>汇率配置</h2><p>实时U价查询设置</p></div></div><div id="exchangerateContent" class="loading">加载中...</div>`;
@@ -3749,7 +3749,7 @@ async function loadMysticConfig() {
   try {
     const d = await api('/api/settings/mystic'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('mysticContent'); if (!el) return;
-    const modes = (selected) => `<option value="feng_shui" ${selected==='feng_shui'?'selected':''}>风水小签</option><option value="tarot" ${selected==='tarot'?'selected':''}>塔罗牌</option><option value="fortune" ${selected==='fortune'?'selected':''}>能量签</option><option value="random" ${selected==='random'?'selected':''}>每天随机</option>`;
+    const modes = (selected) => `<option value="feng_shui" ${selected==='feng_shui'?'selected':''}>风水宜忌</option><option value="tarot" ${selected==='tarot'?'selected':''}>塔罗播报</option><option value="fortune" ${selected==='fortune'?'selected':''}>晚间宜忌</option><option value="random" ${selected==='random'?'selected':''}>每天随机</option>`;
     el.innerHTML = `<div class="card"><h3>风水塔罗播报</h3>
       <div class="toggle-row"><span>启用三档栏目</span><label class="toggle-switch"><input type="checkbox" id="mysticEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="form-group"><label>早间栏目</label><select id="mysticMorningMode" class="input-field">${modes(cfg.morning_mode)}</select></div>

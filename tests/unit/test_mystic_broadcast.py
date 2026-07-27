@@ -33,9 +33,9 @@ def test_mystic_content_is_daily_stable_and_has_three_distinct_columns():
 
     now = datetime(2026, 7, 27, 9, 5, tzinfo=_CST)
     expected = {
-        "morning": ("feng_shui", "今日风水小签"),
-        "afternoon": ("tarot", "今日塔罗牌"),
-        "evening": ("fortune", "晚间能量签"),
+        "morning": ("feng_shui", "今日风水播报"),
+        "afternoon": ("tarot", "今日塔罗播报"),
+        "evening": ("fortune", "晚间宜忌播报"),
     }
     for period, (mode, title) in expected.items():
         first = build_mystic_broadcast(_config(), period, now)
@@ -50,6 +50,32 @@ def test_mystic_content_is_daily_stable_and_has_three_distinct_columns():
         assert "热搜" not in visible
         assert "@moryselect" not in visible.lower()
         assert "@morychannelbot" not in visible.lower()
+
+
+def test_mystic_content_is_a_neutral_group_column_not_personal_coaching():
+    from tasks.support.mystic_content import build_mystic_broadcast
+
+    forbidden = (
+        "给你的",
+        "交给你",
+        "自己",
+        "内心",
+        "情绪",
+        "真正的选择",
+        "自责",
+        "写下一句",
+    )
+    now = datetime(2026, 7, 27, 13, 5, tzinfo=_CST)
+    for period in ("morning", "afternoon", "evening"):
+        payload = build_mystic_broadcast(_config(), period, now)
+        visible = " ".join(
+            [payload["title"]]
+            + [f"{label} {value}" for label, value in payload["sections"]]
+            + [payload["note"]]
+        )
+        assert all(marker not in visible for marker in forbidden)
+        assert len(payload["sections"]) == 4
+        assert payload["note"] == "每日随机参考，仅供娱乐，祝大家顺顺利利。"
 
 
 def test_random_mode_changes_by_date_but_retry_same_day_is_stable():
