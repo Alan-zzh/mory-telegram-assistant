@@ -105,6 +105,16 @@ def test_check_username_empty_returns_empty(detector):
     assert matches == []
 
 
+def test_screenshot_traditional_look_earn_username_hits_builtin_rule(detector):
+    """L2: 截图显示名“看我賺米”规范化后必须命中高置信引流规则"""
+    is_suspicious, reason = check_username_suspicious("看我賺米")
+    normalized = detector._normalize_ad_evasion("看我賺米")
+    assert is_suspicious is True
+    assert reason
+    assert normalized == "看我赚米"
+    assert detector._check_username(normalized)
+
+
 # ──────────────────────────────────────────────────────
 # L3: 内容评分
 # ──────────────────────────────────────────────────────
@@ -127,6 +137,22 @@ def test_content_score_empty_message(detector):
     """L3: 空消息评分为 0"""
     score, dims = detector._check_content_score("")
     assert score == 0
+
+
+@pytest.mark.parametrize("text", ["1天1w米", "微信业务日1w米人"])
+def test_screenshot_income_shorthand_scores_as_ad(detector, text):
+    """L3: 截图中的“时间+数字+w+米”收益黑话必须达到即时处置阈值"""
+    score, dims = detector._check_content_score(text)
+    assert score >= SCORE_THRESHOLD
+    assert "赚钱承诺" in dims[0]
+
+
+@pytest.mark.parametrize("text", ["我每天跑1万米", "微信业务怎么迁移", "一天跑1w米太累了"])
+def test_income_shorthand_rule_does_not_match_normal_context(detector, text):
+    """L3: 正常运动与微信业务讨论不因新规则被误判"""
+    score, dims = detector._check_content_score(text)
+    assert score == 0
+    assert dims == []
 
 
 # ──────────────────────────────────────────────────────
@@ -174,3 +200,12 @@ def test_detect_stats_increment_on_ad(detector):
     initial = detector.stats.get("total_detected", 0)
     detector.detect(username="看简介", msg="加我微信日赚千元")
     assert detector.stats["total_detected"] > initial
+
+
+@pytest.mark.parametrize("text", ["1天1w米", "微信业务日1w米人"])
+def test_screenshot_ad_samples_trigger_immediate_ban(detector, text):
+    """L4: 截图显示名与两条原文均应直接进入统一封禁链"""
+    result = detector.detect(username="看我賺米", msg=text)
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD

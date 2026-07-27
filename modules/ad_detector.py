@@ -45,7 +45,7 @@ logger = get_logger("ad_detector")
 BUILTIN_USERNAME_RULES = [
     {
         "id": "builtin_uname_look_profile",
-        "name": "用户名含'看简介'变体",
+        "name": "用户名含明确引流变体",
         "type": "username",
         "patterns": USERNAME_PATTERNS,
         "action": "ban",

@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-25。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-27。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、新闻播报、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，熟人低频只到预览；价格/内容/权益→预览，明确购买/看过预览/明确定制→自助，拒绝和概念咨询无入口；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、47 个调度项 | FAQ每日23:50汇总待优化问题与未命中样本；短期业务原文每分钟物理清理；`modules/auto_tasks.py` 为 legacy（`_start_with_apscheduler` 死代码，仅保留部分工具函数） |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层 + 营销话术 4 维度 71 条 + AI 辅助决策 4 函数（默认关闭） |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；繁体“看我賺米”与“1天1w米 / 日1w米”收益黑话进入统一永久禁言、删消息、双黑名单处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`（同步冲突副本不计入）；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` 开关 |
@@ -35,14 +35,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；新闻/问候/叫醒无销售；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.36.0（2026-07-25）
+v5.36.1（2026-07-27）
 
-生产状态：v5.36.0 已部署并完成独立代码专家、营销专家双重审查（均 GO）。本地 471 passed / 7 skipped，190 个 DB 委托方法无缺失/孤儿；生产 37/37 个本次运行文件哈希一致，`mory-assistant`/`mory-dashboard` 均 active+enabled、重启 0，health HTTP 200 且版本 v5.36.0，管理员风格样本 API 未鉴权返回 401，当前服务高优先级错误日志为 0。生产已存在 `reply_style_samples`、`business_conversation_context`、`conversation_conversion_state` 三张表，每分钟短期原文物理清理任务生效；ReplyContract 1.0.0 与 nine-case 成交矩阵通过，进化入口启用但强制人工审核、禁止自动应用和保存原始事件文本，夜间主动提醒双开关保持关闭。
+本地状态：v5.36.1 已通过 479 passed / 7 skipped，190 个 DB 委托方法无缺失/孤儿，文档 7/7 一致；截图两条广告原文均 `is_ad=true / score=3 / action=ban`，三条正常反例均不命中。生产当前仍为 v5.36.0，待本次可信提交后增量部署并回填双服务、health、版本、日志和生产规则回执。
 
 ## 最近 3 条大事
-1. 2026-07-25 v5.36.0 ReplyContract v1：双项目统一透明小助理人设、全自动沟通边界、单目标成交与人工审核风格进化。
-2. 2026-07-25 v5.35.19 群验证数字降噪：纯数字优先验证并在全部聊天统计与 AI 前短路，正常含数字聊天不误伤。
-3. 2026-07-25 v5.35.18 销售事实门禁空结果闭环：整段不可信时按唯一目标生成安全回复，不误转人工。
+1. 2026-07-27 v5.36.1 广告黑话补漏：繁体收益引流显示名和“1天1w米 / 日1w米”进入统一封禁链，保留正常语境反例。
+2. 2026-07-25 v5.36.0 ReplyContract v1：双项目统一透明小助理人设、全自动沟通边界、单目标成交与人工审核风格进化。
+3. 2026-07-25 v5.35.19 群验证数字降噪：纯数字优先验证并在全部聊天统计与 AI 前短路，正常含数字聊天不误伤。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
