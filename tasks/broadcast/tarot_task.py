@@ -245,13 +245,16 @@ def _get_fallback_hook(theme: str, uname: str) -> str:
 
 
 class TarotTask(BaseTask):
-    """每日塔罗搭讪任务（15:00，30% 概率）。"""
+    """旧版定向塔罗搭讪；默认关闭，避免与新栏目重复或点名打扰。"""
 
     @property
     def task_id(self) -> str:
         return "tarot_flirt"
 
     def schedule(self) -> List[Dict[str, Any]]:
+        cfg = self.rm.config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(self.rm.config, dict) else {}
+        if not bool(cfg.get("legacy_targeted_tarot_enabled", False)):
+            return []
         return [{
             "job_id": "tarot_flirt",
             "trigger": "cron",

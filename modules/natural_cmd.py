@@ -210,13 +210,13 @@ ALL_CONFIGS = {
         "examples": ["开启晚安", "关闭晚安"]
     },
     
-    "AUTO_NEWS": {
+    "MYSTIC_BROADCAST_ENABLED": {
         "category": "功能开关",
-        "name": "新闻播报",
+        "name": "风水塔罗播报",
         "type": "boolean",
-        "default": True,
-        "desc": "定时新闻推送",
-        "examples": ["开启新闻播报", "关闭新闻"]
+        "default": False,
+        "desc": "早间风水、午间塔罗与晚间能量签",
+        "examples": ["开启风水播报", "关闭塔罗播报"]
     },
     
     "WELCOME_MSG": {
@@ -279,34 +279,34 @@ ALL_CONFIGS = {
         "examples": ["把晚安时间改成23点", "改成21点发晚安"]
     },
     
-    "NEWS_HOUR_MORNING": {
+    "MYSTIC_HOUR_MORNING": {
         "category": "时间调度",
-        "name": "早间新闻时间",
+        "name": "早间风水时间",
         "type": "hour",
         "min": 0, "max": 23,
         "default": 9,
-        "desc": "早间新闻推送时间(小时)",
-        "examples": ["把早间新闻时间改成8点"]
+        "desc": "早间风水小签时间(小时)",
+        "examples": ["把早间风水时间改成8点"]
     },
     
-    "NEWS_HOUR_AFTERNOON": {
+    "MYSTIC_HOUR_AFTERNOON": {
         "category": "时间调度",
-        "name": "午间新闻时间",
+        "name": "午间塔罗时间",
         "type": "hour",
         "min": 0, "max": 23,
-        "default": 12,
-        "desc": "午间新闻推送时间(小时)",
-        "examples": ["把午间新闻时间改成11点"]
+        "default": 13,
+        "desc": "午间塔罗牌时间(小时)",
+        "examples": ["把午间塔罗时间改成14点"]
     },
     
-    "NEWS_HOUR_EVENING": {
+    "MYSTIC_HOUR_EVENING": {
         "category": "时间调度",
-        "name": "晚间新闻时间",
+        "name": "晚间能量签时间",
         "type": "hour",
         "min": 0, "max": 23,
-        "default": 18,
-        "desc": "晚间新闻推送时间(小时)",
-        "examples": ["把晚间新闻时间改成19点"]
+        "default": 20,
+        "desc": "晚间能量签时间(小时)",
+        "examples": ["把晚间能量签时间改成21点"]
     },
     
     "SIGNUP_RESET_HOUR": {
@@ -641,7 +641,12 @@ def _find_config_key(msg: str) -> str | None:
         "签到": "SIGNUP_ENABLED",
         "早安": "AUTO_GREETING",
         "晚安": "AUTO_GOODNIGHT",
-        "新闻": "AUTO_NEWS",
+        "早间风水时间": "MYSTIC_HOUR_MORNING",
+        "午间塔罗时间": "MYSTIC_HOUR_AFTERNOON",
+        "晚间能量签时间": "MYSTIC_HOUR_EVENING",
+        "风水": "MYSTIC_BROADCAST_ENABLED",
+        "塔罗播报": "MYSTIC_BROADCAST_ENABLED",
+        "玄学播报": "MYSTIC_BROADCAST_ENABLED",
         "欢迎": "WELCOME_MSG",
         "撤回": "ANTI_REVOKE",
         "即焚": "BURN_AFTER",
@@ -1053,22 +1058,28 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None
         "签到": "SIGNUP_ENABLED",
         "早安": "AUTO_GREETING",
         "晚安": "AUTO_GOODNIGHT",
-        "新闻": "AUTO_NEWS",
+        "风水": "MYSTIC_BROADCAST_ENABLED",
+        "塔罗播报": "MYSTIC_BROADCAST_ENABLED",
+        "玄学播报": "MYSTIC_BROADCAST_ENABLED",
         "欢迎": "WELCOME_MSG",
         "撤回": "ANTI_REVOKE",
         "防撤回": "ANTI_REVOKE",
         "即焚": "BURN_AFTER",
         "阅后即焚": "BURN_AFTER",
         "挽回": "RECOVER_ENABLED",
-        "早间新闻": "AUTO_NEWS",
-        "午间新闻": "AUTO_NEWS",
-        "晚间新闻": "AUTO_NEWS",
-        "新闻播报": "AUTO_NEWS",
+        "早间风水": "MYSTIC_BROADCAST_ENABLED",
+        "午间塔罗": "MYSTIC_BROADCAST_ENABLED",
+        "晚间能量签": "MYSTIC_BROADCAST_ENABLED",
     }
     
     for alias, key in toggle_aliases.items():
         if alias in feature:
-            config[key] = is_enable
+            if key == "MYSTIC_BROADCAST_ENABLED":
+                config.setdefault("MYSTIC_BROADCAST_CONFIG", {})["enabled"] = is_enable
+                config.setdefault("NEWS_BROADCAST_CONFIG", {})["enabled"] = False
+                config["AUTO_NEWS"] = False
+            else:
+                config[key] = is_enable
             save_config_fn()
             mory_bot.reply_and_track(m, f"✅ 已{action}「{ALL_CONFIGS.get(key, {}).get('name', key)}」")
             logger.info(f"{'ON' if is_enable else 'OFF'}: {key}")
@@ -1077,7 +1088,12 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None
     # 尝试精确匹配
     for key, info in ALL_CONFIGS.items():
         if info["type"] == "boolean" and info["name"].replace("功能", "") in feature:
-            config[key] = is_enable
+            if key == "MYSTIC_BROADCAST_ENABLED":
+                config.setdefault("MYSTIC_BROADCAST_CONFIG", {})["enabled"] = is_enable
+                config.setdefault("NEWS_BROADCAST_CONFIG", {})["enabled"] = False
+                config["AUTO_NEWS"] = False
+            else:
+                config[key] = is_enable
             save_config_fn()
             mory_bot.reply_and_track(m, f"✅ 已{action}「{info['name']}」")
             logger.info(f"{'ON' if is_enable else 'OFF'}: {key}")
@@ -1173,7 +1189,18 @@ def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn, mory_b
         return True
     
     # 普通数值修改
-    config[key] = val
+    mystic_time_keys = {
+        "MYSTIC_HOUR_MORNING": "morning_time",
+        "MYSTIC_HOUR_AFTERNOON": "afternoon_time",
+        "MYSTIC_HOUR_EVENING": "evening_time",
+    }
+    if key in mystic_time_keys:
+        current = config.setdefault("MYSTIC_BROADCAST_CONFIG", {})
+        old_value = str(current.get(mystic_time_keys[key], "00:00"))
+        minute = old_value.split(":", 1)[1] if ":" in old_value else "00"
+        current[mystic_time_keys[key]] = f"{int(val):02d}:{minute}"
+    else:
+        config[key] = val
     save_config_fn()
     
     # 格式化回复
@@ -1581,17 +1608,19 @@ def _handle_ad_rule_management(msg: str, config: dict, bot, m, save_config_fn, m
 
 
 def _handle_task_control(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None) -> bool:
-    """处理任务控制：关闭早间新闻 / 开启塔罗搭讪 等"""
+    """处理任务控制：开启风水播报 / 关闭午间塔罗等。"""
     task_map = {
         "早安问候": "AUTO_GREETING",
         "早安": "AUTO_GREETING",
         "午安问候": "AUTO_GREETING",
         "晚安问候": "AUTO_GOODNIGHT",
         "晚安": "AUTO_GOODNIGHT",
-        "早间新闻": "AUTO_NEWS",
-        "午间新闻": "AUTO_NEWS",
-        "晚间新闻": "AUTO_NEWS",
-        "新闻播报": "AUTO_NEWS",
+        "早间风水": "MYSTIC_BROADCAST_ENABLED",
+        "午间塔罗": "MYSTIC_BROADCAST_ENABLED",
+        "晚间能量签": "MYSTIC_BROADCAST_ENABLED",
+        "风水播报": "MYSTIC_BROADCAST_ENABLED",
+        "塔罗播报": "MYSTIC_BROADCAST_ENABLED",
+        "玄学播报": "MYSTIC_BROADCAST_ENABLED",
         "签到": "SIGNUP_ENABLED",
         "碎片寻宝": "PUZZLE_ENABLED",
         "寻宝": "PUZZLE_ENABLED",
@@ -1604,7 +1633,12 @@ def _handle_task_control(msg: str, config: dict, bot, m, save_config_fn, mory_bo
         return False
     for alias, key in task_map.items():
         if alias in msg:
-            config[key] = is_enable
+            if key == "MYSTIC_BROADCAST_ENABLED":
+                config.setdefault("MYSTIC_BROADCAST_CONFIG", {})["enabled"] = is_enable
+                config.setdefault("NEWS_BROADCAST_CONFIG", {})["enabled"] = False
+                config["AUTO_NEWS"] = False
+            else:
+                config[key] = is_enable
             save_config_fn()
             action = "开启" if is_enable else "关闭"
             mory_bot.reply_and_track(m, f"✅ 已{action}「{alias}」")

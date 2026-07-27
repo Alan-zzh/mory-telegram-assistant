@@ -72,7 +72,7 @@ class BaseTask(ABC):
     调度配置格式示例：
         [
             {
-                "job_id": "news_morning",
+                "job_id": "mystic_morning",
                 "trigger": "cron",
                 "hour": 9,
                 "minute": 0,

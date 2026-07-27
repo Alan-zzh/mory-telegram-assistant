@@ -223,6 +223,24 @@ def _is_news_window(now: datetime, config: dict, period: str, window_minute: int
     return now.hour == hour and minute <= now.minute < min(60, minute + window_minute)
 
 
+def _get_mystic_time(config: dict, period: str) -> tuple[int, int]:
+    """legacy 路径读取风水/塔罗栏目时间。"""
+    cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
+    defaults = {
+        "morning": (9, 5, "morning_time"),
+        "afternoon": (13, 5, "afternoon_time"),
+        "evening": (20, 35, "evening_time"),
+    }
+    default_hour, default_minute, time_key = defaults.get(period, defaults["morning"])
+    return _parse_hhmm(cfg.get(time_key), default_hour, default_minute)
+
+
+def _is_mystic_window(now: datetime, config: dict, period: str, window_minute: int = 5) -> bool:
+    """legacy loop 只触发新玄学栏目，不再触发新闻。"""
+    hour, minute = _get_mystic_time(config, period)
+    return now.hour == hour and minute <= now.minute < min(60, minute + window_minute)
+
+
 def _update_heartbeat():
     """【v5.11.0】更新心跳时间戳"""
     global _LAST_HEARTBEAT
@@ -1271,19 +1289,22 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
 # APScheduler 版本：独立 Job，互不干扰
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _job_news_morning(rm):
-    """早间新闻播报（9:00）"""
-    _execute_news_task(rm, "news_morning", "早间")
+def _job_mystic_morning(rm):
+    """早间风水栏目。"""
+    from tasks.broadcast.mystic_broadcast_task import execute_mystic_broadcast_task
+    execute_mystic_broadcast_task(rm, "mystic_morning", "morning")
 
 
-def _job_news_afternoon(rm):
-    """午间新闻播报（13:00）"""
-    _execute_news_task(rm, "news_afternoon", "午间")
+def _job_mystic_afternoon(rm):
+    """午间塔罗栏目。"""
+    from tasks.broadcast.mystic_broadcast_task import execute_mystic_broadcast_task
+    execute_mystic_broadcast_task(rm, "mystic_afternoon", "afternoon")
 
 
-def _job_news_evening(rm):
-    """晚间新闻播报（20:35）"""
-    _execute_news_task(rm, "news_evening", "晚间")
+def _job_mystic_evening(rm):
+    """晚间能量签栏目。"""
+    from tasks.broadcast.mystic_broadcast_task import execute_mystic_broadcast_task
+    execute_mystic_broadcast_task(rm, "mystic_evening", "evening")
 
 
 # ── 动态随机话术池（去AI化，与ai_engine人设系统一致）── [TRAE SOLO CN]
@@ -3878,11 +3899,9 @@ def _is_deadline_reached(now: datetime, deadline_hour: int, deadline_minute: int
     return (now.hour, now.minute) >= (deadline_hour, deadline_minute)
 
 
-def _is_news_enabled(config: dict) -> bool:
-    cfg = config.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
-    if "enabled" in cfg:
-        return bool(cfg.get("enabled"))
-    return bool(config.get("AUTO_NEWS", False))
+def _is_mystic_enabled(config: dict) -> bool:
+    cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
+    return bool(cfg.get("enabled", False))
 
 
 def _build_critical_tasks(config: dict, today: str) -> list[dict]:
@@ -3906,13 +3925,13 @@ def _build_critical_tasks(config: dict, today: str) -> list[dict]:
             "keys": [f"greeting_{period}_{today}"],
         })
 
-    if _is_news_enabled(config):
+    if _is_mystic_enabled(config):
         for period, task_key, desc in (
-            ("morning", "news_morning", "早间新闻"),
-            ("afternoon", "news_afternoon", "午间新闻"),
-            ("evening", "news_evening", "晚间新闻"),
+            ("morning", "mystic_morning", "早间风水"),
+            ("afternoon", "mystic_afternoon", "午间塔罗"),
+            ("evening", "mystic_evening", "晚间能量签"),
         ):
-            hour, minute = _get_news_time(config, period)
+            hour, minute = _get_mystic_time(config, period)
             deadline_hour, deadline_minute = _deadline_after(hour, minute, 60)
             tasks.append({
                 "desc": desc,
@@ -4455,13 +4474,13 @@ def _start_with_apscheduler(rm):
     )
     _scheduler_instance = scheduler
 
-    # 新闻播报（读取 NEWS_BROADCAST_CONFIG，misfire_grace_time=60：1分钟内错过可补发）
-    news_morning_hour, news_morning_minute = _get_news_time(rm.config, "morning")
-    news_afternoon_hour, news_afternoon_minute = _get_news_time(rm.config, "afternoon")
-    news_evening_hour, news_evening_minute = _get_news_time(rm.config, "evening")
-    scheduler.add_job(_job_news_morning, "cron", hour=news_morning_hour, minute=news_morning_minute, args=[rm], id="news_morning", max_instances=1, coalesce=True, misfire_grace_time=60)
-    scheduler.add_job(_job_news_afternoon, "cron", hour=news_afternoon_hour, minute=news_afternoon_minute, args=[rm], id="news_afternoon", max_instances=1, coalesce=True, misfire_grace_time=60)
-    scheduler.add_job(_job_news_evening, "cron", hour=news_evening_hour, minute=news_evening_minute, args=[rm], id="news_evening", max_instances=1, coalesce=True, misfire_grace_time=60)
+    # 风水 / 塔罗栏目（新闻播报已下线）
+    mystic_morning_hour, mystic_morning_minute = _get_mystic_time(rm.config, "morning")
+    mystic_afternoon_hour, mystic_afternoon_minute = _get_mystic_time(rm.config, "afternoon")
+    mystic_evening_hour, mystic_evening_minute = _get_mystic_time(rm.config, "evening")
+    scheduler.add_job(_job_mystic_morning, "cron", hour=mystic_morning_hour, minute=mystic_morning_minute, args=[rm], id="mystic_morning", max_instances=1, coalesce=True, misfire_grace_time=60)
+    scheduler.add_job(_job_mystic_afternoon, "cron", hour=mystic_afternoon_hour, minute=mystic_afternoon_minute, args=[rm], id="mystic_afternoon", max_instances=1, coalesce=True, misfire_grace_time=60)
+    scheduler.add_job(_job_mystic_evening, "cron", hour=mystic_evening_hour, minute=mystic_evening_minute, args=[rm], id="mystic_evening", max_instances=1, coalesce=True, misfire_grace_time=60)
 
     # 每日数据报告（v4.2.4）- 私聊发送
     scheduler.add_job(_job_daily_report, "cron", hour=9, minute=10, args=[rm], id="daily_report", max_instances=1, coalesce=True, misfire_grace_time=60)
@@ -4855,12 +4874,12 @@ def _legacy_task_loop(rm):
             if now.weekday() == 2 and now.hour == 0 and now.minute == 0:
                 _job_leak(rm)
 
-            if _is_news_window(now, rm.config, "morning"):
-                _job_news_morning(rm)
-            if _is_news_window(now, rm.config, "afternoon"):
-                _job_news_afternoon(rm)
-            if _is_news_window(now, rm.config, "evening", window_minute=7):
-                _job_news_evening(rm)
+            if _is_mystic_window(now, rm.config, "morning"):
+                _job_mystic_morning(rm)
+            if _is_mystic_window(now, rm.config, "afternoon"):
+                _job_mystic_afternoon(rm)
+            if _is_mystic_window(now, rm.config, "evening", window_minute=7):
+                _job_mystic_evening(rm)
             if _is_greeting_window(now, rm.config, "morning"):
                 _job_greeting_morning(rm)
             if _is_greeting_window(now, rm.config, "afternoon"):

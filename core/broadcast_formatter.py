@@ -583,6 +583,48 @@ def build_rich_news_card_message(
     return "\n".join(parts)
 
 
+def build_mystic_html(
+    title: str,
+    sections: list[tuple[str, str]],
+    note: str,
+    emoji: str = "🔮",
+) -> str:
+    """风水/塔罗栏目 HTML 卡片；无新闻、互动或成交入口。"""
+    lines = [
+        f"<b>{escape_html_text(label)}</b>：{escape_html_text(value)}"
+        for label, value in sections
+    ]
+    return "\n".join([
+        f"<b><i>{escape_html_text(emoji)} {escape_html_text(title)}</i></b>",
+        "",
+        "\n\n".join(lines),
+        "",
+        f"<blockquote><i>{escape_html_text(note)}</i></blockquote>",
+        "",
+        f"<i>{BROADCAST_SENDER_HANDLE}</i>",
+    ])
+
+
+def build_rich_mystic_card_message(
+    title: str,
+    sections: list[tuple[str, str]],
+    note: str,
+    emoji: str = "🔮",
+) -> str:
+    """风水/塔罗栏目 Rich Message 卡片。"""
+    parts = [f"<h2>{escape_html_text(emoji)} {escape_html_text(title)}</h2>"]
+    parts.extend(
+        f"<p><b>{escape_html_text(label)}</b>：{escape_html_text(value)}</p>"
+        for label, value in sections
+    )
+    parts.extend([
+        f"<blockquote>{escape_html_text(note)}</blockquote>",
+        "<hr>",
+        f"<footer>{BROADCAST_SENDER_HANDLE}</footer>",
+    ])
+    return "\n".join(parts)
+
+
 def build_rich_alert_card_message(
     title: str,
     body: str,

@@ -214,6 +214,43 @@ def test_news_endpoint_uses_preferred_source_and_time_fields(monkeypatch):
     assert store["NEWS_HOUR_EVENING"] == 21
 
 
+def test_mystic_endpoint_disables_news_and_saves_three_columns(monkeypatch):
+    import dashboard.api.settings_api as settings_api
+
+    store = {
+        "AUTO_NEWS": True,
+        "NEWS_BROADCAST_CONFIG": {"enabled": True},
+        "MYSTIC_BROADCAST_CONFIG": {"enabled": False},
+    }
+    monkeypatch.setattr(settings_api, "read_config", lambda: dict(store))
+
+    def fake_write(cfg):
+        store.clear()
+        store.update(cfg)
+        return True
+
+    monkeypatch.setattr(settings_api, "write_config", fake_write)
+    client = _make_client()
+    resp = client.post("/api/settings/mystic", json={
+        "enabled": True,
+        "morning_time": "09:15",
+        "morning_mode": "feng_shui",
+        "afternoon_time": "13:15",
+        "afternoon_mode": "tarot",
+        "evening_time": "20:45",
+        "evening_mode": "fortune",
+    })
+
+    assert resp.status_code == 200
+    assert store["MYSTIC_BROADCAST_CONFIG"]["enabled"] is True
+    assert store["MYSTIC_BROADCAST_CONFIG"]["morning_mode"] == "feng_shui"
+    assert store["MYSTIC_BROADCAST_CONFIG"]["afternoon_mode"] == "tarot"
+    assert store["MYSTIC_BROADCAST_CONFIG"]["evening_mode"] == "fortune"
+    assert store["MYSTIC_BROADCAST_CONFIG"]["legacy_targeted_tarot_enabled"] is False
+    assert store["NEWS_BROADCAST_CONFIG"]["enabled"] is False
+    assert store["AUTO_NEWS"] is False
+
+
 def test_antiflood_endpoint_syncs_rate_limit_and_engine_config(monkeypatch):
     import dashboard.api.settings_api as settings_api
 

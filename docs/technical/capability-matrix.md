@@ -131,12 +131,8 @@
 | `convert` | **llm_standard** | 转化（标准强度引导） |
 | `cart_recovery` | **llm_standard** | **购物车挽回**（每小时 AI 个性化私信，配合 auto_tasks._job_cart_recovery） |
 | `tarot_interpret` | **llm_standard** | 塔罗解读（用户反馈抽到的牌的含义，与 tarot 区分） |
-| `news` | **llm_premium** | 早间新闻（旗舰模型，保证质量） |
-| `afternoon_news` | **llm_premium** | 午间新闻（旗舰模型） |
-| `evening_news` | **llm_premium** | 晚间新闻（旗舰模型） |
-| `trendradar_morning_news` | **llm_premium** | 趋势雷达早间新闻（兼容模式，已并入统一新闻主流程） |
-| `trendradar_noon_news` | **llm_premium** | 趋势雷达午间新闻（兼容模式） |
-| `trendradar_evening_news` | **llm_premium** | 趋势雷达晚间新闻（兼容模式） |
+| `news` / `afternoon_news` / `evening_news` | **llm_premium** | v5.37.0 起仅保留未接线兼容提示词，定时新闻已下线 |
+| `trendradar_*_news` | **llm_premium** | v5.37.0 起仅保留未接线兼容提示词 |
 
 #### 1.3.2 三池分工策略
 
@@ -308,8 +304,8 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 | hook / nudge / leak | （无） | llm_light | 引导主动聊天 |
 | morning / afternoon / evening | （无） | llm_light | 时段问候 |
 | wakeup / reactivate | （无） | llm_light | 唤醒沉默用户 |
-| news / afternoon_news / evening_news | （无） | llm_premium | 新闻 + 末尾软广 |
-| trendradar_*_news | （无） | llm_premium | 趋势新闻 + 强引导 |
+| news / afternoon_news / evening_news | （无） | llm_premium | 兼容保留，定时发送链已下线 |
+| trendradar_*_news | （无） | llm_premium | 兼容保留，定时发送链已下线 |
 
 ---
 
@@ -648,8 +644,9 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 **`auto_tasks.py` 35+ _job_* 函数清单**（部分）：
 - `_job_cart_recovery`（L1535）— 购物车挽回（详见 2.3.3）
 - `_job_morning_greeting` — 早安播报
-- `_job_afternoon_news` — 午间新闻
-- `_job_evening_news` — 晚间新闻
+- `_job_mystic_morning` — 早间风水小签
+- `_job_mystic_afternoon` — 午间塔罗牌
+- `_job_mystic_evening` — 晚间能量签
 - `_job_checkin_reminder` — 签到提醒
 - `_job_wakeup_inactive` — 唤醒沉默用户
 - `_job_reactivate` — 激活流失用户
@@ -1080,7 +1077,7 @@ P0(新成员) → P0.5(验证码) → P0.6(设置面板) → P0.7(私聊连接)
 | 1468 | `_job_reactivate` | 用户重新激活（沉默 7/15/30 天分层触达） |
 | 1535 | `_job_cart_recovery` | **购物车挽回（每5分钟 AI 个性化消息，硬核商业闭环）** |
 | 1564 | `_job_leak` | 漏斗引导（漏斗各阶段用户差异化推送） |
-| 2822 | `_job_tarot_flirt` | 塔罗撩拨（塔罗场景下软引导至 channel bot） |
+| 2822 | `_job_tarot_flirt` | 旧定向塔罗兼容函数；v5.37.0 默认不注册 |
 | 1299 | `_job_burn_probe` | 烧号探测（疑似注册即弃用账号打标） |
 
 ### 6.4 清理类（6 个）

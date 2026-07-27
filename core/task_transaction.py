@@ -9,7 +9,7 @@ core/task_transaction.py · 任务事务管理器
     TaskTransactionManager.bind(rm)
 
     # 任务中使用
-    with TaskTransactionManager("news_morning", db, resources=['ai', 'bot']) as tx:
+    with TaskTransactionManager("mystic_morning", db, resources=['bot']) as tx:
         if not tx.claimed:
             return
         # ... 执行任务逻辑 ...

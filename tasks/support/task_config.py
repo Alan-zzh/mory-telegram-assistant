@@ -79,6 +79,24 @@ def get_news_source_strategy(config: dict) -> str:
     return "real_first"
 
 
+def get_mystic_time(config: dict, period: str) -> Tuple[int, int]:
+    """风水/塔罗栏目时间读取新配置，不再继承新闻开关。"""
+    cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
+    defaults = {
+        "morning": (9, 5, "morning_time"),
+        "afternoon": (13, 5, "afternoon_time"),
+        "evening": (20, 35, "evening_time"),
+    }
+    default_hour, default_minute, time_key = defaults.get(period, defaults["morning"])
+    return parse_hhmm(cfg.get(time_key), default_hour, default_minute)
+
+
+def is_mystic_enabled(config: dict) -> bool:
+    """玄学播报是新能力，缺少显式开关时必须保持关闭。"""
+    cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
+    return bool(cfg.get("enabled", False))
+
+
 def get_all_group_ids(config: dict) -> list:
     """
     获取所有管理群组（GROUP_ID + MANAGED_GROUPS 合并去重）。

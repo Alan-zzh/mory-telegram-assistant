@@ -378,7 +378,7 @@ const _pageTitles = {
   pointsdecay: '积分衰减', afk: 'AFK配置', antichannel: '反频道转发',
   cas: 'CAS检查', cleanservice: '服务消息清理', autoreply: '自动回复',
   messagelocks: '消息锁', adspam: '广告防刷', inactiveclean: '不活跃清理',
-  greeting: '问候配置', news: '新闻配置', exchangerate: '汇率配置',
+  greeting: '问候配置', mystic: '风水塔罗播报', exchangerate: '汇率配置',
   visualdashboard: '可视化面板', language: '语言设置', spamaction: '广告动作',
   goodbye: '退群消息', rules: '群规配置', games: '游戏配置',
   aimodel: 'AI模型参数', botcore: 'Bot核心配置', pricing: '定价管理', persona: '人设编辑'
@@ -1141,9 +1141,9 @@ function renderPage() {
     case 'greeting':
       content.innerHTML = `<div class="page-header"><div><h2>问候配置</h2><p>早安/午安/晚安定时播报</p></div></div><div id="greetingContent" class="loading">加载中...</div>`;
       loadGreetingConfig(); break;
-    case 'news':
-      content.innerHTML = `<div class="page-header"><div><h2>新闻配置</h2><p>定时新闻推送设置</p></div></div><div id="newsContent" class="loading">加载中...</div>`;
-      loadNewsConfig(); break;
+    case 'mystic':
+      content.innerHTML = `<div class="page-header"><div><h2>风水塔罗播报</h2><p>早间风水、午间塔罗与晚间能量签</p></div></div><div id="mysticContent" class="loading">加载中...</div>`;
+      loadMysticConfig(); break;
     case 'exchangerate':
       content.innerHTML = `<div class="page-header"><div><h2>汇率配置</h2><p>实时U价查询设置</p></div></div><div id="exchangerateContent" class="loading">加载中...</div>`;
       loadExchangeRateConfig(); break;
@@ -1856,7 +1856,7 @@ async function loadConfig() {
     if (!cc) return;
     const categories = {
       '核心互动': ['REPLY_CHANCE', 'REPLY_SPEED', 'REPLY_DELAY_MIN', 'REPLY_DELAY_MAX', 'MAX_MSG_LENGTH', 'RELAY_MODE_ENABLED', 'FAQ_TRACKING_ENABLED', 'FAQ_AUTO_REPLY_ENABLED'],
-      '播报调度': ['GREETING_CONFIG', 'NEWS_BROADCAST_CONFIG', 'RELAY_MODE_ENABLED', 'WELCOME_MSG'],
+      '播报调度': ['GREETING_CONFIG', 'MYSTIC_BROADCAST_CONFIG', 'RELAY_MODE_ENABLED', 'WELCOME_MSG'],
       '安全治理': ['ENABLE_MESSAGE_DELETION', 'ORPHAN_CLEANUP_ENABLED', 'AD_CLEANUP_REACTIONS', 'RETROACTIVE_SCAN_ENABLED', 'EMOJI_MASK_DETECT', 'EDIT_DETECT_ENABLE', 'AD_DETECT_CONFIG', 'ANTIFLOOD_CONFIG', 'ANTI_DELETE_CONFIG', 'SPAM_LIMIT'],
       '业务配置': ['PROACTIVE_ENGAGE_CONFIG', 'CHECKIN_CONFIG', 'POINTS_RULES', 'POINTS_PER_INVITE', 'PRICE_LIST', 'REPLY_STICKER_CHANCE'],
       'AI模型': ['MODE_ROUTING', 'MODEL_POOLS', 'TEMPERATURE', 'MAX_TOKENS', 'TOP_P', 'FREQUENCY_PENALTY', 'PRESENCE_PENALTY', 'CURRENT_MODEL_INDEX'],
@@ -1868,7 +1868,7 @@ async function loadConfig() {
       'REPLY_CHANCE': '群聊回复概率(%)', 'REPLY_DELAY_MIN': '回复延迟下限(秒)', 'REPLY_DELAY_MAX': '回复延迟上限(秒)',
       'REPLY_SPEED': '回复节奏', 'MAX_MSG_LENGTH': '最大回复长度', 'RELAY_MODE_ENABLED': '私聊中继',
       'FAQ_TRACKING_ENABLED': '问题历史留存', 'FAQ_AUTO_REPLY_ENABLED': 'FAQ模板自动回复',
-      'GREETING_CONFIG': '问候配置', 'NEWS_BROADCAST_CONFIG': '新闻配置', 'RELAY_MODE_ENABLED': '私聊中继', 'WELCOME_MSG': '入群欢迎',
+      'GREETING_CONFIG': '问候配置', 'MYSTIC_BROADCAST_CONFIG': '风水塔罗配置', 'RELAY_MODE_ENABLED': '私聊中继', 'WELCOME_MSG': '入群欢迎',
       'ENABLE_MESSAGE_DELETION': '消息删除', 'ORPHAN_CLEANUP_ENABLED': '孤儿清理', 'AD_CLEANUP_REACTIONS': '广告反应清理', 'RETROACTIVE_SCAN_ENABLED': '启动追溯',
       'EMOJI_MASK_DETECT': 'Emoji面具检测', 'EDIT_DETECT_ENABLE': '编辑消息检测', 'AD_DETECT_CONFIG': '广告检测',
       'ANTIFLOOD_CONFIG': '反刷屏', 'ANTI_DELETE_CONFIG': '反撤回', 'SPAM_LIMIT': '刷屏限制',
@@ -3127,7 +3127,7 @@ function renderApp() {
             <div class="nav-item" onclick="switchTab('adspam')">🚫 广告防刷</div>
             <div class="nav-item" onclick="switchTab('inactiveclean')">👋 不活跃清理</div>
             <div class="nav-item" onclick="switchTab('greeting')">🌅 问候配置</div>
-            <div class="nav-item" onclick="switchTab('news')">📰 新闻配置</div>
+            <div class="nav-item" onclick="switchTab('mystic')">🔮 风水塔罗播报</div>
             <div class="nav-item" onclick="switchTab('exchangerate')">💱 汇率配置</div>
             <div class="nav-item" onclick="switchTab('visualdashboard')">📊 可视化面板</div>
             <div class="nav-item" onclick="switchTab('language')">🌐 语言设置</div>
@@ -3745,24 +3745,27 @@ async function saveGreetingConfig() {
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 
-async function loadNewsConfig() {
+async function loadMysticConfig() {
   try {
-    const d = await api('/api/settings/news'); if (!d.ok) return;
-    const cfg = d.data; const el = document.getElementById('newsContent'); if (!el) return;
-    el.innerHTML = `<div class="card"><h3>新闻配置</h3>
-      <div class="toggle-row"><span>启用新闻推送</span><label class="toggle-switch"><input type="checkbox" id="newsEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
-      <div class="form-group"><label>数据源策略</label><select id="newsSource" class="input-field"><option value="real_first" ${cfg.preferred_source==='real_first'?'selected':''}>真实源优先</option><option value="trendradar_first" ${cfg.preferred_source==='trendradar_first'?'selected':''}>热点源优先</option></select></div>
-      <div class="form-group"><label>早间新闻时间</label><input type="time" id="newsMorningTime" value="${cfg.morning_time || '09:05'}" class="input-field"></div>
-      <div class="form-group"><label>午间新闻时间</label><input type="time" id="newsAfternoonTime" value="${cfg.afternoon_time || '13:05'}" class="input-field"></div>
-      <div class="form-group"><label>晚间新闻时间</label><input type="time" id="newsEveningTime" value="${cfg.evening_time || '20:35'}" class="input-field"></div>
-      <div class="form-group"><label>说明</label><div class="hint-text">新闻播报现在固定走真实数据源优先的短摘要，不再展示未接线的“自定义新闻源列表”。</div></div>
-      <button class="btn btn-primary" onclick="saveNewsConfig()">保存设置</button></div>`;
-  } catch (e) { document.getElementById('newsContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
+    const d = await api('/api/settings/mystic'); if (!d.ok) return;
+    const cfg = d.data; const el = document.getElementById('mysticContent'); if (!el) return;
+    const modes = (selected) => `<option value="feng_shui" ${selected==='feng_shui'?'selected':''}>风水小签</option><option value="tarot" ${selected==='tarot'?'selected':''}>塔罗牌</option><option value="fortune" ${selected==='fortune'?'selected':''}>能量签</option><option value="random" ${selected==='random'?'selected':''}>每天随机</option>`;
+    el.innerHTML = `<div class="card"><h3>风水塔罗播报</h3>
+      <div class="toggle-row"><span>启用三档栏目</span><label class="toggle-switch"><input type="checkbox" id="mysticEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
+      <div class="form-group"><label>早间栏目</label><select id="mysticMorningMode" class="input-field">${modes(cfg.morning_mode)}</select></div>
+      <div class="form-group"><label>早间时间</label><input type="time" id="mysticMorningTime" value="${cfg.morning_time || '09:05'}" class="input-field"></div>
+      <div class="form-group"><label>午间栏目</label><select id="mysticAfternoonMode" class="input-field">${modes(cfg.afternoon_mode)}</select></div>
+      <div class="form-group"><label>午间时间</label><input type="time" id="mysticAfternoonTime" value="${cfg.afternoon_time || '13:05'}" class="input-field"></div>
+      <div class="form-group"><label>晚间栏目</label><select id="mysticEveningMode" class="input-field">${modes(cfg.evening_mode)}</select></div>
+      <div class="form-group"><label>晚间时间</label><input type="time" id="mysticEveningTime" value="${cfg.evening_time || '20:35'}" class="input-field"></div>
+      <div class="form-group"><label>说明</label><div class="hint-text">新闻播报已下线。内容每天变化，同一天重试保持同一张牌；仅作轻松娱乐，不点名群友、不带销售入口。</div></div>
+      <button class="btn btn-primary" onclick="saveMysticConfig()">保存设置</button></div>`;
+  } catch (e) { document.getElementById('mysticContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
 }
-async function saveNewsConfig() {
+async function saveMysticConfig() {
   try {
-    const res = await api('/api/settings/news', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('newsEnable').checked, preferred_source: document.getElementById('newsSource').value, morning_time: document.getElementById('newsMorningTime').value, afternoon_time: document.getElementById('newsAfternoonTime').value, evening_time: document.getElementById('newsEveningTime').value }) });
-    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadNewsConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
+    const res = await api('/api/settings/mystic', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('mysticEnable').checked, morning_mode: document.getElementById('mysticMorningMode').value, morning_time: document.getElementById('mysticMorningTime').value, afternoon_mode: document.getElementById('mysticAfternoonMode').value, afternoon_time: document.getElementById('mysticAfternoonTime').value, evening_mode: document.getElementById('mysticEveningMode').value, evening_time: document.getElementById('mysticEveningTime').value }) });
+    if (res.ok) { showToast('✅ 配置已保存', 'success'); loadMysticConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
 

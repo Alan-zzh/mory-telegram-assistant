@@ -5,7 +5,7 @@
 > 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-27。
 
 ## 一句话
-Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、新闻播报、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
+Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、风水塔罗栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
 
 ## 模块状态表
 | 模块 | 状态 | 入口文件 | 备注 |
@@ -13,7 +13,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，熟人低频只到预览；价格/内容/权益→预览，明确购买/看过预览/明确定制→自助，拒绝和概念咨询无入口；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
-| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、47 个调度项 | FAQ每日23:50汇总待优化问题与未命中样本；短期业务原文每分钟物理清理；`modules/auto_tasks.py` 为 legacy（`_start_with_apscheduler` 死代码，仅保留部分工具函数） |
+| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、46 个调度项 | 三档玄学栏目取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总待优化问题与未命中样本；短期业务原文每分钟物理清理；`modules/auto_tasks.py` 为 legacy |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；繁体“看我賺米”与“1天1w米 / 日1w米”收益黑话进入统一永久禁言、删消息、双黑名单处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`（同步冲突副本不计入）；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
@@ -24,25 +24,25 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 网编会员 | 默认关闭 | `modules/membership.py` | 付费等级/订阅管理/权益体系，`MEMBERSHIP_CONFIG.enabled` 开关 |
 | 孤儿清理 | 在用 | `orphan_api.py`、`burn_orphan_task.py` | 端到端串联 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
-| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 161 个路由，端口 6616；新增管理员鉴权的风格样本创建、审核、启用和查询 API |
+| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 162 个路由，端口 6616；播报页直接配置早间风水、午间塔罗、晚间能量签及时间 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 170 张表；`reply_style_samples` 由 Alembic 0002 管理；0003 增加独立的 30 分钟短期业务上下文与结构化转化状态，使进化遥测关闭原文后仍可跨重启承接、CTA 去重和持久拒绝 |
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本并同步根目录六件套 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 后台保留 10 条综合候选，用户只看 5 条精炼头条 + 固定“本次刚刚更新”时效说明；新闻不夹带互动或销售 CTA；卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
+| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 风水、塔罗、能量签使用独立 HTML/Rich 卡片；固定娱乐边界，不带互动或销售 CTA，卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段；早晚正文无按钮，午后/睡前如带入口只到预览；AI 失败回退可信底稿 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；泛定制概念不被静态规则抢占 |
-| 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；新闻/问候/叫醒无销售；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
+| 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；玄学栏目、问候、叫醒无销售；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.36.2（2026-07-27）
+v5.37.0（2026-07-27）
 
-生产状态：v5.36.2 已通过带锁暂存、备份、原子替换和失败回滚流程发布；本地 481 passed / 7 skipped、DB 190/190、文档 7/7。生产 `mory-assistant` / `mory-dashboard` 均 active+enabled、`NRestarts=0`、health HTTP 200/v5.36.2，广告与新闻 6 个关键运行文件哈希与提交一致；新闻实时重新抓取 10 条候选，固定最新时效说明、旧截图互动尾语拦截、事实词保留和 `@MoryMateBot` 署名均通过，管理员 Rich Message 回执 ID 2978。广告检测及内置规则开启、阈值 3，“1天1w米 / 微信业务日1w米人”均 `True / score=3 / ban`，跑步距离与普通微信业务讨论三条反例均 0 分，5/5 VPS 规则探针通过。重启时旧 PID 仅有 logging handler 关闭噪声，当前双 PID 无实际 Traceback/ImportError。
+生产状态：本地 v5.37.0 已完成三档新闻退役与风水塔罗替换，489 passed / 7 skipped、DB 190/190、文档 7/7，任务发现为 45 个类/46 个调度项且不存在 `news_*`；待可信提交和生产增量部署后补真实回执，当前生产仍为 v5.36.2。
 
 ## 最近 3 条大事
-1. 2026-07-27 v5.36.2 新闻去尴尬：第 6 行固定说明本次为刚刚更新的最新新闻，不再随机要求群友讨论；每轮抓取主动绕过中间缓存，事实标题里的价格、福利等普通词不会被营销门禁误删。
-2. 2026-07-27 v5.36.1 广告黑话补漏：繁体收益引流显示名和“1天1w米 / 日1w米”进入统一封禁链，保留正常语境反例。
-3. 2026-07-25 v5.36.0 ReplyContract v1：双项目统一透明小助理人设、全自动沟通边界、单目标成交与人工审核风格进化。
+1. 2026-07-27 v5.37.0 三档新闻整体下线：09:05 风水小签、13:05 塔罗牌、20:35 能量签取代新闻；同日稳定随机、无新闻源、无销售入口，旧定向塔罗默认关闭。
+2. 2026-07-27 v5.36.2 新闻去尴尬：第 6 行固定说明本次为刚刚更新的最新新闻，不再随机要求群友讨论。
+3. 2026-07-27 v5.36.1 广告黑话补漏：繁体收益引流显示名和“1天1w米 / 日1w米”进入统一封禁链，保留正常语境反例。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
@@ -50,7 +50,7 @@ modules_py=135
 core_py=77
 job_count=50
 db_tables=170
-dashboard_routes=161
+dashboard_routes=162
 dispatch_funcs=9
 model_router_mappings=10
 <!-- METRICS:END -->

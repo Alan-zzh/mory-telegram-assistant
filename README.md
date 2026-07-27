@@ -2,9 +2,9 @@
 
 # Mory小助理
 
-Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、新闻播报、运营 Dashboard。单机 VPS（systemd）部署。
+Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、风水塔罗栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.36.2**：新闻卡片固定以“以上是本次刚刚更新的最新新闻。”收尾，不再随机要求群友表达意见或强行立人设；每轮抓取使用 no-cache 和时间戳参数，减少复用上一轮聚合响应。广告检测继续覆盖繁体“看我賺米”及“1天1w米 / 日1w米”收益黑话；两个项目继续共用 ReplyContract v1，普通聊天无 CTA，了解先预览，明确购买才进入自助订阅。
+当前版本 **v5.37.0**：早、午、晚三档新闻播报已整体下线，原时段改为早间风水小签、午间塔罗牌和晚间能量签。内容每天变化、同日重试保持一致，仅作轻松娱乐；不抓新闻、不点名群友、不带销售入口，旧 15:00 定向塔罗默认关闭。广告检测与 ReplyContract v1 继续保持现有边界。
 
 ## 快速开始
 
@@ -31,7 +31,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 ## 目录结构
 - `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（77 个业务 `.py`）。
 - `modules/`：135 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等 v5.34.0+ 默认关闭）。
-- `dashboard/`：运营后台（`app` + `api`，161 路由，含人工审核风格样本 API）。
+- `dashboard/`：运营后台（`app` + `api`，162 路由，含人工审核风格样本 API）。
 - `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
 - `scripts/`：工具脚本（含 `doc_consistency.py` 自检）。
 - `tests/`：单元测试。
@@ -41,7 +41,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `config/`：systemd 服务文件。
 
 ## 客观指标（2026-07-19 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 135，core 业务 `.py` = 77，`_job_` = 50，DB 表 = 170，Dashboard 路由 = 161，消息分发函数 = 9，model_router 映射 = 10。
+modules 业务 `.py` = 135，core 业务 `.py` = 77，`_job_` = 50，DB 表 = 170，Dashboard 路由 = 162，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 六大文档索引

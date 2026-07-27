@@ -240,15 +240,11 @@ BROADCAST_KEYS = {
     "greeting_afternoon_time": {"path": "GREETING_CONFIG.afternoon_time",  "type": "set", "label": "午安时间", "default": "12:35"},
     "greeting_evening":      {"path": "GREETING_CONFIG.evening_enabled",   "type": "toggle", "label": "晚安问候", "default": False},
     "greeting_evening_time": {"path": "GREETING_CONFIG.evening_time",      "type": "set", "label": "晚安时间", "default": "23:05"},
-    # 新闻播报
-    "news_enabled":          {"path": "NEWS_BROADCAST_CONFIG.enabled",     "type": "toggle", "label": "新闻播报", "default": False},
-    "news_source":           {"path": "NEWS_BROADCAST_CONFIG.preferred_source", "type": "cycle",
-                              "options": ["real_first", "trendradar_first"],
-                              "labels": {"real_first": "真实源优先", "trendradar_first": "热点源优先"},
-                              "label": "新闻来源"},
-    "news_morning_time":     {"path": "NEWS_BROADCAST_CONFIG.morning_time", "type": "set", "label": "早间新闻", "default": "09:05"},
-    "news_afternoon_time":   {"path": "NEWS_BROADCAST_CONFIG.afternoon_time", "type": "set", "label": "午间新闻", "default": "13:05"},
-    "news_evening_time":     {"path": "NEWS_BROADCAST_CONFIG.evening_time", "type": "set", "label": "晚间新闻", "default": "20:35"},
+    # 风水 / 塔罗播报
+    "mystic_enabled":        {"path": "MYSTIC_BROADCAST_CONFIG.enabled", "type": "toggle", "label": "风水塔罗播报", "default": False},
+    "mystic_morning_time":   {"path": "MYSTIC_BROADCAST_CONFIG.morning_time", "type": "set", "label": "早间风水", "default": "09:05"},
+    "mystic_afternoon_time": {"path": "MYSTIC_BROADCAST_CONFIG.afternoon_time", "type": "set", "label": "午间塔罗", "default": "13:05"},
+    "mystic_evening_time":   {"path": "MYSTIC_BROADCAST_CONFIG.evening_time", "type": "set", "label": "晚间能量签", "default": "20:35"},
     # 定点播报
     "broadcasts":            {"path": "_list_broadcasts",                  "type": "list", "label": "定点播报列表"},
     # 定时消息

@@ -107,6 +107,18 @@ def normalize_runtime_config(cfg: dict | None) -> dict:
     cfg["NEWS_HOUR_AFTERNOON"] = news_cfg["afternoon_time"]
     cfg["NEWS_HOUR_EVENING"] = news_cfg["evening_time"]
 
+    mystic_cfg = _ensure_dict(cfg, "MYSTIC_BROADCAST_CONFIG")
+    mystic_cfg["enabled"] = bool(mystic_cfg.get("enabled", False))
+    mystic_cfg["morning_time"] = mystic_cfg.get("morning_time", "09:05")
+    mystic_cfg["morning_mode"] = mystic_cfg.get("morning_mode", "feng_shui")
+    mystic_cfg["afternoon_time"] = mystic_cfg.get("afternoon_time", "13:05")
+    mystic_cfg["afternoon_mode"] = mystic_cfg.get("afternoon_mode", "tarot")
+    mystic_cfg["evening_time"] = mystic_cfg.get("evening_time", "20:35")
+    mystic_cfg["evening_mode"] = mystic_cfg.get("evening_mode", "fortune")
+    mystic_cfg["legacy_targeted_tarot_enabled"] = bool(
+        mystic_cfg.get("legacy_targeted_tarot_enabled", False)
+    )
+
     return cfg
 
 

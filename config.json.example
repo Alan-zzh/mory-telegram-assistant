@@ -1,5 +1,5 @@
 {
-  "_CONFIG_VERSION": "5.36.2",
+  "_CONFIG_VERSION": "5.37.0",
   "_CONFIG_UPDATED": "2026-07-25",
   "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。",
   "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
@@ -452,12 +452,15 @@
     "evening_enabled": false,
     "evening_time": "23:05"
   },
-  "NEWS_BROADCAST_CONFIG": {
+  "MYSTIC_BROADCAST_CONFIG": {
     "enabled": false,
-    "preferred_source": "real_first",
     "morning_time": "09:05",
+    "morning_mode": "feng_shui",
     "afternoon_time": "13:05",
-    "evening_time": "20:35"
+    "afternoon_mode": "tarot",
+    "evening_time": "20:35",
+    "evening_mode": "fortune",
+    "legacy_targeted_tarot_enabled": false
   },
   "AUTO_KICK_INACTIVE_DAYS": {
     "enable": false,

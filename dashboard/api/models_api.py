@@ -83,12 +83,11 @@ def api_tasks_status():
     cfg = read_config()
     task_defs = [
         ("greeting_morning", "早安问候", _get_hhmm(cfg, "GREETING_CONFIG", "morning_time", "08:05")),
-        ("news_morning", "早间新闻", _get_hhmm(cfg, "NEWS_BROADCAST_CONFIG", "morning_time", "09:05")),
+        ("mystic_morning", "早间风水", _get_hhmm(cfg, "MYSTIC_BROADCAST_CONFIG", "morning_time", "09:05")),
         ("daily_report", "每日报告", "09:10"),
         ("greeting_afternoon", "午安问候", _get_hhmm(cfg, "GREETING_CONFIG", "afternoon_time", "12:35")),
-        ("news_afternoon", "午间新闻", _get_hhmm(cfg, "NEWS_BROADCAST_CONFIG", "afternoon_time", "13:05")),
-        ("tarot_chatup", "塔罗搭讪", "15:00"),
-        ("news_evening", "晚间新闻", _get_hhmm(cfg, "NEWS_BROADCAST_CONFIG", "evening_time", "20:35")),
+        ("mystic_afternoon", "午间塔罗", _get_hhmm(cfg, "MYSTIC_BROADCAST_CONFIG", "afternoon_time", "13:05")),
+        ("mystic_evening", "晚间能量签", _get_hhmm(cfg, "MYSTIC_BROADCAST_CONFIG", "evening_time", "20:35")),
         ("greeting_evening", "晚安问候", _get_hhmm(cfg, "GREETING_CONFIG", "evening_time", "23:05")),
         ("channel_views", "频道浏览量", "每小时"),
         ("burn_orphan", "孤儿清理", "每6小时"),
