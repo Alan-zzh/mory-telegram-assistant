@@ -378,7 +378,7 @@ const _pageTitles = {
   pointsdecay: '积分衰减', afk: 'AFK配置', antichannel: '反频道转发',
   cas: 'CAS检查', cleanservice: '服务消息清理', autoreply: '自动回复',
   messagelocks: '消息锁', adspam: '广告防刷', inactiveclean: '不活跃清理',
-  greeting: '问候配置', mystic: '风水塔罗播报', exchangerate: '汇率配置',
+  greeting: '问候配置', mystic: '传统文化播报', exchangerate: '汇率配置',
   visualdashboard: '可视化面板', language: '语言设置', spamaction: '广告动作',
   goodbye: '退群消息', rules: '群规配置', games: '游戏配置',
   aimodel: 'AI模型参数', botcore: 'Bot核心配置', pricing: '定价管理', persona: '人设编辑'
@@ -1142,7 +1142,7 @@ function renderPage() {
       content.innerHTML = `<div class="page-header"><div><h2>问候配置</h2><p>早安/午安/晚安定时播报</p></div></div><div id="greetingContent" class="loading">加载中...</div>`;
       loadGreetingConfig(); break;
     case 'mystic':
-      content.innerHTML = `<div class="page-header"><div><h2>风水塔罗播报</h2><p>群公共口吻的早间风水、午间塔罗与晚间宜忌</p></div></div><div id="mysticContent" class="loading">加载中...</div>`;
+      content.innerHTML = `<div class="page-header"><div><h2>传统文化播报</h2><p>早间真实黄历 · 午间三张塔罗 · 晚间易经一卦</p></div></div><div id="mysticContent" class="loading">加载中...</div>`;
       loadMysticConfig(); break;
     case 'exchangerate':
       content.innerHTML = `<div class="page-header"><div><h2>汇率配置</h2><p>实时U价查询设置</p></div></div><div id="exchangerateContent" class="loading">加载中...</div>`;
@@ -1868,7 +1868,7 @@ async function loadConfig() {
       'REPLY_CHANCE': '群聊回复概率(%)', 'REPLY_DELAY_MIN': '回复延迟下限(秒)', 'REPLY_DELAY_MAX': '回复延迟上限(秒)',
       'REPLY_SPEED': '回复节奏', 'MAX_MSG_LENGTH': '最大回复长度', 'RELAY_MODE_ENABLED': '私聊中继',
       'FAQ_TRACKING_ENABLED': '问题历史留存', 'FAQ_AUTO_REPLY_ENABLED': 'FAQ模板自动回复',
-      'GREETING_CONFIG': '问候配置', 'MYSTIC_BROADCAST_CONFIG': '风水塔罗配置', 'RELAY_MODE_ENABLED': '私聊中继', 'WELCOME_MSG': '入群欢迎',
+      'GREETING_CONFIG': '问候配置', 'MYSTIC_BROADCAST_CONFIG': '传统文化播报配置', 'RELAY_MODE_ENABLED': '私聊中继', 'WELCOME_MSG': '入群欢迎',
       'ENABLE_MESSAGE_DELETION': '消息删除', 'ORPHAN_CLEANUP_ENABLED': '孤儿清理', 'AD_CLEANUP_REACTIONS': '广告反应清理', 'RETROACTIVE_SCAN_ENABLED': '启动追溯',
       'EMOJI_MASK_DETECT': 'Emoji面具检测', 'EDIT_DETECT_ENABLE': '编辑消息检测', 'AD_DETECT_CONFIG': '广告检测',
       'ANTIFLOOD_CONFIG': '反刷屏', 'ANTI_DELETE_CONFIG': '反撤回', 'SPAM_LIMIT': '刷屏限制',
@@ -3127,7 +3127,7 @@ function renderApp() {
             <div class="nav-item" onclick="switchTab('adspam')">🚫 广告防刷</div>
             <div class="nav-item" onclick="switchTab('inactiveclean')">👋 不活跃清理</div>
             <div class="nav-item" onclick="switchTab('greeting')">🌅 问候配置</div>
-            <div class="nav-item" onclick="switchTab('mystic')">🔮 风水塔罗播报</div>
+            <div class="nav-item" onclick="switchTab('mystic')">☯️ 传统文化播报</div>
             <div class="nav-item" onclick="switchTab('exchangerate')">💱 汇率配置</div>
             <div class="nav-item" onclick="switchTab('visualdashboard')">📊 可视化面板</div>
             <div class="nav-item" onclick="switchTab('language')">🌐 语言设置</div>
@@ -3749,22 +3749,19 @@ async function loadMysticConfig() {
   try {
     const d = await api('/api/settings/mystic'); if (!d.ok) return;
     const cfg = d.data; const el = document.getElementById('mysticContent'); if (!el) return;
-    const modes = (selected) => `<option value="feng_shui" ${selected==='feng_shui'?'selected':''}>风水宜忌</option><option value="tarot" ${selected==='tarot'?'selected':''}>塔罗播报</option><option value="fortune" ${selected==='fortune'?'selected':''}>晚间宜忌</option><option value="random" ${selected==='random'?'selected':''}>每天随机</option>`;
-    el.innerHTML = `<div class="card"><h3>风水塔罗播报</h3>
+    el.innerHTML = `<div class="card"><h3>三个时段，三种固定栏目</h3>
       <div class="toggle-row"><span>启用三档栏目</span><label class="toggle-switch"><input type="checkbox" id="mysticEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
-      <div class="form-group"><label>早间栏目</label><select id="mysticMorningMode" class="input-field">${modes(cfg.morning_mode)}</select></div>
-      <div class="form-group"><label>早间时间</label><input type="time" id="mysticMorningTime" value="${cfg.morning_time || '09:05'}" class="input-field"></div>
-      <div class="form-group"><label>午间栏目</label><select id="mysticAfternoonMode" class="input-field">${modes(cfg.afternoon_mode)}</select></div>
-      <div class="form-group"><label>午间时间</label><input type="time" id="mysticAfternoonTime" value="${cfg.afternoon_time || '13:05'}" class="input-field"></div>
-      <div class="form-group"><label>晚间栏目</label><select id="mysticEveningMode" class="input-field">${modes(cfg.evening_mode)}</select></div>
-      <div class="form-group"><label>晚间时间</label><input type="time" id="mysticEveningTime" value="${cfg.evening_time || '20:35'}" class="input-field"></div>
-      <div class="form-group"><label>说明</label><div class="hint-text">新闻播报已下线。内容每天变化，同一天重试保持同一张牌；仅作轻松娱乐，不点名群友、不带销售入口。</div></div>
+      <div class="toggle-row"><span>启用单按钮引导（每天三档轮换联系 Mory、预览福利、自助订阅）</span><label class="toggle-switch"><input type="checkbox" id="mysticCtaEnable" ${cfg.cta_enabled?'checked':''}><span class="slider"></span></label></div>
+      <div class="form-group"><label>📜 早间 · 今日黄历</label><div class="hint-text">真实农历、干支、宜忌、冲煞、值日、星宿、吉神方位、节气与彭祖百忌。</div><input type="time" id="mysticMorningTime" value="${cfg.morning_time || '09:05'}" class="input-field"></div>
+      <div class="form-group"><label>🔮 午间 · 三张塔罗</label><div class="hint-text">每天无重复抽取主牌、助力、提醒，包含正逆位、元素与组合解读。</div><input type="time" id="mysticAfternoonTime" value="${cfg.afternoon_time || '13:05'}" class="input-field"></div>
+      <div class="form-group"><label>☯️ 晚间 · 易经一卦</label><div class="hint-text">六十四卦中起本卦与动爻，计算真实之卦，并给出一个适合群聊延伸的观察问题。</div><input type="time" id="mysticEveningTime" value="${cfg.evening_time || '20:35'}" class="input-field"></div>
+      <div class="form-group"><label>内容原则</label><div class="hint-text">三档身份固定、内容按日期高随机且同日重试一致；正文不做确定性断言。开启引导后每张卡最多一个与正文一致的按钮。</div></div>
       <button class="btn btn-primary" onclick="saveMysticConfig()">保存设置</button></div>`;
   } catch (e) { document.getElementById('mysticContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
 }
 async function saveMysticConfig() {
   try {
-    const res = await api('/api/settings/mystic', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('mysticEnable').checked, morning_mode: document.getElementById('mysticMorningMode').value, morning_time: document.getElementById('mysticMorningTime').value, afternoon_mode: document.getElementById('mysticAfternoonMode').value, afternoon_time: document.getElementById('mysticAfternoonTime').value, evening_mode: document.getElementById('mysticEveningMode').value, evening_time: document.getElementById('mysticEveningTime').value }) });
+    const res = await api('/api/settings/mystic', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('mysticEnable').checked, cta_enabled: document.getElementById('mysticCtaEnable').checked, morning_time: document.getElementById('mysticMorningTime').value, afternoon_time: document.getElementById('mysticAfternoonTime').value, evening_time: document.getElementById('mysticEveningTime').value }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadMysticConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }

@@ -1,4 +1,4 @@
-"""早午晚风水、塔罗与宜忌播报任务。"""
+"""早间黄历、午间塔罗与晚间易经播报任务。"""
 
 from __future__ import annotations
 
@@ -28,8 +28,25 @@ _PERIOD_LABELS = {
 }
 
 
+def build_mystic_cta_markup(payload: dict):
+    """每张卡最多一个、且与正文说明一致的 CTA。"""
+    cta = payload.get("cta")
+    if not isinstance(cta, dict):
+        return None
+    from telebot import types
+    from core.telebot_compat import create_colored_button
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(create_colored_button(
+        text=str(cta["label"]),
+        url=str(cta["url"]),
+        style=str(cta.get("style", "default")),
+    ))
+    return markup
+
+
 def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
-    """生成、发送并追踪一张风水/塔罗类卡片。"""
+    """生成、发送并追踪一张传统文化栏目卡片。"""
     if not is_mystic_enabled(rm.config):
         logger.debug("玄学播报未开启，跳过")
         return
@@ -48,18 +65,9 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
                 record_abort(task_name, "玄学播报内容未通过门禁")
                 raise TaskAbort("玄学播报内容未通过门禁")
 
-            rich_message = build_rich_mystic_card_message(
-                payload["title"],
-                payload["sections"],
-                payload["note"],
-                payload["emoji"],
-            )
-            html_message = build_mystic_html(
-                payload["title"],
-                payload["sections"],
-                payload["note"],
-                payload["emoji"],
-            )
+            rich_message = build_rich_mystic_card_message(payload)
+            html_message = build_mystic_html(payload)
+            reply_markup = build_mystic_cta_markup(payload)
             cfg = rm.config or {}
             rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
             format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
@@ -70,7 +78,12 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
                     from core.telebot_compat import send_rich_message_compat
 
                     with rm.locked("bot"):
-                        sent = send_rich_message_compat(rm.bot, gid, rich_message)
+                        sent = send_rich_message_compat(
+                            rm.bot,
+                            gid,
+                            rich_message,
+                            reply_markup=reply_markup,
+                        )
                     if sent and hasattr(sent, "message_id"):
                         schedule_auto_delete(rm, gid, sent.message_id, 24 * 3600)
                         rm.db.track_channel_message(gid, sent.message_id, "text")
@@ -82,7 +95,13 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
                     sent = None
 
             if sent is None:
-                sent = send_and_track(rm, gid, html_message, parse_mode="HTML")
+                sent = send_and_track(
+                    rm,
+                    gid,
+                    html_message,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                )
 
             if not sent or not hasattr(sent, "message_id"):
                 record_abort(task_name, "玄学播报发送失败")
@@ -93,8 +112,9 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
             except Exception as exc:
                 logger.debug(f"玄学播报追踪入库失败: {exc}")
             logger.info(
-                f"✅ {_PERIOD_LABELS.get(period, period)}{payload['title']}已发送"
-                f"（mode={payload['mode']}，msg={sent.message_id}，无入口）"
+                f"✅ {payload['title']}已发送"
+                f"（mode={payload['mode']}，msg={sent.message_id}，"
+                f"cta={(payload.get('cta') or {}).get('target', 'none')}）"
             )
     except TaskAbort:
         pass
@@ -108,7 +128,7 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
 
 
 class MysticBroadcastTask(BaseTask):
-    """早、午、晚三档玄学栏目。"""
+    """早、午、晚三档传统文化栏目。"""
 
     @property
     def task_id(self) -> str:
@@ -135,5 +155,5 @@ class MysticBroadcastTask(BaseTask):
     def execute(self, ctx: TaskContext) -> None:
         period = str(ctx.params.get("period", "morning"))
         task_name = f"mystic_{period}"
-        logger.info(f"🔮 触发{_PERIOD_LABELS.get(period, period)}玄学播报")
+        logger.info(f"🔮 触发{_PERIOD_LABELS.get(period, period)}传统文化播报")
         execute_mystic_broadcast_task(ctx.rm, task_name, period)

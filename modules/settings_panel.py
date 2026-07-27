@@ -240,11 +240,12 @@ BROADCAST_KEYS = {
     "greeting_afternoon_time": {"path": "GREETING_CONFIG.afternoon_time",  "type": "set", "label": "午安时间", "default": "12:35"},
     "greeting_evening":      {"path": "GREETING_CONFIG.evening_enabled",   "type": "toggle", "label": "晚安问候", "default": False},
     "greeting_evening_time": {"path": "GREETING_CONFIG.evening_time",      "type": "set", "label": "晚安时间", "default": "23:05"},
-    # 风水 / 塔罗播报
-    "mystic_enabled":        {"path": "MYSTIC_BROADCAST_CONFIG.enabled", "type": "toggle", "label": "风水塔罗播报", "default": False},
-    "mystic_morning_time":   {"path": "MYSTIC_BROADCAST_CONFIG.morning_time", "type": "set", "label": "早间风水", "default": "09:05"},
-    "mystic_afternoon_time": {"path": "MYSTIC_BROADCAST_CONFIG.afternoon_time", "type": "set", "label": "午间塔罗", "default": "13:05"},
-    "mystic_evening_time":   {"path": "MYSTIC_BROADCAST_CONFIG.evening_time", "type": "set", "label": "晚间宜忌播报", "default": "20:35"},
+    # 三时段传统文化播报
+    "mystic_enabled":        {"path": "MYSTIC_BROADCAST_CONFIG.enabled", "type": "toggle", "label": "传统文化播报", "default": False},
+    "mystic_cta_enabled":    {"path": "MYSTIC_BROADCAST_CONFIG.cta_enabled", "type": "toggle", "label": "传统文化单按钮引导", "default": False},
+    "mystic_morning_time":   {"path": "MYSTIC_BROADCAST_CONFIG.morning_time", "type": "set", "label": "早间今日黄历", "default": "09:05"},
+    "mystic_afternoon_time": {"path": "MYSTIC_BROADCAST_CONFIG.afternoon_time", "type": "set", "label": "午间三张塔罗", "default": "13:05"},
+    "mystic_evening_time":   {"path": "MYSTIC_BROADCAST_CONFIG.evening_time", "type": "set", "label": "晚间易经一卦", "default": "20:35"},
     # 定点播报
     "broadcasts":            {"path": "_list_broadcasts",                  "type": "list", "label": "定点播报列表"},
     # 定时消息

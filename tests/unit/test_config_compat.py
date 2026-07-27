@@ -60,9 +60,10 @@ def test_normalize_runtime_config_syncs_greeting_and_news_legacy_keys():
     assert normalized["GOODNIGHT_HOUR"] == "23:21"
     assert normalized["AUTO_NEWS"] is True
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["enabled"] is False
-    assert normalized["MYSTIC_BROADCAST_CONFIG"]["morning_mode"] == "feng_shui"
+    assert normalized["MYSTIC_BROADCAST_CONFIG"]["cta_enabled"] is False
+    assert normalized["MYSTIC_BROADCAST_CONFIG"]["morning_mode"] == "almanac"
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["afternoon_mode"] == "tarot"
-    assert normalized["MYSTIC_BROADCAST_CONFIG"]["evening_mode"] == "fortune"
+    assert normalized["MYSTIC_BROADCAST_CONFIG"]["evening_mode"] == "iching"
     assert normalized["NEWS_HOUR_MORNING"] == "09:09"
     assert normalized["NEWS_HOUR_AFTERNOON"] == "13:13"
     assert normalized["NEWS_HOUR_EVENING"] == "20:29"

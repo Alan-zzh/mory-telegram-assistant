@@ -6,93 +6,150 @@ from types import SimpleNamespace
 _CST = timezone(timedelta(hours=8))
 
 
-def _config(enabled=True):
+def _config(enabled=True, cta_enabled=True):
     return {
         "GROUP_ID": -100123,
         "RICH_MESSAGE_ENABLED": True,
         "BROADCAST_FORMAT_VERSION": "rich",
         "MYSTIC_BROADCAST_CONFIG": {
             "enabled": enabled,
+            "cta_enabled": cta_enabled,
             "morning_time": "09:05",
-            "morning_mode": "feng_shui",
+            "morning_mode": "almanac",
             "afternoon_time": "13:05",
             "afternoon_mode": "tarot",
             "evening_time": "20:35",
-            "evening_mode": "fortune",
+            "evening_mode": "iching",
             "legacy_targeted_tarot_enabled": False,
         },
     }
 
 
-def test_mystic_content_is_daily_stable_and_has_three_distinct_columns():
+def _visible_lines(payload):
+    return [
+        f"{label} {value}"
+        for block in payload["blocks"]
+        for label, value in block["lines"]
+    ]
+
+
+def test_three_period_products_are_fixed_daily_stable_and_usable():
     from tasks.support.mystic_content import (
-        MYSTIC_NOTE,
         build_mystic_broadcast,
         is_usable_mystic_broadcast,
     )
 
     now = datetime(2026, 7, 27, 9, 5, tzinfo=_CST)
     expected = {
-        "morning": ("feng_shui", "今日风水播报"),
-        "afternoon": ("tarot", "今日塔罗播报"),
-        "evening": ("fortune", "晚间宜忌播报"),
+        "morning": ("almanac", "早间 · 今日黄历", "cnlunar-0.2.4"),
+        "afternoon": ("tarot", "午间 · 三张塔罗", "curated-major-arcana-v1"),
+        "evening": ("iching", "晚间 · 易经一卦", "king-wen-64-v1"),
     }
-    for period, (mode, title) in expected.items():
+    for period, (mode, title, source) in expected.items():
         first = build_mystic_broadcast(_config(), period, now)
         second = build_mystic_broadcast(_config(), period, now)
         assert first == second
         assert first["mode"] == mode
         assert first["title"] == title
-        assert first["note"] == MYSTIC_NOTE
+        assert first["source"] == source
         assert is_usable_mystic_broadcast(first)
         visible = str(first)
         assert "新闻" not in visible
         assert "热搜" not in visible
-        assert "@moryselect" not in visible.lower()
-        assert "@morychannelbot" not in visible.lower()
 
 
-def test_mystic_content_is_a_neutral_group_column_not_personal_coaching():
+def test_real_almanac_contains_lunar_good_bad_and_calendar_details():
     from tasks.support.mystic_content import build_mystic_broadcast
 
-    forbidden = (
-        "给你的",
-        "交给你",
-        "自己",
-        "内心",
-        "情绪",
-        "真正的选择",
-        "自责",
-        "写下一句",
+    payload = build_mystic_broadcast(
+        _config(),
+        "morning",
+        datetime(2026, 7, 27, 9, 5, tzinfo=_CST),
     )
-    now = datetime(2026, 7, 27, 13, 5, tzinfo=_CST)
-    for period in ("morning", "afternoon", "evening"):
-        payload = build_mystic_broadcast(_config(), period, now)
-        visible = " ".join(
-            [payload["title"]]
-            + [f"{label} {value}" for label, value in payload["sections"]]
-            + [payload["note"]]
-        )
-        assert all(marker not in visible for marker in forbidden)
-        assert len(payload["sections"]) == 4
-        assert payload["note"] == "每日随机参考，仅供娱乐，祝大家顺顺利利。"
+    visible = " ".join(_visible_lines(payload))
+    assert "农历丙午年 六月大十四" in payload["meta"]
+    assert "壬寅日" in payload["meta"]
+    assert "宜 嫁娶" in visible
+    assert "忌 出行" in visible
+    assert "冲煞 虎日冲猴" in visible
+    assert "值日 危日 · 金贵 · 黄道日" in visible
+    assert "星宿 心月狐" in visible
+    assert "下一节气 · 立秋 · 8月7日" in visible
+    assert "动土" in payload["insight"]
 
 
-def test_random_mode_changes_by_date_but_retry_same_day_is_stable():
+def test_tarot_draws_three_distinct_cards_with_positions_and_combined_reading():
     from tasks.support.mystic_content import build_mystic_broadcast
 
-    cfg = _config()
-    cfg["MYSTIC_BROADCAST_CONFIG"]["evening_mode"] = "random"
-    days = [
-        datetime(2026, 7, day, 20, 35, tzinfo=_CST)
-        for day in range(20, 28)
+    payload = build_mystic_broadcast(
+        _config(),
+        "afternoon",
+        datetime(2026, 7, 27, 13, 5, tzinfo=_CST),
+    )
+    rows = payload["blocks"][0]["lines"]
+    assert [row[0] for row in rows] == ["主牌", "助力", "提醒"]
+    assert len({row[1].split(" · ")[1] for row in rows}) == 3
+    assert all(("正位" in value or "逆位" in value) for _, value in rows)
+    assert "主导元素" == payload["blocks"][1]["lines"][0][0]
+    assert "牌阵从" in payload["insight"]
+
+
+def test_iching_has_all_patterns_and_moving_line_produces_changed_hexagram():
+    from tasks.support.mystic_content import (
+        _HEXAGRAM_BY_PATTERN,
+        build_mystic_broadcast,
+    )
+
+    assert len(_HEXAGRAM_BY_PATTERN) == 64
+    payload = build_mystic_broadcast(
+        _config(),
+        "evening",
+        datetime(2026, 7, 27, 20, 35, tzinfo=_CST),
+    )
+    rows = dict(payload["blocks"][0]["lines"])
+    assert rows["本卦"] != rows["之卦"]
+    assert "第" in rows["动爻"] and "爻变" in rows["动爻"]
+    assert "本卦看" in payload["insight"]
+    assert "一个具体问题" in payload["note"]
+
+
+def test_cta_is_exactly_one_daily_rotation_and_can_be_disabled():
+    from tasks.broadcast.mystic_broadcast_task import build_mystic_cta_markup
+    from tasks.support.mystic_content import build_mystic_broadcast
+
+    now = datetime(2026, 7, 27, 9, 5, tzinfo=_CST)
+    payloads = [
+        build_mystic_broadcast(_config(), period, now)
+        for period in ("morning", "afternoon", "evening")
     ]
-    payloads = [build_mystic_broadcast(cfg, "evening", day) for day in days]
-    assert len({payload["mode"] for payload in payloads}) >= 2
-    assert build_mystic_broadcast(cfg, "evening", days[0]) == payloads[0]
+    assert {payload["cta"]["target"] for payload in payloads} == {
+        "contact",
+        "preview",
+        "subscribe",
+    }
+    expected_urls = {
+        "contact": "https://t.me/Moryfansbot",
+        "preview": "https://t.me/moryselect",
+        "subscribe": "https://t.me/MorychannelBot",
+    }
+    for payload in payloads:
+        cta = payload["cta"]
+        assert cta["url"] == expected_urls[cta["target"]]
+        markup = build_mystic_cta_markup(payload)
+        assert len(markup.keyboard) == 1
+        assert len(markup.keyboard[0]) == 1
+        button = markup.keyboard[0][0]
+        assert button.text == cta["label"]
+        assert button.url == cta["url"]
+
+    no_cta = build_mystic_broadcast(
+        _config(cta_enabled=False), "morning", now
+    )
+    assert no_cta["cta"] is None
+    assert build_mystic_cta_markup(no_cta) is None
 
 
-def test_mystic_renderers_keep_sender_separate_and_have_no_sales_entry():
+def test_renderers_have_structured_layout_sender_and_matching_cta_copy():
     from core.broadcast_formatter import (
         build_mystic_html,
         build_rich_mystic_card_message,
@@ -104,20 +161,17 @@ def test_mystic_renderers_keep_sender_separate_and_have_no_sales_entry():
         "afternoon",
         datetime(2026, 7, 27, 13, 5, tzinfo=_CST),
     )
-    rendered = [
-        build_mystic_html(
-            payload["title"], payload["sections"], payload["note"], payload["emoji"]
-        ),
-        build_rich_mystic_card_message(
-            payload["title"], payload["sections"], payload["note"], payload["emoji"]
-        ),
-    ]
-    for text in rendered:
+    html = build_mystic_html(payload)
+    rich = build_rich_mystic_card_message(payload)
+    for text in (html, rich):
         assert "@MoryMateBot" in text
+        assert payload["cta"]["closing"] in text
         assert "新闻" not in text
-        assert "下单" not in text
-        assert "订阅" not in text
-        assert "私聊" not in text
+        assert payload["cta"]["url"] not in text
+    assert "<h2>" in rich
+    assert rich.count("<h3>") == len(payload["blocks"])
+    assert "<blockquote>" in rich
+    assert "<footer>@MoryMateBot</footer>" in rich
 
 
 def test_mystic_schedule_replaces_news_and_legacy_targeted_tarot_is_off():
@@ -150,7 +204,7 @@ def test_disabled_mystic_task_does_not_claim_or_send(monkeypatch):
     assert called == []
 
 
-def test_rich_mystic_send_is_tracked(monkeypatch):
+def test_rich_mystic_send_and_single_markup_are_tracked(monkeypatch):
     import core.telebot_compat as telebot_compat
     import tasks.broadcast.mystic_broadcast_task as mystic_task
 
@@ -187,14 +241,21 @@ def test_rich_mystic_send_is_tracked(monkeypatch):
         locked=locked,
     )
     monkeypatch.setattr(mystic_task, "TaskTransactionManager", FakeTransaction)
-    monkeypatch.setattr(mystic_task, "schedule_auto_delete", lambda *args: events.append(("delete", args[2])))
     monkeypatch.setattr(
-        telebot_compat,
-        "send_rich_message_compat",
-        lambda bot, gid, rich: events.append(("send", gid, rich)) or SimpleNamespace(message_id=88),
+        mystic_task,
+        "schedule_auto_delete",
+        lambda *args: events.append(("delete", args[2])),
     )
 
-    mystic_task.execute_mystic_broadcast_task(rm, "mystic_morning", "morning")
+    def fake_send(bot, gid, rich, **kwargs):
+        markup = kwargs["reply_markup"]
+        events.append(("send", gid, rich, len(markup.keyboard)))
+        return SimpleNamespace(message_id=88)
+
+    monkeypatch.setattr(telebot_compat, "send_rich_message_compat", fake_send)
+    mystic_task.execute_mystic_broadcast_task(
+        rm, "mystic_morning", "morning"
+    )
 
     assert any(event[:2] == ("send", -100123) for event in events)
     assert ("channel", -100123, 88, "text") in events
@@ -221,7 +282,7 @@ def test_natural_admin_toggle_and_time_update_mystic_config():
     }
 
     assert _handle_toggle(
-        "开启风水播报",
+        "开启传统文化播报",
         cfg,
         None,
         message,
@@ -233,7 +294,7 @@ def test_natural_admin_toggle_and_time_update_mystic_config():
     assert cfg["AUTO_NEWS"] is False
 
     assert _handle_modify_number(
-        "把早间风水时间改成8点",
+        "把早间黄历时间改成8点",
         cfg,
         None,
         message,

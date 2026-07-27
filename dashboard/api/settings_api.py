@@ -58,21 +58,20 @@ def _get_news_config(cfg: dict) -> dict:
 
 
 def _get_mystic_config(cfg: dict) -> dict:
-    """读取风水/塔罗栏目配置；新能力默认关闭。"""
+    """读取三时段传统文化栏目；产品身份固定，新能力默认关闭。"""
     raw = dict(cfg.get("MYSTIC_BROADCAST_CONFIG", {}) or {})
     raw.setdefault("enabled", False)
+    raw.setdefault("cta_enabled", False)
     defaults = {
-        "morning": ("09:05", "feng_shui"),
+        "morning": ("09:05", "almanac"),
         "afternoon": ("13:05", "tarot"),
-        "evening": ("20:35", "fortune"),
+        "evening": ("20:35", "iching"),
     }
-    valid_modes = {"feng_shui", "tarot", "fortune", "random"}
     for period, (default_time, default_mode) in defaults.items():
         time_key = f"{period}_time"
         mode_key = f"{period}_mode"
         raw[time_key] = _normalize_hhmm(raw.get(time_key), default_time)
-        mode = str(raw.get(mode_key, default_mode) or default_mode).strip().lower()
-        raw[mode_key] = mode if mode in valid_modes else default_mode
+        raw[mode_key] = default_mode
     raw["legacy_targeted_tarot_enabled"] = bool(
         raw.get("legacy_targeted_tarot_enabled", False)
     )
@@ -855,7 +854,7 @@ def api_settings_news():
 @settings_bp.route("/settings/mystic", methods=["GET", "POST"])
 @login_required
 def api_settings_mystic():
-    """风水、塔罗与能量签播报配置。"""
+    """黄历、塔罗与易经播报配置。"""
     if request.method == "GET":
         cfg = read_config()
         return jsonify({"ok": True, "data": _get_mystic_config(cfg)})
@@ -867,20 +866,19 @@ def api_settings_mystic():
     mystic_cfg = _get_mystic_config(cfg)
     if "enabled" in data:
         mystic_cfg["enabled"] = bool(data["enabled"])
-    valid_modes = {"feng_shui", "tarot", "fortune", "random"}
+    if "cta_enabled" in data:
+        mystic_cfg["cta_enabled"] = bool(data["cta_enabled"])
     defaults = {
-        "morning": ("09:05", "feng_shui"),
+        "morning": ("09:05", "almanac"),
         "afternoon": ("13:05", "tarot"),
-        "evening": ("20:35", "fortune"),
+        "evening": ("20:35", "iching"),
     }
     for period, (default_time, default_mode) in defaults.items():
         time_key = f"{period}_time"
         mode_key = f"{period}_mode"
         if time_key in data:
             mystic_cfg[time_key] = _normalize_hhmm(data[time_key], default_time)
-        if mode_key in data:
-            mode = str(data[mode_key]).strip().lower()
-            mystic_cfg[mode_key] = mode if mode in valid_modes else default_mode
+        mystic_cfg[mode_key] = default_mode
     # 旧定向“哥哥～”塔罗不从新栏目页面重新开启。
     mystic_cfg["legacy_targeted_tarot_enabled"] = False
     cfg["MYSTIC_BROADCAST_CONFIG"] = mystic_cfg
@@ -890,7 +888,7 @@ def api_settings_mystic():
     }
     cfg["AUTO_NEWS"] = False
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "风水塔罗播报配置已保存"})
+        return jsonify({"ok": True, "msg": "黄历塔罗易经播报配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 

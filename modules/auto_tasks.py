@@ -1290,19 +1290,19 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _job_mystic_morning(rm):
-    """早间风水栏目。"""
+    """早间今日黄历栏目。"""
     from tasks.broadcast.mystic_broadcast_task import execute_mystic_broadcast_task
     execute_mystic_broadcast_task(rm, "mystic_morning", "morning")
 
 
 def _job_mystic_afternoon(rm):
-    """午间塔罗栏目。"""
+    """午间三张塔罗栏目。"""
     from tasks.broadcast.mystic_broadcast_task import execute_mystic_broadcast_task
     execute_mystic_broadcast_task(rm, "mystic_afternoon", "afternoon")
 
 
 def _job_mystic_evening(rm):
-    """晚间宜忌栏目。"""
+    """晚间易经一卦栏目。"""
     from tasks.broadcast.mystic_broadcast_task import execute_mystic_broadcast_task
     execute_mystic_broadcast_task(rm, "mystic_evening", "evening")
 
@@ -3927,9 +3927,9 @@ def _build_critical_tasks(config: dict, today: str) -> list[dict]:
 
     if _is_mystic_enabled(config):
         for period, task_key, desc in (
-            ("morning", "mystic_morning", "早间风水"),
-            ("afternoon", "mystic_afternoon", "午间塔罗"),
-            ("evening", "mystic_evening", "晚间宜忌播报"),
+            ("morning", "mystic_morning", "早间今日黄历"),
+            ("afternoon", "mystic_afternoon", "午间三张塔罗"),
+            ("evening", "mystic_evening", "晚间易经一卦"),
         ):
             hour, minute = _get_mystic_time(config, period)
             deadline_hour, deadline_minute = _deadline_after(hour, minute, 60)
@@ -4474,7 +4474,7 @@ def _start_with_apscheduler(rm):
     )
     _scheduler_instance = scheduler
 
-    # 风水 / 塔罗栏目（新闻播报已下线）
+    # 三时段传统文化栏目（新闻播报已下线）
     mystic_morning_hour, mystic_morning_minute = _get_mystic_time(rm.config, "morning")
     mystic_afternoon_hour, mystic_afternoon_minute = _get_mystic_time(rm.config, "afternoon")
     mystic_evening_hour, mystic_evening_minute = _get_mystic_time(rm.config, "evening")

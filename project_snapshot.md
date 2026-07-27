@@ -5,7 +5,7 @@
 > 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-27。
 
 ## 一句话
-Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、风水塔罗栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
+Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
 
 ## 模块状态表
 | 模块 | 状态 | 入口文件 | 备注 |
@@ -13,7 +13,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，熟人低频只到预览；价格/内容/权益→预览，明确购买/看过预览/明确定制→自助，拒绝和概念咨询无入口；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
-| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 三档群公共玄学栏目取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总待优化问题与未命中样本；短期业务原文每分钟物理清理；`modules/auto_tasks.py` 为 legacy |
+| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 09:05 今日黄历、13:05 三张塔罗、20:35 易经一卦取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总；短期业务原文每分钟清理；`modules/auto_tasks.py` 为 legacy |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；繁体“看我賺米”与“1天1w米 / 日1w米”收益黑话进入统一永久禁言、删消息、双黑名单处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`（同步冲突副本不计入）；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
@@ -24,25 +24,25 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 网编会员 | 默认关闭 | `modules/membership.py` | 付费等级/订阅管理/权益体系，`MEMBERSHIP_CONFIG.enabled` 开关 |
 | 孤儿清理 | 在用 | `orphan_api.py`、`burn_orphan_task.py` | 端到端串联 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
-| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 162 个路由，端口 6616；播报页直接配置早间风水、午间塔罗、晚间宜忌及时间 |
+| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 162 个路由，端口 6616；传统文化页配置三档时间和单 CTA 轮换开关，栏目身份固定不可串台 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 170 张表；`reply_style_samples` 由 Alembic 0002 管理；0003 增加独立的 30 分钟短期业务上下文与结构化转化状态，使进化遥测关闭原文后仍可跨重启承接、CTA 去重和持久拒绝 |
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本并同步根目录六件套 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 风水、塔罗、晚间宜忌使用独立 HTML/Rich 卡片；群公共短字段口吻，不对个人提问或判断情绪，不带互动或销售 CTA，卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
+| Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 黄历、三张塔罗、易经使用分区 HTML/Rich 卡片；正文有元信息、主题块、组合解读和边界说明；每天三档轮换单 CTA，卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段；早晚正文无按钮，午后/睡前如带入口只到预览；AI 失败回退可信底稿 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；泛定制概念不被静态规则抢占 |
-| 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；玄学栏目、问候、叫醒无销售；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
+| 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.37.1（2026-07-27）
+v5.38.0（2026-07-27）
 
-生产状态：v5.37.1 已由可信提交 `765d4db` 增量部署；双服务 active+enabled、health v5.37.1、NRestarts=0、当前进程零 error。任务实测 45 个类/50 个调度项，三档 `mystic_*` 已注册，`news_*=[]`、旧定向 `tarot_*=[]`，新闻双开关关闭。群公共版管理员 Rich Message 回执为风水 2982、塔罗 2983、晚间宜忌 2984，均 `group_neutral=true` 且署名 `@MoryMateBot`；本地 490 passed / 7 skipped、DB 190/190、文档 7/7。
+生产状态：v5.38.0 本地实现与测试中，生产仍为 v5.37.1；完成可信提交、增量部署和真实 Telegram 三档回执后再更新为生产已生效。
 
 ## 最近 3 条大事
-1. 2026-07-27 v5.37.1 玄学群播通用化：删除个人心理提问和说教，只保留宜忌、方位、参考色、牌面、关键词和明日准备。
-2. 2026-07-27 v5.37.0 三档新闻整体下线：09:05 风水、13:05 塔罗、20:35 晚间宜忌取代新闻；无新闻源、无销售入口，旧定向塔罗默认关闭。
-3. 2026-07-27 v5.36.2 新闻去尴尬：第 6 行固定说明本次为刚刚更新的最新新闻，不再随机要求群友讨论。
+1. 2026-07-27 v5.38.0 三档栏目产品化：真实黄历、三张塔罗与本卦/动爻/之卦完全分流，新增分区排版和每日单 CTA 轮换。
+2. 2026-07-27 v5.37.1 玄学群播通用化：删除个人心理提问和说教，只保留公共字段。
+3. 2026-07-27 v5.37.0 三档新闻整体下线：三个原新闻时段改为传统文化栏目，旧定向塔罗默认关闭。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

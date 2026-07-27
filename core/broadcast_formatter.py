@@ -583,45 +583,65 @@ def build_rich_news_card_message(
     return "\n".join(parts)
 
 
-def build_mystic_html(
-    title: str,
-    sections: list[tuple[str, str]],
-    note: str,
-    emoji: str = "🔮",
-) -> str:
-    """风水/塔罗栏目 HTML 卡片；无新闻、互动或成交入口。"""
-    lines = [
-        f"<b>{escape_html_text(label)}</b>：{escape_html_text(value)}"
-        for label, value in sections
+def build_mystic_html(payload: dict) -> str:
+    """传统文化栏目的 Telegram HTML 降级卡片。"""
+    parts = [
+        f"<b>{escape_html_text(payload.get('emoji', '🔮'))} "
+        f"{escape_html_text(payload.get('title', '今日栏目'))}</b>",
     ]
-    return "\n".join([
-        f"<b><i>{escape_html_text(emoji)} {escape_html_text(title)}</i></b>",
-        "",
-        "\n\n".join(lines),
-        "",
-        f"<blockquote><i>{escape_html_text(note)}</i></blockquote>",
-        "",
-        f"<i>{BROADCAST_SENDER_HANDLE}</i>",
-    ])
+    kicker = str(payload.get("kicker", "") or "")
+    if kicker:
+        parts.append(f"<i>{escape_html_text(kicker)}</i>")
+    meta = str(payload.get("meta", "") or "")
+    if meta:
+        parts.extend(["", f"<blockquote>{escape_html_text(meta)}</blockquote>"])
+    for block in payload.get("blocks", []):
+        parts.extend(["", f"<b>{escape_html_text(block.get('heading', ''))}</b>"])
+        parts.extend(
+            f"<b>{escape_html_text(label)}</b>　{escape_html_text(value)}"
+            for label, value in block.get("lines", [])
+        )
+    insight = str(payload.get("insight", "") or "")
+    if insight:
+        parts.extend(["", f"<blockquote>{escape_html_text(insight)}</blockquote>"])
+    cta = payload.get("cta")
+    if isinstance(cta, dict) and cta.get("closing"):
+        parts.extend(["", f"💬 {escape_html_text(cta['closing'])}"])
+    note = str(payload.get("note", "") or "")
+    if note:
+        parts.extend(["", f"<i>※ {escape_html_text(note)}</i>"])
+    parts.extend(["", f"<i>{BROADCAST_SENDER_HANDLE}</i>"])
+    return "\n".join(parts)
 
 
-def build_rich_mystic_card_message(
-    title: str,
-    sections: list[tuple[str, str]],
-    note: str,
-    emoji: str = "🔮",
-) -> str:
-    """风水/塔罗栏目 Rich Message 卡片。"""
-    parts = [f"<h2>{escape_html_text(emoji)} {escape_html_text(title)}</h2>"]
-    parts.extend(
-        f"<p><b>{escape_html_text(label)}</b>：{escape_html_text(value)}</p>"
-        for label, value in sections
-    )
-    parts.extend([
-        f"<blockquote>{escape_html_text(note)}</blockquote>",
-        "<hr>",
-        f"<footer>{BROADCAST_SENDER_HANDLE}</footer>",
-    ])
+def build_rich_mystic_card_message(payload: dict) -> str:
+    """三时段传统文化栏目的分区 Rich Message 卡片。"""
+    parts = [
+        f"<h2>{escape_html_text(payload.get('emoji', '🔮'))} "
+        f"{escape_html_text(payload.get('title', '今日栏目'))}</h2>",
+    ]
+    kicker = str(payload.get("kicker", "") or "")
+    if kicker:
+        parts.append(f"<p><i>{escape_html_text(kicker)}</i></p>")
+    meta = str(payload.get("meta", "") or "")
+    if meta:
+        parts.append(f"<blockquote>{escape_html_text(meta)}</blockquote>")
+    for block in payload.get("blocks", []):
+        parts.append(f"<h3>{escape_html_text(block.get('heading', ''))}</h3>")
+        parts.extend(
+            f"<p><b>{escape_html_text(label)}</b>　{escape_html_text(value)}</p>"
+            for label, value in block.get("lines", [])
+        )
+    insight = str(payload.get("insight", "") or "")
+    if insight:
+        parts.append(f"<blockquote>{escape_html_text(insight)}</blockquote>")
+    cta = payload.get("cta")
+    if isinstance(cta, dict) and cta.get("closing"):
+        parts.append(f"<p>💬 {escape_html_text(cta['closing'])}</p>")
+    note = str(payload.get("note", "") or "")
+    if note:
+        parts.append(f"<p><i>※ {escape_html_text(note)}</i></p>")
+    parts.extend(["<hr>", f"<footer>{BROADCAST_SENDER_HANDLE}</footer>"])
     return "\n".join(parts)
 
 

@@ -644,9 +644,9 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 **`auto_tasks.py` 35+ _job_* 函数清单**（部分）：
 - `_job_cart_recovery`（L1535）— 购物车挽回（详见 2.3.3）
 - `_job_morning_greeting` — 早安播报
-- `_job_mystic_morning` — 早间风水宜忌
-- `_job_mystic_afternoon` — 午间塔罗播报
-- `_job_mystic_evening` — 晚间宜忌播报
+- `_job_mystic_morning` — 早间今日黄历
+- `_job_mystic_afternoon` — 午间三张塔罗
+- `_job_mystic_evening` — 晚间易经一卦
 - `_job_checkin_reminder` — 签到提醒
 - `_job_wakeup_inactive` — 唤醒沉默用户
 - `_job_reactivate` — 激活流失用户
