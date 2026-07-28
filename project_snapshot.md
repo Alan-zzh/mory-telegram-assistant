@@ -37,7 +37,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.3（2026-07-28）
 
-生产状态：当前生产为 v5.38.2（可信提交 `02a5e8a`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5382_20260728_194640`）；广告四条正例均 `score=4 / ban`、四条正常反例均 0 分，截图账号已补齐永久受限、本地与全局黑名单、`mute_records`。双服务 active+enabled、health v5.38.2、NRestarts=0，9/9 文件哈希一致，当前进程 warning/error 为空。v5.38.3 明确订阅意图统一成交修复已通过本地 512 passed / 7 skipped、DB 190/190、文档 7/7，待可信提交和生产业务回执。
+生产状态：当前生产为 v5.38.3（可信提交 `51bb4c7`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5383_20260728_200329`）；本地 512 passed / 7 skipped、DB 190/190、文档 7/7，11/11 发布文件与 5/5 运行文件哈希一致。双服务 active+enabled、health v5.38.3、NRestarts=0、当前进程 error 为空；生产原句“怎么订阅”得到 `subscribe / explicit_purchase`，P7.5 未截断，正文承接近期预览且群聊只挂一个自助下单按钮、私聊零按钮；Telegram 管理员真实验收回执 `message_id=3016`。
 
 ## 最近 3 条大事
 1. 2026-07-28 v5.38.3 修复“怎么订阅”被 P7.5 旁路截断：明确订阅结合预览语境直接给人设正文与群聊单一自助下单按钮。
