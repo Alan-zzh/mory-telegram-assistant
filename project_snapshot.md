@@ -37,7 +37,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.8（2026-07-28）
 
-生产状态：生产仍为 v5.38.7；v5.38.8 本地专项 34 passed、整仓 585 passed / 7 skipped、DB 190/190、文档 7/7。截图用户真实资料 `score=3`，本地 NudeNet 头像审核命中 `BUTTOCKS_EXPOSED=0.8129`、`FEMALE_GENITALIA_EXPOSED=0.7841`、`ANUS_EXPOSED=0.7445` 并输出 `score=2`。待可信提交和安全增量部署后更新生产证据。
+生产状态：生产为 v5.38.8（可信提交 `715f430`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5388_20260729_004405`）；18/18 文件哈希一致，双服务 active+enabled、NRestarts=0、health v5.38.8、当前进程高严重日志为空。本地专项 34 passed、整仓 585 passed / 7 skipped、DB 190/190、文档 7/7。生产正例名字/Bio/真实头像命中，正常神兽/景区/纯色头像放行；截图用户资料 `score=3`，NudeNet 命中三项明确暴露并输出 `score=2`，已真实 restricted，`blacklist` / `global_blacklist` / `mute_records` 均为 1。
 
 ## 最近 3 条大事
 1. 2026-07-28 v5.38.8 接通入群四类资料信号、验证码解限补审和真正本地 NudeNet 头像主体识别。
