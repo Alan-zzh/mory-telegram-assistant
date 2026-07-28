@@ -17,6 +17,7 @@ import re
 import json
 import uuid
 import time
+import unicodedata
 import urllib.request
 from datetime import datetime, timezone
 from core.helpers import can_delete_message
@@ -241,7 +242,11 @@ class AdDetector:
         if not text:
             return text
 
-        # 1. 全角数字 0-9（U+FF10~U+FF19）→ 半角 0-9
+        # 1. Unicode 兼容规范化：统一全角/花体字母、数字和标点。
+        # NFKC 不做语义替换，只把视觉等价字符收敛为普通字符，正常中文不会被改写。
+        text = unicodedata.normalize("NFKC", text)
+
+        # 2. 兼容旧数学数字范围（NFKC 已覆盖绝大多数，保留显式兜底）
         result = []
         for c in text:
             code = ord(c)
@@ -264,15 +269,33 @@ class AdDetector:
                 result.append(c)
         text = ''.join(result)
 
-        # 2. 数字串中的 O/o 规避：只规范化紧邻“+”的混写数字，不全局替换英文单词。
+        # 3. 数字串中的 O/o 规避：只规范化紧邻“+”的混写数字，不全局替换英文单词。
         # 例：9Oo+ / 4oO+ → 900+ / 400+；型号 O90、普通英文保持不变。
         text = re.sub(
-            r"(?<![A-Za-z0-9_])(?=[0-9Oo]*[0-9])(?=[0-9Oo]*[Oo])[0-9Oo]+(?=\s*[+＋])",
+            r"(?<![A-Za-z0-9_])(?=[0-9Oo]*[0-9])(?=[0-9Oo]*[Oo])[0-9Oo]+(?=\s*\+)",
             lambda match: match.group(0).replace("O", "0").replace("o", "0"),
             text,
         )
 
-        # 3. 形近字 / 繁体变体 映射到简体
+        # 4. 日/月收益数字中的 I/l/| 与 O/o 规避。
+        # 仅接受“时间收益锚点 + 纯数字形近串 + 金额结尾”，不把 BOSS、SOLO 等英文当数字。
+        daily_number_pattern = re.compile(
+            r"(?P<prefix>(?:(?:\u4e00|1)[\u5929\u65e5]|\u6bcf[\u5929\u65e5]|"
+            r"[\u65e5\u6708](?:\u5165|\u8d5a|\u6323)?))"
+            r"(?P<space>\s*)"
+            r"(?P<number>(?:[0-9][0-9OoIl|]*|[Il|][0Oo]{2,}))"
+            r"(?=\s*(?:\+|[\u5143\u5757UuKkWw]))"
+        )
+
+        def _replace_daily_number(match):
+            number = match.group("number").translate(
+                str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1", "|": "1"})
+            )
+            return f"{match.group('prefix')}{match.group('space')}{number}"
+
+        text = daily_number_pattern.sub(_replace_daily_number, text)
+
+        # 5. 形近字 / 繁体变体 映射到简体
         variant_map = {
             '唰': '刷',  # 唰 -> 刷（刷单变体）
             '箪': '单',  # 箪 -> 单

@@ -80,13 +80,16 @@ def test_normalize_traditional_to_simplified(detector):
     ("text", "expected"),
     [
         ("一日 9Oo+", "一日 900+"),
-        ("一日 4oO＋", "一日 400＋"),
+        ("一日 4oO＋", "一日 400+"),
+        ("一日 ｌＯＯＯ＋", "一日 1000+"),
+        ("𝟙日 𝟡Oo＋", "1日 900+"),
         ("型号 O90", "型号 O90"),
         ("Emilia Potts", "Emilia Potts"),
+        ("每天 BOSS+副本", "每天 BOSS+副本"),
     ],
 )
 def test_normalize_o_as_zero_only_inside_plus_number_tokens(detector, text, expected):
-    """L1: O/o 只在紧邻加号的混写数字串中转为 0，不破坏英文与型号"""
+    """L1: 视觉等价字符与收益数字形近字受限规范化，不破坏英文和型号"""
     assert detector._normalize_ad_evasion(text) == expected
 
 
@@ -205,6 +208,60 @@ def test_daily_income_plus_rule_does_not_match_normal_metrics(detector, text):
     score, dims = detector._check_content_score(normalized)
     assert score == 0
     assert dims == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_dimension"),
+    [
+        ("日1入 lOOO+", "赚钱承诺"),
+        ("１日 ｌＯＯＯ＋", "赚钱承诺"),
+        ("一x天 8O0元", "赚钱承诺"),
+        ("加1微x信", "联系方式/引流"),
+        ("兼1职 日结 500元", "招募/拉人"),
+        ("日结 500元，兼x职", "招募/拉人"),
+        ("特1码有量，找庄", "灰色产业"),
+        ("六x彩1合，有量找靠谱庄", "灰色产业"),
+        ("裸1聊", "色情引流"),
+        ("约x炮", "色情引流"),
+        ("跑1分 接单返佣", "加密货币/洗钱"),
+        ("刷x单 日结佣金", "加密货币/洗钱"),
+        ("返佣接单，跑x分", "加密货币/洗钱"),
+        ("洗8钱", "加密货币/洗钱"),
+    ],
+)
+def test_context_limited_obfuscated_ad_templates_trigger_immediate_ban(
+    detector, text, expected_dimension
+):
+    """L3/L4: 六类数字/字母拆字广告需命中对应强语义维度并在首条封禁"""
+    result = detector.detect(username="普通昵称", msg=text)
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+    assert expected_dimension in result["reason"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "跑1分后休息一下",
+        "刷1单正常订单后核对库存",
+        "招聘系统的 X1 字段设计",
+        "兼职经历写在简历里",
+        "代理型号 X1 的售后问题",
+        "六盒彩色积木有六块",
+        "特码字段用于单元测试",
+        "我每天打 BOSS+副本",
+        "空调维修提供上门服务",
+        "联x系是数学里的关系符号写法",
+    ],
+)
+def test_context_limited_obfuscated_templates_do_not_ban_ambiguous_normal_text(
+    detector, text
+):
+    """L4: 歧义词、产品型号、运动游戏和正常服务缺少第二广告锚点时不得误封"""
+    result = detector.detect(username="普通用户", msg=text)
+    assert result["is_ad"] is False
+    assert result["action"] != "ban"
 
 
 @pytest.mark.parametrize(

@@ -327,3 +327,39 @@ def test_daily_income_o_obfuscation_runs_unified_enforcement(monkeypatch):
     assert len(dctx.ctx.bot.restricted) == 1
     assert dctx.ctx.db.blacklist
     assert detector.get_user_tracking(dctx.uid)["message_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "日1入 lOOO+",
+        "加1微x信",
+        "兼1职 日结 500元",
+        "特1码有量，找庄",
+        "裸1聊",
+        "跑1分 接单返佣",
+    ],
+)
+def test_obfuscated_ad_families_run_unified_enforcement(monkeypatch, text):
+    """六类拆字广告首条都必须复用删除、永久禁言和黑名单统一处置链。"""
+    from core.handlers.security_handlers import check_ad_detection
+    from modules.ad_detector import AdDetector
+
+    dctx, _ = _create_dctx_without_channel_forward()
+    dctx.text = text
+    dctx.msg.text = text
+    dctx.msg.from_user.first_name = "广告变体"
+    dctx.uname = "广告变体"
+
+    detector = AdDetector(config=dctx.ctx.config, db=dctx.ctx.db)
+    monkeypatch.setattr(detector, "_check_cas", lambda _uid: (False, ""))
+    monkeypatch.setattr(detector, "_check_spb", lambda _uid: (0.0, False))
+    dctx.ctx.ad_detector = detector
+
+    handled = check_ad_detection(dctx)
+
+    assert handled is True
+    assert dctx.ctx.bot.deleted == [(-1001, 99)]
+    assert len(dctx.ctx.bot.restricted) == 1
+    assert dctx.ctx.db.blacklist
+    assert detector.get_user_tracking(dctx.uid)["message_count"] == 0
