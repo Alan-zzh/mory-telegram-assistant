@@ -76,6 +76,20 @@ def test_normalize_traditional_to_simplified(detector):
     assert result == "赚钱"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("一日 9Oo+", "一日 900+"),
+        ("一日 4oO＋", "一日 400＋"),
+        ("型号 O90", "型号 O90"),
+        ("Emilia Potts", "Emilia Potts"),
+    ],
+)
+def test_normalize_o_as_zero_only_inside_plus_number_tokens(detector, text, expected):
+    """L1: O/o 只在紧邻加号的混写数字串中转为 0，不破坏英文与型号"""
+    assert detector._normalize_ad_evasion(text) == expected
+
+
 # ──────────────────────────────────────────────────────
 # L2: 用户名特征检测
 # ──────────────────────────────────────────────────────
@@ -151,6 +165,44 @@ def test_screenshot_income_shorthand_scores_as_ad(detector, text):
 def test_income_shorthand_rule_does_not_match_normal_context(detector, text):
     """L3: 正常运动与微信业务讨论不因新规则被误判"""
     score, dims = detector._check_content_score(text)
+    assert score == 0
+    assert dims == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "一日 9Oo+",
+        "一日 4oO+",
+        "一日 90o+",
+        "一日 900+",
+        "一天 800＋",
+        "每天 1200+",
+    ],
+)
+def test_screenshot_daily_income_plus_shorthand_scores_as_ad(detector, text):
+    """L3: 截图及同日生产出现的 O/0 混写日收益短句必须达到即时处置阈值"""
+    normalized = detector._normalize_ad_evasion(text)
+    score, dims = detector._check_content_score(normalized)
+    assert score >= SCORE_THRESHOLD
+    assert "赚钱承诺" in dims[0]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "我一天走了900+步",
+        "一天900+步",
+        "每天写900+字",
+        "一日900+米训练",
+        "今天订单90o+条",
+        "型号90O+已经停售",
+    ],
+)
+def test_daily_income_plus_rule_does_not_match_normal_metrics(detector, text):
+    """L3: 运动、学习、订单与型号数字不因 O/0 规范化或加号被误判"""
+    normalized = detector._normalize_ad_evasion(text)
+    score, dims = detector._check_content_score(normalized)
     assert score == 0
     assert dims == []
 
@@ -259,3 +311,13 @@ def test_screenshot_lottery_ads_trigger_immediate_ban_on_first_message(detector,
     assert result["action"] == "ban"
     assert result["score"] >= SCORE_THRESHOLD
     assert "灰色产业" in result["reason"]
+
+
+@pytest.mark.parametrize("text", ["一日 9Oo+", "一日 4oO+", "一日 900+"])
+def test_screenshot_daily_income_ads_trigger_immediate_ban(detector, text):
+    """L4: O/0 混写日收益广告必须首条直接封禁，不能进入累计观察"""
+    result = detector.detect(username="Emilia Potts", msg=text)
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+    assert "赚钱承诺" in result["reason"]

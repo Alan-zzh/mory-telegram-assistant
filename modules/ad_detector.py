@@ -264,7 +264,15 @@ class AdDetector:
                 result.append(c)
         text = ''.join(result)
 
-        # 2. 形近字 / 繁体变体 映射到简体
+        # 2. 数字串中的 O/o 规避：只规范化紧邻“+”的混写数字，不全局替换英文单词。
+        # 例：9Oo+ / 4oO+ → 900+ / 400+；型号 O90、普通英文保持不变。
+        text = re.sub(
+            r"(?<![A-Za-z0-9_])(?=[0-9Oo]*[0-9])(?=[0-9Oo]*[Oo])[0-9Oo]+(?=\s*[+＋])",
+            lambda match: match.group(0).replace("O", "0").replace("o", "0"),
+            text,
+        )
+
+        # 3. 形近字 / 繁体变体 映射到简体
         variant_map = {
             '唰': '刷',  # 唰 -> 刷（刷单变体）
             '箪': '单',  # 箪 -> 单

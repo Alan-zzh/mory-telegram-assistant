@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，价格/内容/权益→预览，明确购买/看过预览/明确定制→自助；“怎么订阅”等明确入口问法跳过旧 P7.5 旁路并结合近期预览直接承接；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 09:05 今日黄历、13:05 三张塔罗、20:35 易经一卦取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总；短期业务原文每分钟清理；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；数据库追溯只删除当前窗口内有明确广告证据的消息，普通行为追踪和无记录范围均 fail-close；繁体收益黑话及彩票交易组合首条进入统一处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；数据库追溯只删除当前窗口内有明确广告证据的消息；“一日 9Oo+ / 4oO+”混写日收益、繁体收益黑话及彩票交易组合首条进入统一处置，日常计量保持放行；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`（同步冲突副本不计入）；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` 开关 |
@@ -35,14 +35,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.38.5（2026-07-28）
+v5.38.6（2026-07-28）
 
-生产状态：当前生产为 v5.38.5（可信提交 `8cc8edd`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5385_20260728_205602`）；本地 519 passed / 7 skipped、DB 190/190、文档 7/7，13/13 暂存与上线文件哈希一致。双服务 active+enabled、health v5.38.5、NRestarts=0、当前进程高严重日志与追溯删除日志均为 0；远端专项 5 passed。生产无 Telegram 写入探针复现保护内容数据库模式：“怎么订阅 / score=0 / is_ad=false”结果为删除调用 0、skipped 1，对照明确广告为删除调用 1；原 `msg_id=61890` 已被 Telegram 删除且无法恢复。
+生产状态：当前生产仍为 v5.38.5；v5.38.6 O/o 混写日收益广告首条处置修复已完成定向回归，待整仓门禁、可信提交与隔离增量部署。
 
 ## 最近 3 条大事
-1. 2026-07-28 v5.38.5 修复启动追溯误删：行为追踪不再等于广告证据，无证据不删除，群内“.”探针移除。
-2. 2026-07-28 v5.38.4 明确订阅回复改为简短人设变体池，连续触发避开近期原句并扩展订阅/开通/付费等近义表达。
-3. 2026-07-28 v5.38.3 修复“怎么订阅”被 P7.5 旁路截断：明确订阅结合预览语境直接给人设正文与群聊单一自助下单按钮。
+1. 2026-07-28 v5.38.6 修复“一日 9Oo+ / 4oO+”混写日收益广告漏判并收紧日常计量反误封边界。
+2. 2026-07-28 v5.38.5 修复启动追溯误删：行为追踪不再等于广告证据，无证据不删除，群内“.”探针移除。
+3. 2026-07-28 v5.38.4 明确订阅回复改为简短人设变体池，连续触发避开近期原句并扩展订阅/开通/付费等近义表达。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

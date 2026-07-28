@@ -301,3 +301,29 @@ def test_lottery_ad_first_message_runs_unified_enforcement(monkeypatch):
     assert len(dctx.ctx.bot.restricted) == 1
     assert dctx.ctx.db.blacklist
     assert detector.get_user_tracking(dctx.uid)["message_count"] == 0
+
+
+def test_daily_income_o_obfuscation_runs_unified_enforcement(monkeypatch):
+    """“一日 9Oo+”首条必须删除、永久禁言并写黑名单，不能落入后续回复。"""
+    from core.handlers.security_handlers import check_ad_detection
+    from modules.ad_detector import AdDetector
+
+    dctx, _ = _create_dctx_without_channel_forward()
+    dctx.text = "一日 9Oo+"
+    dctx.msg.text = dctx.text
+    dctx.msg.from_user.first_name = "Emilia"
+    dctx.msg.from_user.last_name = "Potts"
+    dctx.uname = "Emilia Potts"
+
+    detector = AdDetector(config=dctx.ctx.config, db=dctx.ctx.db)
+    monkeypatch.setattr(detector, "_check_cas", lambda _uid: (False, ""))
+    monkeypatch.setattr(detector, "_check_spb", lambda _uid: (0.0, False))
+    dctx.ctx.ad_detector = detector
+
+    handled = check_ad_detection(dctx)
+
+    assert handled is True
+    assert dctx.ctx.bot.deleted == [(-1001, 99)]
+    assert len(dctx.ctx.bot.restricted) == 1
+    assert dctx.ctx.db.blacklist
+    assert detector.get_user_tracking(dctx.uid)["message_count"] == 0
