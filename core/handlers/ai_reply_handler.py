@@ -33,6 +33,9 @@ _DIRECT_ACCESS_KEYWORDS = (
     "怎么加群", "怎么进群", "怎么入群", "加群", "进群", "入群",
     "预览群", "预览链接", "自助下单", "下单链接", "下单入口",
     "自助机器人", "下单机器人", "订单机器人",
+    "怎么订阅", "如何订阅", "在哪订阅", "我要订阅", "想订阅", "要订阅",
+    "订阅入口", "订阅链接",
+    "怎么开通", "如何开通", "我要开通", "帮我开通", "开通入口", "开通链接",
 )
 
 _QUESTION_MARKERS = (
@@ -189,6 +192,9 @@ def _is_order_access_request(text: str) -> bool:
         for marker in (
             "怎么下单", "我要下单", "下单链接", "下单入口", "自助下单",
             "自助机器人", "下单机器人", "订单机器人", "怎么买", "我要买",
+            "怎么订阅", "如何订阅", "在哪订阅", "我要订阅", "想订阅", "要订阅",
+            "订阅入口", "订阅链接",
+            "怎么开通", "如何开通", "我要开通", "帮我开通", "开通入口", "开通链接",
         )
     )
 
@@ -333,18 +339,42 @@ def _is_direct_access_request(text: str) -> bool:
     return False
 
 
-def _direct_access_reply(text: str, is_priv: bool = False) -> str:
-    """一次只给一个入口：明确下单给订单入口，其余入口请求先给预览。"""
+def _direct_access_reply(
+    text: str,
+    is_priv: bool = False,
+    history=None,
+) -> str:
+    """一次只给一个入口；明确订阅用近期语境做自然承接。"""
     compact = re.sub(r"\s+", "", str(text or "").lower())
-    wants_order = any(
-        marker in compact
-        for marker in ("自助下单", "下单链接", "下单入口", "自助机器人", "下单机器人", "订单机器人")
-    )
+    wants_order = _is_order_access_request(compact)
     if wants_order:
+        recent_assistant = " ".join(
+            str(item.get("content") or "")
+            for item in list(history or [])[-6:]
+            if isinstance(item, dict) and item.get("role") == "assistant"
+        ).lower()
+        has_preview_context = (
+            "@moryselect" in recent_assistant
+            or "预览" in recent_assistant
+        )
+        if is_priv:
+            if has_preview_context:
+                return (
+                    "看样子你不只是想看预览了。自助入口给你："
+                    "https://t.me/MorychannelBot，先看清当前选项，合适再订，我不催你。"
+                )
+            return (
+                "好，既然你认真问到订阅，我把自助入口给你："
+                "https://t.me/MorychannelBot。先看清当前选项，合适再按提示完成。"
+            )
+        if has_preview_context:
+            return (
+                "看样子你不只是想看预览了。行，我把自助入口放下面，"
+                "先看清当前选项，合适再订，我不催你。@MorychannelBot"
+            )
         return (
-            "自助下单：https://t.me/MorychannelBot"
-            if is_priv
-            else "自助下单 @MorychannelBot"
+            "好，既然你认真问到订阅，我把自助入口放下面。"
+            "先看清当前选项，合适再按提示完成。@MorychannelBot"
         )
     return (
         "预览：https://t.me/moryselect"
@@ -610,7 +640,11 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     if resp is None and mode == "convert" and _is_direct_access_request(msg):
         direct_access_handled = True
         direct_access_order = _is_order_access_request(msg)
-        resp = _direct_access_reply(msg, is_priv=is_priv)
+        resp = _direct_access_reply(
+            msg,
+            is_priv=is_priv,
+            history=conversation_history,
+        )
         logger.info(f"🔗 直接入口回复 uid={uid} mode={mode}")
 
     ai_attempted = False

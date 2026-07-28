@@ -8,6 +8,7 @@ import sys
 import os
 import time
 import sqlite3
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -233,6 +234,73 @@ def test_engage_exception_silent():
     # 入库失败但群回复可能成功 → 不强制 result=True
     assert isinstance(result, bool)
     print("✓ engage 异常静默不崩")
+
+
+def test_engage_send_failure_does_not_claim_success_or_persist():
+    """真实发送失败时必须交还主链，不能写成功日志并截断 P10。"""
+    pe = make_pe(enabled=True)
+    pe.mory_bot = object()
+    pe._generate_reply = lambda *_args, **_kwargs: "测试回复"
+
+    result = pe.engage(
+        uid=1,
+        uname="测试用户",
+        chat_id=2,
+        msg="订阅多少钱",
+        matched_keyword="订阅",
+        m=_FakeMessage(0),
+    )
+
+    assert result is False
+    assert pe.db.logged == []
+    assert pe.db.events == []
+
+
+def test_dispatcher_leaves_explicit_subscription_to_unified_p10():
+    """截图原句必须绕过旧搭讪旁路，由 P10 生成人设正文和单一下单按钮。"""
+    from core.message_dispatcher import _dispatch_p7_5_proactive_engage
+
+    class _Proactive:
+        def __init__(self):
+            self.should_calls = 0
+            self.engage_calls = 0
+
+        def should_engage(self, **_kwargs):
+            self.should_calls += 1
+            return True, "订阅"
+
+        def engage(self, **_kwargs):
+            self.engage_calls += 1
+            return True
+
+    proactive = _Proactive()
+    dctx = SimpleNamespace(
+        is_group=True,
+        proactive_eligible=True,
+        uid=42,
+        uname="雨轩",
+        chat_id=-1001,
+        text="怎么订阅",
+        conversation_history=[{
+            "role": "assistant",
+            "content": "全套预览在 @moryselect，你先看看。",
+        }],
+        msg=_FakeMessage(9),
+        ctx=SimpleNamespace(
+            proactive_engage=proactive,
+            db=_FakeDB(),
+            config={
+                "PROACTIVE_ENGAGE_CONFIG": {
+                    "enabled": True,
+                    "only_in_group_id": False,
+                },
+            },
+        ),
+    )
+
+    assert _dispatch_p7_5_proactive_engage(dctx) is False
+    assert proactive.should_calls == 0
+    assert proactive.engage_calls == 0
 
 
 def test_old_private_prompt_is_invalidated_and_reply_follows_single_target():

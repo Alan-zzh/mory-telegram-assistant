@@ -11,7 +11,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 模块 | 状态 | 入口文件 | 备注 |
 |------|------|----------|------|
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
-| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，熟人低频只到预览；价格/内容/权益→预览，明确购买/看过预览/明确定制→自助，拒绝和概念咨询无入口；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
+| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，价格/内容/权益→预览，明确购买/看过预览/明确定制→自助；“怎么订阅”等明确入口问法跳过旧 P7.5 旁路并结合近期预览直接承接；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 09:05 今日黄历、13:05 三张塔罗、20:35 易经一卦取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总；短期业务原文每分钟清理；`modules/auto_tasks.py` 为 legacy |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；繁体“看我賺米”、收益黑话及“港澳1-49特码有量 / 六彩合或六码名单有量并找庄”等彩票交易组合首条进入统一永久禁言、删消息、双黑名单处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
@@ -35,14 +35,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.38.2（2026-07-28）
+v5.38.3（2026-07-28）
 
-生产状态：v5.38.2 已由可信提交 `02a5e8a` 隔离增量部署，备份为 `/home/ubuntu/mory_assistant/backups/deploy_v5382_20260728_194640`；双服务 active+enabled、health v5.38.2、NRestarts=0，当前进程 warning/error 为空，9 个运行与文档文件哈希一致。生产四条截图/实机广告原文均 `score=4 / ban`，四条正常反例均 0 分；截图账号与生产漏判账号精确匹配，历史消息此前已删除，现已补齐永久受限、本地与全局黑名单、`mute_records`。本地 512 passed / 7 skipped、生产 DB 190/190、文档 7/7。
+生产状态：当前生产为 v5.38.2（可信提交 `02a5e8a`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5382_20260728_194640`）；广告四条正例均 `score=4 / ban`、四条正常反例均 0 分，截图账号已补齐永久受限、本地与全局黑名单、`mute_records`。双服务 active+enabled、health v5.38.2、NRestarts=0，9/9 文件哈希一致，当前进程 warning/error 为空。v5.38.3 明确订阅意图统一成交修复已通过本地 512 passed / 7 skipped、DB 190/190、文档 7/7，待可信提交和生产业务回执。
 
 ## 最近 3 条大事
-1. 2026-07-28 v5.38.2 修复六合彩/特码交易黑话漏判，截图及生产原文首条直接进入统一处置。
-2. 2026-07-27 v5.38.1 删除三档重复免责声明，新增私聊明确占卜请求的本地零 Token 自动回复。
-3. 2026-07-27 v5.38.0 三档栏目产品化：真实黄历、三张塔罗与本卦/动爻/之卦完全分流，新增分区排版和每日单 CTA 轮换。
+1. 2026-07-28 v5.38.3 修复“怎么订阅”被 P7.5 旁路截断：明确订阅结合预览语境直接给人设正文与群聊单一自助下单按钮。
+2. 2026-07-28 v5.38.2 修复六合彩/特码交易黑话漏判，截图及生产原文首条直接进入统一处置。
+3. 2026-07-27 v5.38.1 删除三档重复免责声明，新增私聊明确占卜请求的本地零 Token 自动回复。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

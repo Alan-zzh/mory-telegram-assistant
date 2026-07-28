@@ -26,6 +26,9 @@ class _Bot:
     def send_message(self, *args, **kwargs):
         self.sent.append((args, kwargs))
 
+    def send_chat_action(self, *args, **kwargs):
+        self.sent.append((args, kwargs))
+
 
 class _MoryBot:
     def __init__(self):
@@ -45,6 +48,9 @@ class _Db:
 
     def log_conversion_event(self, uid, event):
         self.events.append((uid, event))
+
+    def get_user_consult_count(self, _uid):
+        return 0
 
 
 class _RecoveryDb:
@@ -185,3 +191,85 @@ def test_group_opt_out_cancels_recovery_even_when_reply_probability_skips(monkey
     _dispatch_p10_ai(dispatch)
 
     assert db.cancelled == [42]
+
+
+def test_screenshot_subscription_reaches_persona_reply_and_single_order_button(
+    monkeypatch,
+):
+    """“怎么订阅”不能再被 P7.5 截断，P10 必须给走心正文和唯一按钮。"""
+    sent = []
+
+    def capture_delayed(
+        _bot,
+        _chat_id,
+        _message,
+        text,
+        _delay,
+        _mory_bot,
+        is_priv=False,
+        reply_markup=None,
+    ):
+        sent.append({
+            "text": text,
+            "is_priv": is_priv,
+            "markup": reply_markup,
+        })
+
+    class _FailIfAiCalled:
+        def ask(self, *_args, **_kwargs):
+            raise AssertionError("明确订阅入口不应等待模型超时")
+
+    db = _Db()
+    message = _message("怎么订阅")
+    context = SimpleNamespace(
+        config={
+            "REPLY_CHANCE": 0,
+            "GROWTH_OPTIMIZER_ENABLED": False,
+            "FAQ_TRACKING_ENABLED": False,
+            "RELAY_MODE_ENABLED": False,
+        },
+        db=db,
+        bot=_Bot(),
+        bot_username="mory_assistant_bot",
+        bot_id=999,
+        mory_bot=_MoryBot(),
+        ai=_FailIfAiCalled(),
+    )
+    dispatch = SimpleNamespace(
+        msg=message,
+        ctx=context,
+        text=message.text,
+        uid=42,
+        uname="雨轩",
+        chat_id=-100,
+        is_priv=False,
+        is_group=True,
+        conversation_history=[{
+            "role": "assistant",
+            "content": "全套预览在 @moryselect，你先看看。",
+        }],
+        intent={"intent": "purchase_intent", "source": "intent_router"},
+        _analysis={"mode": "convert"},
+    )
+    monkeypatch.setattr(
+        "core.message_dispatcher._delayed_reply",
+        capture_delayed,
+    )
+    monkeypatch.setattr(
+        "core.message_dispatcher._calc_humanized_delay",
+        lambda *_args, **_kwargs: 0,
+    )
+
+    _dispatch_p10_ai(dispatch)
+
+    assert len(sent) == 1
+    assert sent[0]["is_priv"] is False
+    assert "不只是想看预览" in sent[0]["text"]
+    assert "我不催你" in sent[0]["text"]
+    assert "@MorychannelBot" in sent[0]["text"]
+    assert "@moryselect" not in sent[0]["text"].lower()
+    markup = sent[0]["markup"]
+    assert len(markup.keyboard) == 1
+    assert len(markup.keyboard[0]) == 1
+    assert markup.keyboard[0][0].text == "🛒 自助下单"
+    assert markup.keyboard[0][0].url == "https://t.me/MorychannelBot"

@@ -158,6 +158,12 @@ class ProactiveEngage:
                 conversion_reason=conversion_reason,
             )
             sent_msg = self._send_group_reply(m, reply_text, uid)
+            if sent_msg is None:
+                logger.warning(
+                    "proactive_engage 未实际发送，取消成功回执并交还主链 uid=%s",
+                    uid,
+                )
+                return False
             self._notify_admin_if_needed(uname, uid, msg, matched_keyword)
             self._persist_engage(uid, chat_id, uname, msg, matched_keyword, reply_text)
             self._set_cooldown(uid)

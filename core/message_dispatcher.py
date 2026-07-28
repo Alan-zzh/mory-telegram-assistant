@@ -1742,6 +1742,27 @@ def _dispatch_p7_5_proactive_engage(dctx: DispatchContext) -> bool:
             if target_group and dctx.chat_id != target_group:
                 return False
 
+        # 明确购买/订阅必须进入 P10 统一成交链：那里会结合真实历史、
+        # 生成当前人设正文并挂唯一自助下单按钮。P7.5 只保留了解阶段搭讪，
+        # 否则旧旁路会在模型超时或发送失败时截断真正的成交回复。
+        from core.growth_optimizer import (
+            get_conversion_state,
+            resolve_conversion_target,
+        )
+        conversion_state = get_conversion_state(
+            dctx.ctx.db,
+            dctx.uid,
+            dctx.chat_id,
+        )
+        conversion_target, _ = resolve_conversion_target(
+            dctx.text,
+            getattr(dctx, "conversation_history", []),
+            mode="convert",
+            state=conversion_state,
+        )
+        if conversion_target == "subscribe":
+            return False
+
         should, matched_kw = dctx.ctx.proactive_engage.should_engage(
             uid=dctx.uid,
             msg=dctx.text,
@@ -1751,7 +1772,7 @@ def _dispatch_p7_5_proactive_engage(dctx: DispatchContext) -> bool:
             return False
 
         # 执行搭讪
-        dctx.ctx.proactive_engage.engage(
+        engaged = dctx.ctx.proactive_engage.engage(
             uid=dctx.uid,
             uname=dctx.uname,
             chat_id=dctx.chat_id,
@@ -1759,6 +1780,12 @@ def _dispatch_p7_5_proactive_engage(dctx: DispatchContext) -> bool:
             matched_keyword=matched_kw,
             m=dctx.msg,
         )
+        if not engaged:
+            logger.warning(
+                "🔔 P7.5 搭讪未实际发送，继续交给 P10 uid=%s",
+                dctx.uid,
+            )
+            return False
         clear_logging_context()
         return True
 

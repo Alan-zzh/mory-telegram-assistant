@@ -124,7 +124,16 @@ def test_word_boundary_matching():
 
 def test_direct_access_request_reply():
     """入口回复按意图只给一个目标，不把预览和下单混在一起。"""
-    for text in ("链接给我", "怎么加群", "群入口在哪", "自助机器人链接发我"):
+    for text in (
+        "链接给我",
+        "怎么加群",
+        "群入口在哪",
+        "自助机器人链接发我",
+        "怎么订阅",
+        "如何订阅",
+        "订阅链接发我",
+        "我想订阅",
+    ):
         assert _is_direct_access_request(text) is True
     preview_reply = _direct_access_reply("链接给我", is_priv=False)
     assert "@moryselect" in preview_reply
@@ -132,6 +141,19 @@ def test_direct_access_request_reply():
     order_reply = _direct_access_reply("自助机器人链接发我", is_priv=True)
     assert "MorychannelBot" in order_reply
     assert "moryselect" not in order_reply.lower()
+
+    screenshot_reply = _direct_access_reply(
+        "怎么订阅",
+        is_priv=False,
+        history=[{
+            "role": "assistant",
+            "content": "全套预览在 @moryselect，你先看看。",
+        }],
+    )
+    assert "不只是想看预览" in screenshot_reply
+    assert "我不催你" in screenshot_reply
+    assert "@MorychannelBot" in screenshot_reply
+    assert "@moryselect" not in screenshot_reply.lower()
 
 
 def test_contextual_purchase_reply_skips_preview_and_closes_order():
@@ -239,6 +261,19 @@ def test_conversion_target_matrix_keeps_funnel_order_and_context():
     assert resolve_conversion_target("订阅一个月有多少视频", mode="convert")[0] == "preview"
     assert resolve_conversion_target("价格和权益有什么区别", mode="convert")[0] == "preview"
     assert resolve_conversion_target("我要下单", mode="convert")[0] == "subscribe"
+    for text in (
+        "怎么订阅",
+        "如何订阅",
+        "在哪订阅",
+        "我要订阅",
+        "想订阅",
+        "订阅入口发我",
+        "帮我开通",
+    ):
+        assert resolve_conversion_target(text, mode="convert") == (
+            "subscribe",
+            "explicit_purchase",
+        )
     assert resolve_conversion_target("定制舞", mode="convert")[0] == "subscribe"
     assert resolve_conversion_target("我想定制一段暗黑港风视频", mode="convert")[0] == "subscribe"
     assert resolve_conversion_target("不定制了", mode="convert")[0] == "none"
