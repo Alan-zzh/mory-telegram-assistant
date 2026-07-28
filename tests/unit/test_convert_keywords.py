@@ -20,6 +20,7 @@ from core.handlers.ai_reply_handler import (
     _build_preview_markup,
     _direct_access_reply,
     _is_direct_access_request,
+    _is_order_access_request,
     _should_offer_proactive_preview,
 )
 from core.growth_optimizer import resolve_conversion_target
@@ -133,6 +134,12 @@ def test_direct_access_request_reply():
         "如何订阅",
         "订阅链接发我",
         "我想订阅",
+        "订阅怎么弄",
+        "咋开通",
+        "会员怎么开",
+        "付费入口在哪",
+        "怎麼訂閱",
+        "訂閱連結給我",
     ):
         assert _is_direct_access_request(text) is True
     preview_reply = _direct_access_reply("链接给我", is_priv=False)
@@ -150,10 +157,70 @@ def test_direct_access_request_reply():
             "content": "全套预览在 @moryselect，你先看看。",
         }],
     )
-    assert "不只是想看预览" in screenshot_reply
-    assert "我不催你" in screenshot_reply
     assert "@MorychannelBot" in screenshot_reply
     assert "@moryselect" not in screenshot_reply.lower()
+    assert len(screenshot_reply) <= 55
+
+
+def test_subscription_reply_variants_are_short_persona_and_nonrepeating(monkeypatch):
+    """连续索要入口时换一句，但目标、长度和按钮合同不变。"""
+    monkeypatch.setattr(
+        "core.handlers.ai_reply_handler.random.choice",
+        lambda candidates: list(candidates)[0],
+    )
+    preview_history = [{
+        "role": "assistant",
+        "content": "全套预览在 @moryselect，你先看看。",
+    }]
+    first = _direct_access_reply(
+        "怎么订阅",
+        is_priv=False,
+        history=preview_history,
+    )
+    second = _direct_access_reply(
+        "订阅怎么弄",
+        is_priv=False,
+        history=[
+            *preview_history,
+            {"role": "assistant", "content": first},
+        ],
+    )
+
+    assert first != second
+    for reply in (first, second):
+        assert "@MorychannelBot" in reply
+        assert "@moryselect" not in reply.lower()
+        assert len(reply) <= 55
+        assert any(tone in reply for tone in ("行", "懂了", "好", "可以", "嗯"))
+
+    private_reply = _direct_access_reply(
+        "咋开通",
+        is_priv=True,
+        history=preview_history,
+    )
+    assert "https://t.me/MorychannelBot" in private_reply
+    assert len(private_reply) <= 65
+
+
+def test_order_access_variant_matrix_and_false_positive_boundary():
+    variants = (
+        "怎么订阅", "咋订阅", "订阅怎么弄", "订阅怎么办", "订阅入口在哪",
+        "怎么开通", "咋开通", "开通一下", "会员怎么开", "开个会员",
+        "怎么付费", "付费入口在哪", "怎么付款", "付款链接发我",
+        "怎麼訂閱", "訂閱連結給我", "怎麼開通", "開通連結",
+    )
+    for text in variants:
+        assert _is_order_access_request(text) is True
+        assert _is_direct_access_request(text) is True
+        assert resolve_conversion_target(text, mode="convert") == (
+            "subscribe",
+            "explicit_purchase",
+        )
+
+    # 普通商品即使含“怎么买”，没有 Mory 业务上下文也不能导向订阅。
+    assert resolve_conversion_target("咖啡怎么买", mode="convert")[0] == "none"
+    assert resolve_conversion_target("鞋子怎么购买", mode="convert")[0] == "none"
+    assert resolve_conversion_target("淘宝付款入口在哪", mode="convert")[0] == "none"
 
 
 def test_contextual_purchase_reply_skips_preview_and_closes_order():
@@ -268,7 +335,14 @@ def test_conversion_target_matrix_keeps_funnel_order_and_context():
         "我要订阅",
         "想订阅",
         "订阅入口发我",
+        "订阅怎么弄",
+        "咋订阅",
         "帮我开通",
+        "开通一下",
+        "会员怎么开",
+        "付费入口在哪",
+        "怎麼訂閱",
+        "訂閱連結給我",
     ):
         assert resolve_conversion_target(text, mode="convert") == (
             "subscribe",

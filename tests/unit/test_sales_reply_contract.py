@@ -259,15 +259,19 @@ def test_screenshot_subscription_reaches_persona_reply_and_single_order_button(
         "core.message_dispatcher._calc_humanized_delay",
         lambda *_args, **_kwargs: 0,
     )
+    monkeypatch.setattr(
+        "core.handlers.ai_reply_handler.random.choice",
+        lambda candidates: list(candidates)[0],
+    )
 
     _dispatch_p10_ai(dispatch)
 
     assert len(sent) == 1
     assert sent[0]["is_priv"] is False
-    assert "不只是想看预览" in sent[0]["text"]
-    assert "我不催你" in sent[0]["text"]
+    assert sent[0]["text"].startswith("行，看来预览对上了。")
     assert "@MorychannelBot" in sent[0]["text"]
     assert "@moryselect" not in sent[0]["text"].lower()
+    assert len(sent[0]["text"]) <= 55
     markup = sent[0]["markup"]
     assert len(markup.keyboard) == 1
     assert len(markup.keyboard[0]) == 1

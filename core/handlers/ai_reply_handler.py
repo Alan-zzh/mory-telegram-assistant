@@ -27,15 +27,66 @@ def _final_ai_reply_fallback(mode: str, is_priv: bool = False) -> str:
     return get_fallback_text(mode, is_priv=is_priv)
 
 
+_ORDER_ACCESS_MARKERS = (
+    "怎么下单", "如何下单", "在哪下单", "我要下单", "想下单", "直接下单",
+    "下单链接", "下单入口", "自助下单", "自助机器人", "下单机器人", "订单机器人",
+    "怎么订阅", "如何订阅", "在哪订阅", "咋订阅", "我要订阅", "想订阅", "要订阅",
+    "订阅怎么弄", "订阅咋弄", "订阅怎么办", "订阅入口", "订阅链接", "订阅一下",
+    "怎么开通", "如何开通", "在哪开通", "咋开通", "我要开通", "想开通", "帮我开通",
+    "开通怎么弄", "开通咋弄", "开通一下", "开通入口", "开通链接",
+    "怎么开会员", "如何开会员", "我要开会员", "开个会员", "会员怎么开",
+    "怎么付费", "如何付费", "在哪付费", "我要付费", "想付费", "付费入口", "付费链接",
+    "怎么付款", "如何付款", "在哪付款", "我要付款", "付款入口", "付款链接",
+    "怎么买", "我要买", "想买", "怎么购买", "如何购买", "我要购买", "购买入口", "购买链接",
+    "怎麼下單", "如何下單", "下單入口", "下單連結",
+    "怎麼訂閱", "如何訂閱", "在哪訂閱", "我要訂閱", "想訂閱", "訂閱入口", "訂閱連結",
+    "怎麼開通", "如何開通", "我要開通", "開通入口", "開通連結",
+    "怎麼購買", "如何購買", "購買入口", "購買連結",
+)
+
+_ORDER_ACCESS_PATTERN = re.compile(
+    r"(?:怎么|怎麼|咋|如何|哪里|哪儿|在哪|想|要|我要|帮我|幫我|给我|給我|直接)"
+    r".{0,5}(?:订阅|訂閱|开通|開通|下单|下單|购买|購買|付费|付費|付款|支付|会员|會員)"
+    r"|(?:订阅|訂閱|开通|開通|下单|下單|购买|購買|付费|付費|付款|会员|會員)"
+    r".{0,5}(?:怎么|怎麼|咋|如何|哪里|哪儿|在哪|入口|链接|連結|弄|搞|办|辦)",
+)
+
 _DIRECT_ACCESS_KEYWORDS = (
     "链接给我", "给链接", "发链接", "发个链接", "链接发我", "链接来一个",
     "群链接", "群入口", "入口", "地址", "网址",
     "怎么加群", "怎么进群", "怎么入群", "加群", "进群", "入群",
     "预览群", "预览链接", "自助下单", "下单链接", "下单入口",
     "自助机器人", "下单机器人", "订单机器人",
-    "怎么订阅", "如何订阅", "在哪订阅", "我要订阅", "想订阅", "要订阅",
-    "订阅入口", "订阅链接",
-    "怎么开通", "如何开通", "我要开通", "帮我开通", "开通入口", "开通链接",
+) + _ORDER_ACCESS_MARKERS
+
+_GROUP_SUBSCRIBE_AFTER_PREVIEW_REPLIES = (
+    "行，看来预览对上了。入口放下面，选合适的就行。@MorychannelBot",
+    "懂了，不只看看是吧。下面可以直接订。@MorychannelBot",
+    "好，那就往下一步走。入口在下面，按提示来就行。@MorychannelBot",
+    "可以，想继续就从下面开通。别急，先看清选项。@MorychannelBot",
+    "嗯，看来你是认真想订了。入口给你，自己慢慢选。@MorychannelBot",
+)
+
+_GROUP_SUBSCRIBE_REPLIES = (
+    "想订就直说嘛。入口放下面，选合适的就行。@MorychannelBot",
+    "行，入口给你。先看清选项，再决定。@MorychannelBot",
+    "可以，下面直接开通。按提示来就行。@MorychannelBot",
+    "懂了，是来真的。入口在下面，自己挑。@MorychannelBot",
+    "好，给你入口。合适就开，不合适也不勉强。@MorychannelBot",
+)
+
+_PRIVATE_SUBSCRIBE_AFTER_PREVIEW_REPLIES = (
+    "行，看来预览对上了。入口给你：https://t.me/MorychannelBot，选合适的就行。",
+    "懂了，不只看看是吧。这里可以直接订：https://t.me/MorychannelBot。",
+    "好，那就往下一步走：https://t.me/MorychannelBot，按提示来就行。",
+    "可以，想继续就从这里开通：https://t.me/MorychannelBot。",
+)
+
+_PRIVATE_SUBSCRIBE_REPLIES = (
+    "想订就直说嘛。入口在这：https://t.me/MorychannelBot。",
+    "行，给你入口：https://t.me/MorychannelBot，先看清选项。",
+    "可以，直接从这里开通：https://t.me/MorychannelBot。",
+    "懂了，是来真的。入口：https://t.me/MorychannelBot。",
 )
 
 _QUESTION_MARKERS = (
@@ -187,14 +238,11 @@ def _recent_conversion_cta_sent(history) -> bool:
 
 def _is_order_access_request(text: str) -> bool:
     compact = re.sub(r"\s+", "", str(text or "").lower())
-    return any(
-        marker in compact
-        for marker in (
-            "怎么下单", "我要下单", "下单链接", "下单入口", "自助下单",
-            "自助机器人", "下单机器人", "订单机器人", "怎么买", "我要买",
-            "怎么订阅", "如何订阅", "在哪订阅", "我要订阅", "想订阅", "要订阅",
-            "订阅入口", "订阅链接",
-            "怎么开通", "如何开通", "我要开通", "帮我开通", "开通入口", "开通链接",
+    return bool(
+        compact
+        and (
+            any(marker in compact for marker in _ORDER_ACCESS_MARKERS)
+            or _ORDER_ACCESS_PATTERN.search(compact)
         )
     )
 
@@ -336,17 +384,53 @@ def _is_direct_access_request(text: str) -> bool:
         return True
     if "机器人" in compact and any(k in compact for k in ("自助", "下单", "链接", "入口", "给", "发", "找")):
         return True
+    if _is_order_access_request(compact):
+        return True
     return False
+
+
+def _pick_reply_variant(candidates, history=None) -> str:
+    """优先避开近期已经说过的原句，让语气变化但不改变业务目标。"""
+    pool = tuple(str(item) for item in candidates if str(item).strip())
+    if not pool:
+        return ""
+    recent_assistant = [
+        re.sub(r"\s+", "", str(item.get("content") or ""))
+        for item in list(history or [])[-6:]
+        if isinstance(item, dict) and item.get("role") == "assistant"
+    ]
+    fresh = [
+        candidate
+        for candidate in pool
+        if not any(
+            re.sub(r"\s+", "", candidate) in previous
+            for previous in recent_assistant
+        )
+    ]
+    if fresh:
+        return random.choice(fresh)
+    last = recent_assistant[-1] if recent_assistant else ""
+    nonrepeat = [
+        candidate
+        for candidate in pool
+        if re.sub(r"\s+", "", candidate) != last
+    ]
+    return random.choice(nonrepeat or list(pool))
 
 
 def _direct_access_reply(
     text: str,
     is_priv: bool = False,
     history=None,
+    order_ready=None,
 ) -> str:
-    """一次只给一个入口；明确订阅用近期语境做自然承接。"""
+    """一次只给一个入口；成交短句按语境变化并避开近期原句。"""
     compact = re.sub(r"\s+", "", str(text or "").lower())
-    wants_order = _is_order_access_request(compact)
+    wants_order = (
+        _is_order_access_request(compact)
+        if order_ready is None
+        else bool(order_ready)
+    )
     if wants_order:
         recent_assistant = " ".join(
             str(item.get("content") or "")
@@ -358,23 +442,17 @@ def _direct_access_reply(
             or "预览" in recent_assistant
         )
         if is_priv:
-            if has_preview_context:
-                return (
-                    "看样子你不只是想看预览了。自助入口给你："
-                    "https://t.me/MorychannelBot，先看清当前选项，合适再订，我不催你。"
-                )
-            return (
-                "好，既然你认真问到订阅，我把自助入口给你："
-                "https://t.me/MorychannelBot。先看清当前选项，合适再按提示完成。"
+            return _pick_reply_variant(
+                _PRIVATE_SUBSCRIBE_AFTER_PREVIEW_REPLIES
+                if has_preview_context
+                else _PRIVATE_SUBSCRIBE_REPLIES,
+                history,
             )
-        if has_preview_context:
-            return (
-                "看样子你不只是想看预览了。行，我把自助入口放下面，"
-                "先看清当前选项，合适再订，我不催你。@MorychannelBot"
-            )
-        return (
-            "好，既然你认真问到订阅，我把自助入口放下面。"
-            "先看清当前选项，合适再按提示完成。@MorychannelBot"
+        return _pick_reply_variant(
+            _GROUP_SUBSCRIBE_AFTER_PREVIEW_REPLIES
+            if has_preview_context
+            else _GROUP_SUBSCRIBE_REPLIES,
+            history,
         )
     return (
         "预览：https://t.me/moryselect"
@@ -637,13 +715,19 @@ def _dispatch_p10_ai(dctx: DispatchContext):
 
     direct_access_handled = False
     direct_access_order = False
-    if resp is None and mode == "convert" and _is_direct_access_request(msg):
+    if (
+        resp is None
+        and mode == "convert"
+        and conversion_target in {"preview", "subscribe"}
+        and _is_direct_access_request(msg)
+    ):
         direct_access_handled = True
-        direct_access_order = _is_order_access_request(msg)
+        direct_access_order = conversion_target == "subscribe"
         resp = _direct_access_reply(
             msg,
             is_priv=is_priv,
             history=conversation_history,
+            order_ready=direct_access_order,
         )
         logger.info(f"🔗 直接入口回复 uid={uid} mode={mode}")
 
