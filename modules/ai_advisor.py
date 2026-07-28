@@ -277,18 +277,26 @@ def explain_enforcement_to_chat(
 # 4. 头像 AI 复核（视觉模型判断头像是否含营销话术）
 # ──────────────────────────────────────────────────────
 
-_AVATAR_REVIEW_PROMPT = """请判断这张用户头像图片是否包含营销/广告/色情元素。
+_AVATAR_REVIEW_PROMPT = """你是 Telegram 入群头像安全审核器。请直接观察整张头像，
+不要只做 OCR，也不要因为贴纸、文字遮挡而忽略主体画面。
 
-重点检查：
-1. 头像中是否有"加我V"、"扫码进群"、"看我主页"等文字
-2. 头像是否为色情/低俗图片
-3. 头像是否为营销二维码/客服微信图
-4. 头像是否正常（真人照片/卡通/风景/抽象图等）
+只允许返回下面一个标签，不要 JSON、解释、标点或其他文字：
+- ADULT_HIGH：主体画面明确裸露或强烈性化地突出臀部、私密部位、胸部，或展示性行为
+- MARKETING_HIGH：主体是明确的加好友、客服、下注、代购、色情资源等营销引流海报
+- QR_HIGH：主体包含清晰可扫码二维码
+- SAFE：正常真人、卡通、风景、宠物、品牌标志；普通运动或泳装但未刻意突出私密部位
+- UNSURE：画面太小、模糊、遮挡，或证据不足
 
-【返回格式】严格 JSON：
-{{"is_ad": true/false, "type": "marketing/adult/qr/normal", "confidence": 0.0-1.0, "desc": "≤20字描述"}}
+只有证据明确时返回 *_HIGH；拿不准必须返回 UNSURE。"""
 
-只返回 JSON，不要任何解释。"""
+
+_AVATAR_LABEL_RESULTS = {
+    "ADULT_HIGH": (True, "adult", 0.99, "明确成人低俗头像"),
+    "MARKETING_HIGH": (True, "marketing", 0.97, "明确营销引流头像"),
+    "QR_HIGH": (True, "qr", 0.97, "明确二维码头像"),
+    "SAFE": (False, "normal", 0.98, "头像正常"),
+    "UNSURE": (False, "unknown", 0.0, "视觉证据不足"),
+}
 
 
 def review_avatar_with_vision(
@@ -320,11 +328,19 @@ def review_avatar_with_vision(
             if raw_stripped.lower().startswith("json"):
                 raw_stripped = raw_stripped[4:].strip()
 
-        result = json.loads(raw_stripped)
-        is_ad = bool(result.get("is_ad", False))
-        ad_type = str(result.get("type", "unknown"))
-        confidence = float(result.get("confidence", 0.0))
-        desc = str(result.get("desc", ""))[:50]
+        label = raw_stripped.strip().upper()
+        if label in _AVATAR_LABEL_RESULTS:
+            is_ad, ad_type, confidence, desc = _AVATAR_LABEL_RESULTS[label]
+        else:
+            # 兼容灰度发布期间旧模型返回的 JSON；新提示词只接受固定标签。
+            result = json.loads(raw_stripped)
+            is_ad = bool(result.get("is_ad", False))
+            ad_type = str(result.get("type", "unknown"))
+            try:
+                confidence = max(0.0, min(1.0, float(result.get("confidence", 0.0))))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            desc = str(result.get("desc", ""))[:50]
 
         logger.info(
             f"[AI-Avatar-Review] uid={user_id} is_ad={is_ad} type={ad_type} "

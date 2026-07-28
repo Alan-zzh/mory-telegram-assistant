@@ -499,6 +499,10 @@ colorama==0.4.6 \
     #   interrogate
     #   pytest
     #   radon
+coloredlogs==15.0.1 \
+    --hash=sha256:612ee75c546f53e92e70049c9dbfcc18c935a2b9a53b66085ce9ef6a6e5c0934 \
+    --hash=sha256:7c991aa71a4577af2f82600d8f8f3a89f936baeaf9b50a9c197da014e5bf16b0
+    # via onnxruntime
 coverage[toml]==7.14.1 \
     --hash=sha256:0177614a0370f227888b4e436a7c55686d6a9f90eb1ade2b624ba685a1686e86 \
     --hash=sha256:01b7733daad0237daa01ef80fe2dfceffc911e6a17fa7b55d14aa8214eaaaecd \
@@ -668,6 +672,9 @@ flask==3.0.3 \
     # via
     #   -r requirements.in
     #   flasgger
+flatbuffers==25.12.19 \
+    --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4
+    # via onnxruntime
 frozenlist==1.8.0 \
     --hash=sha256:0325024fe97f94c41c08872db482cf8ac4800d80e79222c6b0b7b162d5b13686 \
     --hash=sha256:032efa2674356903cd0261c4317a561a6850f3ac864a63fc1583147fb05a79b0 \
@@ -988,6 +995,10 @@ gunicorn==21.2.0 \
     --hash=sha256:3213aa5e8c24949e792bcacfc176fef362e7aac80b76c56f6b5122bf350722f0 \
     --hash=sha256:88ec8bff1d634f98e61b9f65bc4bf3cd918a90806c6f5c48bc5603849ec81033
     # via -r requirements.in
+humanfriendly==10.0 \
+    --hash=sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477 \
+    --hash=sha256:6b0b831ce8f15f7300721aa49829fc4e83921a9a301cc7f606be6686a2288ddc
+    # via coloredlogs
 idna==3.18 \
     --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
@@ -1216,6 +1227,10 @@ mistune==3.2.1 \
     --hash=sha256:78cdb0ba5e938053ccf63651b352508d2efa9411dc8810bfb05f2dc5140c0048 \
     --hash=sha256:7c8e5501d38bac1582e067e46c8343f17d57ea1aaa735823f3aba1fd59c88a28
     # via flasgger
+mpmath==1.3.0 \
+    --hash=sha256:7a28eb2a9774d00c7bc92411c19a89209d5da7c4c9a9e227be8330a23a25b91f \
+    --hash=sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c
+    # via sympy
 multidict==6.7.1 \
     --hash=sha256:026d264228bcd637d4e060844e39cdc60f86c479e463d49075dedc21b18fbbe0 \
     --hash=sha256:03ede2a6ffbe8ef936b92cb4529f27f42be7f56afcdab5ab739cd5f27fb1cbf9 \
@@ -1416,6 +1431,10 @@ mypy-extensions==1.1.0 \
     --hash=sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505 \
     --hash=sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558
     # via mypy
+nudenet==3.4.2 \
+    --hash=sha256:5937dbd84e5d8e5de038f08ffea5a1bb50a08475776bf2b4795914ce0eaf0331 \
+    --hash=sha256:b20645d5f06bbb10006e6d4dc8a9513cf684269bbcffb0557a3ed6831aa90d75
+    # via -r requirements.in
 numpy==2.4.6 \
     --hash=sha256:001fbb8e08d942dd57599e781f2472269ee7f2755fae407b4f67b2f0b17da3f1 \
     --hash=sha256:0280e0356c0829a18d9de1cb7eee50ec22ca639878d7240307ca0943d73cd2c4 \
@@ -1489,7 +1508,48 @@ numpy==2.4.6 \
     --hash=sha256:f3a3570c4a2a16746ac2c31a7c7c7b0c186b95ce902e33db6f28094ed7387dda \
     --hash=sha256:f407cb6b8e9d6d8c626bc73c945db1706035af8fd632295547bf1c9e46d092d6 \
     --hash=sha256:f74a575920ab21fe304421a3fc28793d82e299cae9eccb37084e9fc7f3617c20
-    # via scipy
+    # via
+    #   nudenet
+    #   onnxruntime
+    #   opencv-python-headless
+    #   scipy
+onnxruntime==1.20.1 \
+    --hash=sha256:06bfbf02ca9ab5f28946e0f912a562a5f005301d0c419283dc57b3ed7969bb7b \
+    --hash=sha256:0df6f2df83d61f46e842dbcde610ede27218947c33e994545a22333491e72a3b \
+    --hash=sha256:19c2d843eb074f385e8bbb753a40df780511061a63f9def1b216bf53860223fb \
+    --hash=sha256:22b0655e2bf4f2161d52706e31f517a0e54939dc393e92577df51808a7edc8c9 \
+    --hash=sha256:4c4b251a725a3b8cf2aab284f7d940c26094ecd9d442f07dd81ab5470e99b83f \
+    --hash=sha256:5eec64c0269dcdb8d9a9a53dc4d64f87b9e0c19801d9321246a53b7eb5a7d1bc \
+    --hash=sha256:7b2908b50101a19e99c4d4e97ebb9905561daf61829403061c1adc1b588bc0de \
+    --hash=sha256:8508887eb1c5f9537a4071768723ec7c30c28eb2518a00d0adcd32c89dea3221 \
+    --hash=sha256:a19bc6e8c70e2485a1725b3d517a2319603acc14c1f1a017dda0afe6d4665b41 \
+    --hash=sha256:bb71a814f66517a65628c9e4a2bb530a6edd2cd5d87ffa0af0f6f773a027d99e \
+    --hash=sha256:bd386cc9ee5f686ee8a75ba74037750aca55183085bf1941da8efcfe12d5b120 \
+    --hash=sha256:bda6aebdf7917c1d811f21d41633df00c58aff2bef2f598f69289c1f1dabc4b3 \
+    --hash=sha256:c9158465745423b2b5d97ed25aa7740c7d38d2993ee2e5c3bfacb0c4145c49d8 \
+    --hash=sha256:cc01437a32d0042b606f462245c8bbae269e5442797f6213e36ce61d5abdd8cc \
+    --hash=sha256:d30367df7e70f1d9fc5a6a68106f5961686d39b54d3221f760085524e8d38e16 \
+    --hash=sha256:d3b616bb53a77a9463707bb313637223380fc327f5064c9a782e8ec69c22e6a2 \
+    --hash=sha256:d82daaec24045a2e87598b8ac2b417b1cce623244e80e663882e9fe1aae86410 \
+    --hash=sha256:e50ba5ff7fed4f7d9253a6baf801ca2883cc08491f9d32d78a80da57256a5439 \
+    --hash=sha256:f1f56e898815963d6dc4ee1c35fc6c36506466eff6d16f3cb9848cea4e8c8172 \
+    --hash=sha256:f6243e34d74423bdd1edf0ae9596dd61023b260f546ee17d701723915f06a9f7 \
+    --hash=sha256:fb44b08e017a648924dbe91b82d89b0c105b1adcfe31e90d1dc06b8677ad37be
+    # via
+    #   -r requirements.in
+    #   nudenet
+opencv-python-headless==4.13.0.92 \
+    --hash=sha256:0525a3d2c0b46c611e2130b5fdebc94cf404845d8fa64d2f3a3b679572a5bd22 \
+    --hash=sha256:0bd48544f77c68b2941392fcdf9bcd2b9cdf00e98cb8c29b2455d194763cf99e \
+    --hash=sha256:1a7d040ac656c11b8c38677cc8cccdc149f98535089dbe5b081e80a4e5903209 \
+    --hash=sha256:3e0a6f0a37994ec6ce5f59e936be21d5d6384a4556f2d2da9c2f9c5dc948394c \
+    --hash=sha256:5c8cfc8e87ed452b5cecb9419473ee5560a989859fe1d10d1ce11ae87b09a2cb \
+    --hash=sha256:77a82fe35ddcec0f62c15f2ba8a12ecc2ed4207c17b0902c7a3151ae29f37fb6 \
+    --hash=sha256:a7cf08e5b191f4ebb530791acc0825a7986e0d0dee2a3c491184bd8599848a4b \
+    --hash=sha256:eb60e36b237b1ebd40a912da5384b348df8ed534f6f644d8e0b4f103e272ba7d
+    # via
+    #   -r requirements.in
+    #   nudenet
 opentelemetry-api==1.42.1 \
     --hash=sha256:51a69edacadbc03a8950ace1c4c21099cacc538820ac2c9e36277e78cebba714 \
     --hash=sha256:56c63bea9f77b62856be8c47600474acad853b2924b99b1687c4cb6297166716
@@ -1567,6 +1627,7 @@ packaging==26.2 \
     # via
     #   flasgger
     #   gunicorn
+    #   onnxruntime
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-flask
     #   pytest
@@ -1834,6 +1895,7 @@ protobuf==6.33.6 \
     --hash=sha256:f443a394af5ed23672bc6c486be138628fbe5c651ccbc536873d7da23d1868cf
     # via
     #   googleapis-common-protos
+    #   onnxruntime
     #   opentelemetry-proto
 psutil==6.1.1 \
     --hash=sha256:018aeae2af92d943fdf1da6b58665124897cfc94faa2ca92098838f83e1b1bca \
@@ -2023,6 +2085,10 @@ pynacl==1.6.2 \
     --hash=sha256:d29bfe37e20e015a7d8b23cfc8bd6aa7909c92a1b8f41ee416bbb3e79ef182b2 \
     --hash=sha256:fe9847ca47d287af41e82be1dd5e23023d3c31a951da134121ab02e42ac218c9
     # via paramiko
+pyreadline3==3.5.6 \
+    --hash=sha256:61e53218b99656091ddb077df9e71f25850e72e030b6183b39c9b7e6e4f4a9bf \
+    --hash=sha256:8449b734232e42a5dcd74048e39b60db2839a4c38cf3ae2bf7707d58b5389c0d
+    # via humanfriendly
 pytelegrambotapi==4.34.0 \
     --hash=sha256:470bec408033ceebe089cf968cc92cc1ff2d79b912ee5a983a07926ff79d4053 \
     --hash=sha256:ec56b339690c4f4a2c867cc677d01a9bfa9e4af58227a54596e2f366c0947df9
@@ -2404,6 +2470,10 @@ structlog==24.4.0 \
     --hash=sha256:597f61e80a91cc0749a9fd2a098ed76715a1c8a01f73e336b746504d1aad7610 \
     --hash=sha256:b27bfecede327a6d2da5fbc96bd859f114ecc398a6389d664f62085ee7ae6fc4
     # via -r requirements.in
+sympy==1.14.0 \
+    --hash=sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517 \
+    --hash=sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5
+    # via onnxruntime
 tabulate==0.10.0 \
     --hash=sha256:e2cfde8f79420f6deeffdeda9aaec3b6bc5abce947655d17ac662b126e48a60d \
     --hash=sha256:f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3

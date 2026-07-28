@@ -263,6 +263,8 @@ def test_screenshot_subscription_reaches_persona_reply_and_single_order_button(
         "core.handlers.ai_reply_handler.random.choice",
         lambda candidates: list(candidates)[0],
     )
+    # 本用例验证成交回复合同，不应随执行机器是否处于 00:00-05:00 而改走夜间提醒。
+    monkeypatch.setattr("modules.content.is_late_night", lambda: False)
 
     _dispatch_p10_ai(dispatch)
 

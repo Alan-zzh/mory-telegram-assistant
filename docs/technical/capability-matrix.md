@@ -543,13 +543,13 @@ core/mode_router.py 根据 MODE_ROUTING[mode] 选模型池
 |---|------|------|---------|--------|
 | 1 | `ad_patterns_encoded.py` | 编码广告关键词（Unicode 转义存储） | （关键词内置，Dashboard 维护） | `ad_patterns` |
 | 2 | `antidelete.py` | 反撤回（缓存 deleted_messages） | `ANTI_DELETE_CONFIG{enabled=false}` | `deleted_messages` |
-| 3 | `avatar_detector.py` | 色情头像检测（NSFW 模型） | （共用 NSFW_DETECT_CONFIG） | `avatar_check_log` |
+| 3 | `avatar_detector.py` | 入群头像本地 NudeNet 明确暴露检测 + 营销文字 OCR + 相似头像 | `AD_AVATAR_AI_REVIEW_ENABLED=true` 时启用完整链 | `avatar_check_log` |
 | 4 | `edit_detector.py` | 编辑消息检测（追踪 message.edit 事件） | `EDIT_DETECT_ENABLE=false` | `edit_history` |
 | 5 | `emoji_mask_detector.py` | emoji 面具破解（检测 emoji 拼接的违规词） | `EMOJI_MASK_DETECT=false` | `emoji_mask_log` |
 | 6 | `nsfw_detect.py` | NSFW 图片检测 | `NSFW_DETECT_CONFIG{enabled=false, threshold=0.85, api_key=""}` | `nsfw_check_log` |
 | 7 | `spam_watch.py` | CAS/SpamWatch 集成 | `SPAM_WATCH_CONFIG{cas_enabled=false, spamwatch_enabled=false, spamwatch_token="", auto_ban=false}` | `cas_check_log` |
 
-**NSFW threshold=0.85 详解**：模型返回 0-1 的色情概率，≥ 0.85 判定为违规——`api_key` 留空时走本地启发式检测（精度较低）。
+**头像入群检测边界（v5.38.8）**：`avatar_detector.py` 使用本地 NudeNet 3.4.2 ONNX 区域检测，不依赖 `NSFW_DETECT_CONFIG.api_key`；只对明确暴露类别采用逐类高阈值，covered、腹部、腋下、脚部和证据不足结果不封。`nsfw_detect.py` 是独立的消息图片检测模块，`api_key` 留空时不会自动获得同等能力。
 
 ---
 

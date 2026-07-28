@@ -324,7 +324,8 @@ def main():
         # 先判断依赖是否已满足（通过导入检查），跳过慢速网络安装，避免与工具超时竞态
         print("\n  安装/同步 Python 依赖 ...")
         dep_check = (
-            f"cd {VPS_PATH} && python3 -c 'import telebot, flask, gevent, gunicorn, apscheduler; "
+            f"cd {VPS_PATH} && python3 -c 'import telebot, flask, gevent, gunicorn, apscheduler, "
+            "nudenet, onnxruntime, cv2; "
             'print(\"DEPS_OK\")' "' 2>/dev/null"
         )
         try:

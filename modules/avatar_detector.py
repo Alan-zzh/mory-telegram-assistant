@@ -8,6 +8,7 @@
 import io
 import logging
 import hashlib
+import threading
 from typing import Optional, Tuple, List
 from datetime import datetime, timezone
 
@@ -18,6 +19,89 @@ except ImportError:
     HAS_PIL = False
 
 logger = logging.getLogger("avatar_detector")
+
+_nude_detector = None
+_nude_detector_unavailable = False
+_nude_detector_lock = threading.Lock()
+
+# 仅使用 NudeNet 的明确暴露类别；不把 covered/肚子/腋下/脚等日常画面作为广告证据。
+_LOCAL_NSFW_THRESHOLDS = {
+    "FEMALE_GENITALIA_EXPOSED": 0.72,
+    "MALE_GENITALIA_EXPOSED": 0.72,
+    "ANUS_EXPOSED": 0.72,
+    "FEMALE_BREAST_EXPOSED": 0.78,
+    "BUTTOCKS_EXPOSED": 0.80,
+}
+
+
+def _get_nude_detector():
+    """惰性加载本地 NudeNet ONNX 模型，单进程只初始化一次。"""
+    global _nude_detector, _nude_detector_unavailable
+    if _nude_detector is not None or _nude_detector_unavailable:
+        return _nude_detector
+    with _nude_detector_lock:
+        if _nude_detector is not None or _nude_detector_unavailable:
+            return _nude_detector
+        try:
+            from nudenet import NudeDetector
+            _nude_detector = NudeDetector()
+        except Exception as e:
+            _nude_detector_unavailable = True
+            logger.warning(f"本地 NudeNet 头像模型不可用: {e}")
+    return _nude_detector
+
+
+def review_avatar_nsfw_local(image_data: bytes) -> dict:
+    """用真正的本地视觉模型识别明确裸露区域；失败时不把肤色当作定罪证据。"""
+    detector = _get_nude_detector()
+    if detector is None or not image_data:
+        return {
+            "is_ad": False,
+            "type": "unknown",
+            "confidence": 0.0,
+            "desc": "本地头像模型不可用",
+            "used_local": False,
+            "detections": [],
+        }
+    try:
+        with _nude_detector_lock:
+            detections = detector.detect(image_data) or []
+        explicit_hits = []
+        for item in detections:
+            label = str(item.get("class", ""))
+            score = float(item.get("score", 0.0) or 0.0)
+            threshold = _LOCAL_NSFW_THRESHOLDS.get(label)
+            if threshold is not None and score >= threshold:
+                explicit_hits.append({"class": label, "score": round(score, 4)})
+
+        if explicit_hits:
+            strongest = max(explicit_hits, key=lambda item: item["score"])
+            return {
+                "is_ad": True,
+                "type": "adult",
+                "confidence": strongest["score"],
+                "desc": f"本地模型明确暴露:{strongest['class']}",
+                "used_local": True,
+                "detections": explicit_hits,
+            }
+        return {
+            "is_ad": False,
+            "type": "normal",
+            "confidence": 0.0,
+            "desc": "未发现高置信明确暴露",
+            "used_local": True,
+            "detections": [],
+        }
+    except Exception as e:
+        logger.warning(f"本地 NudeNet 头像检测失败: {e}")
+        return {
+            "is_ad": False,
+            "type": "unknown",
+            "confidence": 0.0,
+            "desc": "本地头像检测异常",
+            "used_local": False,
+            "detections": [],
+        }
 
 
 def _compute_phash(image_data: bytes, hash_size: int = 16) -> Optional[str]:
@@ -344,8 +428,9 @@ def check_avatar_marketing(bot, user_id: int, config: dict = None) -> Tuple[bool
     [Puzan-OS v5.32] 综合检测头像中的营销话术/二维码/色情元素。
 
     检测链：
-    1. 现有 check_avatar_ocr_text（OCR + 营销关键词评分）
-    2. ai_advisor.review_avatar_with_vision（AI 视觉模型复核，默认关闭）
+    1. 本地 NudeNet ONNX 检查明确裸露区域（显式开启头像 AI 审核时）
+    2. 通用视觉模型检查画面主体、营销海报和二维码
+    3. 通用视觉模型不可用或证据不足时，回退 OCR + 营销关键词评分
 
     Args:
         bot: TeleBot 实例
@@ -361,13 +446,6 @@ def check_avatar_marketing(bot, user_id: int, config: dict = None) -> Tuple[bool
     """
     cfg = config or {}
 
-    # 第一步：现有 OCR 检测
-    ocr_suspicious, ocr_text, ocr_score = check_avatar_ocr_text(bot, user_id, cfg)
-    if ocr_suspicious:
-        reason = f"OCR命中营销话术: {ocr_text[:50]}"
-        return True, reason, ocr_score, {}
-
-    # 第二步：AI 视觉模型复核（默认关闭）
     ai_result = {}
     if cfg.get("AD_AVATAR_AI_REVIEW_ENABLED", False):
         try:
@@ -386,8 +464,18 @@ def check_avatar_marketing(bot, user_id: int, config: dict = None) -> Tuple[bool
             if not file_data:
                 return False, "下载头像失败", 0, {}
 
+            local_result = review_avatar_nsfw_local(file_data)
+            if local_result.get("used_local") and local_result.get("is_ad"):
+                confidence = float(local_result.get("confidence", 0.0) or 0.0)
+                desc = local_result.get("desc", "")
+                logger.warning(
+                    f"🚫 [本地头像复核] 命中: uid={user_id} conf={confidence:.2f} desc={desc}"
+                )
+                return True, f"本地视觉复核: adult({desc})", 2, local_result
+
             from modules.ai_advisor import review_avatar_with_vision
             ai_result = review_avatar_with_vision(file_data, cfg, user_id)
+            ai_result["local_nsfw"] = local_result
 
             if ai_result.get("used_ai") and ai_result.get("is_ad"):
                 confidence = ai_result.get("confidence", 0.0)
@@ -410,5 +498,14 @@ def check_avatar_marketing(bot, user_id: int, config: dict = None) -> Tuple[bool
         except Exception as e:
             logger.debug(f"[v5.32] AI头像复核失败 uid={user_id}: {e}")
             ai_result = {"error": "internal_error", "used_ai": False}
+
+        # 明确 SAFE 不再重复调用同一个视觉模型；UNSURE/异常才回退文字 OCR。
+        if ai_result.get("used_ai") and ai_result.get("type") != "unknown":
+            return False, "头像正常", 0, ai_result
+
+    ocr_suspicious, ocr_text, ocr_score = check_avatar_ocr_text(bot, user_id, cfg)
+    if ocr_suspicious:
+        reason = f"OCR命中营销话术: {ocr_text[:50]}"
+        return True, reason, ocr_score, ai_result
 
     return False, "头像正常", 0, ai_result

@@ -1,7 +1,7 @@
 # 广告检测系统完整规范
 
 > **被 [AGENTS.md](../../AGENTS.md) 索引引用 · 适用版本：v5.0.0+**
-> **最后更新**：2026-07-28（v5.38.7 上下文受限的数字/字母广告变体层）
+> **最后更新**：2026-07-28（v5.38.8 入群四信号统一审核与本地头像模型）
 
 ## 概述
 
@@ -20,7 +20,7 @@ Mory 小助理作为群管理 Bot，**反垃圾/广告检测**是核心功能之
 | 层级 | 检测内容 | 信号来源 | 评分 | 直接处置 | 说明 |
 |------|---------|---------|:----:|:-------:|------|
 | L0 | CAS/SPB 外部数据库 | 外部 API | +1~+2 | ❌ | 仅辅助评分 |
-| L1 | 用户名+Bio+头像+Premium emoji 状态 | 用户资料 | 三层命中=直接处置 | ✅ | 高置信度组合；状态贴纸支持元数据+OCR |
+| L1 | 显示名/username、Bio、头像、Premium emoji 状态 | 用户资料 | 任一明确高置信命中即处置 | ✅ | 普通/不确定头像不封；状态贴纸支持元数据+OCR |
 | L2 | 消息内容关键词 | 消息文本 | 1~4/维度 | ❌ | 9 个维度权重 |
 | L3 | 零宽字符+元数据 | 消息结构 | +1~+2 | ❌ | 零宽占比>20%额外+2 |
 | L4 | 新用户行为+转发+短链 | 用户行为 | +1 | ❌ | 入群<5分钟+链接 |
@@ -55,6 +55,15 @@ SCORE_THRESHOLD = 3
 6. 通知管理员
 
 投票踢人、验证码失败、僵尸清理、不活跃清理、管理员手动静默操作属于独立群管工具，不等同于广告处置。
+
+### 二点五补充、入群四信号统一入口与延迟补审（v5.38.8）
+
+- 活入口是 `core/handlers/member_handlers.py`，不是仅在未启用验证码时调用的 `group_mgr.py`。
+- 已有本地或全局广告黑名单账号重入时，在验证码和欢迎语之前直接复用 `enforce_ad_user()`。
+- 白名单和群管理员免检先于显示名、Bio、Premium emoji 状态和头像审核，避免资料层误封。
+- 首次入群调用 `get_chat(uid)`；若 Telegram 暂时不给 Bio，验证码通过产生的 `restricted → member` 更新会再次读取最新 Bio 并复审资料与头像。该更新不能只写 `group_members`。
+- 四类资料任一明确命中都会短路验证码和欢迎语，并进入永久禁言、历史清理、本地 `blacklist`、`global_blacklist` 和 `mute_records` 同一处置链。
+- 头像画面主体先由本地 NudeNet ONNX 识别。只采纳生殖器、肛门、女性胸部或臀部等明确暴露类别的高置信结果；covered、腹部、腋下、脚部以及阈值以下结果不封。营销文字继续走 OCR，通用视觉模型不确定时也不定罪。
 
 ### 二点六、Premium emoji 状态识别（v5.16.4 [Codex]）
 
@@ -203,20 +212,21 @@ def retroactive_scan(bot, chat_id, start_msg_id, end_msg_id, admin_id):
 | v5.16.4 | Premium emoji 状态漏检 | 保留 `emoji_status_custom_emoji_id` + 状态贴纸元数据/OCR + 短消息资料层检测 |
 | v5.16.4 | 日志假删但群里残留 | 删除失败不标记 deleted；无 msg_id 的旧残留明确不能承诺自动删 |
 
-### 八、新成员入群全维度检测（v5.30.2 [opencode]）
+### 八、新成员入群全维度检测（v5.38.8）
 
-新人入群时，`group_mgr.py:handle_new_members()` 执行以下检测链：
+新人入群时，活入口 `core/handlers/member_handlers.py:_handle_new_chat_members()` 执行以下检测链：
 
 ```
 1. 用户名关键词匹配（AUTO_MUTE_NAMES）
 2. 用户名可疑检测（check_username_suspicious）
-3. 色情头像检测（check_and_ban_if_porn_avatar）
-4. 头像OCR文字检测（check_avatar_ocr_text）← v5.30.2 新增
-5. BIO简介广告检测（BIO_PATTERNS + detect_profile_ad_signal）← v5.30.2 新增
+3. 显示名/username/Bio/Premium emoji 状态（`detect_profile_ad_signal` + `AdDetector.detect`）
+4. 本地 NudeNet 明确暴露区域检测（`review_avatar_nsfw_local`）
+5. 头像营销文字 OCR 与相似头像检测
+6. 验证码解限后用最新 Bio/头像补审
 ```
 
-**头像OCR检测**：
-- 下载用户头像图片 → 优先用 API 视觉模型识别文字，不可用时 fallback 到本地 RapidOCR
+**头像画面与 OCR 检测**：
+- 下载用户头像图片 → NudeNet 本地 ONNX 先看画面主体 → 通用视觉/OCR 检查营销文字 → 不可用时 fallback 到本地 RapidOCR
 - 命中"看我简介""点我主页""进群了解"等广告关键词 → 评分≥2 直接处置
 - 解决了"看我简介"类视觉广告（emoji/贴纸叠加在头像图片上）无法被文本规则检测的问题
 

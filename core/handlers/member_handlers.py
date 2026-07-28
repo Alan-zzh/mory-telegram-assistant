@@ -19,6 +19,174 @@ from core.logging_util import get_logger
 logger = get_logger("member_handlers")
 
 
+def _get_member_bio(bot, user_id):
+    """读取 Telegram 私聊资料；失败时显式返回不可用，供延迟复审补偿。"""
+    try:
+        chat_info = bot.get_chat(user_id)
+        return (getattr(chat_info, "bio", "") or "")[:500], ""
+    except Exception as e:
+        return "", str(e)
+
+
+def _enforce_member_ad(bot, db, config, chat_id, user_id, user_display, reason):
+    """所有入群资料/头像命中统一走广告处置链。"""
+    from modules.ad_enforcement import enforce_ad_user
+    enforce_ad_user(
+        bot=bot,
+        db=db,
+        config=config,
+        chat_id=chat_id,
+        uid=user_id,
+        uname=user_display,
+        reason=reason[:500],
+        notify_admin=True,
+    )
+
+
+def _is_member_ad_exempt(bot, config, chat_id, user_id):
+    """白名单和群管理员在任何资料/头像检测前免检。"""
+    whitelist_cfg = config.get("AD_WHITELIST", {})
+    whitelist_uids = whitelist_cfg.get("user_ids", []) if isinstance(whitelist_cfg, dict) else []
+    if user_id in whitelist_uids or str(user_id) in {str(uid) for uid in whitelist_uids}:
+        logger.info(f"[入群广告审核] uid={user_id} outcome=skip reason=whitelist")
+        return True
+    try:
+        member = bot.get_chat_member(chat_id, user_id)
+        if member and member.status in ("administrator", "creator"):
+            logger.info(
+                f"[入群广告审核] uid={user_id} outcome=skip reason=role status={member.status}"
+            )
+            return True
+    except Exception as e:
+        logger.debug(f"入群管理员身份查询失败 uid={user_id}: {e}")
+    return False
+
+
+def _review_member_profile(bot, user, bio, config, db, chat_id, ctx=None, stage="join"):
+    """审核显示名、username、Bio 与 Premium emoji 状态。命中返回 True。"""
+    user_id = user.id
+    user_display = (user.first_name or "") + (user.last_name or "")
+    profile_result = {"is_ad": False, "score": 0, "reason": ""}
+
+    try:
+        from modules.ad_profile_signals import detect_profile_ad_signal
+        profile_result = detect_profile_ad_signal(bot, user, bio, config)
+        if profile_result.get("is_ad"):
+            reason = profile_result.get("reason", "")
+            logger.warning(
+                f"🚫 [入群资料审核] stage={stage} uid={user_id} "
+                f"bio_available={bool(bio)} score={profile_result.get('score', 0)} outcome=block "
+                f"reason={reason[:120]}"
+            )
+            _enforce_member_ad(
+                bot, db, config, chat_id, user_id, user_display,
+                f"入群资料审核({stage}): {reason} BIO:{bio[:120]}",
+            )
+            return True
+    except Exception as e:
+        logger.error(f"入群资料信号检测异常 stage={stage} uid={user_id}: {e}")
+
+    ad_detector = getattr(ctx, "ad_detector", None) if ctx else None
+    if ad_detector:
+        try:
+            ad_result = ad_detector.detect(
+                username=user_display,
+                msg="",
+                user_id=user_id,
+                bot=bot,
+                bio=bio,
+                chat_id=chat_id,
+            )
+            score = int(ad_result.get("score", 0) or 0)
+            if ad_result.get("is_ad") and ad_result.get("action") == "ban":
+                reason = ad_result.get("reason", "")
+                logger.warning(
+                    f"🚫 [入群资料审核] stage={stage} uid={user_id} "
+                    f"bio_available={bool(bio)} score={score} outcome=block reason={reason[:120]}"
+                )
+                _enforce_member_ad(
+                    bot, db, config, chat_id, user_id, user_display,
+                    f"入群资料审核({stage}): {reason} BIO:{bio[:120]}",
+                )
+                return True
+            if score >= 2:
+                try:
+                    ad_detector.track_suspicious_user(
+                        user_id, 0, chat_id, f"[入群资料审核:{stage}] {ad_result.get('reason', '')[:80]}", score
+                    )
+                except Exception as e:
+                    logger.debug(f"追踪可疑入群资料失败 uid={user_id}: {e}")
+        except Exception as e:
+            logger.error(f"入群广告检测器异常 stage={stage} uid={user_id}: {e}")
+
+    logger.info(
+        f"[入群资料审核] stage={stage} uid={user_id} bio_available={bool(bio)} "
+        f"score={profile_result.get('score', 0)} outcome=pass"
+    )
+    return False
+
+
+def _review_member_avatar(
+    bot, user, config, db, chat_id, stage="join", check_similarity=False
+):
+    """先跑完整视觉审核，再用本地启发式与头像相似度补充。命中返回 True。"""
+    user_id = user.id
+    user_display = (user.first_name or "") + (user.last_name or "")
+    try:
+        from modules.avatar_detector import (
+            check_avatar_marketing,
+            check_avatar_similarity,
+            check_user_avatar,
+        )
+
+        avatar_hit, avatar_reason, avatar_score, ai_result = check_avatar_marketing(
+            bot, user_id, config
+        )
+        if avatar_hit and avatar_score >= 2:
+            logger.warning(
+                f"🚫 [入群头像审核] stage={stage} uid={user_id} score={avatar_score} "
+                f"ai_type={ai_result.get('type', 'none')} outcome=block reason={avatar_reason[:120]}"
+            )
+            _enforce_member_ad(
+                bot, db, config, chat_id, user_id, user_display,
+                f"入群头像审核({stage}): {avatar_reason}",
+            )
+            return True
+
+        local_hit, local_reason = check_user_avatar(bot, user_id)
+        if local_hit:
+            logger.warning(
+                f"🚫 [入群头像审核] stage={stage} uid={user_id} score=2 "
+                f"ai_type={ai_result.get('type', 'none')} outcome=block reason={local_reason[:120]}"
+            )
+            _enforce_member_ad(
+                bot, db, config, chat_id, user_id, user_display,
+                f"入群头像审核({stage}): {local_reason}",
+            )
+            return True
+
+        if check_similarity:
+            similar, similarity_reason, _ = check_avatar_similarity(bot, user_id, chat_id, db)
+            if similar:
+                logger.warning(
+                    f"🚫 [入群头像审核] stage={stage} uid={user_id} score=2 "
+                    f"outcome=block reason={similarity_reason[:120]}"
+                )
+                _enforce_member_ad(
+                    bot, db, config, chat_id, user_id, user_display,
+                    f"入群头像相似({stage}): {similarity_reason}",
+                )
+                return True
+
+        logger.info(
+            f"[入群头像审核] stage={stage} uid={user_id} score={avatar_score} "
+            f"ai_type={ai_result.get('type', 'none')} outcome=pass"
+        )
+    except Exception as e:
+        logger.warning(f"入群头像审核异常 stage={stage} uid={user_id}: {e}")
+    return False
+
+
 def register_member_handlers(bot, ctx):
     """注册新成员入群处理器到bot实例"""
 
@@ -36,7 +204,7 @@ def register_member_handlers(bot, ctx):
         @bot.chat_member_handler()
         def on_chat_member_update(update):
             try:
-                _handle_chat_member_update(bot, update, ctx.config, ctx.db)
+                _handle_chat_member_update(bot, update, ctx.config, ctx.db, ctx=ctx)
             except Exception as e:
                 logger.debug(f"chat_member更新处理异常: {e}")
     except (AttributeError, TypeError):
@@ -49,8 +217,6 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
     0. 反突袭检测 → 1. 联邦封禁检查 → 2. emoji面具检查 → 2.5 广告检测（名字+BIO+头像三重信号）→ 3. 验证码/欢迎消息
     """
     chat_id = m.chat.id
-    ad_detector = getattr(ctx, 'ad_detector', None) if ctx else None
-
     # 步骤0：反突袭检测
     try:
         from modules.anti_raid import check_raid
@@ -60,6 +226,18 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
     for user in m.new_chat_members:
         user_id = user.id
         user_display = (user.first_name or "") + (user.last_name or "")
+
+        # 已进入任一广告黑名单的账号重进群时必须在验证码/欢迎语之前再次统一处置。
+        try:
+            if db.is_blacklisted(user_id):
+                _enforce_member_ad(
+                    bot, db, config, chat_id, user_id, user_display,
+                    "广告黑名单账号重新入群",
+                )
+                logger.warning(f"🚫 [入群广告审核] uid={user_id} outcome=block reason=existing_blacklist")
+                continue
+        except Exception as e:
+            logger.warning(f"入群黑名单前置查询失败 uid={user_id}: {e}")
 
         # 步骤0.5：CAS/SpamWatch检查
         try:
@@ -95,10 +273,13 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
                 record_invite(db, m.from_user.id, user_id, chat_id, config, bot)
         except Exception as e:
             logger.debug(f"操作异常: {e}")
+
+        ad_exempt = _is_member_ad_exempt(bot, config, chat_id, user_id)
+
         # 步骤2：emoji面具检测（用户名藏广告词）
         from modules.emoji_mask_detector import check_emoji_mask_in_username
         emoji_hit, emoji_reason = check_emoji_mask_in_username(user_display, config)
-        if emoji_hit:
+        if emoji_hit and not ad_exempt:
             logger.warning(f"🎭 emoji面具拦截新人: {user_display}")
             from modules.ad_enforcement import enforce_ad_user
             enforce_ad_user(
@@ -113,128 +294,23 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
             )
             continue
 
-        # 步骤2.4：资料层广告检测（名字 + BIO + Premium emoji状态）
-        user_bio = ""
-        try:
-            chat_info = bot.get_chat(user_id)
-            user_bio = (getattr(chat_info, 'bio', '') or '')[:500]
-        except Exception as e:
-            logger.debug(f"入群拉取用户bio失败 uid={user_id}: {e}")
-
-        try:
-            from modules.ad_profile_signals import detect_profile_ad_signal
-            profile_result = detect_profile_ad_signal(bot, user, user_bio, config)
-            if profile_result.get("is_ad"):
+        if not ad_exempt:
+            # 步骤2.4：显示名、用户名、BIO、Premium emoji 状态统一资料审核。
+            user_bio, bio_error = _get_member_bio(bot, user_id)
+            if bio_error:
                 logger.warning(
-                    f"🚫 [入群资料检测] 拦截广告新人: {user_display}({user_id}) "
-                    f"原因={profile_result.get('reason', '')[:120]}"
+                    f"[入群资料审核] stage=join uid={user_id} bio_available=False fetch_failed=True"
                 )
-                from modules.ad_enforcement import enforce_ad_user
-                enforce_ad_user(
-                    bot=bot,
-                    db=db,
-                    config=config,
-                    chat_id=chat_id,
-                    uid=user_id,
-                    uname=user_display,
-                    reason=f"入群资料检测: {profile_result.get('reason', '')[:200]} BIO:{user_bio[:120]}",
-                    notify_admin=True,
-                )
+            if _review_member_profile(
+                bot, user, user_bio, config, db, chat_id, ctx=ctx, stage="join"
+            ):
                 continue
-        except Exception as e:
-            logger.error(f"入群资料广告检测异常 uid={user_id}: {e}")
 
-        # [TRAE SOLO CN] v5.14.2 新增：步骤 2.5 - 入群即跑名字+BIO+头像三重广告检测
-        # 背景：v5.14.1 修复了变体字规避后，发现入群处理链路没有调用 ad_detector.detect()
-        # 导致名字变体字 + BIO 全文广告 的用户在第一条消息时才被检测（已晚一步）
-        # 现在入群即检测，符合"绝对不能死"+ 商业项目早期封禁原则
-        if ad_detector:
-            try:
-                # 2) 跑 ad_detector 三重检测（msg="" + username + bio）
-                ad_result = ad_detector.detect(
-                    username=user_display,
-                    msg="",
-                    user_id=user_id,
-                    bot=bot,
-                    bio=user_bio,
-                    chat_id=chat_id,
-                )
-                score = ad_result.get("score", 0)
-                is_ad = ad_result.get("is_ad", False)
-                action = ad_result.get("action", "none")
-                reason = ad_result.get("reason", "")
-
-                if is_ad and action == "ban":
-                    logger.warning(
-                        f"🚫 [入群即检测] 拦截广告新人: {user_display}({user_id}) "
-                        f"评分={score} 动作={action} 原因={reason[:100]}"
-                    )
-                    from modules.ad_enforcement import enforce_ad_user
-                    enforce_ad_user(
-                        bot=bot,
-                        db=db,
-                        config=config,
-                        chat_id=chat_id,
-                        uid=user_id,
-                        uname=user_display,
-                        reason=f"入群即检测: {reason[:200]} BIO:{user_bio[:120]}",
-                        notify_admin=True,
-                    )
-                    continue
-                elif score >= 2:
-                    # 评分 2+ 但未到 ban 阈值：标记为可疑 + 开启追踪窗口
-                    # 下次该用户发消息会走 P3.5 完整检测（带 msg 内容）
-                    logger.info(
-                        f"⚠️ [入群即检测] 可疑新人: {user_display}({user_id}) "
-                        f"评分={score} 原因={reason[:100]}"
-                    )
-                    try:
-                        # 入可疑追踪表（ad_suspicious_users），30 分钟内累计评分
-                        # 签名: track_suspicious_user(user_id, msg_id, chat_id, text, score)
-                        ad_detector.track_suspicious_user(user_id, 0, chat_id, f"[入群即检测] {reason[:80]}", score)
-                    except Exception as e:
-                        logger.debug(f"追踪可疑用户失败: {e}")
-            except Exception as e:
-                logger.error(f"入群广告三重检测异常 uid={user_id}: {e}")
-                # 失败不影响主流程，继续后续步骤
-
-        # [Trae] v5.3.1 新增：新成员入群时自动检测头像（一次性检测）
-        try:
-            from modules.avatar_detector import check_user_avatar, check_avatar_similarity
-            is_suspicious_avatar, avatar_reason = check_user_avatar(bot, user_id)
-            if is_suspicious_avatar:
-                logger.warning(f"🚫 新成员头像检测拦截: {user_display}({user_id}) 原因: {avatar_reason}")
-                from modules.ad_enforcement import enforce_ad_user
-                enforce_ad_user(
-                    bot=bot,
-                    db=db,
-                    config=config,
-                    chat_id=chat_id,
-                    uid=user_id,
-                    uname=user_display,
-                    reason=f"新成员头像检测: {avatar_reason}",
-                    notify_admin=True,
-                )
+            # 步骤2.5：完整头像视觉审核 + 本地启发式 + 相似头像。
+            if _review_member_avatar(
+                bot, user, config, db, chat_id, stage="join", check_similarity=True
+            ):
                 continue
-            
-            # 头像相似度检测（批量广告号识别）
-            is_similar, similarity_reason, similar_user_ids = check_avatar_similarity(bot, user_id, chat_id, db)
-            if is_similar:
-                logger.warning(f"🚫 新成员头像相似度拦截: {user_display}({user_id}) 原因: {similarity_reason}")
-                from modules.ad_enforcement import enforce_ad_user
-                enforce_ad_user(
-                    bot=bot,
-                    db=db,
-                    config=config,
-                    chat_id=chat_id,
-                    uid=user_id,
-                    uname=user_display,
-                    reason=f"新成员头像相似: {similarity_reason}",
-                    notify_admin=True,
-                )
-                continue
-        except Exception as e:
-            logger.debug(f"新成员头像检测异常: {e}")
 
         # 步骤3：启动验证码（如果启用了验证）
         ver_config = config.get("VERIFICATION_CONFIG", {})
@@ -297,8 +373,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
             check_force_subscribe(bot, m, config, db)
         except Exception as e:
             logger.debug(f"操作异常: {e}")
-def _handle_chat_member_update(bot, update, config, db):
-    """[TRAE SOLO CN] v5.8.1 处理 chat_member 更新事件，追踪成员变动"""
+def _handle_chat_member_update(bot, update, config, db, ctx=None):
+    """追踪成员变动，并在验证码解限后用最新 Bio/头像做第二道审核。"""
     try:
         new_status = update.new_chat_member.status if update.new_chat_member else None
         old_status = update.old_chat_member.status if update.old_chat_member else None
@@ -321,6 +397,22 @@ def _handle_chat_member_update(bot, update, config, db):
                 logger.debug(f"操作异常: {e}")
             db.upsert_group_member(uid, chat_id, username, display_name, bio, new_status)
             logger.debug(f"[成员追踪] 入群/更新: uid={uid} chat={chat_id} status={new_status}")
+
+            # Telegram 刚入群时 get_chat(uid) 可能尚无 Bio；验证码通过后的
+            # restricted -> member 是稳定的补偿点，必须重新审核而不是只存库。
+            if old_status == "restricted" and new_status == "member":
+                logger.info(
+                    f"[入群延迟复审] uid={uid} chat={chat_id} bio_available={bool(bio)} stage=verify_release"
+                )
+                if _is_member_ad_exempt(bot, config, chat_id, uid):
+                    return
+                if _review_member_profile(
+                    bot, user, bio, config, db, chat_id, ctx=ctx, stage="verify_release"
+                ):
+                    return
+                _review_member_avatar(
+                    bot, user, config, db, chat_id, stage="verify_release", check_similarity=False
+                )
         elif new_status in ('left', 'kicked'):
             db.remove_group_member(uid, chat_id)
             logger.debug(f"[成员追踪] 离群: uid={uid} chat={chat_id}")
