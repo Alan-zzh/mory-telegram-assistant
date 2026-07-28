@@ -37,7 +37,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.6（2026-07-28）
 
-生产状态：当前生产为 v5.38.6（可信提交 `2df28ab`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5386_20260728_212107`）；本地 539 passed / 7 skipped、DB 190/190、文档 7/7，11/11 文件哈希一致。双服务 active+enabled、health v5.38.6、NRestarts=0、当前进程 error 为空；生产 6 条 O/0 混写及纯数字日收益正例均 `score=3 / ban`，6 条日常计量反例均 0 分。截图原消息 `61916` 已真实删除，截图账号和同日 `4oO+` 模板账号均为永久受限，双黑名单与 `mute_records` 已补齐。
+生产状态：当前生产为 v5.38.6（可信提交 `2df28ab`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5386_20260728_212107`）；本地 539 passed / 7 skipped、DB 190/190、文档 7/7，11/11 文件哈希一致。双服务 active+enabled、health v5.38.6、NRestarts=0、当前进程 error 为空。误封专项复核覆盖当日新增 8 人及当前重启扫描 10 人，均有明确广告证据；“怎么订阅”用户为 `left` 且四项封禁残留为 0，唯一过期正常追踪已清除并在重新连接后保持 0，写前数据库备份位于 `/home/ubuntu/mory_assistant/backups/false_positive_cleanup_20260728_214140/mory.db`。
 
 ## 最近 3 条大事
 1. 2026-07-28 v5.38.6 修复“一日 9Oo+ / 4oO+”混写日收益广告漏判并收紧日常计量反误封边界。

@@ -87,6 +87,8 @@
 ### 广告治理
 - 不踢人：永久禁言 + 删除消息 + `global_blacklist` + 历史清理。
 - 统一入口：`modules/ad_enforcement.py:enforce_ad_user()`。
+- 回复、人设、预览、转化和文案优化不得直接或间接授权删除消息、禁言或写黑名单；治理动作必须经过独立的逐条证据门禁，行为追踪本身不是广告证据。
+- 确认误封时必须统一恢复 Telegram 发言权限，并清理 `blacklist`、`global_blacklist`、`mute_records`、`ad_suspicious_users`；恢复后重新查询四项持久态。已删除消息无法恢复时须明确说明，不得假报已补回。
 
 ### 凭据
 - 唯一存 `.env`，代码用 `os.environ["KEY"]`。
