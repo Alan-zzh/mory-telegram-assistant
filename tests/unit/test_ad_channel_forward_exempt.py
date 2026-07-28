@@ -276,3 +276,28 @@ def test_channel_forward_exempt_default_enabled():
     assert result is False
     # 广告检测不应该被调用
     assert len(ad_detector.detect_calls) == 0
+
+
+def test_lottery_ad_first_message_runs_unified_enforcement(monkeypatch):
+    """生产漏判原文首条命中后必须直接进入统一处置，不依赖累计或重复消息。"""
+    from core.handlers.security_handlers import check_ad_detection
+    from modules.ad_detector import AdDetector
+
+    dctx, _ = _create_dctx_without_channel_forward()
+    dctx.text = "港澳1-49特码有量，有收的庄吗？"
+    dctx.msg.text = dctx.text
+    dctx.msg.from_user.first_name = "财神"
+    dctx.uname = "财神"
+
+    detector = AdDetector(config=dctx.ctx.config, db=dctx.ctx.db)
+    monkeypatch.setattr(detector, "_check_cas", lambda _uid: (False, ""))
+    monkeypatch.setattr(detector, "_check_spb", lambda _uid: (0.0, False))
+    dctx.ctx.ad_detector = detector
+
+    handled = check_ad_detection(dctx)
+
+    assert handled is True
+    assert dctx.ctx.bot.deleted == [(-1001, 99)]
+    assert len(dctx.ctx.bot.restricted) == 1
+    assert dctx.ctx.db.blacklist
+    assert detector.get_user_tracking(dctx.uid)["message_count"] == 0

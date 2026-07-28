@@ -155,6 +155,38 @@ def test_income_shorthand_rule_does_not_match_normal_context(detector, text):
     assert dims == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "港澳1-49特码有量，有收的吗?",
+        "港澳1-49特码有量，有收的庄吗？",
+        "六码名单有量，找靠谱庄",
+        "六彩合单子有量，找靠谱庄",
+    ],
+)
+def test_screenshot_lottery_trade_slang_scores_as_gray_industry(detector, text):
+    """L3: 截图及生产原文中的彩票交易黑话必须首条达到即时处置阈值"""
+    score, dims = detector._check_content_score(text)
+    assert score >= SCORE_THRESHOLD
+    assert "灰色产业" in dims[0]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "港澳通行证1-49号窗口有号，有收资料的吗？",
+        "名单有六个人，找靠谱的农庄",
+        "新闻讨论：所谓港澳特码只是非法宣传用语",
+        "六码名单已公开用于数学教学",
+    ],
+)
+def test_lottery_trade_rule_does_not_match_normal_context(detector, text):
+    """L3: 普通港澳、名单、农庄及新闻讨论不因组合规则被误判"""
+    score, dims = detector._check_content_score(text)
+    assert score == 0
+    assert dims == []
+
+
 # ──────────────────────────────────────────────────────
 # L4: 组合判定
 # ──────────────────────────────────────────────────────
@@ -209,3 +241,21 @@ def test_screenshot_ad_samples_trigger_immediate_ban(detector, text):
     assert result["is_ad"] is True
     assert result["action"] == "ban"
     assert result["score"] >= SCORE_THRESHOLD
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "港澳1-49特码有量，有收的吗?",
+        "港澳1-49特码有量，有收的庄吗？",
+        "六码名单有量，找靠谱庄",
+        "六彩合单子有量，找靠谱庄",
+    ],
+)
+def test_screenshot_lottery_ads_trigger_immediate_ban_on_first_message(detector, text):
+    """L4: 彩票交易广告不能依赖重复消息或累计追踪，首条必须直接封禁"""
+    result = detector.detect(username="财神", msg=text)
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+    assert "灰色产业" in result["reason"]

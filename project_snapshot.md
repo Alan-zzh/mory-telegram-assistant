@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-27。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-28。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，熟人低频只到预览；价格/内容/权益→预览，明确购买/看过预览/明确定制→自助，拒绝和概念咨询无入口；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 09:05 今日黄历、13:05 三张塔罗、20:35 易经一卦取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总；短期业务原文每分钟清理；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；繁体“看我賺米”与“1天1w米 / 日1w米”收益黑话进入统一永久禁言、删消息、双黑名单处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；繁体“看我賺米”、收益黑话及“港澳1-49特码有量 / 六彩合或六码名单有量并找庄”等彩票交易组合首条进入统一永久禁言、删消息、双黑名单处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`（同步冲突副本不计入）；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` 开关 |
@@ -35,14 +35,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.38.1（2026-07-27）
+v5.38.2（2026-07-28）
 
-生产状态：v5.38.1 已由可信提交 `2718906` 增量部署，备份为 `/home/ubuntu/mory_assistant/backups/deploy_v5381_20260727_190708`；双服务 active+enabled、health v5.38.1、NRestarts=0，当前进程 19:08 后错误日志为空，8 个关键运行文件哈希一致。生产三档播报、单 CTA 与私聊本地占卜均开启，新闻关闭；同日稳定、跨日变化、文化讨论不抢答与 `token_usage=0` 探针通过。管理员 Rich 回执为黄历 2990、塔罗 2991、易经 2992，均无免责声明；私聊 `/算卦 工作` 经 `KeywordTrigger` 真实发送回执 2993，遥测 `local_zero_token` 且 AI 调用防线未触发。本地 496 passed / 7 skipped、生产 DB 190/190、文档 7/7。
+生产状态：当前生产仍为 v5.38.1；v5.38.2 彩票交易广告首条即时处置修复已完成本地目标回归，待可信提交后增量部署并补生产回执。
 
 ## 最近 3 条大事
-1. 2026-07-27 v5.38.1 删除三档重复免责声明，新增私聊明确占卜请求的本地零 Token 自动回复。
-2. 2026-07-27 v5.38.0 三档栏目产品化：真实黄历、三张塔罗与本卦/动爻/之卦完全分流，新增分区排版和每日单 CTA 轮换。
-3. 2026-07-27 v5.37.1 玄学群播通用化：删除个人心理提问和说教，只保留公共字段。
+1. 2026-07-28 v5.38.2 修复六合彩/特码交易黑话漏判，截图及生产原文首条直接进入统一处置。
+2. 2026-07-27 v5.38.1 删除三档重复免责声明，新增私聊明确占卜请求的本地零 Token 自动回复。
+3. 2026-07-27 v5.38.0 三档栏目产品化：真实黄历、三张塔罗与本卦/动爻/之卦完全分流，新增分区排版和每日单 CTA 轮换。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
