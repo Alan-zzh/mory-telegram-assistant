@@ -125,7 +125,7 @@ python -c "print('中文关键词'.encode('unicode_escape').decode())"
 | 模式 | 触发条件 | 实现 |
 |------|---------|------|
 | `forwardMessage` 模式 | 群组无保护内容 | 逐条转发读取内容判断广告 |
-| 数据库驱动模式 | 群组有保护内容 | 从 `ad_suspicious_users` 表获取已追踪的 msg_id 直接删除 |
+| 数据库驱动模式 | 群组有保护内容 | 只处理当前追踪窗口内有逐条广告证据的 msg_id；普通追踪记录安全跳过 |
 
 ```python
 # modules/ad_detector.py
@@ -142,7 +142,9 @@ def retroactive_scan(bot, chat_id, start_msg_id, end_msg_id, admin_id):
 
 1. 当前命中的消息；
 2. `message_snapshots` 中该用户在该群可追踪到的历史消息；
-3. 旧可疑追踪表中保存了 msg_id 的消息。
+3. 旧可疑追踪表中保存了 msg_id，且该条消息显式 `is_ad=true` 或单条评分达到阈值的消息。
+
+`ad_suspicious_users` 会为连续消息模式记录 `score=0` 的正常消息，因此“被追踪”绝不等于“已确认广告”。保护内容群无法重新读取正文时，无逐条证据必须 fail-close；禁止按消息 ID 范围盲删。启动扫描从 `message_snapshots` 只读获取最后一条群消息 ID，不再向群发送后删除探针消息。
 
 不能自动删除：
 
@@ -173,6 +175,7 @@ def retroactive_scan(bot, chat_id, start_msg_id, end_msg_id, admin_id):
 | CAS/SPB 仅辅助评分 | 外部数据库命中不直接处置 |
 | 白名单机制 | 群管理员/群主 + 可配置 user_id |
 | 阈值保护 | 总评分需 >=3 才处置 |
+| 追溯证据门禁 | 数据库追溯只接受显式 `is_ad` 或单条评分达到阈值，普通追踪与无证据范围不删除 |
 | 两层组合=直接处置 | 用户名+Bio 同时命中即直接处置 |
 | API 查询容错 | CAS/SPB 查询失败不影响本地检测 |
 | 延迟封禁 | 30 分钟窗口累计评分 |

@@ -91,7 +91,7 @@ class _FakeAdDetector:
     def clear_user_tracking(self, uid):
         pass
 
-    def track_suspicious_user(self, user_id: int, msg_id: int, chat_id: int, text: str, score: int) -> dict:
+    def track_suspicious_user(self, user_id: int, msg_id: int, chat_id: int, text: str, score: int, is_ad: bool = False) -> dict:
         return {"action": "none"}
 
     def check_consecutive_patterns(self, user_id: int, chat_id: int, bot=None) -> dict:

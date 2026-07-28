@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，价格/内容/权益→预览，明确购买/看过预览/明确定制→自助；“怎么订阅”等明确入口问法跳过旧 P7.5 旁路并结合近期预览直接承接；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 09:05 今日黄历、13:05 三张塔罗、20:35 易经一卦取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总；短期业务原文每分钟清理；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；繁体“看我賺米”、收益黑话及“港澳1-49特码有量 / 六彩合或六码名单有量并找庄”等彩票交易组合首条进入统一永久禁言、删消息、双黑名单处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py` | L0–L4 五层；数据库追溯只删除当前窗口内有明确广告证据的消息，普通行为追踪和无记录范围均 fail-close；繁体收益黑话及彩票交易组合首条进入统一处置；营销话术 4 维度 71 条；AI 辅助决策 4 函数（默认关闭） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`（同步冲突副本不计入）；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` 开关 |
@@ -35,14 +35,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.38.4（2026-07-28）
+v5.38.5（2026-07-28）
 
-生产状态：当前生产为 v5.38.4（可信提交 `4443ab1`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5384_20260728_203335`）；本地 514 passed / 7 skipped、DB 190/190、文档 7/7，10/10 发布文件与 4/4 运行文件哈希一致。双服务 active+enabled、health v5.38.4、NRestarts=0、当前进程 error 为空；生产连续输入“怎么订阅/订阅怎么弄/咋开通/会员怎么开/付费入口在哪”得到 5 条不同的简短人设承接，群聊仅一个自助下单按钮、私聊零按钮，咖啡/鞋子/淘宝付款反例均为 `none`；Telegram 管理员真实验收回执 `message_id=3017`。
+生产状态：当前生产仍为 v5.38.4（可信提交 `4443ab1`）；v5.38.5 本地已完成截图原文“怎么订阅”、无追踪记录、明确广告、旧高分广告和数据库只读定位 5 个防误删回归，完整回归 519 passed / 7 skipped，待可信提交后增量部署并验证重启扫描真实日志。
 
 ## 最近 3 条大事
-1. 2026-07-28 v5.38.4 明确订阅回复改为简短人设变体池，连续触发避开近期原句并扩展订阅/开通/付费等近义表达。
-2. 2026-07-28 v5.38.3 修复“怎么订阅”被 P7.5 旁路截断：明确订阅结合预览语境直接给人设正文与群聊单一自助下单按钮。
-3. 2026-07-28 v5.38.2 修复六合彩/特码交易黑话漏判，截图及生产原文首条直接进入统一处置。
+1. 2026-07-28 v5.38.5 修复启动追溯误删：行为追踪不再等于广告证据，无证据不删除，群内“.”探针移除。
+2. 2026-07-28 v5.38.4 明确订阅回复改为简短人设变体池，连续触发避开近期原句并扩展订阅/开通/付费等近义表达。
+3. 2026-07-28 v5.38.3 修复“怎么订阅”被 P7.5 旁路截断：明确订阅结合预览语境直接给人设正文与群聊单一自助下单按钮。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

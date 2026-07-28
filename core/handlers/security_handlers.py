@@ -448,7 +448,8 @@ def check_ad_detection(dctx) -> bool:
         msg_id=m.message_id,
         chat_id=chat_id,
         text=ad_result.get("ad_text", msg) or msg,
-        score=total_score
+        score=total_score,
+        is_ad=ad_result.get("is_ad", False) is True,
     )
     if track_result["action"] == "ban":
         if _handle_delayed_ad_tracking(dctx, track_result):

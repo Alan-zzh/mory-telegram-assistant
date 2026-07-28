@@ -418,7 +418,14 @@ class AdDetector:
         track = self.suspicious_users[user_key]
         try:
             messages_json = json.dumps([
-                {"msg_id": m["msg_id"], "chat_id": m["chat_id"], "text": m.get("text", ""), "score": m.get("score", 0), "time": m.get("time", "")}
+                {
+                    "msg_id": m["msg_id"],
+                    "chat_id": m["chat_id"],
+                    "text": m.get("text", ""),
+                    "score": m.get("score", 0),
+                    "is_ad": m.get("is_ad", False) is True,
+                    "time": m.get("time", ""),
+                }
                 for m in track["messages"]
             ], ensure_ascii=False)
             first_seen_str = track["first_seen"].isoformat() if isinstance(track["first_seen"], datetime) else str(track["first_seen"])
@@ -1163,7 +1170,15 @@ class AdDetector:
     # [Trae] v4.6.2 新增：延迟封禁机制
     # ──────────────────────────────────────────────────────
 
-    def track_suspicious_user(self, user_id: int, msg_id: int, chat_id: int, text: str, score: int) -> dict:
+    def track_suspicious_user(
+        self,
+        user_id: int,
+        msg_id: int,
+        chat_id: int,
+        text: str,
+        score: int,
+        is_ad: bool = False,
+    ) -> dict:
         """
         追踪用户消息历史（无论score多少都追踪，用于连续消息模式检测）
         同时累计可疑评分，达到阈值后触发延迟封禁
@@ -1189,6 +1204,7 @@ class AdDetector:
             "chat_id": chat_id,
             "text": text[:100],  # 只存前100字符
             "score": score,
+            "is_ad": is_ad is True,
             "time": now.isoformat(),
         })
 
@@ -1479,7 +1495,7 @@ class AdDetector:
                         continue
                     elif "protected content" in err_str:
                         logger.info("[AD] 追溯扫描: 检测到保护内容，切换到数据库驱动模式")
-                        return self._retroactive_scan_database(bot, chat_id, start_msg_id, end_msg_id, result)
+                        return self._retroactive_scan_database(bot, chat_id, start_msg_id, end_msg_id, result, config)
                     elif "forbidden" in err_str or "bot was blocked" in err_str:
                         result["not_found"] += 1
                         continue
@@ -1544,15 +1560,16 @@ class AdDetector:
         return result
 
     def _retroactive_scan_database(self, bot, chat_id, start_msg_id, end_msg_id, result, config=None):
-        """数据库驱动模式：从追踪记录获取消息ID直接删除"""
-        import time as _time
+        """数据库驱动模式：仅删除有明确广告证据的已追踪消息。"""
 
-        # 1. 从 ad_suspicious_users 表获取所有追踪的消息
+        # 1. 只读取当前追踪窗口内的记录，过期记录不能参与启动追溯。
         tracked_messages = []
         try:
             if self.db:
+                cutoff = datetime.now(timezone.utc).timestamp() - (self.SUSPICIOUS_WINDOW_MINUTES * 60)
                 rows = self.db.conn.execute(
-                    "SELECT user_id, messages FROM ad_suspicious_users"
+                    "SELECT user_id, messages FROM ad_suspicious_users WHERE updated_at > ?",
+                    (cutoff,),
                 ).fetchall()
                 for row in rows:
                     try:
@@ -1560,6 +1577,7 @@ class AdDetector:
                         for m in msgs:
                             if isinstance(m, dict) and "msg_id" in m and "chat_id" in m:
                                 if m["chat_id"] == chat_id and start_msg_id <= m["msg_id"] <= end_msg_id:
+                                    m.setdefault("uid", row[0])
                                     tracked_messages.append(m)
                     except Exception as e:
                         logger.debug(f"操作异常: {e}")
@@ -1575,45 +1593,54 @@ class AdDetector:
                             tracked_messages.append(m)
 
         if not tracked_messages:
-            logger.info("[AD] 追溯扫描(数据库模式): 无追踪记录，尝试批量删除范围内的消息")
-            if config is not None and not can_delete_message(config):
-                logger.info("[AD] 追溯扫描(数据库模式): 消息删除已禁用，跳过批量删除")
-                return result
-            # 无追踪记录时，尝试批量删除（可能误删正常消息，仅用于广告密集区）
-            for msg_id in range(start_msg_id, end_msg_id + 1):
-                try:
-                    resp = bot.delete_message(chat_id, msg_id)
-                    if resp:
-                        result["deleted"] += 1
-                        result["ads_found"] += 1
-                        result["scanned"] += 1
-                        logger.info(f"[AD] 🗑️ 追溯批量删除: msg_id={msg_id}")
-                except Exception as e:
-                    err_str = str(e).lower()
-                    if "not found" in err_str:
-                        result["not_found"] += 1
-                    else:
-                        result["failed"] += 1
-                if (msg_id - start_msg_id) % 20 == 0 and msg_id > start_msg_id:
-                    _time.sleep(1)
+            # 保护内容群无法重新读取消息正文。没有逐条证据时必须 fail-close，
+            # 禁止按消息 ID 范围盲删，否则会删除正常聊天。
+            logger.info("[AD] 追溯扫描(数据库模式): 无可核验追踪记录，安全跳过，不执行范围删除")
             return result
 
-        # 有追踪记录，精准删除
+        # 有追踪记录也不等于广告。只有显式 is_ad=True，或单条评分已达到
+        # 广告阈值的旧记录，才允许进入删除链。
         logger.info(f"[AD] 追溯扫描(数据库模式): 发现 {len(tracked_messages)} 条追踪消息")
         allow_delete = config is None or can_delete_message(config)
         for m in tracked_messages:
             msg_id = m["msg_id"]
             result["scanned"] += 1
+            try:
+                stored_score = int(m.get("score", 0) or 0)
+            except (TypeError, ValueError):
+                stored_score = 0
+            confirmed_ad = m.get("is_ad") is True or stored_score >= self.SUSPICIOUS_THRESHOLD
+            if not confirmed_ad:
+                result["skipped"] += 1
+                text_preview = m.get("text", "")[:60].replace("\n", " ") if m.get("text") else "(无文本)"
+                logger.info(
+                    f"[AD] 追溯安全跳过: msg_id={msg_id} score={stored_score} "
+                    f"is_ad={m.get('is_ad', False)!r} | {text_preview}"
+                )
+                result["details"].append({
+                    "msg_id": msg_id,
+                    "uid": m.get("uid", 0),
+                    "text_preview": text_preview,
+                    "score": stored_score,
+                    "deleted": False,
+                    "reason": "unconfirmed_ad_evidence",
+                })
+                continue
             result["ads_found"] += 1
             if not allow_delete:
-                result["details"].append({"msg_id": msg_id, "uid": m.get("uid", 0), "text_preview": m.get("text", "")[:60] if m.get("text") else "(无文本)", "deleted": False, "reason": "deletion_disabled"})
+                result["details"].append({"msg_id": msg_id, "uid": m.get("uid", 0), "text_preview": m.get("text", "")[:60] if m.get("text") else "(无文本)", "score": stored_score, "deleted": False, "reason": "deletion_disabled"})
                 continue
             try:
                 bot.delete_message(chat_id, msg_id)
                 result["deleted"] += 1
                 text_preview = m.get("text", "")[:60].replace("\n", " ") if m.get("text") else "(无文本)"
                 logger.info(f"[AD] 🗑️ 追溯删除(追踪): msg_id={msg_id} | {text_preview}")
-                result["details"].append({"msg_id": msg_id, "uid": m.get("uid", 0), "text_preview": text_preview, "deleted": True})
+                result["details"].append({"msg_id": msg_id, "uid": m.get("uid", 0), "text_preview": text_preview, "score": stored_score, "deleted": True})
+                try:
+                    if self.db and hasattr(self.db, "mark_message_deleted"):
+                        self.db.mark_message_deleted(chat_id, msg_id)
+                except Exception as mark_err:
+                    logger.warning(f"[AD] 追溯删除后审计标记失败: chat_id={chat_id} msg_id={msg_id}: {mark_err}")
             except Exception as e:
                 result["failed"] += 1
                 err_str = str(e).lower()

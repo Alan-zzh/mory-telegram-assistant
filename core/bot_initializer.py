@@ -698,11 +698,13 @@ def initialize_bot() -> BotContext:
                             return
                 except Exception as e:
                     logger.debug(f"查询 retroactive_scan_log 失败，继续执行扫描: {e}")
-                test_msg = bot.send_message(group_id, ".", disable_notification=True)
-                current_msg_id = test_msg.message_id
-                bot.delete_message(group_id, current_msg_id)
-                start_id = max(1, current_msg_id - scan_range)
-                end_id = current_msg_id - 1
+                # 使用已持久化的最后一条群消息定位扫描范围。禁止为取 message_id
+                # 在群里发送再删除“.”，避免制造删除提示和额外群内副作用。
+                end_id = _get_latest_snapshot_message_id(db, group_id)
+                if not end_id:
+                    logger.info("[启动追溯扫描] 无历史消息快照，安全跳过")
+                    return
+                start_id = max(1, end_id - scan_range + 1)
                 logger.info(f"[启动追溯扫描] 开始扫描 msg_id {start_id}~{end_id}")
                 scan_result = ad_detector.retroactive_scan(bot, group_id, start_id, end_id, admin_id, config=cfg)
                 # 记录扫描日志
@@ -780,6 +782,19 @@ def initialize_bot() -> BotContext:
 # ═══════════════════════════════════════════════════════════════
 #  辅助函数（initialize_bot内部使用）
 # ═══════════════════════════════════════════════════════════════
+def _get_latest_snapshot_message_id(db, chat_id: int) -> int:
+    """只读获取群内最后一条已持久化消息 ID，不向群发送探针消息。"""
+    try:
+        row = db.conn.execute(
+            "SELECT MAX(msg_id) FROM message_snapshots WHERE chat_id=?",
+            (chat_id,),
+        ).fetchone()
+        return int(row[0]) if row and row[0] else 0
+    except Exception as e:
+        _get_logger().warning(f"读取最后消息快照失败 chat_id={chat_id}: {e}")
+        return 0
+
+
 def _check_db_integrity(db, cfg):
     """启动时数据库完整性检查，异常时自动从备份恢复"""
     logger = _get_logger()
