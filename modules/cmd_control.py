@@ -105,7 +105,7 @@ def handle_disable(bot, m, config, db):
         logger.info(f"🚫 命令禁用: chat={chat_id} cmd={cmd_name} by={m.from_user.id}")
     except Exception as e:
         logger.error(f"🚫 命令禁用失败: {e}")
-        bot.reply_to(m, f"❌ 禁用失败：{e}")
+        bot.reply_to(m, "❌ 禁用失败，请稍后重试或联系管理员")
 
 
 def handle_enable(bot, m, config, db):
@@ -141,7 +141,7 @@ def handle_enable(bot, m, config, db):
             bot.reply_to(m, f"⚠️ 命令 {raw_name} 在本群未被禁用，无需启用")
     except Exception as e:
         logger.error(f"✅ 命令启用失败: {e}")
-        bot.reply_to(m, f"❌ 启用失败：{e}")
+        bot.reply_to(m, "❌ 启用失败，请稍后重试或联系管理员")
 
 
 def handle_disabled(bot, m, config, db):
@@ -170,4 +170,4 @@ def handle_disabled(bot, m, config, db):
         bot.reply_to(m, "\n".join(lines))
     except Exception as e:
         logger.error(f"📋 禁用命令列表获取失败: {e}")
-        bot.reply_to(m, f"❌ 获取列表失败：{e}")
+        bot.reply_to(m, "❌ 获取列表失败，请稍后重试或联系管理员")

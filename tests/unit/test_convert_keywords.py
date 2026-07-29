@@ -205,7 +205,7 @@ def test_subscription_reply_variants_are_short_persona_and_nonrepeating(monkeypa
 def test_order_access_variant_matrix_and_false_positive_boundary():
     variants = (
         "怎么订阅", "咋订阅", "订阅怎么弄", "订阅怎么办", "订阅入口在哪",
-        "怎么开通", "咋开通", "开通一下", "会员怎么开", "开个会员",
+        "咋开通", "开通一下", "会员怎么开", "开个会员",
         "怎么付费", "付费入口在哪", "怎么付款", "付款链接发我",
         "怎麼訂閱", "訂閱連結給我", "怎麼開通", "開通連結",
     )
@@ -216,6 +216,21 @@ def test_order_access_variant_matrix_and_false_positive_boundary():
             "subscribe",
             "explicit_purchase",
         )
+
+    # 【挑刺修复】弱 marker（怎么买/想买/怎么开通…）必须配合业务上下文才触发，
+    # 避免普通闲聊（如“怎么买外卖”）被误判为成交意图。
+    weak_variants = ("怎么买", "我要买", "想买", "怎么开通", "我要开通")
+    biz_history = [{
+        "role": "assistant",
+        "content": "预览在 @moryselect，套餐和权限都对上了。",
+    }]
+    for text in weak_variants:
+        # 无业务上下文：不触发成交 CTA
+        assert _is_order_access_request(text) is False
+        assert _is_direct_access_request(text) is False
+        # 有业务上下文：放行
+        assert _is_order_access_request(text, biz_history) is True
+        assert _is_direct_access_request(text, biz_history) is True
 
     # 普通商品即使含“怎么买”，没有 Mory 业务上下文也不能导向订阅。
     assert resolve_conversion_target("咖啡怎么买", mode="convert")[0] == "none"
@@ -282,7 +297,7 @@ def test_rejection_variants_stop_conversion_and_model_claims_are_removed():
         all_removed,
         conversion_target="preview",
         conversion_reason="preview_or_objection",
-    ) == "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+    ) == "想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
 
 
 def test_private_sales_reply_has_no_button_and_group_has_only_one_target():

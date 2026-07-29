@@ -88,8 +88,10 @@ def handle_calc(bot, m, config, db):
             result = int(result)
         bot.reply_to(m, f"🧮 {expr} = {result}")
     except ValueError as e:
-        bot.reply_to(m, f"❌ 表达式错误：{e}")
+        logger.warning(f"计算器表达式错误: {e}")
+        bot.reply_to(m, "❌ 表达式错误，请检查后重试")
     except ZeroDivisionError:
         bot.reply_to(m, "❌ 除数不能为零")
     except Exception as e:
-        bot.reply_to(m, f"❌ 计算失败：{e}")
+        logger.error(f"计算器执行失败: {e}")
+        bot.reply_to(m, "❌ 计算失败，请稍后重试或联系管理员")

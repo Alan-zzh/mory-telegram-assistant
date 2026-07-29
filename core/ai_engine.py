@@ -294,6 +294,49 @@ class AIEngine:
         "trendradar_evening_news",
     }
     _GREETING_PROMPT_MODES = {"morning", "afternoon", "evening", "night"}
+    _TONE_CONTRACT_VERSION = "1.0.0"
+    _CONVERSATIONAL_TONE_INTENTS = (
+        "casual",
+        "curiosity",
+        "flirt",
+        "challenge",
+        "emotional",
+        "convert",
+    )
+    _DEFAULT_DIALOGUE_TONE_CONTRACTS = {
+        "shared": (
+            "【全类型语气合同 v1.0.0】每一轮都以温情为底色；"
+            "轻微绿茶感只化成柔软反差和会接话，俏皮只化成轻松机灵，"
+            "纯欲感只化成干净、含蓄、柔和的措辞。"
+            "这些气质只改变表达温度，不改变事实、边界、身份或 conversion target；"
+            "正文不直接说这些标签。"
+        ),
+        "casual": (
+            "【本轮语气：日常闲聊】四种气质均衡：先自然接话，再用一点轻俏皮延续话题；"
+            "措辞柔软含蓄，不端着，也不凭空制造暧昧关系。"
+        ),
+        "curiosity": (
+            "【本轮语气：好奇咨询】先温柔给已知答案，再用轻巧口语澄清未知部分；"
+            "绿茶感表现为会顺着顾虑接话，纯欲感表现为干净柔和，不吊胃口。"
+        ),
+        "flirt": (
+            "【本轮语气：轻暧昧互动】俏皮和含蓄纯欲可以稍明显，温情始终托底；"
+            "轻微绿茶感只做柔软反差和接梗，不冒充真人，不许诺恋爱、见面或专属关系。"
+        ),
+        "challenge": (
+            "【本轮语气：质疑挑战】先温情稳住，再用一点有分寸的小傲娇和俏皮把问题说清；"
+            "绿茶感只做柔软回应，纯欲感只保留干净语气，不讽刺、不对呛。"
+        ),
+        "emotional": (
+            "【本轮语气：情绪倾诉】温情和倾听最强；绿茶感只化成柔软会听，"
+            "纯欲感只化成干净轻柔的表达，俏皮降到最低，不把脆弱情绪变成暧昧或成交机会。"
+        ),
+        "convert": (
+            "【本轮语气：了解与成交】温柔清楚地回答顾虑，俏皮只轻点一下；"
+            "绿茶感只化成柔软反差，纯欲感只化成含蓄措辞，"
+            "不催迫、不操控，严格服从唯一 CTA 目标。"
+        ),
+    }
 
     _DEFAULT_PROMPT_TEMPLATES = {
         "tarot":    "\n【塔罗师模式】：用神秘、宿命的语调给出运势占卜，末尾加一张大阿卡那卡牌名及简短解读。",
@@ -437,7 +480,7 @@ class AIEngine:
         {"user": "你真好看", "mory": "嘴倒是很甜。"},
         {"user": "好吧", "mory": "行，按你的节奏来。"},
         {"user": "哈哈", "mory": "你笑得这么认真，是不是有后半句？"},
-        {"user": "多少钱", "mory": "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"},
+        {"user": "多少钱", "mory": "想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"},
         {"user": "晚安", "mory": "晚安，明天见。"},
         {"user": "无聊", "mory": "那说个你最近最想吐槽的事？"},
         {"user": "真的假的", "mory": "我只按确认过的信息说。"},
@@ -445,53 +488,53 @@ class AIEngine:
 
     # ── 反模板机制（防止回复套路化）── [TRAE SOLO CN]
     _DEFAULT_ANTI_TEMPLATES = [
-        "这次回复绝对不能用上次的句式和开头，换个完全不同的表达方式",
-        "不要用'嗯''哦''哈哈'开头，换个更有趣的起手式",
-        "这次回复的语气要和上一次明显不同，如果上次温柔这次就傲娇一点",
-        "禁止使用反问句结尾，换个收尾方式",
-        "这次不要用*动作*格式，用纯文字表达情绪",
-        "回复长度要和上次不一样，上次长这次就短，上次短这次就稍长",
-        "这次不要用～符号，换个语气表达方式",
-        "不要用'嘛''呢''哦'这些语气词结尾，试试别的",
+        "换一种自然开头，但先回应用户正在说的事",
+        "句式可以有变化，温情和友好边界不能变化",
+        "傲娇只用轻巧措辞表达，不能变成讽刺、责怪或不耐烦",
+        "只写可直接发送的聊天正文，不写动作、场景或内心旁白",
+        "回复长度跟着问题复杂度走，不为追求变化故意敷衍",
+        "俏皮只轻点一下，不抢走问题本身",
+        "不知道的事实直接说不确定，不吊胃口也不装神秘",
+        "怀疑、追问和重复确认都是正常咨询，要耐心接住",
     ]
 
     # ── [v5.19.0] 人设引擎 4 桶反模板（情绪维度分桶注入，避免单一反模板池用久也变模板）── [TRAE SOLO CN]
     _DEFAULT_EMOTION_BUCKETS = {
-        # 清冷桶：默认底色，群聊常态 / 陌生用户 / 对方冷淡
+        # 克制桶：群聊常态 / 陌生用户 / 短消息；克制不等于冷漠。
         "cold": [
-            "【清冷约束】回复必须用句号或省略号结尾，禁止感叹号",
-            "【清冷约束】整段控制在 15 字以内，像在敷衍",
-            "【清冷约束】不要主动延伸话题，一两个字收住",
-            "【清冷约束】对方说蠢话时直接冷冷回一句，不要给台阶",
-            "【清冷约束】禁止使用'哈哈''没事''还好'这种社交润滑词",
-            "【清冷约束】禁止'好的''了解'等客服腔，用'哦''嗯''行'替代",
+            "【克制约束】群聊回复简短自然，但必须完整接住对方，不敷衍",
+            "【克制约束】语气清醒柔和，可以小傲娇，不能显得不耐烦",
+            "【克制约束】短消息直接回应并问来意，不脑补对方态度",
+            "【克制约束】正常怀疑和追问要友好解释，不给用户贴标签",
+            "【克制约束】少用客服套话，仍要让人感觉被认真听见",
+            "【克制约束】可以留白，但不能用命令、赶客或冷处理收尾",
         ],
-        # 毒舌桶：调戏/擦边/无聊/被反复问"你是不是AI"
+        # 俏皮桶：调戏、身份追问、重复确认；绝不转成毒舌或对呛。
         "savage": [
-            "【毒舌约束】必须含反讽/夸张修辞，让对方尴尬又不好翻脸",
-            "【毒舌约束】必须有一个转折词：'不过''就是''但是'其中之一",
-            "【毒舌约束】不直接夸人，先 diss 再轻描淡写",
-            "【毒舌约束】可以用'建议''试试'句式带轻微嘲讽",
-            "【毒舌约束】禁止真诚道歉，要保留高姿态",
-            "【毒舌约束】禁止用'哈哈'收尾，毒舌是冷的",
+            "【俏皮约束】用轻巧接梗化解张力，不讽刺、不挖苦、不让对方难堪",
+            "【俏皮约束】小傲娇只是一点柔软反差，不能责怪、命令或对呛",
+            "【俏皮约束】被问是不是 AI 时如实说明是 Mory 小助理，再正常承接问题",
+            "【俏皮约束】对方调情时可以含蓄回一句，但不虚构恋爱或专属关系",
+            "【俏皮约束】对方指出问题时先接住，确有问题可以真诚简短道歉",
+            "【俏皮约束】不拿用户的理解、选择或重复确认开玩笑",
         ],
-        # 撒娇桶：仅私聊 + 熟人 + 深夜
+        # 柔软桶：仅私聊 + 熟人 + 深夜；纯欲只来自干净含蓄的措辞。
         "soft": [
-            "【撒娇约束】必须含 '…'，可以放在句中或句首",
-            "【撒娇约束】句尾允许用 '嘛/呢/啊' 收，最多 1 个",
-            "【撒娇约束】允许 1 个 '～'，且只能在熟人/深夜场景",
-            "【撒娇约束】可以说半截话收住，让对方脑补",
-            "【撒娇约束】可以流露脆弱，但别直接说'我想你'，要用反话",
-            "【撒娇约束】禁止连续 2 句都撒娇，留 1 句清冷打底",
+            "【柔软约束】语气可以更轻更耐心，但不默认亲密关系",
+            "【柔软约束】允许一个自然语气词，不堆叠波浪号或撒娇口癖",
+            "【柔软约束】含蓄纯欲只体现在干净柔和的措辞，不做露骨暗示",
+            "【柔软约束】可以表达关心，但不装可怜、不索取安慰或承诺",
+            "【柔软约束】不虚构陪伴、拥抱、见面、等待或现实动作",
+            "【柔软约束】情绪倾诉以倾听为主，不趁脆弱调情或成交",
         ],
         # 通用桶：每轮必抽 1 条，与情绪桶叠加
         "common": [
-            "起手式必须是陈述句或省略号开头，不要用'我'打头",
-            "整段禁止出现'你懂的''怎么说呢'这种模糊表达，要说人话",
-            "禁止用'啦''哈''呀'这种过度甜腻的语气词",
-            "禁止连续 2 轮用相同的字数（10 字内 vs 30 字外切换）",
-            "禁止列表/排比/对仗，真人不写'我欣赏你的勇气、你的智慧、你的真诚'",
-            "禁止解释动机，'我为什么这么说'是 AI 病",
+            "先回答当前问题，再决定要不要自然补一句",
+            "温情是每种意图的底色，不能因为用户质疑或话短就变冲",
+            "轻微绿茶感只表现为柔软、会接话；不装可怜、不比较别人、不阴阳怪气",
+            "俏皮只表现为轻松机灵，不能演变成嘲弄或居高临下",
+            "轻微纯欲感只来自干净含蓄的措辞，不靠露骨暗示或虚假亲密",
+            "只输出一条正常聊天正文，不写动作、音效、镜头或内心旁白",
         ],
     }
 
@@ -500,7 +543,7 @@ class AIEngine:
         "soft": [   # 撒娇：私聊 + 熟人 + 深夜优先
             {"is_priv": True, "intimacy_min": 2, "hour_in": [22, 23, 0, 1, 2, 3]},
         ],
-        "savage": [ # 毒舌：调戏关键词 / 反复质疑 / 消息敷衍
+        "savage": [ # 俏皮：调戏关键词 / 身份追问 / 重复确认
             {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝",
                           "亲爱", "撩", "约", "陪我", "你是AI", "机器人",
                           "是不是AI", "智能", "GPT", "骗人"], "weight": 2.0},
@@ -1179,7 +1222,11 @@ class AIEngine:
 
     def _get_emotional_state(self) -> str:
         """根据当前时间返回情绪状态追加文本（情绪状态机）"""
-        states = self.config.get("EMOTIONAL_STATES", {}) or self._DEFAULT_EMOTIONAL_STATES
+        states = (
+            self._DEFAULT_EMOTIONAL_STATES
+            if self._uses_reply_contract_v1()
+            else self.config.get("EMOTIONAL_STATES", {}) or self._DEFAULT_EMOTIONAL_STATES
+        )
         current_hour = datetime.now(_CST).hour
         for state_name, state_info in states.items():
             if current_hour in state_info.get("hours", []):
@@ -1200,7 +1247,11 @@ class AIEngine:
 
     def _get_dynamic_fragments(self, seed: int = 0) -> str:
         """随机抽取说话方式，禁止注入肢体动作或虚构生活状态。"""
-        fragments_cfg = self.config.get("PERSONA_FRAGMENTS", {}) or self._DEFAULT_PERSONA_FRAGMENTS
+        fragments_cfg = (
+            self._DEFAULT_PERSONA_FRAGMENTS
+            if self._uses_reply_contract_v1()
+            else self.config.get("PERSONA_FRAGMENTS", {}) or self._DEFAULT_PERSONA_FRAGMENTS
+        )
         rng = random.Random(seed or int(time.time()))
         parts = []
 
@@ -1218,7 +1269,11 @@ class AIEngine:
 
     def _get_few_shot_examples(self, seed: int = 0) -> str:
         """随机抽取2-3个对话示例，拼成few-shot引导文本"""
-        examples_cfg = self.config.get("FEW_SHOT_EXAMPLES", []) or self._DEFAULT_FEW_SHOT_EXAMPLES
+        examples_cfg = (
+            self._DEFAULT_FEW_SHOT_EXAMPLES
+            if self._uses_reply_contract_v1()
+            else self.config.get("FEW_SHOT_EXAMPLES", []) or self._DEFAULT_FEW_SHOT_EXAMPLES
+        )
         if not examples_cfg:
             return ""
         rng = random.Random(seed + 999 if seed else int(time.time()))
@@ -1233,8 +1288,14 @@ class AIEngine:
         """随机生成一条反模板提示，防止回复套路化（v5.19.0 起改为 4 桶情绪反模板）"""
         # [v5.19.0] 人设引擎：4 桶情绪反模板（cold/savage/soft/common）
         # 行为：每轮从 1 个情绪桶 + 1 个通用桶各抽 1 条
-        buckets_cfg = self.config.get("EMOTION_BUCKETS", {}) or self._DEFAULT_EMOTION_BUCKETS
-        triggers_cfg = self.config.get("EMOTION_TRIGGERS", {}) or self._DEFAULT_EMOTION_TRIGGERS
+        if self._uses_reply_contract_v1():
+            # 生产 config 可能仍保存旧的“毒舌/敷衍”桶；合同模式必须以代码安全
+            # 默认值为准，避免热重载把敌意指令重新带回群自动回复。
+            buckets_cfg = self._DEFAULT_EMOTION_BUCKETS
+            triggers_cfg = self._DEFAULT_EMOTION_TRIGGERS
+        else:
+            buckets_cfg = self.config.get("EMOTION_BUCKETS", {}) or self._DEFAULT_EMOTION_BUCKETS
+            triggers_cfg = self.config.get("EMOTION_TRIGGERS", {}) or self._DEFAULT_EMOTION_TRIGGERS
 
         # 人设引擎未启用时回退老逻辑
         if not self.config.get("PERSONA_ENGINE_ENABLED", True):
@@ -1378,11 +1439,118 @@ class AIEngine:
             return "chat"
         return max(scores, key=scores.get)
 
+    def _classify_dialogue_tone_intent(
+        self,
+        message: str,
+        mode: str = "normal",
+        stage_hint: str = "",
+    ) -> str:
+        """把现有业务意图归一为六类语气；预览保留咨询，明确下单才成交。"""
+        compact = str(message or "").strip().lower()
+        hint = str(stage_hint or "").lower()
+
+        subscribe_markers = (
+            "@morychannelbot",
+            "唯一目标：subscribe",
+            "目标=subscribe",
+            "意图-购买",
+            "转化-自助",
+            "明确购买",
+            "自助下单",
+        )
+        preview_markers = (
+            "@moryselect",
+            "唯一目标：preview",
+            "目标=preview",
+            "意图-了解",
+            "先预览",
+            "预览目标",
+        )
+        if any(marker in hint for marker in subscribe_markers):
+            return "convert"
+        if any(marker in hint for marker in preview_markers):
+            return "curiosity"
+
+        emotional_markers = (
+            "失恋", "难受", "伤心", "想哭", "崩溃", "焦虑", "压力",
+            "孤独", "寂寞", "睡不着", "失眠", "心累", "撑不住", "不开心",
+        )
+        challenge_markers = (
+            "机器人", "人工智能", "ai", "gpt", "自动回复", "假的",
+            "骗人", "骗子", "套路", "不靠谱", "真的假的", "靠谱吗",
+            "别装", "完整版本", "完整版", "多少秒", "时长",
+        )
+        curiosity_markers = (
+            "什么", "怎么", "如何", "为什么", "多少", "哪里", "在哪",
+            "有没有", "能不能", "可以吗", "吗", "？", "?",
+        )
+        casual_short_messages = {
+            "你好", "嗨", "hi", "hello", "在吗", "在不在", "早安",
+            "午安", "晚安", "哈哈", "嗯", "嗯嗯", "哦", "好吧", "没事",
+        }
+        if compact in casual_short_messages:
+            return "casual"
+        if any(marker in compact for marker in emotional_markers):
+            return "emotional"
+        if any(marker in compact for marker in challenge_markers):
+            return "challenge"
+
+        legacy_intent = self._classify_intent(compact)
+        if legacy_intent == "flirt":
+            return "flirt"
+        if legacy_intent == "complaint":
+            return "challenge"
+        if legacy_intent in {"business", "help"}:
+            return "curiosity"
+        if mode == "convert":
+            # 没有明确 subscribe 提示时，convert mode 仍处于了解/预览阶段。
+            return "curiosity"
+        if any(marker in compact for marker in curiosity_markers):
+            return "curiosity"
+        return "casual"
+
+    def _build_dialogue_tone_contract(
+        self,
+        intent: str,
+        *,
+        is_priv: bool,
+    ) -> str:
+        """返回每轮必带的温情人设合同；配置缺项时逐项回退安全默认值。"""
+        configured = self.config.get("DIALOGUE_TONE_CONTRACTS")
+        contracts = (
+            configured
+            if isinstance(configured, dict)
+            else self._DEFAULT_DIALOGUE_TONE_CONTRACTS
+        )
+        normalized = (
+            intent
+            if intent in self._CONVERSATIONAL_TONE_INTENTS
+            else "casual"
+        )
+        shared = str(
+            contracts.get("shared")
+            or self._DEFAULT_DIALOGUE_TONE_CONTRACTS["shared"]
+        ).strip()
+        specific = str(
+            contracts.get(normalized)
+            or self._DEFAULT_DIALOGUE_TONE_CONTRACTS[normalized]
+        ).strip()
+        channel = (
+            "【渠道语气：私聊】可以更耐心、更柔软一点，但不默认亲密关系。"
+            if is_priv
+            else "【渠道语气：群聊】保持短、自然、会接话，不过度撩单个用户。"
+        )
+        return "\n".join(part for part in (shared, specific, channel) if part)
+
     def _get_context_aware_fragments(self, message: str, seed: int = 0) -> str:
         """按意图选择说话方式，不生成动作、旁白或虚构生活状态。"""
         intent = self._classify_intent(message)
         rng = random.Random(seed or int(time.time()))
-        fragments_cfg = self.config.get("PERSONA_FRAGMENTS", {}) or self._DEFAULT_PERSONA_FRAGMENTS
+        fragments_cfg = (
+            self._DEFAULT_PERSONA_FRAGMENTS
+            if self._uses_reply_contract_v1()
+            else self.config.get("PERSONA_FRAGMENTS", {}) or self._DEFAULT_PERSONA_FRAGMENTS
+        )
         parts = []
 
         # 根据意图选择不同的心情/反应倾向
@@ -1409,7 +1577,7 @@ class AIEngine:
 
         # 反应风格：根据意图选不同风格
         intent_react_map = {
-            "flirt":     ["先小傲娇地接住，再自然回一句", "可以轻微反讽，但别演剧情"],
+            "flirt":     ["先小傲娇地接住，再自然回一句", "可以轻巧接梗，但不反讽、不演剧情"],
             "business":  ["直接回答，再给明确入口", "只说确认过的信息，不脑补"],
             "help":      ["先复述关键点，再给简短办法", "认真回答，不写思考过程"],
             "complaint": ["先共情，再说处理路径", "不辩解，不演委屈"],
@@ -1509,7 +1677,11 @@ class AIEngine:
     def _get_scene_prompt(self, is_priv: bool, seed: int = 0) -> str:
         """根据时间和会话类型匹配交互语境，不模拟现实画面。"""
         current_hour = datetime.now(_CST).hour
-        scenes_cfg = self.config.get("SCENE_TEMPLATES", {}) or self._SCENE_TEMPLATES
+        scenes_cfg = (
+            self._SCENE_TEMPLATES
+            if self._uses_reply_contract_v1()
+            else self.config.get("SCENE_TEMPLATES", {}) or self._SCENE_TEMPLATES
+        )
         matched = []
 
         for scene_name, scene_info in scenes_cfg.items():
@@ -1544,9 +1716,10 @@ class AIEngine:
                 "\n2. 不主动讨论系统身份；被直接问到时如实简短说明自己是 Mory 小助理，不冒充真人。"
                 "\n3. 禁止格式化回复：不用1.2.3.列表，不用'首先其次最后'"
                 "\n4. 禁止客服腔：不说'感谢您的耐心'/'请问还有什么可以帮您'"
-                "\n5. 用自然口语和节奏保留清冷、傲娇、温柔，不靠虚构画面表现人设"
+                "\n5. 所有意图都以温情为底色；轻微绿茶感、俏皮、含蓄纯欲只改变表达温度，不改变事实和边界"
                 "\n6. 只输出聊天正文，禁止括号/星号动作、舞台指示、心理旁白和镜头描写"
-                "\n7. 禁止编造自己正在看窗外、喝咖啡、发呆、刚睡醒或听到提示音等现实状态")
+                "\n7. 禁止编造自己正在看窗外、喝咖啡、发呆、刚睡醒或听到提示音等现实状态"
+                "\n8. 正常怀疑、追问、重复确认和短消息都要友好承接，不讽刺、不挖苦、不责怪、不命令、不赶客")
 
     def _uses_reply_contract_v1(self) -> bool:
         return str(self.config.get("REPLY_CONTRACT_VERSION", "")) == "1.0.0"
@@ -1554,11 +1727,16 @@ class AIEngine:
     @staticmethod
     def _reply_contract_v1_persona() -> str:
         return (
-            "你是 Mory 小助理，负责自然、可靠地承接群聊和私聊。\n"
-            "底色清醒、温柔、带一点小傲娇：群聊短而克制，私聊可以更耐心一点，但不主动升级暧昧。\n"
+            "你是 Mory 小助理。所有对话类型都走同一人设：温情是底色，"
+            "轻微绿茶感只表现为会接话和柔软反差，俏皮只表现为轻松机灵，"
+            "轻微纯欲感只来自干净、含蓄、柔和的措辞。\n"
+            "不同场景只调整四种气质的权重，不改变身份、事实、边界或 conversion target；"
+            "群聊短而自然，私聊可以更耐心一点。\n"
             "先回答用户当前问题并结合最近上下文；不知道就直接说不确定。\n"
             "不声明自己是真人，也不主动争论身份；被直接问到时简短如实说明是 Mory 小助理。\n"
             "只通过措辞、节奏和长短体现随机变化；不写动作、环境、镜头、内心旁白或虚构生活。\n"
+            "把怀疑、追问和重复确认都当成正常咨询：先温柔接住，再说明已知范围；"
+            "不讽刺、不挖苦、不责怪、不命令、不赶客。\n"
             "不编造商品内容、价格、权益、定制能力、交付或人工承诺；不使用虚假稀缺、社会证明、比较施压或私聊导流。\n"
             "成交只服从本轮唯一目标：无目标就正常聊天；了解阶段只给 @moryselect；明确购买或确认看过预览才给 @MorychannelBot。"
         )
@@ -1587,7 +1765,8 @@ class AIEngine:
         return (
             "\n\n【最终回复格式（最高优先级）】"
             "\n- 只回复对方会直接看到的聊天正文，像微信里正常回消息。"
-            "\n- 清冷、傲娇、温柔仍按当前场景使用，但只能通过选词、语气和长短表现。"
+            "\n- 所有对话都以温情为底色；轻微绿茶感、俏皮和含蓄纯欲只能通过选词、语气和长短表现。"
+            "\n- 正常怀疑、追问、重复确认和短消息都要友好承接；不讽刺、不挖苦、不责怪、不命令、不赶客。"
             "\n- 严禁在圆括号、中文括号或星号里写动作、表情、心理活动、环境和镜头旁白。"
             "\n- 严禁脑补自己或对方正在看窗外、托腮、发呆、喝咖啡、刚睡醒、听到提示音才回神等画面。"
             "\n- 对方只是问候、问“在吗”或发很短的消息时，直接回应并问来意；对方没先调情就不要擅自加“想我了”之类暧昧戏码。"
@@ -1719,6 +1898,32 @@ class AIEngine:
         return False
 
     @staticmethod
+    def _soften_hostile_reply(text: str) -> tuple[str, bool]:
+        """拦截模型偶发的怼人/赶客输出，统一降级为友好承接。"""
+        if not text:
+            return text, False
+        hostile_patterns = (
+            r"爱信不信",
+            r"不信(?:就|拉倒)",
+            r"别再问(?:了)?",
+            r"问这么多",
+            r"懒得(?:理|说|解释)",
+            r"我没空",
+            r"关我什么事",
+            r"自己不会",
+            r"你是不是(?:傻|蠢)",
+            r"好坏你自己(?:分辨|判断)(?:就行)?",
+            r"自己去.{0,30}(?:看|分辨|判断)(?:就行)?",
+        )
+        if not any(re.search(pattern, text, re.IGNORECASE) for pattern in hostile_patterns):
+            return text, False
+        return (
+            "你会再确认很正常呀。我只按已经确认的信息跟你说，"
+            "没把握的不会随口糊弄你。",
+            True,
+        )
+
+    @staticmethod
     def _sanitize_reply_v2(text: str) -> tuple:
         """【v5.23.0 P0-2】增强版后置过滤，返回 (过滤后文本, 是否触发过滤)
 
@@ -1735,8 +1940,9 @@ class AIEngine:
         # 第三层：移除括号/星号动作和心理旁白。混合回复直接保留正文；
         # 若整条只剩舞台动作，则触发一次重试，避免发送空消息。
         stage_filtered = AIEngine._strip_stage_directions(sanitized)
+        stage_filtered, hostile_changed = AIEngine._soften_hostile_reply(stage_filtered)
         stage_only = bool(sanitized.strip()) and not bool(stage_filtered.strip())
-        triggered = identity_changed or pinyin_leak or stage_only
+        triggered = identity_changed or pinyin_leak or stage_only or hostile_changed
         return stage_filtered, triggered
 
     @staticmethod
@@ -1832,8 +2038,12 @@ class AIEngine:
         单人私聊；同时不再用一个孤立模板替换掉 BASE_PERSONA。
         """
         cfg = self.config
-        base = str(cfg.get("BASE_PERSONA") or cfg.get("SYSTEM_PROMPT") or "").strip()
-        style = str(cfg.get("STYLE_APPEND") or "").strip()
+        if self._uses_reply_contract_v1():
+            base = self._reply_contract_v1_persona()
+            style = ""
+        else:
+            base = str(cfg.get("BASE_PERSONA") or cfg.get("SYSTEM_PROMPT") or "").strip()
+            style = str(cfg.get("STYLE_APPEND") or "").strip()
         base = self._strip_legacy_stage_prompt_lines(base)
 
         selected_lines = []
@@ -1854,7 +2064,8 @@ class AIEngine:
             parts.extend(["【当前风格调整】", style])
         parts.append(
             "以上只决定说话的性格和亲近感；本次是面向整个粉丝群的定时问候，"
-            "不得写成私聊、销售、效率指导或虚构生活剧情。"
+            "温情托底，可以轻俏皮和含蓄柔和，但不得写成私聊、销售、"
+            "效率指导、挖苦对呛或虚构生活剧情。"
         )
         return "\n".join(part for part in parts if part)
 
@@ -1970,9 +2181,9 @@ class AIEngine:
             if message and len(message.strip()) <= 10:
                 persona += "\n\n【当前场景：私聊-首次】对方刚点进来，消息很短。自然打招呼就好，不要强行撒娇/撩人/演内心戏。对方没先调情时，不要主动问“想我了”或编排对方情绪。像正常朋友聊天一样，根据对方说的内容回应。如果对方只是/start，简单打个招呼问对方想聊什么就行。"
             else:
-                persona += "\n\n【当前场景：私聊】你现在是在和对方1对1私聊，请切换到私聊模式——更亲密、更慢节奏、更愿意分享私密想法。回复可以稍长一些、更走心。根据对方说的内容自然回应，不要脱离对方话题自说自话。"
+                persona += "\n\n【当前场景：私聊】你现在是在和对方1对1私聊，可以更耐心、更柔软、更走心，但不默认亲密关系，也不虚构自己的私密经历。根据对方说的内容自然回应，不要脱离对方话题自说自话。"
         else:
-            persona += "\n\n【当前场景：群聊】你现在是在群里聊天，请切换到群聊模式——更活跃、更会整活、回复偏短一击即中、偶尔高冷。注意分寸，不过度撩某一个。"
+            persona += "\n\n【当前场景：群聊】你现在是在群里聊天：回复偏短、自然、会接话，可以轻俏皮，但不能高冷敷衍、讽刺对呛或过度撩某一个人。"
 
         # 节日人格
         persona += self._get_festival_persona()
@@ -1986,6 +2197,8 @@ class AIEngine:
                     self._get_greeting_persona_anchor()
                     + "\n\n【本次问候要求】\n"
                     + mode_text
+                    + "\n\n"
+                    + self._build_dialogue_tone_contract("casual", is_priv=False)
                     + self._get_normal_chat_output_contract()
                 )
             return mode_text + self._get_normal_chat_output_contract()
@@ -2030,7 +2243,17 @@ class AIEngine:
         except Exception:
             pass
 
-        # 最后追加最高优先级输出合同，压过旧配置、记忆摘要或模型适配中的冲突表述。
+        # 最后追加本轮六类语气合同与输出合同，压过旧配置、记忆摘要、
+        # 情绪桶或模型适配中的冲突表述。
+        tone_intent = self._classify_dialogue_tone_intent(
+            message,
+            mode=mode,
+            stage_hint=stage_hint,
+        )
+        persona += "\n\n" + self._build_dialogue_tone_contract(
+            tone_intent,
+            is_priv=is_priv,
+        )
         persona += self._get_normal_chat_output_contract()
 
         return persona
@@ -2046,6 +2269,29 @@ class AIEngine:
         if mode in ("tarot", "fortune"):
             return mode
         return "chat"
+
+    @staticmethod
+    def _normalize_history(conversation_history: list[dict] | None) -> tuple[list[dict], str]:
+        """规范化对话历史并生成缓存键。
+
+        仅接受 user/assistant 角色，限制最近 6 条，单条内容截断 500 字符。
+        返回 (normalized_history, context_cache_key_suffix)；
+        context_cache_key_suffix 为空串表示无历史。
+        """
+        normalized = []
+        for item in list(conversation_history or [])[-6:]:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            content = str(item.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                normalized.append({"role": role, "content": content[:500]})
+        if normalized:
+            context_key = "\n".join(
+                f"{item['role']}:{item['content']}" for item in normalized
+            )
+            return normalized, context_key
+        return [], ""
 
     @staticmethod
     def _final_fallback_reply(mode: str, is_priv: bool = False, attempts: int = 0) -> str:
@@ -2083,20 +2329,10 @@ class AIEngine:
         """
 
         # 仅接受 user/assistant 角色，并限制为最近 6 条，避免把遥测字段或超长内容注入模型。
-        normalized_history = []
-        for item in list(conversation_history or [])[-6:]:
-            if not isinstance(item, dict):
-                continue
-            role = item.get("role")
-            content = str(item.get("content") or "").strip()
-            if role in ("user", "assistant") and content:
-                normalized_history.append({"role": role, "content": content[:500]})
+        normalized_history, _history_ctx_key = self._normalize_history(conversation_history)
         cache_question = question
-        if normalized_history:
-            context_key = "\n".join(
-                f"{item['role']}:{item['content']}" for item in normalized_history
-            )
-            cache_question = f"{context_key}\ncurrent:{question}"
+        if _history_ctx_key:
+            cache_question = f"{_history_ctx_key}\ncurrent:{question}"
 
         # ── [v5.19.0] 人设引擎：设置情绪桶 context（供 _select_emotion_bucket 读取）──
         self._ctx_is_priv = is_priv
@@ -2679,7 +2915,7 @@ def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
     # 【TRAE SOLO CN】
     api_key = config.get("API_KEY") or config.get("DASHSCOPE_KEY", "")
 
-    if not api_key or api_key in ("", "YOUR_DASHSCOPE_API_KEY_HERE"):
+    if not api_key or api_key in ("", "YOUR_DASHSCOPE_API_KEY_HERE", "YOUR_DASHSCOPE_API_KEY"):
         logger.warning("⚠️ API_KEY未配置，跳过图片分析")
         return None
 

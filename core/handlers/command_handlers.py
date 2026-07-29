@@ -349,6 +349,7 @@ def handle_admin_feature_commands(dctx) -> bool:
     # [TRAE SOLO CN] 追溯广告扫描
     if msg.startswith("/scan_ads"):
         import threading
+        import time as _time
         ad_detector = dctx.ctx.ad_detector
         admin_id = CONFIG.get("ADMIN_ID", 0)
         group_id = dctx.chat_id
@@ -366,18 +367,49 @@ def handle_admin_feature_commands(dctx) -> bool:
                 start_id = max(1, current_msg_id - scan_range)
                 end_id = current_msg_id - 1
             except Exception as e:
-                bot.reply_to(m, f"❌ 获取消息ID失败: {e}")
+                logger.warning(f"[scan_ads] 获取消息ID失败: {e}")
+                bot.reply_to(m, "❌ 获取消息ID失败，请稍后重试或联系管理员")
                 clear_logging_context()
                 return True
 
-        bot.reply_to(m, f"🔍 开始追溯扫描 msg_id {start_id}~{end_id}...")
+        # 【挑刺修复·任务3】生成 scan_id 供管理员查询，并持久化到 scan_ads_log
+        scan_id = f"{int(_time.time())}_{group_id}"
+        bot.reply_to(m, f"🔍 开始追溯扫描 msg_id {start_id}~{end_id}...\nscan_id: {scan_id}")
+
+        def _persist_scan(status, *, scanned=0, ads_found=0, deleted=0, failed=0, error_msg=""):
+            """记录扫描状态到 scan_ads_log（raw SQL，不走 _REPO_METHOD_MAP）。"""
+            try:
+                with db.lock:
+                    if status == "running":
+                        db.conn.execute(
+                            "INSERT INTO scan_ads_log (scan_id, group_id, start_ts, status) "
+                            "VALUES (?, ?, ?, ?)",
+                            (scan_id, group_id, int(_time.time()), "running"),
+                        )
+                    else:
+                        db.conn.execute(
+                            "UPDATE scan_ads_log SET end_ts=?, status=?, scanned=?, "
+                            "ads_found=?, deleted=?, failed=?, error_msg=? WHERE scan_id=?",
+                            (int(_time.time()), status, scanned, ads_found, deleted,
+                             failed, error_msg, scan_id),
+                        )
+                    db.conn.commit()
+            except Exception as log_e:
+                logger.warning(f"scan_ads_log 写入失败 scan_id={scan_id}: {log_e}")
 
         def _do_scan():
+            _persist_scan("running")
+            logger.info(f"[scan_ads] 开始扫描 scan_id={scan_id} group={group_id} range={start_id}~{end_id}")
             try:
                 scan_result = ad_detector.retroactive_scan(bot, group_id, start_id, end_id, admin_id)
+                logger.info(
+                    f"[scan_ads] 扫描完成 scan_id={scan_id} scanned={scan_result['scanned']} "
+                    f"ads={scan_result['ads_found']} deleted={scan_result['deleted']} failed={scan_result['failed']}"
+                )
                 report = (
                     f"🔍 追溯扫描完成\n"
                     f"━━━━━━━━━━━━━━━\n"
+                    f"🆔 scan_id: {scan_id}\n"
                     f"📊 扫描范围: {start_id}~{end_id}\n"
                     f"📋 扫描消息: {scan_result['scanned']}条\n"
                     f"🚫 发现广告: {scan_result['ads_found']}条\n"
@@ -390,17 +422,69 @@ def handle_admin_feature_commands(dctx) -> bool:
                     failed_items = [d for d in scan_result.get("details", []) if not d.get("deleted")]
                     for item in failed_items[:5]:
                         report += f"\n  ⚠️ msg_id={item['msg_id']}: {item.get('error', '未知')}"
+                _persist_scan(
+                    "done",
+                    scanned=scan_result.get("scanned", 0),
+                    ads_found=scan_result.get("ads_found", 0),
+                    deleted=scan_result.get("deleted", 0),
+                    failed=scan_result.get("failed", 0),
+                )
                 try:
                     bot.send_message(group_id, report)
                 except Exception as e:
-                    logger.debug(f"操作异常: {e}")
+                    logger.warning(f"[scan_ads] 发送报告失败 scan_id={scan_id}: {e}")
             except Exception as e:
+                logger.warning(f"[scan_ads] 扫描异常 scan_id={scan_id}: {e}")
+                _persist_scan("failed", error_msg=str(e)[:500])
                 try:
-                    bot.send_message(group_id, f"❌ 追溯扫描失败: {e}")
-                except Exception as e:
-                    logger.debug(f"操作异常: {e}")
+                    bot.send_message(group_id, f"❌ 追溯扫描失败 (scan_id: {scan_id})，请稍后重试或联系管理员")
+                except Exception as send_e:
+                    logger.warning(f"[scan_ads] 失败通知发送异常 scan_id={scan_id}: {send_e}")
         t = threading.Thread(target=_do_scan, daemon=True, name="scan_ads")
         t.start()
+        clear_logging_context()
+        return True
+
+    # 【挑刺修复·任务3】查询最近一次 /scan_ads 扫描状态（管理员）
+    if msg.startswith("/scan_status"):
+        _status_group_id = dctx.chat_id
+        try:
+            with db.lock:
+                cur = db.conn.execute(
+                    "SELECT scan_id, start_ts, end_ts, status, scanned, ads_found, "
+                    "deleted, failed, error_msg FROM scan_ads_log "
+                    "WHERE group_id=? ORDER BY start_ts DESC LIMIT 1",
+                    (_status_group_id,),
+                )
+                row = cur.fetchone()
+        except Exception as e:
+            logger.warning(f"[scan_status] 查询扫描状态失败: {e}")
+            bot.reply_to(m, "❌ 查询扫描状态失败，请稍后重试")
+            clear_logging_context()
+            return True
+        if not row:
+            bot.reply_to(m, "📭 本群暂无扫描记录。")
+        else:
+            from datetime import datetime as _dt
+            _sid, _sts, _ets, _status, _scanned, _ads, _deleted, _failed, _err = row
+            _start_str = _dt.fromtimestamp(_sts).strftime("%Y-%m-%d %H:%M:%S") if _sts else "未知"
+            _end_str = _dt.fromtimestamp(_ets).strftime("%Y-%m-%d %H:%M:%S") if _ets else "进行中/未结束"
+            _status_emoji = {"done": "✅", "running": "⏳", "failed": "❌"}.get(_status, "❓")
+            _status_report = (
+                f"{_status_emoji} 最近一次扫描状态\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"🆔 scan_id: {_sid}\n"
+                f"📌 状态: {_status}\n"
+                f"🕐 开始: {_start_str}\n"
+                f"🕔 结束: {_end_str}\n"
+                f"📋 扫描: {_scanned or 0}条\n"
+                f"🚫 广告: {_ads or 0}条\n"
+                f"🗑️ 删除: {_deleted or 0}条\n"
+                f"⚠️ 失败: {_failed or 0}条"
+            )
+            if _err:
+                _status_report += f"\nerrmsg: {_err[:200]}"
+            bot.reply_to(m, _status_report)
         clear_logging_context()
         return True
 
@@ -592,7 +676,7 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
         except Exception as e:
             logger.error(f"销售中心命令异常: {e}")
             try:
-                bot.send_message(m.chat.id, f"❌ 销售中心命令执行失败: {e}")
+                bot.send_message(m.chat.id, "❌ 销售中心命令执行失败，请稍后重试或联系管理员")
             except Exception:
                 pass
         clear_logging_context()
@@ -604,7 +688,7 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
         except Exception as e:
             logger.error(f"安全中心命令异常: {e}")
             try:
-                bot.send_message(m.chat.id, f"❌ 安全中心命令执行失败: {e}")
+                bot.send_message(m.chat.id, "❌ 安全中心命令执行失败，请稍后重试或联系管理员")
             except Exception:
                 pass
         clear_logging_context()
@@ -616,7 +700,7 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
         except Exception as e:
             logger.error(f"多群托管命令异常: {e}")
             try:
-                bot.send_message(m.chat.id, f"❌ 多群托管命令执行失败: {e}")
+                bot.send_message(m.chat.id, "❌ 多群托管命令执行失败，请稍后重试或联系管理员")
             except Exception:
                 pass
         clear_logging_context()
@@ -628,7 +712,7 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
         except Exception as e:
             logger.error(f"内容审核命令异常: {e}")
             try:
-                bot.send_message(m.chat.id, f"❌ 内容审核命令执行失败: {e}")
+                bot.send_message(m.chat.id, "❌ 内容审核命令执行失败，请稍后重试或联系管理员")
             except Exception:
                 pass
         clear_logging_context()
@@ -640,7 +724,7 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
         except Exception as e:
             logger.error(f"新成员分析命令异常: {e}")
             try:
-                bot.send_message(m.chat.id, f"❌ 新成员分析命令执行失败: {e}")
+                bot.send_message(m.chat.id, "❌ 新成员分析命令执行失败，请稍后重试或联系管理员")
             except Exception:
                 pass
         clear_logging_context()
@@ -652,7 +736,7 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
         except Exception as e:
             logger.error(f"会员管理命令异常: {e}")
             try:
-                bot.send_message(m.chat.id, f"❌ 会员管理命令执行失败: {e}")
+                bot.send_message(m.chat.id, "❌ 会员管理命令执行失败，请稍后重试或联系管理员")
             except Exception:
                 pass
         clear_logging_context()
@@ -1080,7 +1164,8 @@ def _handle_group_admin_commands(dctx: DispatchContext) -> bool:
             bot.pin_chat_message(chat_id, m.reply_to_message.message_id, disable_notification=True)
             bot.reply_to(m, "📌 已置顶")
         except Exception as e:
-            bot.reply_to(m, f"❌ 置顶失败：{e}")
+            logger.warning("置顶失败: chat=%s error=%s", chat_id, e)
+            bot.reply_to(m, "❌ 置顶失败，请稍后重试或联系管理员")
         clear_logging_context()
         return True
     if msg == "/unpin":
@@ -1088,7 +1173,8 @@ def _handle_group_admin_commands(dctx: DispatchContext) -> bool:
             bot.unpin_chat_message(chat_id)
             bot.reply_to(m, "📌 已取消置顶")
         except Exception as e:
-            bot.reply_to(m, f"❌ 取消置顶失败：{e}")
+            logger.warning("取消置顶失败: chat=%s error=%s", chat_id, e)
+            bot.reply_to(m, "❌ 取消置顶失败，请稍后重试或联系管理员")
         clear_logging_context()
         return True
     if msg == "/unpinall":
@@ -1096,7 +1182,8 @@ def _handle_group_admin_commands(dctx: DispatchContext) -> bool:
             bot.unpin_all_chat_messages(chat_id)
             bot.reply_to(m, "📌 已取消所有置顶")
         except Exception as e:
-            bot.reply_to(m, f"❌ 取消所有置顶失败：{e}")
+            logger.warning("取消所有置顶失败: chat=%s error=%s", chat_id, e)
+            bot.reply_to(m, "❌ 取消所有置顶失败，请稍后重试或联系管理员")
         clear_logging_context()
         return True
 

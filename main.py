@@ -39,9 +39,10 @@ def main():
     DB = ctx.db if hasattr(ctx, 'db') else None
     AI = ctx.ai if hasattr(ctx, 'ai') else None
 
-    # 初始化结构化日志（JSON 格式，与现有 logging_util 共存）
-    from core.structured_logger import init_structlog
-    init_structlog(json_output=True)
+    # 统一日志系统：使用 logging_util（已合并 structured_logger 的 bind_context 能力）
+    # JSON 格式由 configure_logging(json_format=True) 控制，便于日志采集器解析
+    from core.logging_util import configure_logging
+    configure_logging(json_format=True)
 
     # 【v5.11.0】启动 preflight 健康检查：5 项关键检查，任何致命问题阻断启动
     # 【v5.25.0】连续失败时指数退避，防止 systemd 重启轰炸
@@ -81,13 +82,7 @@ def main():
     start_config_reload_watcher(CONFIG)
 
     # ════════════════════════════════════════════════════════════════════
-    #  1.2 启动 WriteQueue 单线程写入队列（v5.23.0 P0-1：消除 database is locked）
-    # ════════════════════════════════════════════════════════════════════
-    from core.write_queue import write_queue
-    write_queue.start()
-
-    # ════════════════════════════════════════════════════════════════════
-    #  1.3 初始化 LLM 成本熔断器（v5.26.0 阶段1-A：防刷资金安全红线）
+    #  1.2 初始化 LLM 成本熔断器（v5.26.0 阶段1-A：防刷资金安全红线）
     # ════════════════════════════════════════════════════════════════════
     from core.llm_cost_guard import init_guard
     init_guard(CONFIG, getattr(DB, "db_file", None))
@@ -113,6 +108,16 @@ def main():
     init_tracing(CONFIG)
 
     # ════════════════════════════════════════════════════════════════════
+    #  1.7 恢复验证码会话（重启前未完成的验证，从 SQLite 恢复到内存）
+    #      避免 Bot 重启后新成员永久禁言无人解禁
+    # ════════════════════════════════════════════════════════════════════
+    try:
+        from modules.verification import restore_sessions_on_startup
+        restore_sessions_on_startup(bot, DB, CONFIG)
+    except Exception as e:
+        logger.warning(f"恢复验证码会话失败（不阻断启动）：{e}")
+
+    # ════════════════════════════════════════════════════════════════════
     #  2. 注册专用处理器（优先级高于主分发器）
     # ════════════════════════════════════════════════════════════════════
 
@@ -131,6 +136,21 @@ def main():
     # Telegram Business/Guest 新事件（连接状态、删除同步等）
     from core.handlers.business_handlers import register_business_handlers
     register_business_handlers(bot, ctx)
+
+    # 用户入口命令 /start /help：必须在第 165 行兜底 handler 之前注册
+    # （pyTelegramBotAPI 先注册先匹配），否则会被 master_handler 当成普通消息吞掉。
+    from core.handlers.start_help_handler import (
+        handle_start_command,
+        handle_help_command,
+    )
+
+    @bot.message_handler(commands=["start"])
+    def on_start_command(message):
+        handle_start_command(bot, message, ctx)
+
+    @bot.message_handler(commands=["help"])
+    def on_help_command(message):
+        handle_help_command(bot, message, ctx)
 
     # 管理员救援命令必须早于兜底分发器，避免私聊被 AI/反馈路由吞掉。
     @bot.message_handler(
@@ -162,8 +182,9 @@ def main():
     # ════════════════════════════════════════════════════════════════════
     from core.message_dispatcher import master_handler
 
+    # 兜底只处理 text，new_chat_members 由 member_handlers 专用 handler 处理，避免重叠
     @bot.message_handler(func=lambda m: True,
-                         content_types=["text", "new_chat_members"])
+                         content_types=["text"])
     def on_any_message(message):
         master_handler(message, ctx)
 
@@ -185,11 +206,15 @@ def main():
             ctx.save_config()
         except Exception as e:
             logging.getLogger("main").warning(f"停机时保存配置失败：{e}")
+        # 【P1-NEW-10】停止 APScheduler，避免 daemon 线程在数据库关闭后仍执行任务
         try:
-            from core.write_queue import write_queue
-            write_queue.stop(timeout=10.0)
+            from tasks.task_scheduler import get_scheduler_instance
+            scheduler = get_scheduler_instance()
+            if scheduler and scheduler.running:
+                scheduler.shutdown(wait=False)
+                logging.getLogger("main").info("✅ 调度器已关闭")
         except Exception as e:
-            logging.getLogger("main").warning(f"停机时停止 WriteQueue 失败：{e}")
+            logging.getLogger("main").warning(f"关闭调度器失败: {e}")
         try:
             ctx.db.close()
         except Exception as e:

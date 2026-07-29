@@ -27,11 +27,11 @@
 - 解法：签到/打卡/checkin 不进入广告资料层与延迟封禁累计；解封统一清理 `blacklist`/`global_blacklist`/`mute_records`/`ad_suspicious_users`。
 - 预防：新增"正常业务动作"清单需在广告检测前显式排除。
 
-### 5. 广告资料规则存在，但入群活入口和数据时序仍可漏审
-- 问题：广告显示名、Bio、Premium emoji 状态或低俗头像已各自有规则，截图账号仍通过验证码并收到欢迎语；同时管理员/白名单不能被资料层误伤。
-- 根因：验证启用后的活入口只跑肤色启发式，未调用完整头像审核；`restricted→member` 虽拿到延迟 Bio 却只存库不复审；免检顺序不统一。
-- 解法：白名单/管理员免检前置；四类资料信号汇入同一入群审核函数，任一高置信命中都调用 `enforce_ad_user()`；验证码解限后补审最新 Bio/头像，头像主体用本地 NudeNet 而非 OCR 或肤色猜测。
-- 预防：截图漏判必须同时验证真实注册入口、数据何时可用、检测器是否被调用和统一处置持久态；头像只对明确暴露高置信类别定罪，普通/不确定画面放行。
+### 5. 广告资料审核的活入口、数据时序与旧头像兜底互相打架
+- 问题：广告资料曾因入口断链漏审；接入 NudeNet 后，两张正常头像又在名字正常、Bio 为空时被单独永久禁言。
+- 根因：`restricted→member` 补审和四信号主链修好后，`check_avatar_marketing()` 后面仍串着旧 PIL 尺寸/比例/文件大小/平均颜色兜底；高置信模型放行后，颜色启发式反而能独立翻盘执法，其他旧入口也仍在调用它。
+- 解法：白名单/管理员免检前置并保留资料补审；头像执法只采纳高置信明确暴露、广告文字/二维码或批量相似证据；所有入口移除弱启发式执法调用，兼容接口固定只记录并放行。
+- 预防：头像审核回归必须同时覆盖正例、普通人物/玩偶反例和“高置信模型放行但旧兜底命中”顺序反例；尺寸、比例、文件大小、肤色等统计特征永远不能成为广告处置证据。
 
 ### 6. AI 失败兜底尴尬
 - 问题：AI 调用失败时返回拟人化尴尬文案，体验差且无意义。
@@ -63,6 +63,12 @@
 - 解法：群内纯数字先交给验证码模块，随后无条件在所有聊天采集与 AI 前短路；无活动验证会话也静默忽略，含文字的正常数字聊天继续处理。
 - 预防：系统/验证流量的识别必须早于任何业务统计或模型调用，不能只把验证码 handler 排在 AI 前。
 
+### 6.5 旧情绪桶把正常质疑和短消息推成怼人回复
+- 问题：用户只是确认完整版时长，自动回复却出现“难不成”“自己去看”“好坏你自己分辨”等责怪、赶客语气；短问候也容易被写成动作剧情或强行暧昧。
+- 根因：基础人设虽已写温柔，运行时 4 桶仍注入“像在敷衍、让对方尴尬、不给台阶、禁止真诚道歉”等更具体的高优先级指令；FAQ、直接入口等旁路又没有统一发送前门禁。
+- 解法：六类对话意图每轮注入同一温情合同，轻微绿茶感只做柔软反差，俏皮只做轻巧接梗，纯欲只来自干净含蓄措辞；合同模式强制忽略生产旧敌意桶；FAQ、直接入口、缓存和模型回复统一经过动作旁白与敌意降级门禁。
+- 预防：人设回归必须覆盖六类意图×群/私渠道、旧配置污染、截图式敌意原句、动作旁白、预览/订阅目标和静态旁路；随机风格只能改变表达温度，不能改变友好边界、事实或 CTA。
+
 ### 7. 新闻 / 问候消息超时不删
 - 问题：定时播报 / 问候消息发出后未清理，长期堆积。
 - 根因：发送与清理链未同步接入。
@@ -76,67 +82,8 @@
 - 预防：新增数据表若会产生孤儿记录，必须同步接入 burn_orphan。
 
 ## 结构性风险（推断，附依据）
-- 历史误封集中在"检测链与入口/清理链不一致"类问题（见上 3–7）。推断系统存在"新增能力未同步接入统一入口/清理"的结构性风险，新功能易重蹈覆辙。应对：所有新增检测/播报必须显式接入 dispatcher 与 burn_orphan，并加回归测试固化（依据：AI_DEBUG_HISTORY 多次同类 hotfix）。
-
-### 9. Dashboard worker timeout
-- 问题：生产 `mory-dashboard` 在 2026-07-07 08:31–08:33 出现连续 Gunicorn `WORKER TIMEOUT` / `SIGKILL`，服务自恢复但后台存在慢请求拖死 worker 的隐患。
-- 根因：Dashboard systemd 使用 Gunicorn 默认 30 秒 timeout，后台页面包含数据库、SSH、审计等慢操作，2 worker 配置下容易被长请求占满。
-- 解法：`config/mory-dashboard.service` 增加 `--timeout 120 --graceful-timeout 30 --max-requests 1000 --max-requests-jitter 100`，部署后重启 Dashboard 并复核 health / journal。
-- 预防：Dashboard 新增慢接口必须设置应用层 timeout，生产巡检除 10 分钟错误外要抽查最近 1 小时 Dashboard journal。
-
-### 10. 同机浏览器容器拖垮 Mory
-- 问题：2026-07-08 生产机出现“各种报错不能用”，`mory-assistant`/`mory-dashboard` 表面 active，但整机 swap 接近打满，内核 OOM 杀过 `headless_shell`，Dashboard 出现 `WORKER TIMEOUT` / `SIGKILL`。
-- 根因：同机 `dreamina-bridge` 容器内 Playwright/Chromium 进程占用约 1.8GiB 内存并触发 OOM，拖慢 systemd、调度任务和 Dashboard worker。
-- 解法：重启 `dreamina-bridge` 释放内存，并用 `docker update --memory 1536m --memory-swap 1792m dreamina-bridge` 限制容器内存；同时修复 `conversion_events` 重复 `ALTER TABLE ADD COLUMN` 的日志噪声。
-- 预防：生产巡检不能只看 Mory 双服务 active，必须同时看 `free -m`、`docker stats`、内核 OOM 日志和最近 1 小时 Dashboard journal。
-
-### 11. Rich Message 400 "object expected as rich message"
-- 问题：`send_rich_message_compat` 发送 Rich Message 触发 Telegram API 400 "object expected as rich message"，被迫 `rich_enabled = False` 硬编码禁用。
-- 根因：`_html_to_rich_components` 返回 `List[Dict]` 组件列表，但官方 Bot API 10.1 期望 `rich_message` 参数是 `InputRichMessage` 对象 `{"html": "..."}`。
-- 解法：`send_rich_message_compat` 改为：str → `{"html": str}`；list → 拼接 HTML 后包装；dict → 直接用。恢复 `RICH_MESSAGE_ENABLED` 从 config 读取。
-- 预防：接入新 Bot API 方法时，必须先查官方参数类型定义，不能凭组件列表臆测对象格式。
-
-### 12. 解封链路不对称（mute_records 写入缺失 + ad_suspicious_users 残留）
-- 问题：解封后用户仍可能被再次触发禁封，且管理员无二次通知。
-- 根因：①`_mute_forever` 只调 `restrict_chat_member` 不写 `mute_records`，但 `_remove_blacklists` 解封时清理 `mute_records`，路径不对称；②`_remove_blacklists` 不清理 `ad_suspicious_users`，而 `ad_detector.clear_user_tracking` 受 `if user_key in self.suspicious_users` 内存条件门控，Bot 重启后内存清空导致数据库残留；③`restore_ad_user` 无管理员通知。
-- 解法：`_mute_forever` 增加 `INSERT OR REPLACE INTO mute_records`；`_remove_blacklists` 增加 `DELETE FROM ad_suspicious_users`；`restore_ad_user` 增加管理员通知。
-- 预防：禁封/解封操作必须对称——写入什么表，解封就清理什么表；数据库层兜底清理不依赖内存条件门控。
-
-### 13. SQLite ALTER TABLE ADD COLUMN 非常量默认值导致服务启动崩溃循环
-- 问题：`v5.33.0` 部署后 mory-assistant 启动崩溃循环（`restart counter is at 7`），日志报 `sqlite3.OperationalError: Cannot add a column with non-constant default`。
-- 根因：`database.py` 的 `_safe_add_column` 调用 `ALTER TABLE user_profiles ADD COLUMN conv_last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP`，SQLite 不允许 `ADD COLUMN` 带非常量默认值（`CURRENT_TIMESTAMP`/`RANDOM()` 等每次调用返回不同值），仅 `CREATE TABLE` 时允许。`conv_turn_count INTEGER DEFAULT 0` 因 `0` 是常量成功添加，`conv_last_active` 失败导致整个 `_init_tables()` 抛异常，DB 初始化失败 → 启动崩溃。
-- 解法：`conv_last_active` 改为 `TIMESTAMP`（允许 NULL），由 `update_conversation_turn()` 在 UPDATE 时显式赋值 `CURRENT_TIMESTAMP`；`user_repo.py` 同步修改。
-- 预防：①`_safe_add_column` 只用常量默认值（数字/字符串字面量），需要时间戳默认值的列改为代码层显式赋值；②`CREATE TABLE IF NOT EXISTS` 不受此限制，可继续用 `DEFAULT CURRENT_TIMESTAMP`；③新增列部署后必须验证 mory-assistant 启动成功，不能只看 `is-active`（systemd 会 restart 重试掩盖首次失败）。
-
-### 14. AI 引擎黑名单（BLACKLISTED_MODELS）重启丢失 + 启动日志多池重复刷屏
-- 问题：模型到期或没钱时 ai_engine 把模型加入 `BLACKLISTED_MODELS` 内存拉黑，但每次服务重启都重新加载过期模型 → 重新触发 `_is_model_expired → _blacklist_model` → 日志重复刷"🚫 模型拉黑"；4 个池都含同一过期模型时启动刷 4-5 行重复日志；Dashboard 显示的黑名单永远是旧的（config.json 没落盘）。
-- 根因：`ai_engine._blacklist_model()` 只改内存 `self.config["BLACKLISTED_MODELS"]`，不主动调用 `save_config()`；`save_config_task.py` 逻辑为"仅 `CURRENT_MODEL_INDEX` 变化时才落盘"——黑名单变化但 idx 没变 → 永远不落盘；同时 `_filter_runtime_pool` 对每个池独立调用 `_blacklist_model`，无去重。
-- 解法：①`_blacklist_model`/`_restore_model` 在拉黑/恢复时置 `self._blacklist_dirty = True`；②新增 `consume_blacklist_dirty()` 公开方法（线程安全，读后清标记）；③`save_config_task.execute()` 检测 dirty 标记，dirty 或 idx 变化任一触发即落盘；④`_filter_runtime_pool` 调 `_blacklist_model` 前先 `_is_blacklisted` 判重。
-- 预防：①内存态配置变更必须配合"脏标记 + 异步落盘"机制，不能依赖"另一个任务偶尔保存"；②多池共享同一对象时，过滤逻辑必须考虑"已被其他池拉黑过"的情况，避免重复触发副作用（日志/告警/写盘）；③`save_config_task` 这种"按条件落盘"任务，触发条件变更（新增 dirty 标记）必须同步更新其文档注释。
-
-### 15. v5.35.0 36 新模块 SQL 三类错误（表名复数/表名不存在/NOT NULL 缺字段）
-- 问题：v5.35.0 一次性补 36 个新模块，import 修好后 SQL 层暴露 3 类错误：①表名复数化（`group_reports`/`word_clouds`/`force_channels` 等 12 处，实际表名单数）；②表名完全不存在（`member_info`/`global_ad_blacklist` 等 14 处未在 `_init_tables()` 建表）；③`INSERT OR REPLACE INTO chat_settings (chat_id, data) VALUES (?, ?)` 没提供 `updated_at` 但表定义 `INTEGER NOT NULL` → `IntegrityError`。
-- 根因：①模块作者按"业务概念复数"命名 SQL 表名（如"举报"→`group_reports`），与 `_init_tables()` 中"单数表名"约定不一致；②模块作者假设了一些表（`member_info`/`bot_registry` 等）会被自动创建，但实际 `_init_tables()` 没建；③v5.35.0 新表 `updated_at INTEGER NOT NULL` 设计与模块代码"INSERT OR REPLACE 只更新部分字段"的写法不兼容（INSERT OR REPLACE 会用 NULL 覆盖未提供字段）。
-- 解法：①统一扫描 36 模块 SQL，复数表名→单数（7 模块 20 处）；②`database.py:_init_tables()` 末尾补 25 张 `CREATE TABLE IF NOT EXISTS`（不破坏现有表结构）；③23 处 v5.35.0 新表 `updated_at INTEGER NOT NULL`→`updated_at INTEGER`（允许 NULL），5 处 pre-v5.35.0 NOT NULL 保留不动。
-- 预防：①新增模块写 SQL 前必须 grep `_init_tables()` 真实表名，禁止凭概念命名；②模块使用 `INSERT OR REPLACE` 时，目标表的 NOT NULL 字段必须能在 REPLACE 路径全部覆盖，否则改成 `INSERT ... ON CONFLICT DO UPDATE` 只更新指定字段；③批量补模块时必须配套"import + DB 启动 + SQL 表名扫描"三连验证，不能只看 import 通过。
-
-### 16. v5.35.0/16 模块 fetchone() 两次调用导致统计/健康度恒为 0
-- 问题：`group_safety_center._get_rules_health` 规则健康度恒为 0；`stats_report.get_message_stats/get_user_stats/get_activity_stats` 三个统计方法 8 处数据全部返回 0，整个统计模块形同虚设。
-- 根因：典型错误写法 `value = cursor.fetchone()[0] if cursor.fetchone() else 0`：Python 表达式先求值条件 `cursor.fetchone()`（消费第一行），条件成立时再调用 `cursor.fetchone()[0]`（游标已空，返回 None → `[0]` IndexError 或回退 else 0），条件不成立时走 else 0。结果**恒为 0**，与查询实际数据无关。Python 短路求值在三元表达式里会两次求值同一个函数调用，无缓存。
-- 解法：①统一改写为 `row = cursor.fetchone(); value = row[0] if row else 0`（先存 row，再判 row）；②v5.35.2 修复 group_safety_center 1 处 + stats_report 8 处共 9 处。
-- 预防：①任何 `cursor.fetchone()` 必须只调用一次并保存到变量，禁止在三元表达式条件 + 真值处两次调用；②同类风险写法包括 `len(cursor.fetchall()) if cursor.fetchall() else 0`（fetchall 也会消费游标）；③模块写完后必须用真实非空数据走一次 e2e，禁止只看"返回 0 不报错"就以为正常。
-
-### 17. datetime.datetime.timedelta 多层引用 AttributeError
-- 问题：`valid_speak.get_stats` 调用 `datetime.timedelta(days=days)` 报 AttributeError: module 'datetime' has no attribute 'timedelta'。
-- 根因：模块顶部 `from datetime import datetime`，此时 `datetime` 是 `datetime.datetime` 类（不是模块）。后续 `datetime.timedelta()` 等价于访问 `datetime.datetime.timedelta` 类属性，但 timedelta 在 `datetime.datetime` 类上不存在，而在 `datetime` 模块上。命名空间污染 + 多层引用混淆导致。
-- 解法：①顶部改为 `from datetime import datetime, timedelta`（显式导入 timedelta）；②调用处改为 `timedelta(days=days)`（不再用 `datetime.timedelta`）。
-- 预防：①`from datetime import datetime` 后禁止写 `datetime.timedelta` / `datetime.date`，必须显式 import；②代码审查时 grep `datetime\.(timedelta|date|time|timezone)` 检查是否在 `from datetime import datetime` 上下文下被误用；③推荐统一写法 `from datetime import datetime, timedelta` 同时导入两个常用类。
-
-### 18. v5.35.2 修复不完全导致 v5.35.3 二次修复（fetchone 漏修 + import 漏改 + eval 安全）
-- 问题：v5.35.2 自称"全项目验收二轮修复"，但 GOAL MODE 9 阶段全量审计发现 5 个 P0 残留：①`stats_report.get_group_stats` 第 67/93 行 2 处 fetchone 两次调用 bug 漏修（v5.35.2 只修了同文件其他 8 处）；②`valid_speak.get_stats` 顶部 `from datetime import datetime` 漏改 `datetime, timedelta`（v5.35.2 CHANGELOG 称已修但实际只改了 `timedelta(days=days)` 调用处，import 没改 → NameError 模块即崩）；③`log_cleanup_task` 漏 `import os` 但用了 `os.path.dirname`，每天 04:00 触发即崩；④`security_center` 第 127 行 `eval(row[1])` 任意代码执行风险（用户可控的 factors 字段）；⑤`settings_api` 用 `logger.debug` 但没 import logger。
-- 根因：①"全项目验收"未做静态代码审计，只跑了已有单测（已有单测没覆盖这些路径）；②修复时只看"测试通过"不看"代码语义正确"——`from datetime import datetime` 改成 `from datetime import datetime, timedelta` 是 import 行修改，CHANGELOG 写了但实际代码没改；③v5.35.2 修复 stats_report 时按 grep `fetchone()` 找的，但漏了 `cursor.fetchone()` 在三元表达式中的 2 处；④eval() 是历史遗留代码，多次审计都漏过。
-- 解法：①GOAL MODE 9 阶段流程：阶段 0 基线 → 阶段 1 多智能体并行静态审计（2 subagent × 11 分区 A-K）→ 阶段 2 问题定级 P0/P1/P2/P3 → 阶段 3 修复策略 → 阶段 4 实施修复 → 阶段 5 验证（py_compile + doc_consistency + verify_db_methods + pytest）→ 阶段 6 部署 → 阶段 7 Git → 阶段 8 完工报告；②stats_report 第 67/93 行改 `row = cursor.fetchone(); value = row[0] if row else 0`；③valid_speak.py 顶部改 `from datetime import datetime, timedelta`；④log_cleanup_task.py 第 7 行加 `import os`；⑤security_center.py 加 `import ast` + `eval` → `ast.literal_eval`；⑥settings_api.py 加 `from core.logging_util import get_logger` + `logger = get_logger("settings_api")`。
-- 预防：①"全项目验收"必须做静态代码审计（grep `eval(`/`fetchone\(\).*fetchone\(\)`/`except.*pass`/`import` 完整性），不能只跑单测；②修复 bug 时必须改 import 行 + 调用处两处，不能只改调用处；③CHANGELOG 写的修复点必须与 git diff 一一对应，写完跑一次 grep 确认；④历史 eval() 必须全量替换为 ast.literal_eval（安全且向后兼容 Python 字面量）；⑤GOAL MODE 9 阶段流程可作为"重大版本验收"的标准流程，比"快速修复+单测"更彻底。
+- 历史误封集中在“检测链与入口/清理链不一致”类问题。新增检测或播报必须显式接入 dispatcher 与 burn_orphan，并加回归测试。
+- v5.33.0—v5.35.3 的 Dashboard、SQLite、Rich Message 和模块审计病历已压缩归档到 `docs/archive/ai-debug-history-v5.33-v5.35.3.md`。
 
 ### 19. v5.35.4 INSERT OR REPLACE 数据丢失模式（单行表主键不指定 + SELECT 无 WHERE）
 - 问题：v5.35.0 引入的 6 个单行表模块（ad_blocker/bot_settings/bot_list/group_list/group_migration/super_afool）都存在数据丢失 bug：写入用 `INSERT OR REPLACE INTO tbl (data) VALUES (?)`，读取用 `SELECT data FROM tbl`（无 WHERE）。表象是"写入成功但读取总是返回旧数据或 None"。

@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 设置工作目录
 WORKDIR /app
 
-# 复制依赖文件
-COPY requirements.txt .
+# 复制依赖文件（优先使用 lock 锁定版本）
+COPY requirements.lock requirements.txt
 
 # 安装Python依赖
 RUN pip install --no-cache-dir -r requirements.txt

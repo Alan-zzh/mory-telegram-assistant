@@ -368,7 +368,7 @@ def check_ad_detection(dctx) -> bool:
 
     if should_check_avatar:
         try:
-            from modules.avatar_detector import check_user_avatar, check_avatar_ocr_text
+            from modules.avatar_detector import check_avatar_ocr_text
             # [TRAE SOLO CN] v5.8.5 新增：头像OCR文字检测（5秒超时保护）
             avatar_ocr_suspicious, avatar_ocr_text, avatar_ocr_score = False, "", 0
             try:
@@ -400,23 +400,6 @@ def check_ad_detection(dctx) -> bool:
                         ad_result["action"] = "ban"
                         ad_result["reason"] = f"头像OCR广告文字触发: {avatar_ocr_text[:30]}"
             
-            # 原有PIL头像检测
-            if not ad_result["is_ad"]:
-                is_suspicious_avatar, avatar_reason = check_user_avatar(bot, uid)
-                if is_suspicious_avatar:
-                    # [TRAE SOLO CN] v5.8.0 新增：用户名+Bio+头像三层组合直接封禁
-                    bio_score_val = ad_result.get("bio_score", 0)
-                    uname_anomaly_val = ad_result.get("username_anomaly_score", 0)
-                    if uname_anomaly_val >= 1 and bio_score_val >= 3:
-                        logger.warning(f"[AD] 🚫 三层组合直接封禁: uid={uid} 用户名+Bio+头像全部命中")
-                        ad_result["is_ad"] = True
-                        ad_result["action"] = "ban"
-                        ad_result["reason"] = f"三层组合直接封禁(用户名+Bio+头像): {avatar_trigger_reason}+头像异常: {avatar_reason}"
-                    else:
-                        logger.warning(f"🎭 {avatar_trigger_reason}+头像检测: uid={uid} username={uname_clean[:30]} reason={avatar_reason}")
-                        ad_result["is_ad"] = True
-                        ad_result["action"] = "ban"
-                        ad_result["reason"] = f"{avatar_trigger_reason}+头像异常: {avatar_reason}"
         except Exception as e:
             logger.debug(f"头像检测异常: {e}")
 

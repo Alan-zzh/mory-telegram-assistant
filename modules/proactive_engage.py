@@ -22,14 +22,14 @@ _CST = timezone(timedelta(hours=8))
 
 # A/B 群承接话术模板：了解阶段先预览，明确购买才进入自助。
 _FALLBACK_TEMPLATES = [
-    "{uname}，先去 @moryselect 看看预览，合不合适你自己判断。",
+    "{uname}，可以先去 @moryselect 看看预览，没写清楚的再问我呀。",
     "想了解的话先看 @moryselect，具体喜欢哪种再聊。",
     "先别急着决定，@moryselect 里有预览，看完更清楚。",
 ]
 
 _FALLBACK_BY_INTENT = {
     "price": [
-        "{uname}，先去 @moryselect 看预览，内容合不合适你自己判断。",
+        "{uname}，可以先去 @moryselect 看预览，想确认什么再问我呀。",
         "价格先不急着定，先看 @moryselect 的预览再选更稳。",
     ],
     "rights": [

@@ -114,7 +114,7 @@ def handle_backup(bot, m, config, db):
 
     except Exception as e:
         logger.error(f"群设置备份失败: {e}")
-        bot.reply_to(m, f"❌ 备份失败：{e}")
+        bot.reply_to(m, "❌ 备份失败，请稍后重试或联系管理员")
 
 
 def handle_restore(bot, m, config, db):
@@ -182,7 +182,7 @@ def handle_restore(bot, m, config, db):
         bot.reply_to(m, "❌ 备份文件JSON解析失败，请检查文件格式")
     except Exception as e:
         logger.error(f"群设置恢复失败: {e}")
-        bot.reply_to(m, f"❌ 恢复失败：{e}")
+        bot.reply_to(m, "❌ 恢复失败，请稍后重试或联系管理员")
 
 
 def _sum_counts(backup_data):

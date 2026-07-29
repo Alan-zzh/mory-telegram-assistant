@@ -80,7 +80,7 @@ def handle_warn(bot, m, config: dict, db, target_uid: int, reason: str):
                 mins = mute_duration // 60
                 auto_msg = f"⚠️ 警告达上限({count}/{limit})，已禁言{mins}分钟。"
         except Exception as e:
-            auto_msg = f"⚠️ 警告达上限({count}/{limit})，但自动{action}失败：{e}"
+            auto_msg = f"⚠️ 警告达上限({count}/{limit})，自动{action}未生效，请联系管理员处理"
             logger.warning("自动%s失败: %s", action, e)
     else:
         auto_msg = ""
@@ -90,6 +90,9 @@ def handle_warn(bot, m, config: dict, db, target_uid: int, reason: str):
     reply = f"⚠️ {target_mention} 收到警告 ({count}/{limit})\n原因：{reason}"
     if auto_msg:
         reply += f"\n{auto_msg}"
+    else:
+        # 未达上限时提示上限与申诉渠道；达上限时 auto_msg 已含相关信息，不重复
+        reply += f"\n⚠️ 警告上限 {limit} 次，达上限将自动{action}。如认为误判，请联系群管理员。"
 
     try:
         bot.send_message(chat_id, reply, parse_mode="HTML")

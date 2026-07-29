@@ -62,7 +62,7 @@ def handle_connect(bot, m, config, db):
             return
     except Exception as e:
         logger.warning(f"验证群管理员失败: chat={target_chat_id} uid={uid} err={e}")
-        bot.reply_to(m, f"❌ 无法验证群组权限：{e}")
+        bot.reply_to(m, "❌ 无法验证群组权限，请稍后重试或联系管理员")
         return
 
     # 写入连接记录
@@ -124,6 +124,6 @@ def handle_remote_message(bot, m, config, db):
     except Exception as e:
         logger.warning(f"远程消息转发失败: uid={uid} chat={chat_id} err={e}")
         try:
-            bot.send_message(uid, f"❌ 消息转发失败：{e}")
+            bot.send_message(uid, "❌ 消息转发失败，请稍后重试或联系管理员")
         except Exception as e:
             logger.debug(f"操作异常: {e}")

@@ -129,14 +129,13 @@ def _review_member_profile(bot, user, bio, config, db, chat_id, ctx=None, stage=
 def _review_member_avatar(
     bot, user, config, db, chat_id, stage="join", check_similarity=False
 ):
-    """先跑完整视觉审核，再用本地启发式与头像相似度补充。命中返回 True。"""
+    """只用明确视觉/OCR证据及批量相似证据审核头像。命中返回 True。"""
     user_id = user.id
     user_display = (user.first_name or "") + (user.last_name or "")
     try:
         from modules.avatar_detector import (
             check_avatar_marketing,
             check_avatar_similarity,
-            check_user_avatar,
         )
 
         avatar_hit, avatar_reason, avatar_score, ai_result = check_avatar_marketing(
@@ -150,18 +149,6 @@ def _review_member_avatar(
             _enforce_member_ad(
                 bot, db, config, chat_id, user_id, user_display,
                 f"入群头像审核({stage}): {avatar_reason}",
-            )
-            return True
-
-        local_hit, local_reason = check_user_avatar(bot, user_id)
-        if local_hit:
-            logger.warning(
-                f"🚫 [入群头像审核] stage={stage} uid={user_id} score=2 "
-                f"ai_type={ai_result.get('type', 'none')} outcome=block reason={local_reason[:120]}"
-            )
-            _enforce_member_ad(
-                bot, db, config, chat_id, user_id, user_display,
-                f"入群头像审核({stage}): {local_reason}",
             )
             return True
 
@@ -306,7 +293,7 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
             ):
                 continue
 
-            # 步骤2.5：完整头像视觉审核 + 本地启发式 + 相似头像。
+            # 步骤2.5：明确头像视觉/OCR证据 + 批量相似头像。
             if _review_member_avatar(
                 bot, user, config, db, chat_id, stage="join", check_similarity=True
             ):

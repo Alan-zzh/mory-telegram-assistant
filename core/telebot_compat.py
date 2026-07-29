@@ -18,6 +18,12 @@ import time
 import traceback
 
 
+class _TelegramAttrMapping(dict):
+    """兼容 Telegram 新对象：同时支持 obj.key 与 obj["key"] 读取。"""
+
+    __getattr__ = dict.get
+
+
 DEFAULT_ALLOWED_UPDATES = [
     "message",
     "edited_message",
@@ -247,6 +253,13 @@ def preserve_message_extra_fields():
         for key in passthrough_fields:
             if key in obj and not hasattr(message, key):
                 setattr(message, key, obj.get(key))
+
+        # pyTelegramBotAPI 4.34 还没有 RichMessage 类型，会把 Bot API 10
+        # 的 rich_message 原样保留成 dict；较新版本则会返回对象。统一成
+        # 可属性访问且仍兼容字典下标的薄包装，避免运行环境版本差异。
+        rich_message = getattr(message, "rich_message", None)
+        if isinstance(rich_message, dict):
+            message.rich_message = _TelegramAttrMapping(rich_message)
 
         if getattr(message, "content_type", None) is None:
             if "rich_message" in obj:

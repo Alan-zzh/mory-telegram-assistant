@@ -53,14 +53,18 @@ def test_deploy_manifest_excludes_sync_conflicts_and_includes_truth_docs():
     import deploy_vps
 
     assert all(".sync-conflict-" not in path for path in deploy_vps.UPLOAD_FILES)
+    # 公开文档随部署上传（VERSION.md 是版本说明，非内部规则）
     assert {
-        "AGENTS.md",
         "README.md",
-        "AI_DEBUG_HISTORY.md",
         "CHANGELOG.md",
         "VERSION.md",
-        "project_snapshot.md",
     }.issubset(set(deploy_vps.UPLOAD_FILES))
+    # 内部文档不上传 VPS，避免暴露安全策略、踩坑病历和模块清单
+    assert {
+        "AGENTS.md",
+        "AI_DEBUG_HISTORY.md",
+        "project_snapshot.md",
+    }.isdisjoint(set(deploy_vps.UPLOAD_FILES))
     assert {
         "migrations/versions/0002_reply_style_samples.py",
         "migrations/versions/0003_business_conversation_context.py",

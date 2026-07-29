@@ -23,6 +23,8 @@
 """
 
 from core.logging_util import get_logger
+from core.admin_utils import is_admin_user
+import re
 
 logger = get_logger("federation")
 
@@ -32,6 +34,8 @@ def fban_user(db, user_id: int, banned_by: int, reason: str = "联邦封禁", ch
     联邦封禁用户
     """
     import time
+    # 【P2-2 安全加固】过滤 reason 中的控制字符，防止日志注入和换行伪造
+    reason = re.sub(r'[\r\n\t\x00-\x1f]', ' ', str(reason))[:200]
     with db.conn:
         db.conn.execute(
             "INSERT OR REPLACE INTO federation_bans VALUES (?,?,?,?,?)",
@@ -125,8 +129,7 @@ def execute_fban_on_join(bot, m, config: dict, db, user, user_display: str):
 
 def handle_fban_command(bot, m, args: list, config: dict, db):
     """处理 /fban 命令"""
-    admin_id = config.get("ADMIN_ID", 0)
-    if m.from_user.id != admin_id:
+    if not is_admin_user(config, m.from_user.id):
         bot.reply_to(m, "❌ 只有管理员可以执行联邦封禁")
         return
 
@@ -143,7 +146,7 @@ def handle_fban_command(bot, m, args: list, config: dict, db):
     reason = " ".join(args[1:]) if len(args) > 1 else "联邦封禁"
     chat_id = m.chat.id
 
-    fban_user(db, user_id, admin_id, reason, chat_id)
+    fban_user(db, user_id, m.from_user.id, reason, chat_id)
 
     bot.reply_to(m, f"✅ 已将用户 {user_id} 加入联邦封禁\n原因：{reason}")
 
@@ -155,8 +158,7 @@ def handle_fban_command(bot, m, args: list, config: dict, db):
         logger.debug(f"操作异常: {e}")
 def handle_unfban_command(bot, m, args: list, config: dict, db):
     """处理 /unfban 命令"""
-    admin_id = config.get("ADMIN_ID", 0)
-    if m.from_user.id != admin_id:
+    if not is_admin_user(config, m.from_user.id):
         bot.reply_to(m, "❌ 只有管理员可以解除联邦封禁")
         return
 
@@ -177,8 +179,7 @@ def handle_unfban_command(bot, m, args: list, config: dict, db):
 
 def handle_feds_command(bot, m, args: list, config: dict, db):
     """处理 /feds 查询命令"""
-    admin_id = config.get("ADMIN_ID", 0)
-    if m.from_user.id != admin_id:
+    if not is_admin_user(config, m.from_user.id):
         bot.reply_to(m, "❌ 只有管理员可以查询联邦封禁")
         return
 

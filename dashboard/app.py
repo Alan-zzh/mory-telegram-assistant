@@ -139,15 +139,25 @@ def create_app():
         def _apidocs_unavailable():
             return jsonify({"ok": False, "msg": "flasgger 未安装，API 文档暂不可用"}), 503
 
-    # 结构化日志：每个请求自动注入 request_id
+    # 统一日志：每个请求自动注入 request_id（使用 logging_util.bind_context）
     @app.before_request
     def _bind_request_id():
         import uuid
         try:
-            from core.structured_logger import bind_context
+            from core.logging_util import bind_context, clear_logging_context
+            clear_logging_context()
             bind_context(request_id=uuid.uuid4().hex[:12])
         except Exception as e:
-            logger.debug(f"structlog 未初始化，跳过 request_id 绑定: {e}")
+            logger.debug(f"日志上下文绑定失败: {e}")
+
+    @app.after_request
+    def _clear_request_id(response):
+        try:
+            from core.logging_util import clear_logging_context
+            clear_logging_context()
+        except Exception:
+            pass
+        return response
 
     # [阶段3-F] DB 驱动权限映射：启动时幂等初始化 role_permissions 表
     # 表为空时用 ROLE_PERMISSIONS 字典 bootstrap，保证向后兼容

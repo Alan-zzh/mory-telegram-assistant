@@ -7,6 +7,9 @@ Dashboard API - 用户生命周期分布统计
 """
 from flask import Blueprint, jsonify
 from dashboard.helpers import login_required, get_db
+from core.logging_util import get_logger
+
+logger = get_logger(__name__)
 
 user_lifecycle_bp = Blueprint('user_lifecycle', __name__, url_prefix='/api/user-lifecycle')
 
@@ -112,8 +115,9 @@ def get_distribution():
             "msg": "success"
         })
     except Exception as e:
+        logger.exception("[user_lifecycle] 获取分布失败")
         return jsonify({
             "code": 500,
             "data": None,
-            "msg": f"获取分布失败: {str(e)}"
+            "msg": "内部错误，请联系管理员"
         }), 500

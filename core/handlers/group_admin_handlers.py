@@ -145,7 +145,8 @@ def handle_group_admin_commands(dctx) -> bool:
             bot.pin_chat_message(chat_id, m.reply_to_message.message_id, disable_notification=True)
             bot.reply_to(m, "📌 已置顶")
         except Exception as e:
-            bot.reply_to(m, f"❌ 置顶失败：{e}")
+            logger.warning("置顶失败: chat=%s error=%s", chat_id, e)
+            bot.reply_to(m, "❌ 置顶失败，请稍后重试或联系管理员")
         clear_logging_context()
         return True
     if msg == "/unpin":
@@ -153,7 +154,8 @@ def handle_group_admin_commands(dctx) -> bool:
             bot.unpin_chat_message(chat_id)
             bot.reply_to(m, "📌 已取消置顶")
         except Exception as e:
-            bot.reply_to(m, f"❌ 取消置顶失败：{e}")
+            logger.warning("取消置顶失败: chat=%s error=%s", chat_id, e)
+            bot.reply_to(m, "❌ 取消置顶失败，请稍后重试或联系管理员")
         clear_logging_context()
         return True
     if msg == "/unpinall":
@@ -161,7 +163,8 @@ def handle_group_admin_commands(dctx) -> bool:
             bot.unpin_all_chat_messages(chat_id)
             bot.reply_to(m, "📌 已取消所有置顶")
         except Exception as e:
-            bot.reply_to(m, f"❌ 取消所有置顶失败：{e}")
+            logger.warning("取消所有置顶失败: chat=%s error=%s", chat_id, e)
+            bot.reply_to(m, "❌ 取消所有置顶失败，请稍后重试或联系管理员")
         clear_logging_context()
         return True
 

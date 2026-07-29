@@ -33,12 +33,19 @@ from dashboard.audit import get_current_role, has_permission, log_audit, _summar
 _WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 
 # 豁免路径前缀（不校验权限）
+# 【v5.38.9 安全修复】收紧豁免列表:
+#   1. 移除 /api/scheduler/jobs /api/scheduler/stats /api/audit/logs /api/audit/stats /api/attribution/
+#      这些路径暴露调度任务清单、审计日志、归因数据,未登录可读属于数据泄露
+#   2. /api/health 仅根路径(精确匹配)豁免,子路径如 /api/health/score /api/health/jobs 必须登录
+# 所有 /api/* 路径默认要求登录 + 对应权限,只有 /api/health 根路径允许未登录探活
 _EXEMPT_PREFIXES = (
-    "/login", "/api/login", "/api/health", "/api/auth", "/static/",
-    "/api/scheduler/stats", "/api/scheduler/jobs",  # 监控只读
-    "/api/audit/logs", "/api/audit/stats",          # 审计只读
-    "/api/attribution/",                             # 归因只读
+    "/login", "/api/login", "/api/auth", "/static/",
 )
+
+# 需要精确匹配(==)的豁免路径,避免 startswith 误豁免子路径
+_EXEMPT_EXACT_PATHS = {
+    "/api/health",  # 仅根路径用于探活;/api/health/score /api/health/jobs 等子路径必须登录
+}
 
 # 路径前缀到权限的映射（按最长匹配优先）
 _PATH_PERMISSION_MAP = [
@@ -64,7 +71,13 @@ def _infer_permission(path: str) -> str:
 
 
 def _is_exempt(path: str) -> bool:
-    """检查路径是否豁免"""
+    """检查路径是否豁免
+
+    【v5.38.9】/api/health 改为精确匹配,避免 startswith 误豁免 /api/health/score
+    /api/health/jobs /api/health/audit 等子路径(它们含敏感运维数据,必须登录)。
+    """
+    if path in _EXEMPT_EXACT_PATHS:
+        return True
     return path.startswith(_EXEMPT_PREFIXES)
 
 

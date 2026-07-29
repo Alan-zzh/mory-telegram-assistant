@@ -86,22 +86,22 @@ class MessageTemplates:
 
     # 购物车召回只允许发送一次温和预览提醒；三组保留是为了兼容旧 stage。
     CART_RECOVERY_STAGE_1: List[str] = [
-        "刚才想了解的内容，可以先去 @moryselect 看预览。合不合适你自己判断，不急。",
+        "刚才想了解的内容，可以先去 @moryselect 看预览。没写清楚的再问我呀，不急。",
     ]
 
     # 旧 stage 1/2 不再改变口径，避免虚假福利、稀缺和多阶段骚扰。
     CART_RECOVERY_STAGE_2: List[str] = [
-        "刚才想了解的内容，可以先去 @moryselect 看预览。合不合适你自己判断，不急。",
+        "刚才想了解的内容，可以先去 @moryselect 看预览。没写清楚的再问我呀，不急。",
     ]
 
     # 旧 stage 2 同样只给预览，不制造情感负担。
     CART_RECOVERY_STAGE_3: List[str] = [
-        "刚才想了解的内容，可以先去 @moryselect 看预览。合不合适你自己判断，不急。",
+        "刚才想了解的内容，可以先去 @moryselect 看预览。没写清楚的再问我呀，不急。",
     ]
 
     # 旧版通用备用文案（保留兼容）
     CART_RECOVERY_FALLBACKS: List[str] = [
-        "刚才想了解的内容，可以先去 @moryselect 看预览。合不合适你自己判断，不急。",
+        "刚才想了解的内容，可以先去 @moryselect 看预览。没写清楚的再问我呀，不急。",
     ]
 
     # 挽回阶段 → 文案池映射

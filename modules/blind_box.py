@@ -20,6 +20,7 @@ import random
 
 from core.database import _db_lock
 from core.logging_util import get_logger
+from core.admin_utils import is_admin_user
 
 logger = get_logger("blind_box")
 
@@ -176,10 +177,8 @@ def handle_blind_box_admin(bot, m, config, db, args):
     """管理员盲盒设置命令"""
     uid = m.from_user.id
 
-    # 权限检查
-    admin_id = config.get("ADMIN_ID", 0)
-    admin_ids = config.get("ADMIN_IDS", [])
-    if uid != admin_id and uid not in admin_ids:
+    # 【P2-3 安全加固】统一使用 is_admin_user，同时支持 ADMIN_ID 和 ADMIN_IDS
+    if not is_admin_user(config, uid):
         bot.reply_to(m, "❌ 仅管理员可设置盲盒")
         return
 

@@ -6,7 +6,9 @@ dashboard/api/metrics_api.py · Prometheus 指标暴露端点
   GET /api/v1/metrics - 返回 Prometheus 文本格式指标（仅 admin 可访问）
 """
 
-from flask import Blueprint, Response, session, jsonify
+import os
+import hmac
+from flask import Blueprint, Response, session, jsonify, request
 from core.logging_util import get_logger
 
 logger = get_logger("metrics_api")
@@ -19,15 +21,24 @@ def prometheus_metrics():
     """
     Prometheus 指标暴露端点
 
-    权限控制：仅 admin 角色可访问
+    权限控制：仅 admin 可访问；支持 Bearer token（METRICS_TOKEN）供 Prometheus scrape
     返回格式：text/plain; version=0.0.4（Prometheus  exposition format）
     """
-    # 权限校验：仅 admin 可访问
-    if not session.get("logged_in"):
-        return jsonify({"ok": False, "msg": "未登录，请先登录 Dashboard"}), 401
-
-    if session.get("role", "viewer") != "admin":
-        return jsonify({"ok": False, "msg": "需要管理员权限才能访问指标端点"}), 403
+    # 优先检查 Bearer token（供 Prometheus 使用）
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        expected_token = os.environ.get("METRICS_TOKEN", "")
+        if expected_token and hmac.compare_digest(token, expected_token):
+            pass  # token 校验通过，跳过 session 校验
+        else:
+            return jsonify({"ok": False, "msg": "无效的 metrics token"}), 401
+    else:
+        # 回退到 session 校验
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "msg": "未登录，请先登录 Dashboard"}), 401
+        if session.get("role", "viewer") != "admin":
+            return jsonify({"ok": False, "msg": "需要管理员权限才能访问指标端点"}), 403
 
     try:
         from prometheus_client import generate_latest, CONTENT_TYPE_LATEST

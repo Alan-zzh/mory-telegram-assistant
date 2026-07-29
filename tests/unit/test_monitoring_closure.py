@@ -104,6 +104,12 @@ def test_verify_db_methods_survives_non_utf8_parent_console():
 
 def test_alembic_config_is_readable_with_windows_default_encoding():
     """alembic.ini 不应依赖 UTF-8 locale 才能解析。"""
+    # 【v5.38.9 修复】alembic 是部署侧依赖，本地/CI 环境可能未安装；
+    # 缺失时跳过而非失败，避免误报。
+    import importlib.util
+    if importlib.util.find_spec("alembic") is None:
+        import pytest
+        pytest.skip("alembic 未安装，跳过 alembic.ini 解析测试")
     env = os.environ.copy()
     env.pop("PYTHONUTF8", None)
     result = subprocess.run(

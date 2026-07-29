@@ -383,12 +383,12 @@ def _handle_tool_calls(message: dict, bot, m, config: dict, db) -> str | None:
 
 def _exec_send_price_list(bot, m, config: dict, args: dict) -> str:
     """废弃兼容入口：不发送价格表或私聊，只返回安全的预览目标。"""
-    return "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+    return "想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
 
 
 def _exec_send_private_guide(bot, m, config: dict, args: dict) -> str:
     """废弃兼容入口：不主动私聊用户，只返回安全的预览目标。"""
-    return "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+    return "想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -16,12 +16,17 @@
 import time
 from core.database import _db_lock
 from core.logging_util import get_logger
+from core.admin_utils import is_admin_user
 
 logger = get_logger("custom_commands")
 
 
 def handle_create_command(bot, m, config, db, cmd_name, response):
     """创建自定义命令（管理员）"""
+    # 【P2-3 安全加固】防御性权限校验：即便调用方未拦截，也强制要求管理员
+    if not is_admin_user(config, m.from_user.id):
+        bot.reply_to(m, "⛔ 仅管理员可操作")
+        return
     # 确保命令名以 / 开头
     if not cmd_name.startswith("/"):
         cmd_name = "/" + cmd_name
@@ -40,11 +45,15 @@ def handle_create_command(bot, m, config, db, cmd_name, response):
         logger.info(f"⚙️ 自定义命令创建: chat={chat_id} cmd={cmd_name} by={uid}")
     except Exception as e:
         logger.error(f"⚙️ 自定义命令创建失败: {e}")
-        bot.reply_to(m, f"❌ 命令创建失败：{e}")
+        bot.reply_to(m, "❌ 命令创建失败，请稍后重试或联系管理员")
 
 
 def handle_delete_command(bot, m, config, db, cmd_name):
     """删除自定义命令（管理员）"""
+    # 【P2-3 安全加固】防御性权限校验：即便调用方未拦截，也强制要求管理员
+    if not is_admin_user(config, m.from_user.id):
+        bot.reply_to(m, "⛔ 仅管理员可操作")
+        return
     if not cmd_name.startswith("/"):
         cmd_name = "/" + cmd_name
 
@@ -64,7 +73,7 @@ def handle_delete_command(bot, m, config, db, cmd_name):
             bot.reply_to(m, f"❌ 未找到命令 {cmd_name}")
     except Exception as e:
         logger.error(f"⚙️ 自定义命令删除失败: {e}")
-        bot.reply_to(m, f"❌ 命令删除失败：{e}")
+        bot.reply_to(m, "❌ 命令删除失败，请稍后重试或联系管理员")
 
 
 def handle_commands_list(bot, m, config, db):
@@ -87,7 +96,7 @@ def handle_commands_list(bot, m, config, db):
             bot.reply_to(m, f"⚙️ 自定义命令列表（共{len(rows)}条）：\n{text}")
     except Exception as e:
         logger.error(f"⚙️ 自定义命令列表获取失败: {e}")
-        bot.reply_to(m, f"❌ 命令列表获取失败：{e}")
+        bot.reply_to(m, "❌ 命令列表获取失败，请稍后重试或联系管理员")
 
 
 def check_custom_command(bot, m, config, db):

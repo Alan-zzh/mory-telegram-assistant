@@ -47,7 +47,7 @@ def handle_schedule_msg(bot, m, config, db, time_str, content):
         logger.info(f"⏰ 定时消息设置: chat={chat_id} time={time_str} by={uid}")
     except Exception as e:
         logger.error(f"⏰ 定时消息设置失败: {e}")
-        bot.reply_to(m, f"❌ 定时消息设置失败：{e}")
+        bot.reply_to(m, "❌ 定时消息设置失败，请稍后重试或联系管理员")
 
 
 def handle_schedule_list(bot, m, config, db):
@@ -70,7 +70,7 @@ def handle_schedule_list(bot, m, config, db):
             bot.reply_to(m, f"⏰ 定时消息列表（共{len(rows)}条）：\n{text}")
     except Exception as e:
         logger.error(f"⏰ 定时消息列表获取失败: {e}")
-        bot.reply_to(m, f"❌ 定时消息列表获取失败：{e}")
+        bot.reply_to(m, "❌ 定时消息列表获取失败，请稍后重试或联系管理员")
 
 
 def handle_schedule_delete(bot, m, config, db, schedule_id):
@@ -91,7 +91,7 @@ def handle_schedule_delete(bot, m, config, db, schedule_id):
             bot.reply_to(m, "❌ 未找到该定时消息")
     except Exception as e:
         logger.error(f"⏰ 定时消息删除失败: {e}")
-        bot.reply_to(m, f"❌ 定时消息删除失败：{e}")
+        bot.reply_to(m, "❌ 定时消息删除失败，请稍后重试或联系管理员")
 
 
 def run_scheduled_messages(bot, config, db):

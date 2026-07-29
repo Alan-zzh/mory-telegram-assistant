@@ -51,7 +51,7 @@ def handle_setgtitle(bot, m, config, db):
         logger.info(f"群标题修改: chat={chat_id} title={title} by={uid}")
     except Exception as e:
         logger.error(f"群标题修改失败: {e}")
-        bot.reply_to(m, f"❌ 修改群标题失败：{e}")
+        bot.reply_to(m, "❌ 修改群标题失败，请稍后重试或联系管理员")
 
 
 def handle_setdesc(bot, m, config, db):
@@ -72,7 +72,7 @@ def handle_setdesc(bot, m, config, db):
         logger.info(f"群描述修改: chat={chat_id} by={uid}")
     except Exception as e:
         logger.error(f"群描述修改失败: {e}")
-        bot.reply_to(m, f"❌ 修改群描述失败：{e}")
+        bot.reply_to(m, "❌ 修改群描述失败，请稍后重试或联系管理员")
 
 
 def handle_setgpic(bot, m, config, db):
@@ -107,4 +107,4 @@ def handle_setgpic(bot, m, config, db):
         logger.info(f"群头像修改: chat={chat_id} by={uid}")
     except Exception as e:
         logger.error(f"群头像修改失败: {e}")
-        bot.reply_to(m, f"❌ 修改群头像失败：{e}")
+        bot.reply_to(m, "❌ 修改群头像失败，请稍后重试或联系管理员")

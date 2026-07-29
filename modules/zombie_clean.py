@@ -76,7 +76,7 @@ def handle_zombies(bot, m, config: dict, db):
         admins = bot.get_chat_administrators(chat_id)
         admin_uids = {a.user.id for a in admins}
     except Exception as e:
-        bot.reply_to(m, f"⚠️ 获取管理员列表失败：{e}")
+        bot.reply_to(m, "⚠️ 获取管理员列表失败，请稍后重试或联系管理员")
         logger.warning("获取管理员列表失败: chat=%s error=%s", chat_id, e)
         return
 
@@ -176,7 +176,7 @@ def handle_zombies(bot, m, config: dict, db):
             db.conn.execute("UPDATE zombie_scans SET msg_id=? WHERE id=?", (sent.message_id, scan_id))
             db.conn.commit()
     except Exception as e:
-        bot.reply_to(m, f"⚠️ 发送扫描结果失败：{e}")
+        bot.reply_to(m, "⚠️ 发送扫描结果失败，请稍后重试或联系管理员")
         logger.error("发送僵尸号扫描结果失败: %s", e)
 
     logger.info("僵尸号扫描完成: chat=%s found=%s checked=%s", chat_id, len(zombie_uids), checked)

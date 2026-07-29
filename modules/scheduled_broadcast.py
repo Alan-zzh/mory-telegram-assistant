@@ -167,29 +167,9 @@ def _looks_like_local_path(s: str) -> bool:
     return has_separator or has_image_ext
 
 
-_SOFT_TEMPLATE_VARIANTS = {
-    "default": [
-        "路过留一句，大家按自己的节奏来。",
-        "这会儿有空的，随便聊两句就行。",
-        "不用赶，先把眼前的事处理好。",
-    ],
-    "morning": [
-        "早上好，今天按自己的节奏开始。",
-        "新一天先稳稳地过，不用急。",
-    ],
-    "afternoon": [
-        "下午好，卡住的话先缓一缓。",
-        "剩下的事一件一件来就好。",
-    ],
-    "evening": [
-        "晚上好，今天辛苦了。",
-        "把还没做完的事留给明天也没关系。",
-    ],
-    "night": [
-        "夜里就把节奏放慢一点。",
-        "准备休息的话，先照顾好自己。",
-    ],
-}
+# v5.38.10 已彻底移除模板变体内容，避免误开启后复发尴尬句。
+# 保留变量名以兼容现有 import / 引用，字典清空为 {}。
+_SOFT_TEMPLATE_VARIANTS = {}
 
 
 def _parse_broadcast_time(item: dict):
@@ -241,18 +221,8 @@ def _build_markup(item: dict, config: dict = None):
 
 
 def _pick_soft_template_variant(item: dict, config: dict | None = None) -> str:
-    """给旧模板加一个轻微变化句，保留原文案骨架。"""
-    cfg = config or {}
-    if cfg.get("BROADCAST_TEMPLATE_VARIATION_ENABLED", False) is False:
-        return ""
-    if item.get("template_variant") is False:
-        return ""
-
-    period = str(item.get("period", "") or "default").strip() or "default"
-    pool = _SOFT_TEMPLATE_VARIANTS.get(period) or _SOFT_TEMPLATE_VARIANTS["default"]
-    today = datetime.now(_CST).strftime("%Y-%m-%d")
-    seed = f"{item.get('id', '')}|{period}|{today}"
-    return random.Random(seed).choice(pool)
+    """v5.38.10 已彻底移除模板变体内容，始终返回空串，避免复发尴尬句。"""
+    return ""
 
 
 def _merge_footer_with_variant(footer: str, variant: str) -> str:

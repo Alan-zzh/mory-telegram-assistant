@@ -53,7 +53,7 @@ def handle_pin(bot, m, config, db):
                     logger.debug(f"操作异常: {e}")
         logger.info(f"置顶消息: chat={chat_id} msg={m.reply_to_message.message_id} silent={silent}")
     except Exception as e:
-        bot.reply_to(m, f"❌ 置顶失败：{e}")
+        bot.reply_to(m, "❌ 置顶失败，请稍后重试或联系管理员")
 
 
 def handle_unpin(bot, m, config, db):
@@ -75,7 +75,7 @@ def handle_unpin(bot, m, config, db):
         bot.reply_to(m, "📌 已取消最新置顶消息")
         logger.info(f"取消置顶: chat={chat_id}")
     except Exception as e:
-        bot.reply_to(m, f"❌ 取消置顶失败：{e}")
+        bot.reply_to(m, "❌ 取消置顶失败，请稍后重试或联系管理员")
 
 
 def handle_unpinall(bot, m, config, db):
@@ -97,4 +97,4 @@ def handle_unpinall(bot, m, config, db):
         bot.reply_to(m, "📌 已取消所有置顶消息")
         logger.info(f"取消全部置顶: chat={chat_id}")
     except Exception as e:
-        bot.reply_to(m, f"❌ 取消全部置顶失败：{e}")
+        bot.reply_to(m, "❌ 取消全部置顶失败，请稍后重试或联系管理员")

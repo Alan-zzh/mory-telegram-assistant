@@ -36,7 +36,7 @@ def handle_save_note(bot, m, config, db, note_name, content):
         logger.info(f"📝 笔记保存: chat={chat_id} name={note_name} by={uid}")
     except Exception as e:
         logger.error(f"📝 笔记保存失败: {e}")
-        bot.reply_to(m, f"❌ 笔记保存失败：{e}")
+        bot.reply_to(m, "❌ 笔记保存失败，请稍后重试或联系管理员")
 
 
 def handle_get_note(bot, m, config, db, note_name):
@@ -54,7 +54,7 @@ def handle_get_note(bot, m, config, db, note_name):
             bot.reply_to(m, f"❌ 未找到笔记 '{note_name}'")
     except Exception as e:
         logger.error(f"📝 笔记获取失败: {e}")
-        bot.reply_to(m, f"❌ 笔记获取失败：{e}")
+        bot.reply_to(m, "❌ 笔记获取失败，请稍后重试或联系管理员")
 
 
 def handle_notes_list(bot, m, config, db):
@@ -73,7 +73,7 @@ def handle_notes_list(bot, m, config, db):
             bot.reply_to(m, f"📝 笔记列表（共{len(rows)}条）：\n{names}")
     except Exception as e:
         logger.error(f"📝 笔记列表获取失败: {e}")
-        bot.reply_to(m, f"❌ 笔记列表获取失败：{e}")
+        bot.reply_to(m, "❌ 笔记列表获取失败，请稍后重试或联系管理员")
 
 
 def handle_del_note(bot, m, config, db, note_name):
@@ -94,4 +94,4 @@ def handle_del_note(bot, m, config, db, note_name):
             bot.reply_to(m, f"❌ 未找到笔记 '{note_name}'")
     except Exception as e:
         logger.error(f"📝 笔记删除失败: {e}")
-        bot.reply_to(m, f"❌ 笔记删除失败：{e}")
+        bot.reply_to(m, "❌ 笔记删除失败，请稍后重试或联系管理员")

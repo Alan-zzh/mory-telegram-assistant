@@ -11,6 +11,35 @@ HTML_PAGE = '''<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+/* ── 设计 Token（单一真相源，未来逐步替换硬编码值）── */
+:root {
+  --color-bg-primary: #0f0f1a;
+  --color-bg-secondary: #1e1e2e;
+  --color-bg-tertiary: #252540;
+  --color-bg-card: #1e1e2e;
+  --color-border-subtle: rgba(255, 255, 255, 0.06);
+  --color-border-soft: rgba(255, 255, 255, 0.1);
+  --color-text-primary: #e2e8f0;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #6b7280;
+  --color-text-heading: #fff;
+  --color-accent-blue: #60a5fa;
+  --color-accent-purple: #a78bfa;
+  --color-accent-green: #10b981;
+  --color-accent-orange: #f59e0b;
+  --color-accent-blue-dark: #3b82f6;
+  --gradient-primary: linear-gradient(135deg, #60a5fa, #a78bfa);
+  --gradient-blue: linear-gradient(135deg, #60a5fa, #3b82f6);
+  --gradient-bg: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+  --gradient-card: linear-gradient(135deg, #1e1e2e, #252540);
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --shadow-card: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
 * { font-family: 'Inter', system-ui, -apple-system, sans-serif; box-sizing: border-box; }
 body { margin: 0; padding: 0; background: #0f0f1a; color: #e2e8f0; min-height: 100vh; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -239,7 +268,10 @@ async function doLogin() {
       showToast(r.msg, 'error');
     }
   } catch (e) {
-    showToast('登录失败', 'error');
+    const msg = (e instanceof Response && e.status === 401) ? '密码错误，请重试'
+              : (e instanceof Response && e.status === 403) ? '账号已锁定，联系超管'
+              : '网络连接失败，请检查网络';
+    showToast(msg, 'error');
   }
 }
 
@@ -1296,7 +1328,14 @@ async function loadBotStatus() {
         </table>
       </div>
     `;
-  } catch(e) { console.error(e); }
+  } catch(e) {
+    console.error(e);
+    const el = document.getElementById('statusContent');
+    if (el) {
+      el.className = 'empty-state';
+      el.innerHTML = `<h3>加载失败</h3><p>${escHtml(e.message || '未知错误')}</p><button onclick="loadBotStatus()">重试</button>`;
+    }
+  }
 }
 
 async function loadModels() {
@@ -1400,7 +1439,14 @@ async function loadTasks() {
         </table>
       </div>
     `;
-  } catch(e) { console.error(e); }
+  } catch(e) {
+    console.error(e);
+    const el = document.getElementById('tasksContent');
+    if (el) {
+      el.className = 'empty-state';
+      el.innerHTML = `<h3>加载失败</h3><p>${escHtml(e.message || '未知错误')}</p><button onclick="loadTasks()">重试</button>`;
+    }
+  }
 }
 
 async function loadGroupMgr() {

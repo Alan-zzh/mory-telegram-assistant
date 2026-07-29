@@ -98,4 +98,4 @@ def handle_adminlog(bot, m, config, db):
         bot.reply_to(m, "\n".join(lines))
     except Exception as e:
         logger.error(f"📋 管理日志查询失败: {e}")
-        bot.reply_to(m, f"❌ 查询失败：{e}")
+        bot.reply_to(m, "❌ 查询失败，请稍后重试或联系管理员")

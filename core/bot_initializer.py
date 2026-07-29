@@ -343,13 +343,14 @@ def _get_minimal_default_config() -> dict:
     return {
         "TOKEN": "", "API_KEY": "", "ADMIN_ID": 0, "GROUP_ID": 0,
         "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        # 兜底配置不设过期，确保 config.json 损坏时始终可用
         "MODEL_POOLS": {"llm": [
-            {"name": "qwen3.6-27b", "expire": "2026-07-23"},
-            {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24"},
-            {"name": "qwen3.7-max-preview", "expire": "2026-08-24"},
-            {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01"},
-            {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08"},
-            {"name": "kimi-k2.7-code", "expire": "2026-09-14"},
+            {"name": "qwen3.6-27b"},
+            {"name": "qwen3.7-max-2026-05-17"},
+            {"name": "qwen3.7-max-preview"},
+            {"name": "qwen3.7-plus-2026-05-26"},
+            {"name": "qwen3.7-max-2026-06-08"},
+            {"name": "kimi-k2.7-code"},
         ]},
         "REPLY_CHANCE": 10, "_CONFIG_VERSION": "5.0.0",
         "SYSTEM_PROMPT": "你是Mory，一个活泼可爱的小助理。",
@@ -530,10 +531,12 @@ def initialize_bot() -> BotContext:
         cfg["API_KEY"] = os.environ["DASHSCOPE_KEY"]
 
     # 6. 校验必填项
-    if not cfg.get("TOKEN") or cfg["TOKEN"] == "YOUR_BOT_TOKEN_HERE":
+    _PLACEHOLDER_TOKENS = ("YOUR_BOT_TOKEN_HERE", "YOUR_TELEGRAM_BOT_TOKEN")
+    _PLACEHOLDER_KEYS = ("YOUR_DASHSCOPE_API_KEY_HERE", "YOUR_DASHSCOPE_API_KEY")
+    if not cfg.get("TOKEN") or cfg["TOKEN"] in _PLACEHOLDER_TOKENS:
         logger.critical("❌ TOKEN 未填写！请编辑 config.json 或设置 TG_TOKEN 环境变量后重启。")
         sys.exit(1)
-    if not cfg.get("API_KEY") or cfg["API_KEY"] == "YOUR_DASHSCOPE_API_KEY_HERE":
+    if not cfg.get("API_KEY") or cfg["API_KEY"] in _PLACEHOLDER_KEYS:
         logger.critical("❌ API_KEY 未填写！请编辑 config.json 后重启。")
         sys.exit(1)
 
@@ -570,13 +573,33 @@ def initialize_bot() -> BotContext:
     ad_detector = AdDetector(cfg, db)
 
     # 12. 获取BOT_ID/BOT_USERNAME
-    _bot_me = bot.get_me()
+    _bot_me = None
+    for _attempt in range(3):
+        try:
+            _bot_me = bot.get_me()
+            break
+        except Exception as e:
+            if _attempt == 2:
+                logger.critical(f"❌ bot.get_me() 连续 3 次失败: {e}")
+                sys.exit(1)
+            logger.warning(f"⚠️ bot.get_me() 第 {_attempt+1} 次失败，重试中: {e}")
+            time.sleep(2 ** _attempt)
     bot_id = _bot_me.id
     bot_username = _bot_me.username
     logger.info(f"🤖 Bot ID: {bot_id}, Username: @{bot_username}")
 
     # 13. 数据库完整性检查 + 自动恢复
     _check_db_integrity(db, cfg)
+
+    # 13.5 【P1-2】清理 task_execution_history 僵尸 running 记录
+    # 进程被 SIGKILL 时 running 状态永久残留,启动时一次性清理
+    # [P2-NEW-12] 阈值由 3600s 降为 1800s，平衡 5 分钟间隔任务与误清理风险
+    try:
+        zombie_count = db.cleanup_zombie_running(timeout_seconds=1800)
+        if zombie_count > 0:
+            logger.warning(f"🧹 启动清理: {zombie_count} 条僵尸 running 任务记录已标记为 failed")
+    except Exception as e:
+        logger.warning(f"启动清理僵尸 running 记录失败(非致命): {e}")
 
     # 14. 数据库写入测试（内存测试，不写生产库）
     _test_db_write()
@@ -824,7 +847,9 @@ def _restore_db_from_backup(db, cfg):
             try:
                 db.close()
                 shutil.copy2(_latest_backup, os.path.join(base_dir, "mory.db"))
-                # 注意：恢复后需要重新创建DB实例，由调用者处理
+                # 【P0-NEW-09 修复】close() 后必须重建连接，否则后续操作抛
+                # ProgrammingError: Cannot operate on a closed database
+                db.reconnect()
                 _load_dynamic_states(cfg, db)
                 logger.info("✅ 数据库从备份恢复成功！")
                 try:

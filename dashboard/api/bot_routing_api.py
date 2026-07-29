@@ -15,6 +15,9 @@ dashboard/api/bot_routing_api.py · 多 Bot 路由管理 API（v5.24.0 阶段3-C
 from flask import Blueprint, jsonify, request
 
 from dashboard.helpers import login_required, admin_required, read_config
+from core.logging_util import get_logger
+
+logger = get_logger(__name__)
 
 bot_routing_bp = Blueprint("bot_routing", __name__, url_prefix="/api/bot-routing")
 
@@ -71,7 +74,8 @@ def api_bot_routing_list():
             "default_policy": router.default_policy,
         })
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"内部错误：{e}"}), 500
+        logger.exception("[bot_routing] 操作失败")
+        return jsonify({"ok": False, "msg": "内部错误，请联系管理员"}), 500
 
 
 @bot_routing_bp.route("/assign", methods=["POST"])
@@ -121,7 +125,8 @@ def api_bot_routing_assign():
             return jsonify({"ok": True, "msg": "路由已分配"})
         return jsonify({"ok": False, "msg": "路由分配失败，请查看日志"}), 500
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"内部错误：{e}"}), 500
+        logger.exception("[bot_routing] 操作失败")
+        return jsonify({"ok": False, "msg": "内部错误，请联系管理员"}), 500
 
 
 @bot_routing_bp.route("/remove", methods=["POST"])
@@ -155,7 +160,8 @@ def api_bot_routing_remove():
             return jsonify({"ok": True, "msg": "路由已删除"})
         return jsonify({"ok": False, "msg": "路由删除失败，请查看日志"}), 500
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"内部错误：{e}"}), 500
+        logger.exception("[bot_routing] 操作失败")
+        return jsonify({"ok": False, "msg": "内部错误，请联系管理员"}), 500
 
 
 @bot_routing_bp.route("/check", methods=["GET"])
@@ -203,4 +209,5 @@ def api_bot_routing_check():
             }
         })
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"内部错误：{e}"}), 500
+        logger.exception("[bot_routing] 操作失败")
+        return jsonify({"ok": False, "msg": "内部错误，请联系管理员"}), 500

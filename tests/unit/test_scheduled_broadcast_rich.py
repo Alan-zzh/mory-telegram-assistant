@@ -496,16 +496,19 @@ def test_preserve_message_extra_fields_keeps_bot_api_10_fields():
     from telebot import types
 
     preserve_message_extra_fields()
+    # 【v5.38.9 修复】pyTelegramBotAPI 4.36.0 的 RichMessage.de_json 要求 blocks 字段，
+    # 旧的 {"text": {"text": "hello"}} 格式已不兼容。使用 Bot API 10 的 paragraph block。
     msg = types.Message.de_json({
         "message_id": 1,
         "date": 1,
         "chat": {"id": 1, "type": "private"},
-        "rich_message": {"text": {"text": "hello"}},
+        "rich_message": {"blocks": [{"type": "paragraph", "text": "hello"}]},
         "guest_query_id": "guest-1",
     })
 
     assert msg.content_type == "rich_message"
-    assert msg.rich_message["text"]["text"] == "hello"
+    assert msg.rich_message is not None
+    assert len(msg.rich_message.blocks) == 1
     assert msg.guest_query_id == "guest-1"
 
 

@@ -1133,6 +1133,7 @@ def api_settings_persona():
             "added_knowledge": cfg.get("ADDED_KNOWLEDGE", ""),
             # [v5.19.0] 人设引擎
             "persona_engine_enabled": cfg.get("PERSONA_ENGINE_ENABLED", True),
+            "dialogue_tone_contracts": cfg.get("DIALOGUE_TONE_CONTRACTS", {}),
             "emotion_buckets_keys": sorted(list((cfg.get("EMOTION_BUCKETS") or {}).keys()) or ["cold", "savage", "soft", "common"]),
             "emotion_temp_map_size": len(cfg.get("EMOTION_TEMP_MAP") or {}),
         }})
@@ -1149,6 +1150,8 @@ def api_settings_persona():
     # [v5.19.0] 人设引擎开关
     if "persona_engine_enabled" in data:
         cfg["PERSONA_ENGINE_ENABLED"] = bool(data.get("persona_engine_enabled"))
+    if "dialogue_tone_contracts" in data and isinstance(data.get("dialogue_tone_contracts"), dict):
+        cfg["DIALOGUE_TONE_CONTRACTS"] = data["dialogue_tone_contracts"]
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "人设配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500

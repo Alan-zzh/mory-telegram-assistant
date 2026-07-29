@@ -404,11 +404,24 @@ def render_main_menu(config):
 # ═════════════════════════════════════════════════════════════════════════
 
 def _build_toggle_button(key_info, key_name, category, config):
-    """构建开关按钮"""
+    """构建开关按钮
+
+    渲染规则：默认关闭且当前仍未启用的开关，标签前加 🔴 标记，提醒管理员
+    这些功能部署后处于关闭状态，避免误以为反广告/反撤回等安全功能已生效；
+    默认关闭但已被手动启用的开关加 🟢 标记，便于一眼区分启用状态。
+    """
     path = key_info["path"]
-    val = _get_nested(config, path, key_info.get("default", False))
+    default_val = key_info.get("default", False)
+    val = _get_nested(config, path, default_val)
     label = key_info["label"]
-    btn_text = f"{label}：{_status_text(val)}"
+    if default_val is False and val is False:
+        # 默认关闭且当前未启用：红色警示
+        btn_text = f"🔴 {label}：{_status_text(val)}"
+    elif default_val is False and val is True:
+        # 默认关闭但已手动启用：绿色提示
+        btn_text = f"🟢 {label}：{_status_text(val)}"
+    else:
+        btn_text = f"{label}：{_status_text(val)}"
     callback = f"settings_{category}_toggle_{key_name}"
     return InlineKeyboardButton(btn_text, callback_data=callback)
 
@@ -492,7 +505,13 @@ def _build_submenu(category, keys, title, emoji, config):
     # 返回主菜单
     keyboard.add(InlineKeyboardButton("🔙 返回主菜单", callback_data="settings_back_main"))
 
-    text = f"{emoji} <b>{title}</b>\n\n点击按钮修改配置："
+    # 若本子菜单含默认关闭的开关，则显示警示横幅，避免管理员误以为安全功能已生效
+    has_default_off_toggle = any(
+        info.get("type") == "toggle" and info.get("default", False) is False
+        for info in keys.values()
+    )
+    banner = "\n⚠️ 标记为🔴的功能默认关闭，请根据群组需求手动启用\n" if has_default_off_toggle else ""
+    text = f"{emoji} <b>{title}</b>\n{banner}\n点击按钮修改配置："
     return text, keyboard
 
 
@@ -670,7 +689,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无记录")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -707,7 +726,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无定时消息")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -736,7 +755,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无记录")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -757,7 +776,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无白名单")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -789,7 +808,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f" {label}：暂无商品")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -812,7 +831,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无优惠券")
             except Exception as e:
-                bot.send_message(chat_id, f"️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -836,7 +855,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：今日暂无数据")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -856,7 +875,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无自定义命令")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -875,7 +894,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无笔记")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -892,7 +911,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无禁用命令")
             except Exception as e:
-                bot.send_message(chat_id, f"️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -911,7 +930,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无标签")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -930,7 +949,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f" {label}：暂无认证用户")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -949,7 +968,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无投票")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -974,7 +993,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                     f"💡 发送 /zombieclean 触发僵尸扫描"
                 )
             except Exception as e:
-                bot.send_message(chat_id, f"📋 {label}：查询失败({e})，发送 /zombieclean 触发扫描")
+                bot.send_message(chat_id, f"📋 {label}：查询失败，发送 /zombieclean 触发扫描")
         else:
             bot.send_message(chat_id, f"📋 {label}：发送 /zombieclean 触发僵尸扫描")
         return
@@ -994,7 +1013,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无记录")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -1068,7 +1087,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
                 else:
                     bot.send_message(chat_id, f"📋 {label}：暂无远程连接\n💡 私聊发送 /connect 群组ID 连接群组")
             except Exception as e:
-                bot.send_message(chat_id, f"⚠️ 查询失败：{e}")
+                bot.send_message(chat_id, "⚠️ 查询失败，请稍后重试")
         else:
             bot.send_message(chat_id, f"📋 {label}：需要数据库连接")
         return
@@ -1079,7 +1098,7 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
             link = bot.export_chat_invite_link(chat_id)
             bot.send_message(chat_id, f"📋 {label}：\n  🔗 {link}\n\n💡 使用 /invitelink 重新生成")
         except Exception as e:
-            bot.send_message(chat_id, f"📋 {label}：无法获取邀请链接（{e}）\n💡 Bot需要管理员权限才能导出邀请链接")
+            bot.send_message(chat_id, f"📋 {label}：无法获取邀请链接\n💡 Bot需要管理员权限才能导出邀请链接")
         return
 
     # 通用 fallback

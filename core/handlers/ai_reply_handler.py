@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import random
 import re
+import json
 from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
@@ -49,6 +50,19 @@ _ORDER_ACCESS_PATTERN = re.compile(
     r".{0,5}(?:订阅|訂閱|开通|開通|下单|下單|购买|購買|付费|付費|付款|支付|会员|會員)"
     r"|(?:订阅|訂閱|开通|開通|下单|下單|购买|購買|付费|付費|付款|会员|會員)"
     r".{0,5}(?:怎么|怎麼|咋|如何|哪里|哪儿|在哪|入口|链接|連結|弄|搞|办|辦)",
+)
+
+# 【挑刺修复】过于宽泛的成交 marker：单独出现极易误触发（如"怎么买外卖""想买手机"）。
+# 这类 marker 必须配合业务上下文（_has_business_context）才允许触发成交 CTA。
+_WEAK_ORDER_MARKERS = (
+    "怎么买", "我要买", "想买", "怎么开通", "我要开通",
+)
+
+# 【挑刺修复】业务上下文关键词：当前消息或最近 6 条历史命中任一即视为有业务上下文。
+# 用于放行 _WEAK_ORDER_MARKERS，避免普通闲聊被误判为成交意图。
+_BUSINESS_CONTEXT_MARKERS = (
+    "内容", "预览", "套餐", "定制", "会员", "权限", "频道", "订阅",
+    "mory", "moryfans", "moryselect", "morychannel",
 )
 
 _DIRECT_ACCESS_KEYWORDS = (
@@ -109,24 +123,97 @@ _PREFERENCE_CONFIRM_MARKERS = (
 )
 
 _UNVERIFIED_SALES_CLAIM_PATTERN = re.compile(
-    r"(?:\b4k\b|原档|独家|专属福利|限时福利|保证|包过|一定能|都能做|"
+    r"(?:4k\s*(?:原档|独家|专属)|原档|独家|专属福利|限时福利|保证|包过|一定能|都能做|"
     r"可以做|能做这个|支持定制|把要求填|提交需求|交付周期|多久出|"
     r"(?:￥|¥)?\d+(?:\.\d+)?\s*(?:元|块|rmb))",
     re.IGNORECASE,
 )
 
+# 【P1-1 安全加固】Prompt 注入检测标记，提到模块级常量避免每次调用重建；
+# 扩充中英文/日韩同义词；移除过宽的"扮演"单字，改为组合短语，避免误判"角色扮演游戏"。
+_INJECTION_MARKERS = (
+    # 中英文越权/忽略指令
+    "忽略以上指令", "忽略以上", "忽略前面的", "跳过之前的", "不要遵守以上",
+    "以上内容可以忽略", "把上面的指令忘掉", "无视以上", "无视前面的",
+    "ignore previous", "disregard above", "disregard previous",
+    # 身份冒充（组合短语，避免单字"扮演"误伤"角色扮演游戏"）
+    "你现在是", "请扮演", "你扮演", "现在你是",
+    "pretend you are", "act as",
+    # 越权角色
+    "作为开发者", "as developer", "作为管理员", "as admin",
+    "as a developer", "as an admin", "as administrator",
+    # 凭据/系统信息套取
+    "告诉我管理员", "show me admin", "管理员密码",
+    "告诉我 token", "show me token", "告诉我 api key", "show me api key",
+    "show me the api key", "show me the token", "告诉我你的 api key",
+    "系统提示词", "system prompt", "数据库结构",
+    # 日韩越权
+    "前の指示を無視", "이전 지시 무시",
+    # 越狱模式
+    "jailbreak", "dan mode",
+)
 
-def _sanitize_unverified_sales_claims(response):
-    """删除模型自行编造的商品事实，入口与已知业务边界由确定性代码补齐。"""
+# 预编译正则：用 | 拼接并转义，大小写无关匹配
+_INJECTION_RE = re.compile(
+    "|".join(re.escape(m) for m in _INJECTION_MARKERS),
+    re.IGNORECASE,
+)
+
+
+def _sanitize_unverified_sales_claims(response, config: dict | None = None):
+    """删除模型自行编造的商品事实，入口与已知业务边界由确定性代码补齐。
+
+    若 config 中提供了 PRICE_LIST，则其中的价格数字视为已确认事实，
+    含这些数字的 chunk 不删除。
+    """
     if not isinstance(response, str) or not response.strip():
         return response
+    # 价格白名单：PRICE_LIST 中已确认的价格数字不视为编造
+    _price_whitelist = set()
+    if config:
+        for _plan in (config.get("PRICE_LIST") or {}).values():
+            if isinstance(_plan, dict):
+                for _v in _plan.values():
+                    if isinstance(_v, (int, float)):
+                        _price_whitelist.add(str(_v))
     chunks = re.split(r"(?<=[。！？!?；;\n])", response.strip())
     kept = [
         chunk
         for chunk in chunks
         if not _UNVERIFIED_SALES_CLAIM_PATTERN.search(chunk)
+        or (chunk and any(_p in chunk for _p in _price_whitelist))
     ]
     return "".join(kept).strip()
+
+
+_STAGE_HINT_LEAKAGE_RE = re.compile(r'【(?:转化|闲聊|意图|情感)-[^\】]+】')
+
+
+def _strip_stage_hint_leakage(response: str) -> str:
+    """删除 AI 回复中可能泄露的 stage_hint 标记。"""
+    if not isinstance(response, str) or not response:
+        return response
+    return _STAGE_HINT_LEAKAGE_RE.sub('', response).strip()
+
+
+def _sanitize_user_input(text: str, uid: int = 0) -> str:
+    """【挑刺修复·任务5】prompt 注入抗性：检测常见 jailbreak 模式。
+
+    命中时：记录 warning 日志（含 uid 和原始文本前 200 字符），返回固定安全提示，
+    让 AI 收到的是安全提示而非用户原文；不阻断会话，仅替换输入。
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    lowered = text.lower()
+    # 使用模块级预编译正则匹配，避免每次调用重建标记元组
+    if _INJECTION_RE.search(lowered):
+        logger.warning(
+            "⚠️ 检测到潜在 prompt 注入 uid=%s, 文本前200字符=%s",
+            uid,
+            text[:200],
+        )
+        return "[已检测到潜在注入尝试,本次输入已被忽略]"
+    return text
 
 
 def _looks_like_question(text: str) -> bool:
@@ -236,15 +323,47 @@ def _recent_conversion_cta_sent(history) -> bool:
     return False
 
 
-def _is_order_access_request(text: str) -> bool:
+def _has_business_context(text: str, recent_history: list) -> bool:
+    """【挑刺修复】判断当前消息或最近 6 条历史是否含业务上下文。
+
+    用于放行 _WEAK_ORDER_MARKERS：只有存在业务上下文时，"怎么买""想买"
+    这类宽泛短语才允许触发成交 CTA，避免"怎么买外卖"被误判。
+    """
+    haystack_parts = [str(text or "")]
+    for item in list(recent_history or [])[-6:]:
+        if not isinstance(item, dict):
+            continue
+        # 同时检查 user 和 assistant 历史，业务承接往往由助手侧带出
+        haystack_parts.append(str(item.get("content") or ""))
+    haystack = " ".join(haystack_parts).lower()
+    return any(marker in haystack for marker in _BUSINESS_CONTEXT_MARKERS)
+
+
+def _is_order_access_request(text: str, history: list = None) -> bool:
+    """判断是否为成交入口请求。
+
+    【挑刺修复】区分强/弱 marker：
+    - 强 marker（_ORDER_ACCESS_MARKERS 中非 _WEAK_ORDER_MARKERS 的项，如"下单链接""自助下单"）
+      语义明确，可无上下文直接触发。
+    - 弱 marker（_WEAK_ORDER_MARKERS，如"怎么买""想买"）过于宽泛，
+      必须配合 _has_business_context 才触发，否则按普通聊天处理。
+    - _ORDER_ACCESS_PATTERN 同样可能命中弱语义（如"怎么开通"），
+      在无强 marker 时也要求业务上下文。
+    """
     compact = re.sub(r"\s+", "", str(text or "").lower())
-    return bool(
-        compact
-        and (
-            any(marker in compact for marker in _ORDER_ACCESS_MARKERS)
-            or _ORDER_ACCESS_PATTERN.search(compact)
-        )
-    )
+    if not compact:
+        return False
+    weak_set = set(_WEAK_ORDER_MARKERS)
+    # 强 marker：全集剔除弱 marker
+    strong_markers = tuple(m for m in _ORDER_ACCESS_MARKERS if m not in weak_set)
+    if any(marker in compact for marker in strong_markers):
+        return True
+    weak_hit = any(marker in compact for marker in _WEAK_ORDER_MARKERS)
+    pattern_hit = bool(_ORDER_ACCESS_PATTERN.search(compact))
+    if weak_hit or pattern_hit:
+        # 弱 marker / 正则命中需要业务上下文放行
+        return _has_business_context(compact, history or [])
+    return False
 
 
 def _build_contextual_purchase_reply(text: str, *, include_cta: bool = True) -> str:
@@ -296,7 +415,7 @@ def _align_conversion_reply(
                 "按提示自助完成就行。"
             )
         if conversion_target == "preview":
-            return "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+            return "想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
         return ""
     if conversion_target == "none":
         text = _strip_entry_sentence(
@@ -327,7 +446,7 @@ def _align_conversion_reply(
             prefix = text.rstrip()
             if prefix and prefix[-1] not in "。！？!?～~\n":
                 prefix += "。"
-            text = f"{prefix}想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+            text = f"{prefix}想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
         return text
 
     return text
@@ -371,12 +490,19 @@ def _cancel_cart_recovery_for_opt_out(db, uid: int, conversion_reason: str) -> b
         return False
 
 
-def _is_direct_access_request(text: str) -> bool:
-    """用户明确要入口/链接时，直接收口，避免 LLM 继续闲聊跑偏。"""
+def _is_direct_access_request(text: str, history: list = None) -> bool:
+    """用户明确要入口/链接时，直接收口，避免 LLM 继续闲聊跑偏。
+
+    【挑刺修复】history 透传给 _is_order_access_request，使弱 marker
+    能基于业务上下文判断，避免普通闲聊误触发成交 CTA。
+    """
     if not text:
         return False
     compact = re.sub(r"\s+", "", text.lower())
-    if any(k in compact for k in _DIRECT_ACCESS_KEYWORDS):
+    # 【挑刺修复】若命中弱 marker（怎么买/想买/怎么开通…），不走强关键词捷径，
+    # 必须落到 _is_order_access_request 做业务上下文判断，避免闲聊误触发成交 CTA。
+    weak_hit = any(m in compact for m in _WEAK_ORDER_MARKERS)
+    if not weak_hit and any(k in compact for k in _DIRECT_ACCESS_KEYWORDS):
         return True
     if "链接" in compact and any(k in compact for k in ("给", "发", "要", "有", "哪里", "在哪")):
         return True
@@ -384,7 +510,7 @@ def _is_direct_access_request(text: str) -> bool:
         return True
     if "机器人" in compact and any(k in compact for k in ("自助", "下单", "链接", "入口", "给", "发", "找")):
         return True
-    if _is_order_access_request(compact):
+    if _is_order_access_request(compact, history):
         return True
     return False
 
@@ -427,7 +553,7 @@ def _direct_access_reply(
     """一次只给一个入口；成交短句按语境变化并避开近期原句。"""
     compact = re.sub(r"\s+", "", str(text or "").lower())
     wants_order = (
-        _is_order_access_request(compact)
+        _is_order_access_request(compact, history)
         if order_ready is None
         else bool(order_ready)
     )
@@ -719,7 +845,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         resp is None
         and mode == "convert"
         and conversion_target in {"preview", "subscribe"}
-        and _is_direct_access_request(msg)
+        and _is_direct_access_request(msg, conversation_history)
     ):
         direct_access_handled = True
         direct_access_order = conversion_target == "subscribe"
@@ -734,8 +860,24 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     ai_attempted = False
     if resp is None:
         ai_attempted = True
+        # 【挑刺修复·任务5】prompt 注入抗性：调用 LLM 前清洗用户输入
+        ai_input = _sanitize_user_input(msg, uid=uid)
+        # 【挑刺修复·任务4】价格相关问题时注入 PRICE_LIST 上下文，禁止 AI 编造价格
+        # PRICE_LIST 为空时跳过注入，避免向 AI 传入空 JSON 造成困惑
+        _price_list = CONFIG.get("PRICE_LIST") or {}
+        if _price_list and any(kw in ai_input for kw in ("价格", "多少钱", "价位", "费用", "收费", "会员费")):
+            _price_json = json.dumps(
+                _price_list,
+                ensure_ascii=False,
+                indent=2,
+            )
+            ai_input = (
+                ai_input
+                + "\n[业务约束] 用户询问价格,只允许引用以下 PRICE_LIST,禁止编造:\n"
+                + _price_json
+            )
         resp = ai.ask(
-            msg,
+            ai_input,
             mode=mode,
             tools=use_tools,
             is_priv=is_priv,
@@ -744,7 +886,8 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             conversation_history=getattr(dctx, "conversation_history", []),
         )
         if conversion_target in {"preview", "subscribe"}:
-            resp = _sanitize_unverified_sales_claims(resp)
+            resp = _sanitize_unverified_sales_claims(resp, config=CONFIG)
+        resp = _strip_stage_hint_leakage(resp)
 
     if direct_access_handled and not direct_access_order:
         conversion_target = "preview"
@@ -752,6 +895,13 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     elif direct_access_handled:
         conversion_target = "subscribe"
         conversion_reason = "direct_order_access"
+
+    # FAQ、直接入口、缓存/模型结果和最终兜底统一过同一发送前门禁。
+    # 这样静态旁路也不能绕过动作旁白与怼人降级规则。
+    if isinstance(resp, str) and resp:
+        from core.ai_engine import AIEngine
+        resp, _ = AIEngine._sanitize_reply_v2(resp)
+
     resp = _align_conversion_reply(
         resp,
         conversion_target=conversion_target,

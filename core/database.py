@@ -64,13 +64,15 @@ class DB:
         self.conn.execute("PRAGMA cache_size=-4000;")
         self.conn.execute("PRAGMA mmap_size=268435456;")
         self._init_tables()
-        # 【v5.24.0 阶段1-A】用 WriteQueueConnectionProxy 包装连接，写操作自动走队列
-        # PRAGMA 和建表已在真实连接上执行完毕，代理包装后所有 Repo 的写操作自动全量化
-        from core.db_connection_proxy import WriteQueueConnectionProxy
-        self._real_conn = self.conn  # 保留真实连接引用（供 close/WriteQueue Worker 使用）
-        self.conn = WriteQueueConnectionProxy(self._real_conn)
+        # 【v5.32.0 重构】移除 WriteQueueConnectionProxy 包装，回归原生 SQLite 连接。
+        # WAL + busy_timeout=30s + synchronous=NORMAL 已足够应对单 VPS 群组助手的并发量。
+        # 写队列的 4 层抽象（WriteQueue + DBConnectionProxy + _FakeCursor + 核心表区分）
+        # 超出场景需要，且非技术维护者无法理解"非核心写被静默丢弃"的语义。
+        # 监控代码（alert_rules/db_migration_monitor/metrics）通过 write_queue.get_stats()
+        # 获取统计，write_queue 保留为空壳兼容层。
+        self._real_conn = self.conn  # 保留引用兼容（部分代码用 db._real_conn 访问真实连接）
         # 初始化8个Repo实例
-        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo, SalesRepo, ReplyEvolutionRepo, ConversationContextRepo
+        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo, SalesRepo, ReplyEvolutionRepo, ConversationContextRepo, TaskExecHistoryRepo
         self.users = UserRepo(self)
         self.groups = GroupRepo(self)
         self.points = PointsRepo(self)
@@ -83,6 +85,7 @@ class DB:
         self.sales = SalesRepo(self)
         self.reply_evolution = ReplyEvolutionRepo(self)
         self.conversation_context = ConversationContextRepo(self)
+        self.task_exec_history = TaskExecHistoryRepo(self)
 
         # 【v5.31.1 第一层防御：启动自检】扫描所有 Repo 实例的 public 方法，
         # 验证每个方法都在 _REPO_METHOD_MAP 中注册。缺失则直接启动失败，
@@ -117,6 +120,37 @@ class DB:
                 logger.debug(f"操作异常: {e}")
             except Exception:
                 pass
+
+    def reconnect(self):
+        """关闭后重新连接数据库（用于备份恢复后重建连接）。
+
+        【P0-NEW-09 修复】_restore_db_from_backup 调用 close() 后必须重建连接，
+        否则后续所有操作抛 ProgrammingError: Cannot operate on a closed database。
+
+        复用 __init__ 中的连接建立、PRAGMA、建表与代理包装逻辑；
+        不重新初始化 Repo（Repo 持有 self 引用，会自动使用新连接）。
+        """
+        with _db_lock:
+            # 1. 安全关闭旧连接（可能已被 close() 关闭）
+            try:
+                old_conn = self.__dict__.get('conn')
+                if old_conn:
+                    old_conn.close()
+            except Exception as e:
+                logger.warning(f"reconnect 关闭旧连接异常（已忽略）: {e}")
+            # 2. 重建真实连接并应用 PRAGMA（与 __init__ 保持一致）
+            self.conn = sqlite3.connect(self.db_file, check_same_thread=False)
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            self.conn.execute("PRAGMA wal_autocheckpoint=1000;")
+            self.conn.execute("PRAGMA busy_timeout=30000;")
+            self.conn.execute("PRAGMA synchronous=NORMAL;")
+            self.conn.execute("PRAGMA cache_size=-4000;")
+            self.conn.execute("PRAGMA mmap_size=268435456;")
+            # 3. 建表（幂等）
+            self._init_tables()
+            # 4. 回归原生连接（v5.32.0 移除 WriteQueueConnectionProxy）
+            self._real_conn = self.conn
+            logger.info("✅ 数据库连接已重建")
     # ──────────────────────────── 异常处理辅助 ──────────────────────────
     def _log_db_error(self, operation: str, error: Exception, level: str = "warning", context: str = ""):
         """
@@ -456,6 +490,22 @@ class DB:
                 exec_ts REAL NOT NULL
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_task_log_key_date ON task_log(task_key, exec_date)")
+
+            # 【v5.38.9 修复】task_execution_history 真实任务执行审计表
+            # task_log 是分布式锁表,任务执行后 DELETE 释放,基于它算"成功率"必然 100% 失真。
+            # 此表由 TaskTransactionManager 在 __enter__/__exit__ 写入真实状态(running/success/failed/aborted),
+            # /api/health/task-success-rate 读取真实成功率。migration 0004 同步建表,此处幂等兜底。
+            c.execute("""CREATE TABLE IF NOT EXISTS task_execution_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_key TEXT NOT NULL,
+                exec_date TEXT NOT NULL,
+                start_ts INTEGER NOT NULL,
+                end_ts INTEGER,
+                status TEXT NOT NULL,
+                error_msg TEXT,
+                duration_ms INTEGER
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_task_exec_key_date ON task_execution_history(task_key, exec_date)")
 
             # [v5.14.0新增] 商业搭讪事件表 - 记录 Bot 主动搭讪用户的完整链路
             # 用于 Dashboard /api/engage/* 可视化、转化追踪、运营复盘
@@ -1899,6 +1949,40 @@ class DB:
                 data TEXT DEFAULT '[]'
             )""")
 
+            # 【挑刺修复·任务3】/scan_ads 追溯扫描日志表（幂等建表，raw SQL 不走 _REPO_METHOD_MAP）
+            c.execute("""CREATE TABLE IF NOT EXISTS scan_ads_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id TEXT NOT NULL,
+                group_id INTEGER NOT NULL,
+                start_ts INTEGER NOT NULL,
+                end_ts INTEGER,
+                status TEXT NOT NULL,
+                scanned INTEGER DEFAULT 0,
+                ads_found INTEGER DEFAULT 0,
+                deleted INTEGER DEFAULT 0,
+                failed INTEGER DEFAULT 0,
+                error_msg TEXT
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_scan_ads_log_group ON scan_ads_log(group_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_scan_ads_log_start ON scan_ads_log(start_ts)")
+
+            # 验证码会话持久化表（双写策略：内存优先读，SQLite 用于重启恢复）
+            # 解决 Bot 重启时内存会话丢失导致永久禁言无人解禁的问题
+            c.execute("""CREATE TABLE IF NOT EXISTS verification_sessions (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                answer TEXT NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                max_attempts INTEGER DEFAULT 3,
+                timeout_ts REAL NOT NULL,
+                msg_id INTEGER,
+                mode TEXT NOT NULL,
+                user_name TEXT,
+                started_ts INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, user_id)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_verif_timeout ON verification_sessions(timeout_ts)")
+
             self.conn.commit()
 
             # ── 性能索引（IF NOT EXISTS 幂等）【v4.2.8增强：添加replied索引防止全表扫描】─
@@ -2048,6 +2132,15 @@ class DB:
         'clear_conversion_opt_out': 'conversation_context',
         'record_business_context': 'conversation_context',
         'cleanup_expired_business_context': 'conversation_context',
+        # task_exec_history_repo：真实任务执行审计,替代 task_log 算成功率。
+        'record_task_start': 'task_exec_history',
+        'record_task_success': 'task_exec_history',
+        'record_task_failure': 'task_exec_history',
+        'record_task_abort': 'task_exec_history',
+        'get_success_rate': 'task_exec_history',
+        # 【P1-2】僵尸 running 清理(启动时调用) + 【P2-1】历史记录 TTL 清理
+        'cleanup_zombie_running': 'task_exec_history',
+        'cleanup_old_history': 'task_exec_history',
     }
 
     # ──────────────────────────── v5.31.1 第一层防御：启动自检 ──────────────────────────
@@ -2059,6 +2152,7 @@ class DB:
         'sales': 'sales',
         'reply_evolution': 'reply_evolution',
         'conversation_context': 'conversation_context',
+        'task_exec_history': 'task_exec_history',
     }
 
     def _self_check_repo_methods(self):
@@ -2110,6 +2204,7 @@ class DB:
             'questions': self.questions, 'relay': self.relay, 'ab_test': self.ab_test,
             'sales': self.sales, 'reply_evolution': self.reply_evolution,
             'conversation_context': self.conversation_context,
+            'task_exec_history': self.task_exec_history,
         }
         for method_name, repo_key in self._REPO_METHOD_MAP.items():
             repo_instance = repo_instances.get(repo_key)
@@ -2140,7 +2235,7 @@ class DB:
             len([m for m in dir(getattr(self, a)) if not m.startswith('_') and callable(getattr(getattr(self, a), m, None))])
             for a in self._REPO_ATTR_MAP
         )
-        logger.info(f"✅ DB 启动自检通过：{len(self._REPO_METHOD_MAP)} 个委托方法映射到 9 个 Repo，共 {total_methods} public 方法全覆盖")
+        logger.info(f"✅ DB 启动自检通过：{len(self._REPO_METHOD_MAP)} 个委托方法映射到 {len(self._REPO_ATTR_MAP)} 个 Repo，共 {total_methods} public 方法全覆盖")
 
     def __getattr__(self, name):
         repo_name = self._REPO_METHOD_MAP.get(name)

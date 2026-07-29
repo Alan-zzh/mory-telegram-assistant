@@ -28,7 +28,9 @@
 """
 
 import re
+from html import escape
 from core.logging_util import get_logger
+from core.admin_utils import is_admin_user
 
 logger = get_logger("welcome_customization")
 
@@ -130,14 +132,17 @@ def send_welcome_message(bot, m, config: dict, db):
     for user in m.new_chat_members:
         # 格式化欢迎消息
         welcome_msg = format_welcome_message(welcome_config["welcome_text"], user, chat_id)
+        # HTML 转义最终文本，防止用户输入/模板注入（变量值在最终文本中一并转义）
+        safe_welcome = escape(welcome_msg)
 
         # 发送欢迎消息（带媒体或纯文本）
         sent_msg = None
         try:
             if welcome_config["media_file_id"]:
-                sent_msg = bot.send_photo(chat_id, welcome_config["media_file_id"], caption=welcome_msg)
+                sent_msg = bot.send_photo(chat_id, welcome_config["media_file_id"],
+                                          caption=safe_welcome, parse_mode="HTML")
             else:
-                sent_msg = bot.send_message(chat_id, welcome_msg)
+                sent_msg = bot.send_message(chat_id, safe_welcome, parse_mode="HTML")
 
             logger.info(f"👋 发送欢迎消息: uid={user.id} chat_id={chat_id}")
 
@@ -159,8 +164,9 @@ def send_welcome_message(bot, m, config: dict, db):
     # 如果启用群规展示，发送群规
     if welcome_config["enable_rules"]:
         try:
-            rules_msg = welcome_config["rules_text"]
-            bot.send_message(chat_id, rules_msg)
+            # 群规同样是用户输入，HTML 转义后以 HTML 模式发送
+            safe_rules = escape(welcome_config["rules_text"])
+            bot.send_message(chat_id, safe_rules, parse_mode="HTML")
         except Exception as e:
             logger.warning(f"发送群规失败: {e}")
 
@@ -177,9 +183,11 @@ def send_goodbye_message(bot, m, config: dict, db):
 
     # 格式化告别消息
     goodbye_msg = format_welcome_message(welcome_config["goodbye_text"], user, chat_id)
+    # HTML 转义最终文本，防止用户输入/模板注入
+    safe_goodbye = escape(goodbye_msg)
 
     try:
-        bot.send_message(chat_id, goodbye_msg)
+        bot.send_message(chat_id, safe_goodbye, parse_mode="HTML")
         logger.info(f"👋 发送告别消息: uid={user.id} chat_id={chat_id}")
     except Exception as e:
         logger.warning(f"发送告别消息失败: {e}")
@@ -187,8 +195,7 @@ def send_goodbye_message(bot, m, config: dict, db):
 
 def handle_set_welcome_command(bot, m, args: list, config: dict, db):
     """处理 /setwelcome 命令"""
-    admin_id = config.get("ADMIN_ID", 0)
-    if m.from_user.id != admin_id:
+    if not is_admin_user(config, m.from_user.id):
         bot.reply_to(m, "❌ 只有管理员可以设置欢迎消息")
         return
 
@@ -204,8 +211,7 @@ def handle_set_welcome_command(bot, m, args: list, config: dict, db):
 
 def handle_set_goodbye_command(bot, m, args: list, config: dict, db):
     """处理 /setgoodbye 命令"""
-    admin_id = config.get("ADMIN_ID", 0)
-    if m.from_user.id != admin_id:
+    if not is_admin_user(config, m.from_user.id):
         bot.reply_to(m, "❌ 只有管理员可以设置告别消息")
         return
 
@@ -221,8 +227,7 @@ def handle_set_goodbye_command(bot, m, args: list, config: dict, db):
 
 def handle_set_rules_command(bot, m, args: list, config: dict, db):
     """处理 /setrules 命令"""
-    admin_id = config.get("ADMIN_ID", 0)
-    if m.from_user.id != admin_id:
+    if not is_admin_user(config, m.from_user.id):
         bot.reply_to(m, "❌ 只有管理员可以设置群规")
         return
 
@@ -238,8 +243,7 @@ def handle_set_rules_command(bot, m, args: list, config: dict, db):
 
 def handle_clean_welcome_command(bot, m, config: dict, db):
     """处理 /cleanwelcome 命令"""
-    admin_id = config.get("ADMIN_ID", 0)
-    if m.from_user.id != admin_id:
+    if not is_admin_user(config, m.from_user.id):
         bot.reply_to(m, "❌ 只有管理员可以设置自动清理")
         return
 
@@ -252,8 +256,7 @@ def handle_clean_welcome_command(bot, m, config: dict, db):
 
 def handle_get_welcome_command(bot, m, config: dict, db):
     """处理 /getwelcome 命令"""
-    admin_id = config.get("ADMIN_ID", 0)
-    if m.from_user.id != admin_id:
+    if not is_admin_user(config, m.from_user.id):
         bot.reply_to(m, "❌ 只有管理员可以查看配置")
         return
 

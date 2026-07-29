@@ -9,6 +9,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 from dashboard.helpers import login_required, get_db
+from core.logging_util import get_logger
+
+logger = get_logger(__name__)
 
 # 【Loop 16】CST 时区，避免 VPS(UTC) 下漏斗显示日期错位 8 小时
 _CST = timezone(timedelta(hours=8))
@@ -96,10 +99,11 @@ def get_funnel():
             'msg': 'success'
         })
     except Exception as e:
+        logger.exception("[funnel] 获取漏斗数据失败")
         return jsonify({
             'code': 500,
             'data': None,
-            'msg': f'获取漏斗数据失败: {str(e)}'
+            'msg': '内部错误，请联系管理员'
         }), 500
 
 
@@ -180,8 +184,9 @@ def get_funnel_trend():
             'msg': 'success'
         })
     except Exception as e:
+        logger.exception("[funnel] 获取趋势数据失败")
         return jsonify({
             'code': 500,
             'data': None,
-            'msg': f'获取趋势数据失败: {str(e)}'
+            'msg': '内部错误，请联系管理员'
         }), 500

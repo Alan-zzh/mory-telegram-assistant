@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.8**：入群显示名/username、Bio、Premium emoji 状态和头像四类资料信号接回同一审核入口，任一高置信命中都会在验证码和欢迎语前执行永久禁言、历史清理与双黑名单；刚入群暂时取不到 Bio 时，在验证码解限后用最新资料补审。头像主体由本地 NudeNet ONNX 检测明确暴露区域，文字营销继续用 OCR，证据不足不封；固定成人资源矩阵名“白虎一线天”严格匹配，普通神兽和景区语境放行。
+当前版本 **v5.38.10**：群自动回复的日常、咨询、轻暧昧、质疑、情绪和成交六类意图统一以温情为底色，安全保留轻微绿茶感、俏皮和含蓄纯欲感；旧“毒舌/敷衍”配置在合同模式下失效，FAQ、缓存和模型输出发送前统一拦截动作旁白与怼人措辞。入群资料审核同时禁止头像尺寸、比例、文件大小和平均颜色等弱特征单独定罪，只保留高置信明确暴露、广告文字/二维码或批量相似证据。
 
 ## 快速开始
 
@@ -27,6 +27,92 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 ```
 部署后验证：`systemctl status` 双 active + `curl localhost:6616/api/health`。
 项目默认把生产部署纳入更新/修复闭环：本地门禁通过并提交可信 Git commit 后直接增量部署；仅限本地、无运行态影响或安全门禁阻断时跳过。完整约束以 `AGENTS.md` 为准。
+
+## 本地启动故障排查
+
+### 虚拟环境损坏
+- 现象：`.venv/Scripts/python.exe` 缺失，或启动报 `ModuleNotFoundError` / 解释器路径异常。
+- 处理：删除 `.venv` 后用 `python -m venv .venv` 重建，再 `.venv\Scripts\activate`，最后 `pip install -r requirements.lock`。
+
+### 依赖安装失败
+- 优先 `pip install -r requirements.lock`（锁定版本，与生产一致）。
+- 锁文件安装失败时回退 `pip install -r requirements.txt`，并记录差异以便后续修复 lock。
+
+### Telegram Bot Token 未设置
+- 复制 `.env.example` 为 `.env`，填写 `TG_TOKEN`（从 [@BotFather](https://t.me/BotFather) 获取）。
+- 缺少 `TG_TOKEN` 时 preflight 启动检查会阻断启动并打印告警。
+
+### Dashboard 无法访问
+- 检查环境变量 `DASHBOARD_SECRET`（至少 16 位）与 `DASHBOARD_PASSWORD` 是否已设置。
+- 默认端口 6616，本地验证：`curl localhost:6616/api/health`。
+
+### 数据库初始化
+- 首次运行自动建表（`mory.db`），无需手动迁移。
+- 如需重置可删除 `mory.db`（⚠️ 会丢失全部数据，谨慎操作）；生产环境请改用 `migrations/` 下的 Alembic 迁移。
+
+## 管理员命令清单
+
+⚠️ 以下命令仅 `ADMIN_ID` / `ADMIN_IDS` 配置的管理员可用；普通用户触发会被忽略或拒绝。
+
+### 用户入口（所有人可用）
+
+| 命令 | 参数 | 用途 |
+| --- | --- | --- |
+| `/start` | — | 新用户引导：私聊返回完整功能清单，群聊返回简短引导 |
+| `/help` | — | 帮助命令：私聊返回用户命令清单，管理员额外附带管理员清单；群聊主动私聊完整帮助 |
+
+### 广告 / 封禁
+
+| 命令 | 参数 | 用途 |
+| --- | --- | --- |
+| `/scan_ads` | `[start_id] [end_id]` | 追溯扫描广告（可选范围，缺省取近 N 条） |
+| `/scan_status` | — | 查询最近一次 `/scan_ads` 扫描进度与结果 |
+| `/unban` · `解封` | `@user` 或 `<uid>` | 解除广告封禁 |
+| `/fban` | `@user [reason]` | 联邦封禁（跨群生效） |
+| `/unfban` | `@user` | 解除联邦封禁 |
+| `/feds` | — | 查询联邦封禁列表 |
+
+### 认证 / 标签
+
+| 命令 | 参数 | 用途 |
+| --- | --- | --- |
+| `/certify` | `@user` 或 `<uid>` | 认证用户 |
+| `/uncertify` | `@user` 或 `<uid>` | 取消认证 |
+| `标签` | `@user <tag>` | 给用户打标签（自然语言） |
+| `备注` | `@user <note>` | 给用户加备注（自然语言） |
+| `查看标签` | `@user` | 查看用户标签（自然语言） |
+
+### 群欢迎 / 规则
+
+| 命令 | 参数 | 用途 |
+| --- | --- | --- |
+| `/setwelcome` | `<text>` | 设置欢迎语 |
+| `/setgoodbye` | `<text>` | 设置离别语 |
+| `/setrules` | `<text>` | 设置群规 |
+| `/cleanwelcome` | — | 清除欢迎语 |
+| `/getwelcome` | — | 查看当前欢迎语 |
+
+### 设置面板 / 业务模块
+
+| 命令 | 参数 | 用途 |
+| --- | --- | --- |
+| `/settings` | — | 打开设置面板（按钮交互） |
+| `/sales` | — | 销售中心 |
+| `/security` | — | 安全中心 |
+| `/managed` | — | 多群托管 |
+| `/content_audit` | — | 内容审核 |
+| `/analytics` | — | 新成员分析 |
+| `/membership` | — | 会员管理 |
+
+### 优惠券
+
+| 命令 | 参数 | 用途 |
+| --- | --- | --- |
+| `生成优惠券` | `<args>` | 生成优惠券（自然语言） |
+| `领券` | `<code>` | 领取优惠券 |
+| `核券` | `<code>` | 核销优惠券 |
+
+> 普通用户命令见 `/help`；管理员在私聊触发 `/help` 会额外附带上述清单。
 
 ## 目录结构
 - `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（77 个业务 `.py`）。

@@ -33,6 +33,7 @@ class FaultReporter:
     _ALERT_FILE = "fault_alerts.log"
     _DEDUP_STATE_FILE = "fault_dedup_state.json"
     _MAX_PENDING = 50
+    _MAX_ALERT_FILE_SIZE = 10 * 1024 * 1024  # 10MB，超过则轮转
 
     _instance: Optional["FaultReporter"] = None
     _instance_lock = threading.Lock()
@@ -126,6 +127,14 @@ class FaultReporter:
     def _save_local(self, category: str, detail: str, severity: str, ts: str):
         try:
             line = f"[{ts}] {severity} {category} | {detail}\n"
+            # 日志轮转：超过阈值时把旧文件改名为 .1，避免 fault_alerts.log 无限增长
+            try:
+                if os.path.exists(self._ALERT_FILE):
+                    if os.path.getsize(self._ALERT_FILE) > self._MAX_ALERT_FILE_SIZE:
+                        import shutil
+                        shutil.move(self._ALERT_FILE, self._ALERT_FILE + ".1")
+            except Exception as e:
+                logger.debug(f"[FaultReporter] 告警文件轮转失败（非致命）: {e}")
             with open(self._ALERT_FILE, "a", encoding="utf-8") as f:
                 f.write(line)
             self._pending.append(line)

@@ -88,8 +88,9 @@ BUILTIN_KEYWORD_GROUPS = {
         "patterns": CRYPTO_PATTERNS,
     },
     # [Trae] v4.11.2 新增：中性加密词汇，正常讨论可使用，权重降低避免误伤
+    # 【挑刺修复】已去重，与 crypto_money 不重叠（启动时 _check_crypto_overlap 兜底）
     "crypto_neutral": {
-        "label": "中性加密词汇",
+        "label": "中性加密词汇（已去重，与 crypto_money 不重叠）",
         "weight": 1,
         "patterns": CRYPTO_NEUTRAL_PATTERNS,
     },
@@ -127,6 +128,34 @@ BUILTIN_KEYWORD_GROUPS = {
 }
 
 SCORE_THRESHOLD = 3  # [Trae] v4.11.2 调整：阈值3，正常中性加密讨论(score=2)不触发，广告(score>=6)仍拦截
+
+
+def _check_crypto_overlap() -> None:
+    """【挑刺修复·任务2】检测 crypto_money 与 crypto_neutral 关键词重叠并自动去重。
+
+    两者若存在同一关键词（如 "BTC"），权重会从 1+3 累计到 4，正常讨论可能
+    直接被误判广告。重叠关键词只保留在 crypto_money（权重 3）中，从
+    crypto_neutral（权重 1）移除；对 CRYPTO_NEUTRAL_PATTERNS 原地修改，
+    保证 BUILTIN_KEYWORD_GROUPS 引用的是同一列表。
+    """
+    money_set = set(CRYPTO_PATTERNS)
+    overlap = [p for p in CRYPTO_NEUTRAL_PATTERNS if p in money_set]
+    if not overlap:
+        return
+    logger.warning(
+        "[AD] crypto_neutral 与 crypto_money 关键词重叠 %d 项，已自动从 crypto_neutral 移除: %s",
+        len(overlap),
+        overlap,
+    )
+    # 原地过滤，保留非重叠项；BUILTIN_KEYWORD_GROUPS["crypto_neutral"]["patterns"]
+    # 与 CRYPTO_NEUTRAL_PATTERNS 是同一列表引用，故同步生效。
+    CRYPTO_NEUTRAL_PATTERNS[:] = [
+        p for p in CRYPTO_NEUTRAL_PATTERNS if p not in money_set
+    ]
+
+
+# 启动时调用一次，保证两个列表不重叠
+_check_crypto_overlap()
 
 # ──────────────────────────────────────────────────────
 # 独立工具函数（供 group_mgr 等模块直接调用）

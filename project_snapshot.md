@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-28。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-30。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -11,10 +11,10 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 模块 | 状态 | 入口文件 | 备注 |
 |------|------|----------|------|
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
-| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1：公开 Mory 小助理身份，清醒/温柔/小傲娇与群/私差异；普通聊天无 CTA，价格/内容/权益→预览，明确购买/看过预览/明确定制→自助；“怎么订阅”等明确入口问法跳过旧 P7.5 旁路并结合近期预览直接承接；近期 CTA 去重；私聊零按钮、群聊单目标；禁止虚构事实、动作场景、假稀缺和社会证明 |
+| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；合同模式屏蔽旧毒舌/敷衍桶，FAQ/缓存/模型结果统一走动作旁白和敌意发送前门禁。普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 09:05 今日黄历、13:05 三张塔罗、20:35 易经一卦取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总；短期业务原文每分钟清理；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py`、`core/handlers/member_handlers.py` | L0–L4 五层；入群显示名/username、Bio、Premium emoji 状态和头像任一高置信命中即统一处置，验证码解限后补审延迟 Bio/头像；头像主体使用本地 NudeNet 明确暴露类别，营销文字用 OCR，证据不足不封；数据库追溯只删除当前窗口内有明确广告证据的消息；NFKC + 上下文受限模板覆盖六类数字/字母拆字 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py`、`core/handlers/member_handlers.py` | L0–L4 五层；入群显示名/username、Bio、Premium emoji 状态和头像任一高置信命中即统一处置，验证码解限后补审延迟 Bio/头像；头像仅采纳高置信明确暴露、广告文字/二维码或批量相似证据，尺寸、比例、文件大小和平均颜色只记录不定罪；数据库追溯只删除当前窗口内有明确广告证据的消息；NFKC + 上下文受限模板覆盖六类数字/字母拆字 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`（同步冲突副本不计入）；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` 开关 |
@@ -35,22 +35,22 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.38.8（2026-07-28）
+v5.38.10（2026-07-30）
 
-生产状态：生产为 v5.38.8（可信提交 `715f430`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5388_20260729_004405`）；18/18 文件哈希一致，双服务 active+enabled、NRestarts=0、health v5.38.8、当前进程高严重日志为空。本地专项 34 passed、整仓 585 passed / 7 skipped、DB 190/190、文档 7/7。生产正例名字/Bio/真实头像命中，正常神兽/景区/纯色头像放行；截图用户资料 `score=3`，NudeNet 命中三项明确暴露并输出 `score=2`，已真实 restricted，`blacklist` / `global_blacklist` / `mute_records` 均为 1。
+本地状态：v5.38.9 挑刺报告与单系统重构、v5.38.10 头像弱特征误封修复和全类型群自动回复人设合同已在当前主工作区合并验证，待形成单一可信提交后全量部署。生产已单独发布头像修复，但尚未包含本地 v5.38.9 整包与本轮人设合同。
 
 ## 最近 3 条大事
-1. 2026-07-28 v5.38.8 接通入群四类资料信号、验证码解限补审和真正本地 NudeNet 头像主体识别。
-2. 2026-07-28 v5.38.7 新增六类上下文受限广告变体模板，歧义词需第二锚点并收紧“上门”误封。
-3. 2026-07-28 v5.38.6 修复“一日 9Oo+ / 4oO+”混写日收益广告漏判并收紧日常计量反误封边界。
+1. 2026-07-30 v5.38.10 六类群自动回复统一温情、轻微绿茶感、俏皮和含蓄纯欲合同，屏蔽旧敌意桶并统一发送前门禁。
+2. 2026-07-30 v5.38.10 禁止头像颜色、尺寸、比例和文件大小弱特征直接执法，保留高置信视觉/OCR和批量相似证据。
+3. 2026-07-29 v5.38.9 挑刺报告全量修复：/start /help、真实任务成功率、RBAC、prompt 注入抗性与验证码持久化。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=135
-core_py=77
-job_count=50
-db_tables=170
-dashboard_routes=162
+core_py=78
+job_count=36
+db_tables=173
+dashboard_routes=163
 dispatch_funcs=9
 model_router_mappings=10
 <!-- METRICS:END -->

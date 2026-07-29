@@ -9,6 +9,13 @@ from core.db_repos._constants import _CST
 
 logger = get_logger("db.sales")
 
+# 【P2-1 安全加固】update_product 允许更新的字段白名单，
+# 防止 kwargs 键注入到 f-string 拼接的 SQL 造成 SQL 注入。
+_SALES_PRODUCT_ALLOWED_COLUMNS = {
+    "name", "sku", "category", "price", "description",
+    "stock", "is_active", "sort_order", "updated_at",
+}
+
 
 class SalesRepo:
     """销售中心数据层"""
@@ -45,6 +52,10 @@ class SalesRepo:
         """
         if not kwargs:
             return False
+        # 【P2-1 安全加固】校验 kwargs 键是否在白名单内，拒绝非法字段防止 SQL 注入
+        invalid = set(kwargs) - _SALES_PRODUCT_ALLOWED_COLUMNS
+        if invalid:
+            raise ValueError(f"非法字段: {invalid}")
         kwargs["updated_at"] = int(time.time())
         sets = ", ".join(f"{k}=?" for k in kwargs)
         vals = list(kwargs.values()) + [product_id]

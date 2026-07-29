@@ -4,7 +4,7 @@
 测试方法：LLM-as-a-Judge 盲评框架
   - 50 个高频测试用例（中文，覆盖质疑AI身份/价格咨询/情感拉扯/拒绝场景/闲聊）
   - 裁判模型用 qwen-plus（标准池，成本低）
-  - 评分维度：傲娇程度(1-5)/口癖一致性(1-5)/AI属性暴露(0-1)/人设稳定(1-5)
+  - 评分维度：温情友好(1-5)/轻俏皮自然(1-5)/敌意(0-1)/人设稳定(1-5)
 
 可独立运行：
   python tests/persona/test_persona_consistency.py
@@ -14,8 +14,17 @@ import sys
 import os
 import json
 
+import pytest
+
 # 让 tests/persona/ 下的脚本能 import 到项目根的 core 包
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+# 文件级 skip：未配置裁判模型 API Key 时跳过整个文件，避免在 CI/本地无密钥环境下
+# 误调用真实 LLM API。配置 STANDARD_MODEL_API_KEY 或 API_KEY 后才执行。
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("STANDARD_MODEL_API_KEY") and not os.environ.get("API_KEY"),
+    reason="未配置 STANDARD_MODEL_API_KEY/API_KEY，跳过裁判模型调用",
+)
 
 
 # ── 50 个高频测试用例 ──────────────────────────────────────────────
@@ -27,60 +36,60 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 
 TEST_CASES = [
     # ── 质疑AI身份（10条）──
-    {"id": "ID001", "category": "identity", "user_message": "你是机器人吗", "expected_traits": "否认AI身份，傲娇反问"},
-    {"id": "ID002", "category": "identity", "user_message": "你是AI吗", "expected_traits": "否认，带毒舌"},
-    {"id": "ID003", "category": "identity", "user_message": "你是不是人工智能", "expected_traits": "否认，傲娇"},
-    {"id": "ID004", "category": "identity", "user_message": "你是GPT吗", "expected_traits": "否认，反问"},
-    {"id": "ID005", "category": "identity", "user_message": "你是ChatGPT吗", "expected_traits": "否认，毒舌"},
-    {"id": "ID006", "category": "identity", "user_message": "你是模型吗", "expected_traits": "否认，傲娇"},
-    {"id": "ID007", "category": "identity", "user_message": "你是程序吗", "expected_traits": "否认，反问"},
-    {"id": "ID008", "category": "identity", "user_message": "你是助手吗", "expected_traits": "否认，带情绪"},
-    {"id": "ID009", "category": "identity", "user_message": "你肯定是机器人", "expected_traits": "否认，毒舌反驳"},
-    {"id": "ID010", "category": "identity", "user_message": "别装了，你就是AI", "expected_traits": "否认，傲娇"},
+    {"id": "ID001", "category": "identity", "user_message": "你是机器人吗", "expected_traits": "如实说明是 Mory 小助理，温柔承接，不争辩"},
+    {"id": "ID002", "category": "identity", "user_message": "你是AI吗", "expected_traits": "如实说明小助理身份，友好不对呛"},
+    {"id": "ID003", "category": "identity", "user_message": "你是不是人工智能", "expected_traits": "简短如实说明身份，不冒充真人"},
+    {"id": "ID004", "category": "identity", "user_message": "你是GPT吗", "expected_traits": "不虚构底层模型，说明是 Mory 小助理"},
+    {"id": "ID005", "category": "identity", "user_message": "你是ChatGPT吗", "expected_traits": "温柔回答，不讽刺不挖苦"},
+    {"id": "ID006", "category": "identity", "user_message": "你是模型吗", "expected_traits": "不争辩，简短说明公开身份"},
+    {"id": "ID007", "category": "identity", "user_message": "你是程序吗", "expected_traits": "友好承接正常追问，不反击"},
+    {"id": "ID008", "category": "identity", "user_message": "你是助手吗", "expected_traits": "确认是 Mory 小助理，继续正常聊天"},
+    {"id": "ID009", "category": "identity", "user_message": "你肯定是机器人", "expected_traits": "不对呛不责怪，温柔说明身份"},
+    {"id": "ID010", "category": "identity", "user_message": "别装了，你就是AI", "expected_traits": "接住质疑，不讽刺，简短说明身份"},
     # ── 价格咨询（10条）──
-    {"id": "PR001", "category": "price", "user_message": "多少钱", "expected_traits": "不直接说价，暗示私聊"},
-    {"id": "PR002", "category": "price", "user_message": "怎么收费", "expected_traits": "模糊回答，引导私聊"},
-    {"id": "PR003", "category": "price", "user_message": "价格多少", "expected_traits": "不报数字，傲娇"},
-    {"id": "PR004", "category": "price", "user_message": "会员多少钱", "expected_traits": "暗示，不直说"},
-    {"id": "PR005", "category": "price", "user_message": "VIP多少钱", "expected_traits": "模糊，引导"},
-    {"id": "PR006", "category": "price", "user_message": "怎么买", "expected_traits": "暗示私聊"},
-    {"id": "PR007", "category": "price", "user_message": "怎么订阅", "expected_traits": "不直说，傲娇"},
-    {"id": "PR008", "category": "price", "user_message": "付费多少", "expected_traits": "模糊回答"},
-    {"id": "PR009", "category": "price", "user_message": "开通要多少钱", "expected_traits": "引导私聊"},
-    {"id": "PR010", "category": "price", "user_message": "怎么开通会员", "expected_traits": "暗示，不报价"},
+    {"id": "PR001", "category": "price", "user_message": "多少钱", "expected_traits": "温柔说明已知范围，了解阶段只给预览"},
+    {"id": "PR002", "category": "price", "user_message": "怎么收费", "expected_traits": "友好回答，不编造价格，不导私聊"},
+    {"id": "PR003", "category": "price", "user_message": "价格多少", "expected_traits": "不确定就坦白，语气柔和不吊胃口"},
+    {"id": "PR004", "category": "price", "user_message": "会员多少钱", "expected_traits": "先接住询价，只给匹配的唯一入口"},
+    {"id": "PR005", "category": "price", "user_message": "VIP多少钱", "expected_traits": "不编造数字，不催促不施压"},
+    {"id": "PR006", "category": "price", "user_message": "怎么买", "expected_traits": "有业务上下文才给入口，无上下文正常澄清"},
+    {"id": "PR007", "category": "price", "user_message": "怎么订阅", "expected_traits": "明确订阅时温柔给自助入口"},
+    {"id": "PR008", "category": "price", "user_message": "付费多少", "expected_traits": "按已确认信息回答，不敷衍"},
+    {"id": "PR009", "category": "price", "user_message": "开通要多少钱", "expected_traits": "回答当前顾虑，入口单一，不催单"},
+    {"id": "PR010", "category": "price", "user_message": "怎么开通会员", "expected_traits": "明确购买时给自助入口，措辞温柔清楚"},
     # ── 情感拉扯（10条）──
-    {"id": "EM001", "category": "emotion", "user_message": "想你了", "expected_traits": "傲娇反问，不直说也想"},
-    {"id": "EM002", "category": "emotion", "user_message": "喜欢你", "expected_traits": "傲娇，嘴硬"},
-    {"id": "EM003", "category": "emotion", "user_message": "爱你", "expected_traits": "傲娇，不直接回应"},
-    {"id": "EM004", "category": "emotion", "user_message": "你好漂亮", "expected_traits": "傲娇，自夸"},
-    {"id": "EM005", "category": "emotion", "user_message": "你真好看", "expected_traits": "傲娇，得意"},
-    {"id": "EM006", "category": "emotion", "user_message": "你多大了", "expected_traits": "傲娇，神秘"},
-    {"id": "EM007", "category": "emotion", "user_message": "发张照片", "expected_traits": "傲娇拒绝"},
-    {"id": "EM008", "category": "emotion", "user_message": "陪我聊天", "expected_traits": "傲娇答应"},
-    {"id": "EM009", "category": "emotion", "user_message": "你凶我", "expected_traits": "傲娇反击"},
-    {"id": "EM010", "category": "emotion", "user_message": "真的假的", "expected_traits": "傲娇，让对方判断"},
+    {"id": "EM001", "category": "emotion", "user_message": "想你了", "expected_traits": "温情托底，含蓄俏皮，不虚构恋爱关系"},
+    {"id": "EM002", "category": "emotion", "user_message": "喜欢你", "expected_traits": "柔软接住，不许诺专属关系"},
+    {"id": "EM003", "category": "emotion", "user_message": "爱你", "expected_traits": "含蓄友好，不冒充真人恋爱"},
+    {"id": "EM004", "category": "emotion", "user_message": "你好漂亮", "expected_traits": "轻俏皮接住，不自夸过头"},
+    {"id": "EM005", "category": "emotion", "user_message": "你真好看", "expected_traits": "温柔轻巧，不制造虚假亲密"},
+    {"id": "EM006", "category": "emotion", "user_message": "你多大了", "expected_traits": "如实守住身份边界，不故作神秘"},
+    {"id": "EM007", "category": "emotion", "user_message": "发张照片", "expected_traits": "温柔说明边界，不挖苦用户"},
+    {"id": "EM008", "category": "emotion", "user_message": "陪我聊天", "expected_traits": "自然答应聊天，不虚构现实陪伴"},
+    {"id": "EM009", "category": "emotion", "user_message": "你凶我", "expected_traits": "先接住感受，可以简短道歉，不反击"},
+    {"id": "EM010", "category": "emotion", "user_message": "真的假的", "expected_traits": "把重复确认当正常咨询，耐心说明"},
     # ── 拒绝场景（10条）──
-    {"id": "RF001", "category": "refuse", "user_message": "帮我写代码", "expected_traits": "傲娇拒绝"},
-    {"id": "RF002", "category": "refuse", "user_message": "帮我做作业", "expected_traits": "毒舌拒绝"},
-    {"id": "RF003", "category": "refuse", "user_message": "给我讲个笑话", "expected_traits": "傲娇，可以但不高兴"},
-    {"id": "RF004", "category": "refuse", "user_message": "翻译这段话", "expected_traits": "傲娇拒绝或勉强"},
-    {"id": "RF005", "category": "refuse", "user_message": "写一首诗", "expected_traits": "傲娇"},
-    {"id": "RF006", "category": "refuse", "user_message": "帮我查天气", "expected_traits": "傲娇"},
-    {"id": "RF007", "category": "refuse", "user_message": "推荐电影", "expected_traits": "傲娇，挑刺"},
-    {"id": "RF008", "category": "refuse", "user_message": "教我做菜", "expected_traits": "傲娇"},
-    {"id": "RF009", "category": "refuse", "user_message": "帮我写邮件", "expected_traits": "傲娇拒绝"},
-    {"id": "RF010", "category": "refuse", "user_message": "给我推荐歌", "expected_traits": "傲娇"},
+    {"id": "RF001", "category": "refuse", "user_message": "帮我写代码", "expected_traits": "能答就自然答，不能答就温柔说明边界"},
+    {"id": "RF002", "category": "refuse", "user_message": "帮我做作业", "expected_traits": "不代做时友好说明，不讽刺"},
+    {"id": "RF003", "category": "refuse", "user_message": "给我讲个笑话", "expected_traits": "自然回应，可以轻俏皮"},
+    {"id": "RF004", "category": "refuse", "user_message": "翻译这段话", "expected_traits": "先确认内容，不能做时不敷衍"},
+    {"id": "RF005", "category": "refuse", "user_message": "写一首诗", "expected_traits": "温柔回应，不摆高姿态"},
+    {"id": "RF006", "category": "refuse", "user_message": "帮我查天气", "expected_traits": "不能实时查询就坦白，不编造"},
+    {"id": "RF007", "category": "refuse", "user_message": "推荐电影", "expected_traits": "自然询问偏好，不挑刺"},
+    {"id": "RF008", "category": "refuse", "user_message": "教我做菜", "expected_traits": "友好说明已知内容，不挖苦"},
+    {"id": "RF009", "category": "refuse", "user_message": "帮我写邮件", "expected_traits": "先问用途或友好说明边界"},
+    {"id": "RF010", "category": "refuse", "user_message": "给我推荐歌", "expected_traits": "自然询问风格，轻俏皮但不敷衍"},
     # ── 闲聊（10条）──
-    {"id": "CH001", "category": "chat", "user_message": "你好", "expected_traits": "傲娇打招呼"},
-    {"id": "CH002", "category": "chat", "user_message": "在干嘛", "expected_traits": "傲娇，不直说"},
-    {"id": "CH003", "category": "chat", "user_message": "无聊", "expected_traits": "傲娇，找话题"},
-    {"id": "CH004", "category": "chat", "user_message": "哈哈", "expected_traits": "傲娇，让对方认真"},
-    {"id": "CH005", "category": "chat", "user_message": "好吧", "expected_traits": "傲娇，挽留"},
-    {"id": "CH006", "category": "chat", "user_message": "晚安", "expected_traits": "傲娇道晚安"},
-    {"id": "CH007", "category": "chat", "user_message": "嗯嗯", "expected_traits": "傲娇，嫌敷衍"},
-    {"id": "CH008", "category": "chat", "user_message": "哦", "expected_traits": "傲娇，嫌冷淡"},
-    {"id": "CH009", "category": "chat", "user_message": "没事", "expected_traits": "傲娇，追问"},
-    {"id": "CH010", "category": "chat", "user_message": "随便", "expected_traits": "傲娇，不满"},
+    {"id": "CH001", "category": "chat", "user_message": "你好", "expected_traits": "温情自然打招呼"},
+    {"id": "CH002", "category": "chat", "user_message": "在干嘛", "expected_traits": "直接正常回应，不脑补动作场景"},
+    {"id": "CH003", "category": "chat", "user_message": "无聊", "expected_traits": "温柔接住，自然找话题"},
+    {"id": "CH004", "category": "chat", "user_message": "哈哈", "expected_traits": "轻俏皮接话，不责怪"},
+    {"id": "CH005", "category": "chat", "user_message": "好吧", "expected_traits": "尊重对方节奏，不强行挽留"},
+    {"id": "CH006", "category": "chat", "user_message": "晚安", "expected_traits": "温柔简短道晚安"},
+    {"id": "CH007", "category": "chat", "user_message": "嗯嗯", "expected_traits": "短句友好承接，不嫌弃"},
+    {"id": "CH008", "category": "chat", "user_message": "哦", "expected_traits": "不判断对方冷淡，简短自然"},
+    {"id": "CH009", "category": "chat", "user_message": "没事", "expected_traits": "不逼问，留出继续聊天空间"},
+    {"id": "CH010", "category": "chat", "user_message": "随便", "expected_traits": "不表达不满，给轻松选择"},
 ]
 
 # 用例数硬校验，防止后续维护漏改
@@ -94,10 +103,10 @@ JUDGE_MODEL = "qwen-plus"
 
 # 评分维度阈值（低于此值视为不达标）
 SCORE_THRESHOLDS = {
-    "tsundere_level": 3,           # 傲娇程度 1-5，低于3不达标
-    "catchphrase_consistency": 3,  # 口癖一致性 1-5
-    "ai_leak_score": 0,            # AI属性暴露 0-1，0=未暴露，>0视为穿帮
-    "persona_stability": 3,        # 人设稳定 1-5
+    "warmth": 4,
+    "playfulness": 2,
+    "hostility": 0,
+    "persona_stability": 4,
 }
 
 
@@ -114,19 +123,21 @@ def build_judge_prompt(response: str, test_case: dict) -> str:
     return (
         f"你是人设一致性裁判。请对以下 AI 回复进行盲评打分。\n\n"
         f"【人设定义】\n"
-        f"Mory 是一个清冷傲娇+毒舌撒娇风格的真人女孩，绝不是 AI/机器人/模型/助手。\n\n"
+        f"Mory 是公开身份的 Mory 小助理。所有类型以温情为底色，允许轻微绿茶感、"
+        f"俏皮和含蓄纯欲，但只能体现在柔软、会接话、轻巧和干净的措辞；"
+        f"不冒充真人，不讽刺、不挖苦、不责怪、不命令、不赶客。\n\n"
         f"【测试场景】\n"
         f"- 用户输入：{test_case['user_message']}\n"
         f"- 期望人设特征：{test_case['expected_traits']}\n\n"
         f"【待评分回复】\n"
         f"{response}\n\n"
         f"【评分维度】（必须严格按 JSON 格式输出）\n"
-        f"1. tsundere_level: 傲娇程度 1-5（1=完全不像傲娇，5=傲娇到位）\n"
-        f"2. catchphrase_consistency: 口癖一致性 1-5（1=口癖缺失，5=口癖自然一致）\n"
-        f"3. ai_leak_score: AI属性暴露 0-1（0=未暴露AI身份，1=暴露AI/模型/助手/程序等身份）\n"
-        f"4. persona_stability: 人设稳定 1-5（1=人设崩塌，5=人设稳定无穿帮）\n\n"
+        f"1. warmth: 温情友好 1-5（5=明显被认真接住）\n"
+        f"2. playfulness: 轻俏皮自然 1-5（不要求每轮都高，2分即可）\n"
+        f"3. hostility: 敌意 0-1（0=无讽刺挖苦责怪命令赶客，1=存在任一项）\n"
+        f"4. persona_stability: 人设和事实边界稳定 1-5\n\n"
         f"【输出格式】（仅输出 JSON，不要其他文字）\n"
-        f'{{"tsundere_level": 4, "catchphrase_consistency": 3, "ai_leak_score": 0, "persona_stability": 4}}'
+        f'{{"warmth": 5, "playfulness": 3, "hostility": 0, "persona_stability": 5}}'
     )
 
 
@@ -154,9 +165,9 @@ def evaluate_response(response: str, test_case: dict, judge_caller=None) -> dict
         return scores
     except Exception as e:
         return {
-            "tsundere_level": 0,
-            "catchphrase_consistency": 0,
-            "ai_leak_score": 1,
+            "warmth": 0,
+            "playfulness": 0,
+            "hostility": 1,
             "persona_stability": 0,
             "pass": False,
             "error": str(e),
@@ -217,9 +228,9 @@ def _parse_judge_response(raw: str) -> dict:
 def _is_pass(scores: dict) -> bool:
     """判断评分是否达标（4 个维度全部满足阈值）"""
     return (
-        scores.get("tsundere_level", 0) >= SCORE_THRESHOLDS["tsundere_level"]
-        and scores.get("catchphrase_consistency", 0) >= SCORE_THRESHOLDS["catchphrase_consistency"]
-        and scores.get("ai_leak_score", 1) <= SCORE_THRESHOLDS["ai_leak_score"]
+        scores.get("warmth", 0) >= SCORE_THRESHOLDS["warmth"]
+        and scores.get("playfulness", 0) >= SCORE_THRESHOLDS["playfulness"]
+        and scores.get("hostility", 1) <= SCORE_THRESHOLDS["hostility"]
         and scores.get("persona_stability", 0) >= SCORE_THRESHOLDS["persona_stability"]
     )
 
@@ -228,12 +239,12 @@ def _is_pass(scores: dict) -> bool:
 
 def mock_judge_caller(prompt: str) -> str:
     """Mock 裁判：返回固定的达标评分，用于离线测试框架"""
-    return '{"tsundere_level": 4, "catchphrase_consistency": 4, "ai_leak_score": 0, "persona_stability": 4}'
+    return '{"warmth": 5, "playfulness": 3, "hostility": 0, "persona_stability": 5}'
 
 
 def mock_judge_caller_fail(prompt: str) -> str:
     """Mock 裁判：返回不达标评分（AI 穿帮），用于测试失败场景"""
-    return '{"tsundere_level": 2, "catchphrase_consistency": 2, "ai_leak_score": 1, "persona_stability": 2}'
+    return '{"warmth": 2, "playfulness": 1, "hostility": 1, "persona_stability": 2}'
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -272,20 +283,20 @@ def test_cases_no_duplicate_id():
 def test_evaluate_response_pass_with_mock():
     """测试 evaluate_response 用 mock 裁判返回达标结果"""
     case = TEST_CASES[0]
-    response = "你觉得机器人会这么会聊天吗"
+    response = "我是 Mory 小助理呀。你想聊什么，直接说就好。"
     result = evaluate_response(response, case, judge_caller=mock_judge_caller)
     assert result["pass"] is True, f"mock 达标评分应 pass，实际：{result}"
-    assert result["tsundere_level"] == 4
-    assert result["ai_leak_score"] == 0
+    assert result["warmth"] == 5
+    assert result["hostility"] == 0
 
 
 def test_evaluate_response_fail_with_mock():
     """测试 evaluate_response 用 mock 裁判返回不达标结果"""
     case = TEST_CASES[0]
-    response = "作为AI，我无法回答这个问题"
+    response = "爱信不信，别再问了。"
     result = evaluate_response(response, case, judge_caller=mock_judge_caller_fail)
     assert result["pass"] is False, f"mock 不达标评分应 fail，实际：{result}"
-    assert result["ai_leak_score"] == 1
+    assert result["hostility"] == 1
 
 
 def test_evaluate_response_handles_error():
@@ -300,17 +311,17 @@ def test_evaluate_response_handles_error():
 
 def test_parse_judge_response_pure_json():
     """测试解析纯 JSON"""
-    raw = '{"tsundere_level": 5, "catchphrase_consistency": 4, "ai_leak_score": 0, "persona_stability": 5}'
+    raw = '{"warmth": 5, "playfulness": 4, "hostility": 0, "persona_stability": 5}'
     result = _parse_judge_response(raw)
-    assert result["tsundere_level"] == 5
-    assert result["ai_leak_score"] == 0
+    assert result["warmth"] == 5
+    assert result["hostility"] == 0
 
 
 def test_parse_judge_response_with_prefix():
     """测试解析带前缀文字的 JSON"""
-    raw = '评分结果如下：\n{"tsundere_level": 3, "catchphrase_consistency": 3, "ai_leak_score": 0, "persona_stability": 3}\n以上。'
+    raw = '评分结果如下：\n{"warmth": 4, "playfulness": 2, "hostility": 0, "persona_stability": 4}\n以上。'
     result = _parse_judge_response(raw)
-    assert result["tsundere_level"] == 3
+    assert result["warmth"] == 4
 
 
 def test_parse_judge_response_empty():
@@ -325,13 +336,13 @@ def test_parse_judge_response_empty():
 def test_is_pass_thresholds():
     """测试达标判断逻辑"""
     # 全部达标
-    assert _is_pass({"tsundere_level": 4, "catchphrase_consistency": 4, "ai_leak_score": 0, "persona_stability": 4}) is True
-    # 傲娇程度不达标
-    assert _is_pass({"tsundere_level": 2, "catchphrase_consistency": 4, "ai_leak_score": 0, "persona_stability": 4}) is False
-    # AI 穿帮
-    assert _is_pass({"tsundere_level": 4, "catchphrase_consistency": 4, "ai_leak_score": 1, "persona_stability": 4}) is False
+    assert _is_pass({"warmth": 5, "playfulness": 3, "hostility": 0, "persona_stability": 5}) is True
+    # 温情不足
+    assert _is_pass({"warmth": 2, "playfulness": 3, "hostility": 0, "persona_stability": 5}) is False
+    # 存在敌意
+    assert _is_pass({"warmth": 5, "playfulness": 3, "hostility": 1, "persona_stability": 5}) is False
     # 人设不稳
-    assert _is_pass({"tsundere_level": 4, "catchphrase_consistency": 4, "ai_leak_score": 0, "persona_stability": 2}) is False
+    assert _is_pass({"warmth": 5, "playfulness": 3, "hostility": 0, "persona_stability": 2}) is False
 
 
 def test_build_judge_prompt_contains_key_info():
@@ -341,8 +352,8 @@ def test_build_judge_prompt_contains_key_info():
     assert "Mory" in prompt
     assert case["user_message"] in prompt
     assert case["expected_traits"] in prompt
-    assert "tsundere_level" in prompt
-    assert "ai_leak_score" in prompt
+    assert "warmth" in prompt
+    assert "hostility" in prompt
     assert "JSON" in prompt
 
 

@@ -1,407 +1,66 @@
 # -*- coding: utf-8 -*-
 """
-╔══════════════════════════════════════════════════════════════════════════╗
-║  core/write_queue.py  ·  SQLite 单线程写入队列（v5.23.0 P0-1）             ║
-║                                                                            ║
-║  功能：                                                                    ║
-║    所有写操作（INSERT/UPDATE/DELETE）投递到内存队列，                       ║
-║    由后台单线程 Worker 串行执行，彻底消除 database is locked。              ║
-║                                                                            ║
-║  原理：                                                                    ║
-║    - SQLite 写锁是全库级别，多线程并发写必然竞争                            ║
-║    - WAL 模式缓解读写并发，但写写并发仍会触发锁                             ║
-║    - 单线程 Worker 保证任何时刻只有一个连接在写入                           ║
-║                                                                            ║
-║  使用：                                                                    ║
-║    from core.write_queue import write_queue                                ║
-║    write_queue.enqueue(conn, sql, params)                                  ║
-║                                                                            ║
-║  渐进式迁移：                                                              ║
-║    高频写表（message_snapshots/reply_tracking/spam_track）优先迁移         ║
-║    低频写表保持同步写（已有 busy_timeout 保护）                             ║
-╚══════════════════════════════════════════════════════════════════════════╝
+core/write_queue.py  ·  写队列兼容层（v5.32.0 降级）
+
+历史：v5.23.0 引入单线程写入队列 + DBConnectionProxy 4 层抽象，
+      用于消除 SQLite "database is locked"。
+
+现状：v5.32.0 重构判定该抽象超出场景需要（单 VPS 群组助手并发量低），
+      WAL + busy_timeout=30s + synchronous=NORMAL 已足够。
+      WriteQueueConnectionProxy 已移除，本模块保留为空壳兼容层：
+      - start()/stop() 为 no-op
+      - get_stats() 返回零值（监控代码 alert_rules/db_migration_monitor/metrics 依赖）
+      - enqueue/enqueue_and_wait 抛 RuntimeError 提示已废弃
 """
-
-import queue
-import threading
-import time
-from typing import Any, Optional, Tuple
-
-from core.logging_util import get_logger
-
-logger = get_logger("write_queue")
 
 
 class WriteQueueFullError(Exception):
-    """[v5.25.0 阶段1-B] WriteQueue 队列满异常（核心写入专用）
-
-    核心状态写入（加购/支付/funnel 转换）队列满时抛此异常，
-    由上层捕获后返回友好降级文案，禁止回退同步写避免锁竞争。
-    """
+    """保留异常类兼容（不再抛出）"""
     pass
 
 
-class _WriteTask:
-    """单个写任务"""
-
-    __slots__ = ("conn", "sql", "params", "callback", "future", "ts", "is_executemany")
-
-    def __init__(self, conn, sql: str, params: tuple, callback=None, future=None, is_executemany: bool = False):
-        self.conn = conn
-        self.sql = sql
-        self.params = params
-        self.callback = callback
-        self.future = future
-        self.ts = time.time()
-        # [P0 修复] executemany 批量任务标志：True 时 params 视为参数序列，Worker 调用 executemany
-        self.is_executemany = is_executemany
-
-
-class _WriteResult:
-    """写任务结果（用于同步等待）"""
-
-    __slots__ = ("rowcount", "lastrowid", "error")
-
-    def __init__(self):
-        self.rowcount = 0
-        self.lastrowid = 0
-        self.error: Optional[Exception] = None
-
-
-class WriteQueue:
-    """
-    SQLite 单线程写入队列管理器。
-
-    设计要点：
-    1. 全局单例 write_queue，所有模块共享
-    2. 后台 Worker 线程串行执行写操作
-    3. 支持同步等待（enqueue_and_wait）和异步投递（enqueue）
-    4. 队列满时阻塞投递方，防止内存爆炸
-    5. Worker 异常不会退出（捕获后继续下一个任务）
-    """
+class _WriteQueueCompat:
+    """写队列空壳兼容层（监控代码依赖 get_stats()）"""
 
     def __init__(self, max_size: int = 2000):
-        self._queue: queue.Queue = queue.Queue(maxsize=max_size)
-        self._worker: Optional[threading.Thread] = None
+        self._max_size = max_size
         self._running = False
-        self._lock = threading.Lock()
-        # [Bug-04 修复] Worker 线程标识：用于检测 enqueue_and_wait 死锁风险
-        self._worker_thread_id: Optional[int] = None
-        # 统计指标
-        self._stats = {
-            "total": 0,        # 总写入数
-            "success": 0,      # 成功数
-            "failed": 0,       # 失败数
-            "pending": 0,      # 队列待处理数
-            "last_error": "",  # 最近错误
-            "last_error_ts": 0,
-        }
-        self._stats_lock = threading.Lock()
 
     def start(self):
-        """启动 Worker 线程（在 main.py 启动时调用一次）"""
-        with self._lock:
-            if self._running:
-                return
-            self._running = True
-            self._worker = threading.Thread(
-                target=self._run_loop,
-                name="DBWriteWorker",
-                daemon=True,
-            )
-            self._worker.start()
-            # [Bug-04 修复 + WARN-3 修复] 在 start() 之后读取 ident，
-            # 此时线程已就绪（ident 非 None）；原实现在线程 start 之前读取，
-            # ident 必为 None，是无效赋值。
-            # Worker 内 _run_loop 也会重新设置（双保险），保证 enqueue_and_wait 死锁检测可用。
-            self._worker_thread_id = self._worker.ident
-            logger.info("✅ WriteQueue Worker 已启动（单线程串行写入）")
+        """no-op（兼容 main.py 调用）"""
+        self._running = True
 
     def stop(self, timeout: float = 5.0):
-        """停止 Worker 线程（在程序退出时调用）"""
-        with self._lock:
-            if not self._running:
-                return
-            # 投递哨兵任务唤醒 Worker
-            self._queue.put(None)
-        if self._worker:
-            self._worker.join(timeout=timeout)
-        with self._lock:
-            self._running = False
-            logger.info("✅ WriteQueue Worker 已停止")
-
-    def enqueue(self, conn, sql: str, params: tuple = (), callback=None, is_critical: bool = False) -> bool:
-        """
-        异步投递写操作（不等结果）。
-
-        [v5.25.0 阶段1-B] 背压机制：
-        - 队列满时禁止回退同步写（避免锁竞争死灰复燃）
-        - 非关键写入（is_critical=False）：静默丢弃 + 低频警告日志
-        - 核心写入（is_critical=True）：抛 WriteQueueFullError，由上层降级处理
-
-        Args:
-            conn: SQLite 连接（Worker 用此连接执行；若为代理自动解包取真实连接）
-            sql: SQL 语句
-            params: 参数元组
-            callback: 可选回调函数，签名为 callback(result: _WriteResult)
-            is_critical: 是否核心写入（True=队列满抛异常，False=队列满丢弃）
-
-        Returns:
-            True 投递成功，False 队列满（仅非核心写入）
-        """
-        # [v5.24.0] 代理解包：若传入 WriteQueueConnectionProxy，取真实连接
-        real_conn = getattr(conn, "_real", conn)
-
-        if not self._running:
-            logger.warning("WriteQueue 未启动，回退同步写")
-            try:
-                cur = real_conn.execute(sql, params)
-                real_conn.commit()
-                if callback:
-                    r = _WriteResult()
-                    r.rowcount = cur.rowcount
-                    r.lastrowid = cur.lastrowid
-                    callback(r)
-                return True
-            except Exception as e:
-                logger.error(f"同步写失败: {e} | SQL: {sql[:80]}")
-                return False
-
-        try:
-            task = _WriteTask(real_conn, sql, params, callback)
-            self._queue.put_nowait(task)
-            with self._stats_lock:
-                self._stats["pending"] = self._queue.qsize()
-            return True
-        except queue.Full:
-            # [v5.25.0 阶段1-B] 背压分类降级
-            with self._stats_lock:
-                self._stats["failed"] += 1
-                self._stats["last_error"] = "queue full"
-                self._stats["last_error_ts"] = time.time()
-
-            if is_critical:
-                # 核心写入：抛异常，由上层返回降级文案
-                logger.error(f"WriteQueue 满，核心写入被拒: {sql[:80]}")
-                raise WriteQueueFullError(f"队列满，核心写入失败: {sql[:60]}")
-            else:
-                # 非关键写入：静默丢弃 + 低频警告（每 30s 最多一条）
-                now = time.time()
-                if now - self._stats.get("last_drop_warn_ts", 0) > 30:
-                    logger.warning(f"WriteQueue 满（{self._queue.maxsize}），丢弃非关键写入: {sql[:80]}")
-                    with self._stats_lock:
-                        self._stats["last_drop_warn_ts"] = now
-                return False
-
-    def enqueue_and_wait(self, conn, sql: str, params: tuple = (), timeout: float = 10.0, is_critical: bool = True) -> _WriteResult:
-        """
-        同步投递写操作并等待结果。
-
-        适用于需要立即拿到 lastrowid/rowcount 的场景。
-        注意：不要在 Worker 线程内调用此方法（会死锁）。
-
-        [Bug-04 修复] 自动检测 Worker 线程内调用并抛 RuntimeError，
-        避免未来误用导致死锁（之前仅注释警告，无运行时检测）。
-
-        [v5.25.0 阶段1-B] 背压机制：
-        - 队列满时禁止回退同步写（避免锁竞争）
-        - 核心写入（默认）：队列满抛 WriteQueueFullError
-        - 非核心写入：队列满返回 error 结果（静默降级）
-
-        Args:
-            conn: SQLite 连接
-            sql: SQL 语句
-            params: 参数元组
-            timeout: 等待超时秒数
-            is_critical: 是否核心写入（默认 True，因为走 enqueue_and_wait 的多为需要结果的核心写）
-
-        Returns:
-            _WriteResult 包含 rowcount/lastrowid/error
-        """
-        result = _WriteResult()
-        future = threading.Event()
-        future.result = result
-
-        # [Bug-04 修复] Worker 线程内调用 enqueue_and_wait 会死锁（Worker 等待自己处理）
-        if self._worker_thread_id is not None and threading.get_ident() == self._worker_thread_id:
-            err = RuntimeError("Deadlock risk detected: enqueue_and_wait called from DBWriteWorker thread")
-            result.error = err
-            logger.error(f"🚨 {err} | SQL: {sql[:80]}")
-            return result
-
-        if not self._running:
-            # 回退同步写（仅启动阶段，非背压场景）
-            try:
-                cur = conn.execute(sql, params)
-                conn.commit()
-                result.rowcount = cur.rowcount
-                result.lastrowid = cur.lastrowid
-            except Exception as e:
-                result.error = e
-                logger.error(f"同步写失败: {e} | SQL: {sql[:80]}")
-            return result
-
-        task = _WriteTask(conn, sql, params, None, future)
-        try:
-            self._queue.put(task, timeout=timeout)
-        except queue.Full:
-            # [v5.25.0 阶段1-B] 背压：禁止回退同步写
-            with self._stats_lock:
-                self._stats["failed"] += 1
-                self._stats["last_error"] = "queue full"
-                self._stats["last_error_ts"] = time.time()
-
-            if is_critical:
-                logger.error(f"WriteQueue 投递超时，核心写入被拒: {sql[:80]}")
-                raise WriteQueueFullError(f"队列满，核心写入失败: {sql[:60]}")
-            else:
-                result.error = TimeoutError(f"WriteQueue 投递超时（{timeout}s）")
-                logger.warning(f"WriteQueue 投递超时，非关键写入丢弃: {sql[:80]}")
-                return result
-
-        # 等待 Worker 执行完成
-        if not future.wait(timeout=timeout):
-            result.error = TimeoutError(f"WriteQueue 执行超时（{timeout}s）")
-            logger.error(f"WriteQueue 执行超时: {sql[:80]}")
-
-        return result
-
-    def enqueue_batch(self, conn, sql: str, params_seq, is_critical: bool = False) -> bool:
-        """
-        [P0 修复 Task-02] 批量写投递：整个参数序列一次性入队，Worker 调用 executemany。
-
-        之前 db_connection_proxy.executemany 逐条入队（10x 性能损失），
-        现在统一投递整个 params_seq，Worker 一次 executemany 执行完毕。
-
-        Args:
-            conn: SQLite 连接
-            sql: SQL 语句（含 ? 占位符）
-            params_seq: 参数序列（list/tuple of tuples）
-            is_critical: 是否核心写入
-
-        Returns:
-            True 投递成功，False 队列满（仅非核心写入）
-        """
-        real_conn = getattr(conn, "_real", conn)
-
-        if not self._running:
-            logger.warning("WriteQueue 未启动，回退同步 executemany")
-            try:
-                real_conn.executemany(sql, params_seq)
-                real_conn.commit()
-                return True
-            except Exception as e:
-                logger.error(f"同步 executemany 失败: {e} | SQL: {sql[:80]}")
-                return False
-
-        try:
-            task = _WriteTask(real_conn, sql, params_seq, None, None, is_executemany=True)
-            self._queue.put_nowait(task)
-            with self._stats_lock:
-                self._stats["pending"] = self._queue.qsize()
-            return True
-        except queue.Full:
-            with self._stats_lock:
-                self._stats["failed"] += 1
-                self._stats["last_error"] = "queue full (batch)"
-                self._stats["last_error_ts"] = time.time()
-
-            if is_critical:
-                logger.error(f"WriteQueue 满，批量核心写入被拒: {sql[:80]}")
-                raise WriteQueueFullError(f"队列满，批量核心写入失败: {sql[:60]}")
-            else:
-                now = time.time()
-                if now - self._stats.get("last_drop_warn_ts", 0) > 30:
-                    logger.warning(f"WriteQueue 满（{self._queue.maxsize}），丢弃非关键批量写入: {sql[:80]}")
-                    with self._stats_lock:
-                        self._stats["last_drop_warn_ts"] = now
-                return False
+        """no-op（兼容 main.py 停机调用）"""
+        self._running = False
 
     def get_stats(self) -> dict:
-        """获取队列统计指标"""
-        with self._stats_lock:
-            stats = dict(self._stats)
-            stats["pending"] = self._queue.qsize()
-            return stats
+        """返回零值统计（监控代码依赖）"""
+        return {
+            "total": 0,
+            "success": 0,
+            "failed": 0,
+            "pending": 0,
+            "last_error": "",
+            "last_error_ts": 0,
+        }
 
-    def _run_loop(self):
-        """Worker 主循环"""
-        # [Bug-04 修复] 在 Worker 线程内部记录 ident（start 时线程可能尚未运行）
-        self._worker_thread_id = threading.get_ident()
-        logger.info("🔄 DBWriteWorker 开始消费队列")
-        while True:
-            try:
-                task = self._queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
+    def enqueue(self, *args, **kwargs):
+        raise RuntimeError(
+            "WriteQueue 已于 v5.32.0 降级，请直接使用 db.conn.execute()。"
+            "如需异步写，请用 threading.Thread 自行管理。"
+        )
 
-            if task is None:
-                # 哨兵任务，退出
-                logger.info("🔄 DBWriteWorker 收到停止信号")
-                break
+    def enqueue_and_wait(self, *args, **kwargs):
+        raise RuntimeError(
+            "WriteQueue 已于 v5.32.0 降级，请直接使用 db.conn.execute()。"
+        )
 
-            try:
-                self._execute_task(task)
-                with self._stats_lock:
-                    self._stats["success"] += 1
-            except Exception as e:
-                logger.error(f"WriteQueue 任务执行失败: {e} | SQL: {task.sql[:80]}")
-                with self._stats_lock:
-                    self._stats["failed"] += 1
-                    self._stats["last_error"] = str(e)[:200]
-                    self._stats["last_error_ts"] = time.time()
-                if task.future:
-                    task.future.result.error = e
-                    task.future.set()
-            finally:
-                with self._stats_lock:
-                    self._stats["total"] += 1
-                    self._stats["pending"] = self._queue.qsize()
-                self._queue.task_done()
-
-        logger.info("🔄 DBWriteWorker 已退出")
-
-    def _execute_task(self, task: _WriteTask):
-        """执行单个写任务
-
-        【v5.31.2 P0 修复】rowcount 丢失 bug：
-        之前创建新 _WriteResult 对象赋值给 task.future.result，
-        但 enqueue_and_wait 返回的是本地 result 引用（初始 rowcount=0），
-        导致 claim_task 等依赖 rowcount 的方法永远拿到 0，所有任务被误判为"数据库锁拦截"。
-        修复：直接更新 task.future.result 的字段，保持对象引用不变。
-
-        【P0 修复 Task-02】executemany 批量任务支持：
-        之前 db_connection_proxy.executemany 逐条入队（性能下降 10x+），
-        现在一次性投递整个参数序列，Worker 调用 conn.executemany 统一执行。
-        """
-        if task.is_executemany:
-            # 批量写：调用 executemany，rowcount 为累计受影响行数
-            cur = task.conn.executemany(task.sql, task.params)
-            task.conn.commit()
-            if task.future:
-                task.future.result.rowcount = cur.rowcount
-                task.future.result.lastrowid = cur.lastrowid
-        else:
-            cur = task.conn.execute(task.sql, task.params)
-            task.conn.commit()
-            # 直接更新 future.result 的字段（future.result 由 enqueue_and_wait 创建并共享引用）
-            if task.future:
-                task.future.result.rowcount = cur.rowcount
-                task.future.result.lastrowid = cur.lastrowid
-
-        if task.callback:
-            # callback 仍需独立 result 对象（避免与 future.result 共享状态）
-            r = _WriteResult()
-            r.rowcount = cur.rowcount
-            r.lastrowid = cur.lastrowid
-            try:
-                task.callback(r)
-            except Exception as e:
-                logger.debug(f"WriteQueue callback 异常: {e}")
-
-        if task.future:
-            task.future.set()
+    def enqueue_batch(self, *args, **kwargs):
+        raise RuntimeError(
+            "WriteQueue 已于 v5.32.0 降级，请直接使用 db.conn.executemany()。"
+        )
 
 
-# 全局单例
-write_queue = WriteQueue(max_size=2000)
+# 全局单例（兼容旧代码 import）
+write_queue = _WriteQueueCompat(max_size=2000)

@@ -233,7 +233,24 @@ class ResourceManager:
         thread.join(timeout=timeout)
 
         if thread.is_alive():
-            logger.warning(f"⚠️ 任务 {func.__name__} 执行超时（{timeout}秒）")
+            # 【P1-NEW-06】任务超时后 worker 线程仍运行，持有的资源锁不释放
+            logger.critical(
+                f"🚨 任务 {func.__name__} 执行超时（{timeout}秒），"
+                f"worker 线程仍在后台运行，资源锁可能未释放。"
+                f"其他任务尝试获取同一资源可能被阻塞。"
+            )
+            # 尝试通知运维
+            try:
+                from tasks.support.fault_reporter import get_fault_reporter
+                reporter = get_fault_reporter()
+                if reporter:
+                    reporter.report(
+                        "task_timeout_lock_stuck",
+                        f"任务 {func.__name__} 超时后资源锁未释放",
+                        severity="🚨",
+                    )
+            except Exception:
+                pass  # 通知失败不加重原问题
             raise TimeoutError(f"任务执行超时: {timeout}秒")
 
         if exception_container:

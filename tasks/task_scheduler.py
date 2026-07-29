@@ -174,5 +174,13 @@ class TaskScheduler:
 def create_scheduler(rm: ResourceManager, max_workers: int = 30) -> TaskScheduler:
     """创建并返回 TaskScheduler 全局单例。"""
     global _scheduler_instance
+    # 【P0-NEW-05 修复】防止重复创建导致任务双实例：先关闭旧调度器
+    if _scheduler_instance is not None and getattr(_scheduler_instance, 'scheduler', None) is not None:
+        try:
+            if _scheduler_instance.scheduler.running:
+                logger.warning("⚠️ create_scheduler 被重复调用，先关闭旧实例")
+                _scheduler_instance.scheduler.shutdown(wait=False)
+        except Exception as e:
+            logger.warning(f"关闭旧调度器失败: {e}")
     _scheduler_instance = TaskScheduler(rm, max_workers=max_workers)
     return _scheduler_instance

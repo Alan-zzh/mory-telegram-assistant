@@ -6,11 +6,13 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.38.8"
-CONFIG_VERSION = "5.38.8"
+VERSION = "v5.38.10"
+CONFIG_VERSION = "5.38.10"
 __version__ = VERSION
 
 VERSION_HISTORY = [
+    "v5.38.10: [Codex] 全类型群自动回复人设与误封修复：casual/curiosity/flirt/challenge/emotional/convert 六类意图统一温情底色、安全轻微绿茶感、俏皮和含蓄纯欲感；生产旧毒舌/敷衍桶在合同模式失效，FAQ/缓存/模型结果发送前统一去动作旁白并降级怼人措辞。正常头像的尺寸、比例、文件大小和平均颜色同时降为仅记录弱特征，任何入口不得据此广告处置；高置信 NudeNet 明确暴露、头像广告文字/二维码和批量相似证据继续有效。",
+    "v5.38.9: [TRAE SOLO CN] 挑刺报告全量修复：新增 /start 与 /help 入口命令（私聊完整功能清单、群聊简短引导、管理员附带命令清单），补齐新用户 onboarding 断链；新增 task_execution_history 审计表与 TaskExecHistoryRepo，TaskTransactionManager 在抢占成功后写入 running、退出时按成功/失败/中止四态更新，根治旧版 task_log 删除后无法统计真实成功率的数据失真；Dashboard 新增 /api/health/task-success-rate 端点读取真实四态统计，旧 /api/health/jobs 标注为失真；RBAC 收紧：_EXEMPT_PREFIXES 只允许 /login /api/login /api/auth /static/，_EXEMPT_EXACT_PATHS 仅 /api/health，其余全部需要登录；AI 回复新增 _sanitize_user_input 检测中英文 prompt 注入（忽略以上指令/扮演/管理员密码/API key 套取等），命中时记录 warning 并替换为安全提示；AI 回复新增 _has_business_context 与 _WEAK_ORDER_MARKERS，弱成交 marker 必须配合业务上下文才触发 CTA，避免“怎么买外卖”被误判；验证码模块新增 SQLite 双写持久化，重启后可恢复未完成验证会话，避免新成员永久禁言；数学题难度提升（混合运算 30% 概率）；deploy_vps.py 部署清单移除 AGENTS.md/AI_DEBUG_HISTORY.md 等内部文档，仅保留 README.md/VERSION.md/CHANGELOG.md/project_snapshot.md；测试隔离修复 test_dashboard_app_smoke setdefault 不覆盖短值；新增 21 个 prompt 注入抗性单测。本地整仓 176 passed / 0 failed、DB 195 方法验证通过。",
     "v5.38.8: [Codex] 修复入群广告资料审核断链：显示名/username、Bio、Premium emoji 状态和头像任一高置信命中即进入统一永久禁言、历史清理与双黑名单处置；验证码解限后用最新 Bio/头像补审。头像主体改用本地 NudeNet ONNX 明确暴露类别检测，文字营销保留 OCR，证据不足不封；“白虎一线天”成人资源矩阵显示名在严格分隔符范围内拦截，正常白虎/一线天语境放行。",
     "v5.38.7: [Codex] 广告变体模板层升级：NFKC 统一全角/花体字符，收益数字仅在时间与金额语境内转换 O/o/I/l/|；收益、联系方式、招募、彩票交易、色情和跑分洗钱六类数字/字母拆字模板首条进入统一处置。跑1分、刷1单、招聘/兼职讨论、型号、游戏、运动、维修上门等歧义文本缺少第二广告锚点时放行，并移除“上门”单独作为色情证据的旧误判。",
     "v5.38.6: [Codex] 修复“一日 9Oo+ / 4oO+”日收益广告漏判：只在紧邻加号的混写数字串中把 O/o 规范化为 0，一日/一天/每日/每天加数字加号首条达到赚钱承诺阈值并进入统一处置；步数、距离、字数、订单和型号保持放行，同时收紧旧“一天+数字”规则的日常计量边界。",

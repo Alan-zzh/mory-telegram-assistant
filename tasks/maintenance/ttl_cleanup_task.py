@@ -44,6 +44,11 @@ class TtlCleanupTask(BaseTask):
             if deleted_track or deleted_spam or deleted_puzzle:
                 logger.info(f"🧹 TTL清理: 追踪{deleted_track}条/垃圾{deleted_spam}条/谜题{deleted_puzzle}条")
             self.rm.db.cleanup_old_task_log()
+            # 【P2-1】清理 task_execution_history 超过 90 天的历史记录
+            try:
+                self.rm.db.cleanup_old_history(days=90)
+            except Exception as e:
+                logger.debug(f"task_execution_history 清理跳过: {e}")
         except Exception as e:
             logger.error(f"TTL清理失败：{e}")
 

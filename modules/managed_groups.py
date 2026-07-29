@@ -33,6 +33,13 @@ logger = get_logger("managed_groups")
 
 _CST = timezone(timedelta(hours=8))
 
+# 【P2-1 安全加固】update_managed_group 允许更新的字段白名单，
+# 防止 kwargs 键注入到 f-string 拼接的 SQL 造成 SQL 注入。
+_MANAGED_GROUP_ALLOWED_COLUMNS = {
+    "chat_id", "group_name", "customer_id", "plan", "status",
+    "expire_at", "contact", "note", "updated_at",
+}
+
 DEFAULT_CONFIG = {
     "enabled": False,
     "notify_expire_days": [30, 7, 1],   # 到期前多少天提醒
@@ -92,6 +99,10 @@ def update_managed_group(db, mg_id: int, **kwargs) -> bool:
     """更新托管群信息"""
     if not kwargs:
         return False
+    # 【P2-1 安全加固】校验 kwargs 键是否在白名单内，拒绝非法字段防止 SQL 注入
+    invalid = set(kwargs) - _MANAGED_GROUP_ALLOWED_COLUMNS
+    if invalid:
+        raise ValueError(f"非法字段: {invalid}")
     kwargs["updated_at"] = int(time.time())
     sets = ", ".join(f"{k}=?" for k in kwargs)
     vals = list(kwargs.values()) + [mg_id]

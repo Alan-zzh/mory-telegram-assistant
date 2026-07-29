@@ -45,14 +45,25 @@ sys.path.insert(0, str(ROOT))
 from core.deploy_utils import safe_upload_config, upload_files, verify_deployment, sync_runtime_fields_from_vps, sync_env_api_key, ensure_remote_dir
 from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_KEY_FILES, VPS_PATH, ssh_connect
 
-# 绝不上传的文件名（含垃圾/临时/凭据/旧备份，v5.16.5 补）
+# 绝不上传的文件名（含凭据/运行态/旧备份）。_collect_upload_files 只扫描 .py 文件，
+# 故 .bat/.sh 等非 Python 脚本根本不会被收集，无需在此列举。
+# v5.16.5 曾在此防御已删除的 deploy.bat/start.sh/start_dashboard.bat/docker_deploy.sh，
+# 但这些条目属无效死代码（本地已删且扫描器不会命中），已于本次清理移除。
 EXCLUDE_NAMES = {
-    "config.json", ".env", "mory.db", "deploy_vps.py", "__pycache__", ".pyc",
+    # 运行态配置（含 Token/密钥，线上以 safe_upload_config 安全合并，不直接覆盖）
+    "config.json",
+    # 凭据文件（含 VPS 密码/API Key，绝不上传）
+    ".env", ".env.bak",
+    # 数据库与缓存（运行态数据，上传会覆盖线上）
+    "mory.db", "__pycache__", ".pyc",
+    # 部署脚本自身（避免递归上传）
+    "deploy_vps.py",
+    # 同步冲突临时文件（Syncthing 等产生的 .sync-conflict- 副本）
     ".sync-conflict-",
-    # 垃圾/临时/凭据备份
-    ".env.bak", "_ssh_known_hosts", "dashboard.log", "fault_alerts.log",
-    # 旧部署脚本残留（v5.16.5 删除本地后防御）
-    "start.sh", "deploy.bat", "start_dashboard.bat", "docker_deploy.sh",
+    # SSH 已知主机（含 VPS 指纹，本地凭据）
+    "_ssh_known_hosts",
+    # 运行日志（运行态产物，不应上传）
+    "dashboard.log", "fault_alerts.log",
 }
 
 # 【死代码清理列表】本地已删除的文件，部署时自动从服务器删除，保持服务器干净
@@ -65,6 +76,11 @@ DEAD_REMOTE_FILES = [
     "core/router_statistics.py",
     "modules/predictive_patrol.py",
     "docs/review-report-20260621.md",
+    # 内部文档（曾误上传至 VPS，现已从 ROOT_FILES 移除；部署时清理远端旧版本，
+    # 避免暴露安全策略/踩坑病历/模块清单）
+    "AGENTS.md",
+    "AI_DEBUG_HISTORY.md",
+    "project_snapshot.md",
 ]
 
 # 需要动态扫描的目录（递归收集所有 .py 文件）
@@ -75,7 +91,14 @@ SCAN_DIRS = [
     "scripts",
     "tasks",
     "migrations",
-]  # 运行代码、自动任务与 Alembic 迁移必须随同一次版本部署
+    "i18n",
+]  # 运行代码、自动任务、Alembic 迁移与 i18n 语言包必须随同一次版本部署
+
+# 各扫描目录的扩展名映射（未列出的目录默认扫描 .py）
+# i18n 目录只含 .json 语言包，需显式声明
+SCAN_DIR_EXTS = {
+    "i18n": [".json"],
+}
 
 # 根目录下需要上传的文件
 ROOT_FILES = [
@@ -83,12 +106,14 @@ ROOT_FILES = [
     "version.py",
     "windows_helper.py",
     "start_dashboard.py",
-    "AGENTS.md",
     "README.md",
-    "AI_DEBUG_HISTORY.md",
     "CHANGELOG.md",
     "VERSION.md",
-    "project_snapshot.md",
+    "alembic.ini",
+    "config.json.example",
+    # 内部文档（AGENTS.md/AI_DEBUG_HISTORY.md/project_snapshot.md）不上传 VPS，
+    # 避免暴露安全策略、踩坑病历和模块清单。如需查阅请在本地仓库查看。
+    # VERSION.md 是版本说明（非内部规则），保留上传供 VPS 端查版本。
 ]
 
 # 需要上传到 /etc/systemd/system/ 的服务文件
@@ -101,23 +126,25 @@ SERVICE_FILES = [
 
 
 def _collect_upload_files():
-    """动态收集所有需要上传的 .py 文件"""
+    """动态收集所有需要上传的代码/资源文件"""
     files = []
     # 根目录文件
     for f in ROOT_FILES:
         if (ROOT / f).exists():
             files.append(f)
-    # 递归扫描子目录
+    # 递归扫描子目录（按目录决定扩展名，默认 .py；i18n 等目录走 SCAN_DIR_EXTS）
     for dir_name in SCAN_DIRS:
         dir_path = ROOT / dir_name
         if not dir_path.exists():
             continue
-        for py_file in sorted(dir_path.rglob("*.py")):
-            rel = py_file.relative_to(ROOT).as_posix()
-            # 跳过排除文件
-            if any(exc in rel for exc in EXCLUDE_NAMES):
-                continue
-            files.append(rel)
+        exts = SCAN_DIR_EXTS.get(dir_name, [".py"])
+        for ext in exts:
+            for py_file in sorted(dir_path.rglob(f"*{ext}")):
+                rel = py_file.relative_to(ROOT).as_posix()
+                # 跳过排除文件
+                if any(exc in rel for exc in EXCLUDE_NAMES):
+                    continue
+                files.append(rel)
     return files
 
 
@@ -275,6 +302,23 @@ def main():
         services_stopped = True  # 不管停没停成功，保险都标记
 
         time.sleep(2)
+
+        # 4.5 部署前备份 VPS 当前代码（失败不阻断部署）
+        print("\n  备份 VPS 当前代码 ...")
+        try:
+            backup_cmd = (
+                f"cp -r {VPS_PATH} {VPS_PATH}.bak.$(date +%s) && "
+                f"ls -dt {VPS_PATH}.bak.* 2>/dev/null | tail -n +3 | xargs -r rm -rf"
+            )
+            stdin, stdout, stderr = client.exec_command(backup_cmd, timeout=120)
+            rc = stdout.channel.recv_exit_status()
+            if rc == 0:
+                print("  ✅ VPS 代码已备份（保留最近 2 个）")
+            else:
+                err = stderr.read().decode("utf-8", errors="replace").strip()
+                print(f"  ⚠️ VPS 代码备份返回码 {rc}（继续部署）：{err[:200]}")
+        except Exception as e:
+            print(f"  ⚠️ VPS 代码备份失败（继续部署）：{e}")
 
         # 5. 上传代码文件
         print("\n[4/5] 上传代码文件 ...")

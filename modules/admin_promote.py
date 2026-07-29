@@ -82,7 +82,7 @@ def handle_promote(bot, m, config: dict, db, target_uid: int):
             can_manage_chat=perms.get("can_manage_chat", True),
         )
     except Exception as e:
-        bot.reply_to(m, f"⚠️ 提升管理员失败：{e}")
+        bot.reply_to(m, "⚠️ 提升管理员失败，请稍后重试或联系管理员")
         logger.warning("提升管理员失败: chat=%s target=%s error=%s", chat_id, target_uid, e)
         return
 
@@ -129,7 +129,7 @@ def handle_demote(bot, m, config: dict, db, target_uid: int):
             can_manage_chat=False,
         )
     except Exception as e:
-        bot.reply_to(m, f"⚠️ 降职失败：{e}")
+        bot.reply_to(m, "⚠️ 降职失败，请稍后重试或联系管理员")
         logger.warning("降职失败: chat=%s target=%s error=%s", chat_id, target_uid, e)
         return
 

@@ -36,6 +36,36 @@ def clear_logging_context():
     if hasattr(_thread_local, 'context'):
         delattr(_thread_local, 'context')
 
+def bind_context(
+    request_id: Optional[str] = None,
+    user_id: Optional[int] = None,
+    chat_id: Optional[int] = None,
+    bot_id: Optional[int] = None,
+    **extra,
+) -> None:
+    """绑定上下文到当前线程（统一入口，替代 structured_logger.bind_context）
+
+    绑定后该线程内所有 ContextLogger 日志自动携带这些字段。
+
+    Args:
+        request_id: 请求唯一 ID
+        user_id: 用户 ID
+        chat_id: 聊天 ID
+        bot_id: Bot ID
+        **extra: 其他自定义字段
+    """
+    ctx = {}
+    if request_id is not None:
+        ctx["request_id"] = request_id
+    if user_id is not None:
+        ctx["user_id"] = user_id
+    if chat_id is not None:
+        ctx["chat_id"] = chat_id
+    if bot_id is not None:
+        ctx["bot_id"] = bot_id
+    ctx.update(extra)
+    set_logging_context(**ctx)
+
 class ContextLogger(logging.LoggerAdapter):
     """自动注入上下文的LoggerAdapter"""
 
@@ -291,6 +321,7 @@ __all__ = [
     'get_logging_context',
     'set_logging_context',
     'clear_logging_context',
+    'bind_context',
     'exception_handler',
     'log_execution',
     'cleanup_old_logs',

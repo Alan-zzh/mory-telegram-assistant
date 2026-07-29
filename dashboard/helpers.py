@@ -70,8 +70,13 @@ def get_db():
         # 【TRAE SOLO CN v5.18.3审计修复】Dashboard 连接加 WAL + busy_timeout，防止与 Bot 进程互锁
         g.db = sqlite3.connect(db_path, timeout=30.0)
         g.db.row_factory = sqlite3.Row
+        # 【P2-5 修复】PRAGMA 配置补齐,与 core/database.py 保持一致,
+        # 避免 Dashboard 读连接因 journal_mode/busy_timeout 不一致导致锁竞争
         g.db.execute("PRAGMA journal_mode=WAL")
         g.db.execute("PRAGMA busy_timeout=30000")
+        g.db.execute("PRAGMA synchronous=NORMAL")
+        g.db.execute("PRAGMA cache_size=-4000")
+        g.db.execute("PRAGMA mmap_size=268435456")
     return g.db
 
 
@@ -111,6 +116,10 @@ def write_config(cfg):
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, cfg_path)
+        # [P2-NEW-14] 更新缓存，避免同进程立即 read_config 返回旧数据（竞态）
+        _config_cache["data"] = cfg
+        _config_cache["mtime"] = os.path.getmtime(cfg_path)
+        _config_cache["loaded_at"] = time.time()
         _signal_config_reload()
         return True
     except Exception:

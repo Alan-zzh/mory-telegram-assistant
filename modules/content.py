@@ -141,7 +141,7 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
                 "按提示自助完成。"
             )
         else:
-            reply = "想先了解的话去 @moryselect 看预览，合不合适你自己判断。"
+            reply = "想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
         mory_bot.reply_and_track(m, reply)
         db.set_cart(uid)
         db.log_conversion_event(uid, "interested")
@@ -248,7 +248,7 @@ def _handle_admin_photo(bot, m, config: dict, img_bytes: bytes, mory_bot):
         bot.send_photo(
             gid,
             bio,
-            caption="想先了解的话去 @moryselect 看预览，合不合适你自己判断。",
+            caption="想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。",
         )
         mory_bot.reply_and_track(m, "✅ 打码完成并已推群")
         logger.info("📸 图片打码推群成功")

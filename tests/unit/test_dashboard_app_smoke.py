@@ -9,16 +9,33 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 
 def _build_app():
-    os.environ.setdefault("TG_TOKEN", "123456:test-token")
-    os.environ.setdefault("DASHSCOPE_KEY", "test-dashscope-key")
-    os.environ.setdefault("DASHBOARD_SECRET", "test-dashboard-secret")
-    os.environ.setdefault("DASHBOARD_PASSWORD", "password123")
-    from dashboard.app import create_app
+    """构建 Dashboard 测试 app，自动保存/恢复环境变量，避免污染其它测试。"""
+    _saved = {
+        "TG_TOKEN": os.environ.get("TG_TOKEN"),
+        "DASHSCOPE_KEY": os.environ.get("DASHSCOPE_KEY"),
+        "DASHBOARD_SECRET": os.environ.get("DASHBOARD_SECRET"),
+        "DASHBOARD_PASSWORD": os.environ.get("DASHBOARD_PASSWORD"),
+    }
+    # 【v5.38.9 修复】setdefault 不会覆盖已存在的短值/空值，导致测试隔离失败；
+    # 改为强制赋值，确保 DASHBOARD_SECRET 至少 16 位。
+    os.environ["TG_TOKEN"] = "123456:test-token"
+    os.environ["DASHSCOPE_KEY"] = "test-dashscope-key"
+    os.environ["DASHBOARD_SECRET"] = "test-dashboard-secret-1234567890"
+    os.environ["DASHBOARD_PASSWORD"] = "password123"
+    try:
+        from dashboard.app import create_app
 
-    app = create_app()
-    assert app is not None
-    app.config["TESTING"] = True
-    return app
+        app = create_app()
+        assert app is not None
+        app.config["TESTING"] = True
+        return app
+    finally:
+        # 恢复原值，避免环境变量污染后续测试
+        for k, v in _saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
 
 
 def test_dashboard_app_creates_with_expected_routes():
@@ -46,8 +63,20 @@ def test_metrics_endpoint_requires_login_and_allows_admin():
         session["role"] = "admin"
 
     auth = client.get("/api/v1/metrics")
-    assert auth.status_code == 200
-    assert b"python_info" in auth.data or b"mory_" in auth.data
+    # 【v5.38.9 修复】prometheus-client 是可选依赖；未安装时端点返回 501，
+    # 这是合法行为，不应让测试失败。安装时才断言 200 + 指标内容。
+    try:
+        import prometheus_client  # noqa: F401
+        has_prom = True
+    except ImportError:
+        has_prom = False
+
+    if has_prom:
+        assert auth.status_code == 200
+        assert b"python_info" in auth.data or b"mory_" in auth.data
+    else:
+        # 未安装 prometheus-client 时返回 501 NOT IMPLEMENTED
+        assert auth.status_code == 501
 
 
 def test_scheduler_api_falls_back_to_scheduler_metrics(monkeypatch, tmp_path):

@@ -26,13 +26,34 @@ health_bp = Blueprint("health", __name__, url_prefix="/api")
 
 @health_bp.route("/health", methods=["GET"])
 def api_health_check():
-    """[TRAE SOLO CN] 健康检查端点（无需认证，供监控/负载均衡探测）"""
+    """[TRAE SOLO CN] 健康检查端点（无需认证，供监控/负载均衡探测）
+
+    【v5.38.9 安全修复】不再返回 version 字段,避免攻击者据此匹配 CVE。
+    探活只需要 status=ok,版本号如需展示在前端应走已登录的 /api/bot/status。
+
+    【v5.39.0 实质检查】增加 SQLite 连通性 + Bot 心跳新鲜度检查，
+    避免 DB 故障或 Bot 卡死时仍返回 ok。
+    """
     try:
-        from version import VERSION
-        version = VERSION
+        conn = get_db()
+        conn.execute("SELECT 1").fetchone()
+        # 检查 Bot 心跳（system_states 表的 last_heartbeat）
+        try:
+            row = conn.execute(
+                "SELECT value FROM system_states WHERE key='last_heartbeat'"
+            ).fetchone()
+            if row:
+                try:
+                    last_hb = int(row[0])
+                except (TypeError, ValueError):
+                    last_hb = 0
+                if time.time() - last_hb > 120:
+                    return jsonify({"status": "degraded", "msg": "bot heartbeat stale"}), 503
+        except sqlite3.Error:
+            pass  # system_states 表不存在或无心跳记录，不阻塞健康检查
+        return jsonify({"status": "ok"})
     except Exception:
-        version = "unknown"
-    return jsonify({"status": "ok", "version": version})
+        return jsonify({"status": "down", "msg": "db unavailable"}), 503
 
 
 @health_bp.route("/health/score")
@@ -247,5 +268,71 @@ def api_health_audit():
         audit["failed_checks"] = failed
 
         return jsonify(audit)
+    except Exception:
+        return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500
+
+
+@health_bp.route("/health/task-success-rate")
+@login_required
+def api_health_task_success_rate():
+    """【v5.38.9】真实任务成功率(基于 task_execution_history 审计表)
+
+    旧版 /api/health/jobs 基于 task_log(分布式锁表,执行后 DELETE)算成功率,
+    必然 100% 失真。本端点读取 TaskTransactionManager 写入的真实四态统计。
+
+    需要登录,不在 _EXEMPT_PREFIXES 豁免列表中。
+
+    【P0-1 修复】get_db() 返回原生 sqlite3.Connection,无 get_success_rate 方法,
+    改用原生 SQL 直接查询 task_execution_history 表,绕过 Repo 委托。
+    SQL 参考 task_exec_history_repo.py 的 get_success_rate 实现。
+    """
+    try:
+        from urllib.parse import parse_qs
+        from flask import request
+        # 默认 7 天,允许 1-90 天范围
+        days = 7
+        qs = parse_qs(request.query_string.decode("utf-8")) if request.query_string else {}
+        if qs.get("days"):
+            try:
+                days = int(qs["days"][0])
+            except (ValueError, IndexError):
+                days = 7
+        days = max(1, min(int(days or 7), 90))
+        conn = get_db()
+        # 直接用原生 sqlite3 查询,绕过 Repo 委托(get_db 返回原生 Connection)
+        cutoff_date = (datetime.now(_CST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        try:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM task_execution_history "
+                "WHERE exec_date >= ? GROUP BY status",
+                (cutoff_date,)
+            ).fetchall()
+        except Exception:
+            # 表可能不存在(Dashboard 直连未初始化),返回空统计
+            rows = []
+        counts = {row[0]: int(row[1]) for row in rows}
+        success = counts.get("success", 0)
+        failed = counts.get("failed", 0)
+        aborted = counts.get("aborted", 0)
+        running = counts.get("running", 0)
+        total = success + failed + aborted + running
+        # 成功率 = success / (success + failed + running),aborted 是主动中止不计入分母
+        denom = success + failed + running
+        rate = round(success * 100.0 / denom, 2) if denom > 0 else 0.0
+        stats = {
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "aborted": aborted,
+            "running": running,
+            "rate": rate,
+            "days": days,
+        }
+        return jsonify({
+            "ok": True,
+            "ts": int(time.time()),
+            "stats": stats,
+            "note": "基于 task_execution_history 真实四态统计,替代旧 task_log 100% 失真",
+        })
     except Exception:
         return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500
