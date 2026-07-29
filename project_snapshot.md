@@ -37,7 +37,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.10（2026-07-30）
 
-生产状态：生产已是 v5.38.10（可信提交 `53fcbda`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v5389_20260730_003509`）；6/6 暂存与上线文件哈希一致，双服务 active+enabled、health v5.38.10、NRestarts=0。专项 27 passed、整仓 588 passed / 7 skipped、DB 190/190、文档数字一致。两位误封用户四项持久态均清零且 Telegram 发言权限为 true；生产两张原头像 NudeNet 均为 0 检测，颜色弱特征均返回放行，强制旧规则命中时处置调用 0，高置信正例控制组处置调用 1。
+生产状态：生产已是 v5.38.10（运行修复 `53fcbda`、发布提交 `8cbce51`；业务文件备份 `/home/ubuntu/mory_assistant/backups/deploy_v5389_20260730_003509`，版本备份 `/home/ubuntu/mory_assistant/backups/deploy_v53810_20260730_004157`）；6/6 暂存与上线文件哈希一致，双服务 active+enabled、health v5.38.10、NRestarts=0。专项 27 passed、整仓 588 passed / 7 skipped、DB 190/190、文档数字一致。两位误封用户四项持久态均清零且 Telegram 发言权限为 true；生产两张原头像 NudeNet 均为 0 检测，颜色弱特征均返回放行，强制旧规则命中时处置调用 0，高置信正例控制组处置调用 1。
 
 ## 最近 3 条大事
 1. 2026-07-30 v5.38.10 禁止头像颜色、尺寸、比例和文件大小弱特征直接执法，保留高置信视觉/OCR和批量相似证据。
