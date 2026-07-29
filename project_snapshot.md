@@ -24,9 +24,9 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 网编会员 | 默认关闭 | `modules/membership.py` | 付费等级/订阅管理/权益体系，`MEMBERSHIP_CONFIG.enabled` 开关 |
 | 孤儿清理 | 在用 | `orphan_api.py`、`burn_orphan_task.py` | 端到端串联 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
-| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 162 个路由，端口 6616；传统文化页配置三档时间、单 CTA 轮换和私聊零 Token 占卜开关，栏目身份固定不可串台 |
-| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 170 张表；`reply_style_samples` 由 Alembic 0002 管理；0003 增加独立的 30 分钟短期业务上下文与结构化转化状态，使进化遥测关闭原文后仍可跨重启承接、CTA 去重和持久拒绝 |
-| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本并同步根目录六件套；依赖预检包含 NudeNet/ONNX/OpenCV，避免头像模型缺包却误报依赖已满足 |
+| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；传统文化页配置三档时间、单 CTA 轮换和私聊零 Token 占卜开关，栏目身份固定不可串台 |
+| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 173 张表；`reply_style_samples` 由 Alembic 0002 管理；0003 增加短期业务上下文与结构化转化状态；0004 增加任务执行历史，生产迁移表已验证存在 |
+| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本和内部治理文档，部署前备份、失败保险恢复双服务；依赖预检包含 NudeNet/ONNX/OpenCV |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
 | Rich Message | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py` | 黄历、三张塔罗、易经使用分区 HTML/Rich 卡片；正文有元信息、主题块和组合解读，不重复显示免责声明；每天三档轮换单 CTA，卡片署名 `@MoryMateBot`；`EPHEMERAL_MESSAGE_ENABLED` 默认关闭 |
@@ -37,7 +37,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.10（2026-07-30）
 
-本地状态：v5.38.9 挑刺报告与单系统重构、v5.38.10 头像弱特征误封修复和全类型群自动回复人设合同已在当前主工作区合并验证，待形成单一可信提交后全量部署。生产已单独发布头像修复，但尚未包含本地 v5.38.9 整包与本轮人设合同。
+本地状态：v5.38.9 挑刺修复、单系统重构、v5.38.10 头像弱特征误封修复和全类型群自动回复人设合同已统一收口到可信提交 `b1e2063` 并全量部署。生产双服务 active+enabled、NRestarts=0、health OK、版本 v5.38.10、9/9 关键哈希一致，Telegram getMe、DB 197 个委托方法和 0004 迁移表均正常，启动后真实错误 0。六类群聊 Prompt 合同与私聊合同 7/7 生效；五类真实模型回复通过，质疑类供应池两轮超时但截图敌意原句的生产发送前门禁已验证会温和降级，详见 `runtime/verification-reports/persona-tone-v53810-20260730.md`。
 
 ## 最近 3 条大事
 1. 2026-07-30 v5.38.10 六类群自动回复统一温情、轻微绿茶感、俏皮和含蓄纯欲合同，屏蔽旧敌意桶并统一发送前门禁。
