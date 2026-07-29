@@ -99,13 +99,6 @@ def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
         # ── v4.5.36 新增：检测可疑用户名（Custom Emoji贴图/引流文字）──
         is_suspicious, suspicious_reason = check_username_suspicious(user_name)
 
-        # ── v4.6.1 新增：检测色情头像 ──
-        avatar_banned = False
-        try:
-            avatar_banned = check_and_ban_if_porn_avatar(bot, user.id, m.chat.id, user_display)
-        except Exception as e:
-            logger.warning(f"头像检测失败 {user_display}: {e}")
-
         # ── v5.30.2 新增：头像OCR文字检测（"看我简介"类视觉广告） ──
         avatar_ocr_hit = False
         avatar_ocr_text = ""
@@ -154,13 +147,10 @@ def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
             logger.debug(f"BIO检测失败 {user_display}: {e}")
 
         # ── 综合判断：任一检测命中 → 广告处置 ──
-        if matched_keyword or is_suspicious or avatar_banned or avatar_ocr_hit or bio_hit:
+        if matched_keyword or is_suspicious or avatar_ocr_hit or bio_hit:
             if matched_keyword:
                 logger.warning(f"🚫 已加黑名单：{user_display} 命中关键词={matched_keyword}")
                 notify_reason = f"🔑 命中关键词：{matched_keyword}"
-            elif avatar_banned:
-                logger.warning(f"🚫 已加黑名单：{user_display} 原因=头像检测违规")
-                notify_reason = f"🔑 原因：头像检测违规"
             elif avatar_ocr_hit:
                 logger.warning(f"🚫 已加黑名单：{user_display} 原因=头像OCR广告文字")
                 notify_reason = f"🔑 原因：头像包含广告文字（OCR识别）文字={avatar_ocr_text[:30]}"

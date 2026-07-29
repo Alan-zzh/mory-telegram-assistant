@@ -212,7 +212,10 @@ def check_avatar_similarity(bot, user_id: int, chat_id: int, db=None) -> Tuple[b
 
 def check_user_avatar(bot, user_id: int) -> Tuple[bool, str]:
     """
-    检查用户头像是否可疑
+    读取头像基础图像特征，仅用于兼容旧调用和诊断。
+
+    尺寸、比例、文件大小和平均颜色都不是广告/色情证据，必须始终放行；
+    可执法的头像证据统一由 check_avatar_marketing 的高置信视觉/OCR结果提供。
     返回: (is_suspicious: bool, reason: str)
     """
     try:
@@ -251,55 +254,53 @@ def check_user_avatar(bot, user_id: int) -> Tuple[bool, str]:
 
 def _analyze_image(image_data: bytes) -> Tuple[bool, str]:
     """
-    使用PIL分析图片特征
-    注意：这是简化版检测，主要基于图片特征启发式判断
+    使用PIL记录基础图片特征。
+
+    这些特征只能用于诊断，不能作为广告或色情处置证据。
     """
     try:
         img = Image.open(io.BytesIO(image_data))
-        
+        weak_signals = []
+
         # 获取图片基本信息
         width, height = img.size
         mode = img.mode
-        
-        # 检查1：图片尺寸异常（色情头像通常有特定尺寸）
+
+        # 以下均为弱特征，只记录不定罪。
         if width < 100 or height < 100:
-            return True, "头像尺寸过小（疑似低质量广告号）"
-        
-        # 检查2：图片比例异常
+            weak_signals.append("尺寸过小")
+
         ratio = width / height
         if ratio > 3 or ratio < 0.33:
-            return True, "头像比例异常"
-        
-        # 检查3：颜色分析（色情图片通常有特定颜色特征）
+            weak_signals.append("比例异常")
+
         if mode in ('RGB', 'RGBA'):
-            # 转换为RGB分析
             if mode == 'RGBA':
                 img = img.convert('RGB')
-            
-            # 获取颜色直方图
+
             histogram = img.histogram()
-            
-            # 计算加权平均颜色（Σ(i * hist[i]) / total_pixels 才是正确的平均颜色值）
             total_pixels = width * height
             r_avg = sum(i * histogram[i] for i in range(256)) / total_pixels
             g_avg = sum(i * histogram[256 + i] for i in range(256)) / total_pixels
             b_avg = sum(i * histogram[512 + i] for i in range(256)) / total_pixels
-            
-            # 肤色检测启发式（简化版）
-            # 肤色通常在 R>G>B 且 R 在 100-200 范围
+
             if r_avg > g_avg > b_avg and 80 < r_avg < 220:
-                # 进一步检查红色/粉色比例
-                total_pixels = width * height
                 skin_like = sum(histogram[i] for i in range(100, 200))
                 if skin_like > total_pixels * 0.3:
-                    return True, "头像颜色特征疑似色情内容"
-        
-        # 检查4：文件大小异常（极小的文件可能是占位图）
+                    weak_signals.append("颜色分布类似肤色")
+
         if len(image_data) < 1024:
-            return True, "头像文件过小（疑似占位图）"
-        
+            weak_signals.append("文件过小")
+
+        if weak_signals:
+            logger.info(
+                f"头像弱特征仅记录不处置: {','.join(weak_signals)} "
+                f"size={width}x{height} bytes={len(image_data)}"
+            )
+            return False, f"头像弱特征已忽略（{','.join(weak_signals)}）"
+
         return False, "头像正常"
-        
+
     except Exception as e:
         logger.warning(f"图片分析失败: {e}")
         return False, f"分析失败: {e}"
@@ -307,17 +308,20 @@ def _analyze_image(image_data: bytes) -> Tuple[bool, str]:
 
 def _basic_image_check(image_data: bytes) -> Tuple[bool, str]:
     """
-    基础图片检查（无PIL时）
+    基础图片检查（无PIL时），只记录格式信息，不作为处置证据。
     """
-    # 检查文件大小
+    weak_signals = []
     if len(image_data) < 1024:
-        return True, "头像文件过小"
-    
-    # 检查文件头（JPEG/PNG）
+        weak_signals.append("文件过小")
+
     if not (image_data[:2] == b'\xff\xd8' or  # JPEG
             image_data[:8] == b'\x89PNG\r\n\x1a\n'):  # PNG
-        return True, "头像格式异常"
-    
+        weak_signals.append("格式无法识别")
+
+    if weak_signals:
+        logger.info(f"头像基础弱特征仅记录不处置: {','.join(weak_signals)}")
+        return False, f"头像基础弱特征已忽略（{','.join(weak_signals)}）"
+
     return False, "头像正常（基础检查）"
 
 
@@ -407,15 +411,11 @@ def check_avatar_ocr_text(bot, user_id: int, config: dict = None) -> Tuple[bool,
 
 def check_and_ban_if_porn_avatar(bot, user_id: int, chat_id: int, user_name: str = "", db=None) -> bool:
     """
-    检查头像是否可疑。
-    [Codex] 处置策略已迁移到 modules.ad_enforcement：本函数只返回命中结果，不踢人。
+    旧接口兼容层：基础头像启发式不得触发广告处置。
+
+    真正的头像审核必须调用 check_avatar_marketing，并要求明确视觉/OCR证据。
     """
-    is_suspicious, reason = check_user_avatar(bot, user_id)
-
-    if is_suspicious:
-        logger.warning(f"🚫 头像检测命中：{user_name}({user_id}) 原因：{reason}")
-        return True
-
+    logger.debug(f"头像旧启发式处置接口已停用: {user_name}({user_id})")
     return False
 
 

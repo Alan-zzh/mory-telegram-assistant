@@ -3825,18 +3825,8 @@ def _job_startup_member_scan(rm):
                     ban_reason = ""
 
                     if uname_score >= 1 and bio_score >= 3:
-                        avatar_suspicious = False
-                        try:
-                            from modules.avatar_detector import check_user_avatar
-                            avatar_suspicious, avatar_reason = check_user_avatar(bot, user.id)
-                        except Exception as e:
-                            logger.debug(f"操作异常: {e}")
-                        if avatar_suspicious:
-                            should_ban = True
-                            ban_reason = f"三层组合(用户名+Bio+头像)"
-                        else:
-                            should_ban = True
-                            ban_reason = f"两层组合(用户名+Bio)"
+                        should_ban = True
+                        ban_reason = f"两层组合(用户名+Bio)"
 
                     if should_ban:
                         try:

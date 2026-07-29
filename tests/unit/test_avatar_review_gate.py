@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """头像视觉审核回归：固定标签、低误判阈值和 OCR 降级。"""
 
+from io import BytesIO
 from types import SimpleNamespace
 
 
@@ -80,6 +81,36 @@ def test_local_nsfw_model_ignores_covered_and_ambiguous_body_regions(monkeypatch
     assert result["used_local"] is True
     assert result["is_ad"] is False
     assert result["detections"] == []
+
+
+def test_weak_color_and_geometry_features_never_become_enforcement_evidence():
+    from PIL import Image
+    from modules import avatar_detector
+
+    image = Image.new("RGB", (640, 640), (180, 140, 100))
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="JPEG")
+
+    is_suspicious, reason = avatar_detector._analyze_image(image_bytes.getvalue())
+
+    assert is_suspicious is False
+    assert "已忽略" in reason
+
+
+def test_legacy_avatar_ban_api_cannot_enforce_weak_heuristics(monkeypatch):
+    from modules import avatar_detector
+
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_user_avatar",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("旧头像封禁接口不得再调用弱启发式")
+        ),
+    )
+
+    assert avatar_detector.check_and_ban_if_porn_avatar(
+        _Bot(), 42, -1001, "普通用户"
+    ) is False
 
 
 def test_avatar_safe_result_does_not_repeat_ocr(monkeypatch):
@@ -193,4 +224,44 @@ def test_member_avatar_gate_enforces_high_but_not_borderline(monkeypatch):
         ),
     )
     assert member_handlers._review_member_avatar(_Bot(), user, {}, object(), -1001) is False
+    assert enforced == []
+
+
+def test_member_avatar_gate_never_consults_legacy_color_heuristic(monkeypatch):
+    from core.handlers import member_handlers
+    from modules import avatar_detector
+
+    user = SimpleNamespace(id=42, first_name="kin", last_name="")
+    enforced = []
+    monkeypatch.setattr(
+        member_handlers,
+        "_enforce_member_ad",
+        lambda *args, **kwargs: enforced.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_avatar_marketing",
+        lambda *args: (
+            False,
+            "头像正常",
+            0,
+            {"type": "normal", "used_ai": True},
+        ),
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_avatar_similarity",
+        lambda *args: (False, "无相似头像", []),
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_user_avatar",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("入群头像审核不得调用旧颜色启发式")
+        ),
+    )
+
+    assert member_handlers._review_member_avatar(
+        _Bot(), user, {}, object(), -1001
+    ) is False
     assert enforced == []
