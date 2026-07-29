@@ -1,7 +1,7 @@
 # 广告检测系统完整规范
 
 > **被 [AGENTS.md](../../AGENTS.md) 索引引用 · 适用版本：v5.0.0+**
-> **最后更新**：2026-07-30（v5.38.9 头像弱特征禁止执法）
+> **最后更新**：2026-07-30（v5.38.10 头像弱特征禁止执法）
 
 ## 概述
 
@@ -64,7 +64,7 @@ SCORE_THRESHOLD = 3
 - 首次入群调用 `get_chat(uid)`；若 Telegram 暂时不给 Bio，验证码通过产生的 `restricted → member` 更新会再次读取最新 Bio 并复审资料与头像。该更新不能只写 `group_members`。
 - 四类资料任一明确命中都会短路验证码和欢迎语，并进入永久禁言、历史清理、本地 `blacklist`、`global_blacklist` 和 `mute_records` 同一处置链。
 - 头像画面主体先由本地 NudeNet ONNX 识别。只采纳生殖器、肛门、女性胸部或臀部等明确暴露类别的高置信结果；covered、腹部、腋下、脚部以及阈值以下结果不封。营销文字继续走 OCR，通用视觉模型不确定时也不定罪。
-- v5.38.9 起，旧 PIL 尺寸、比例、文件大小和平均颜色分析仅输出诊断信息，`member_handlers`、`group_mgr`、`security_handlers`、`auto_tasks` 均不得据此调用广告处置；兼容函数 `check_and_ban_if_porn_avatar()` 固定放行。高置信 NudeNet、明确头像广告文字/二维码和批量相似头像仍是独立证据。
+- v5.38.10 起，旧 PIL 尺寸、比例、文件大小和平均颜色分析仅输出诊断信息，`member_handlers`、`group_mgr`、`security_handlers`、`auto_tasks` 均不得据此调用广告处置；兼容函数 `check_and_ban_if_porn_avatar()` 固定放行。高置信 NudeNet、明确头像广告文字/二维码和批量相似头像仍是独立证据。
 
 ### 二点六、Premium emoji 状态识别（v5.16.4 [Codex]）
 
