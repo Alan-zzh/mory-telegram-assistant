@@ -267,6 +267,48 @@ def test_context_limited_obfuscated_templates_do_not_ban_ambiguous_normal_text(
 @pytest.mark.parametrize(
     "text",
     [
+        "性格安静，不粘人、不查岗，长期稳定关系q裙：1092048570 QDPt",
+        "Q裙：1092048570 学生 良家兼职 个人无定 有房可上门 eX",
+        "长期稳定关系扣郡号-1O9204857O",
+        "q郡 109 204 8570 个人兼职，有房可上门",
+        "Q群：1092048570",
+        "QQ群号 1092048570",
+        "扣扣群-1092048570",
+        "企鹅群：1092048570",
+        "qqun:1092048570",
+    ],
+)
+def test_screenshot_qq_group_contact_variants_trigger_immediate_ban(detector, text):
+    """L3/L4: QQ 群及关系招揽中的 q裙/扣郡变体必须首条进入统一处置"""
+    result = detector.detect(username="普通昵称", msg=text)
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+    assert "联系方式/引流" in result["reason"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "这条Q裙的尺码是109，订单号1092048570",
+        "Q裙：1092048570订单号，麻烦查一下物流",
+        "我在讨论Q群算法，不是群号",
+        "企鹅群今天有109只",
+        "长期稳定关系需要互相信任",
+        "不粘人、不查岗只是我对相处方式的看法",
+        "Q裙：12345",
+    ],
+)
+def test_qq_group_contact_variants_do_not_ban_normal_context(detector, text):
+    """L4: 服装订单、算法、动物数量和普通关系表达不能被群号变体规则误封"""
+    result = detector.detect(username="普通用户", msg=text)
+    assert result["is_ad"] is False
+    assert result["action"] != "ban"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "港澳1-49特码有量，有收的吗?",
         "港澳1-49特码有量，有收的庄吗？",
         "六码名单有量，找靠谱庄",
