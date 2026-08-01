@@ -251,7 +251,7 @@ class HTTPClient:
         """
         # 使用配置的默认值
         timeout = timeout or self.config["default_timeout"]
-        retry_times = retry_times or self.config["retry_times"]
+        retry_times = self.config["retry_times"] if retry_times is None else retry_times
         retry_delay = retry_delay or self.config["retry_delay"]
         
         # 构建请求参数

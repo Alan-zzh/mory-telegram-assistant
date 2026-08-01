@@ -278,13 +278,20 @@ def test_channel_forward_exempt_default_enabled():
     assert len(ad_detector.detect_calls) == 0
 
 
-def test_lottery_ad_first_message_runs_unified_enforcement(monkeypatch):
-    """生产漏判原文首条命中后必须直接进入统一处置，不依赖累计或重复消息。"""
+@pytest.mark.parametrize(
+    "text",
+    [
+        "新澳门六叔公单子有量，有庄收吗？",
+        "新澳六彩盒单子有量找庄合作",
+    ],
+)
+def test_lottery_ad_first_message_runs_unified_enforcement(monkeypatch, text):
+    """两条生产漏判原文首条都必须进入删除、永久限制和双黑名单统一处置。"""
     from core.handlers.security_handlers import check_ad_detection
     from modules.ad_detector import AdDetector
 
     dctx, _ = _create_dctx_without_channel_forward()
-    dctx.text = "港澳1-49特码有量，有收的庄吗？"
+    dctx.text = text
     dctx.msg.text = dctx.text
     dctx.msg.from_user.first_name = "财神"
     dctx.uname = "财神"
@@ -300,6 +307,7 @@ def test_lottery_ad_first_message_runs_unified_enforcement(monkeypatch):
     assert dctx.ctx.bot.deleted == [(-1001, 99)]
     assert len(dctx.ctx.bot.restricted) == 1
     assert dctx.ctx.db.blacklist
+    assert any("global_blacklist" in sql for sql, _ in dctx.ctx.db.conn.executed)
     assert detector.get_user_tracking(dctx.uid)["message_count"] == 0
 
 

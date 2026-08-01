@@ -88,6 +88,7 @@ _last_task_run = {}
 _task_lock = threading.Lock()
 
 _scheduler_instance = None
+_startup_maintenance_thread = None
 
 # 【v5.11.0 可靠性框架】注册任务清单 + abort 历史
 _REGISTERED_JOBS = []  # [(job_id, trigger, func_name)]
@@ -4412,19 +4413,6 @@ def _start_with_task_scheduler(rm):
     except Exception as e:
         logger.warning(f"看门狗启动失败: {e}")
 
-    # 启动时一次性任务
-    try:
-        from tasks.maintenance.startup_member_scan_task import StartupMemberScanTask
-        StartupMemberScanTask(rm).run()
-    except Exception as e:
-        logger.warning(f"启动成员扫描失败: {e}")
-
-    try:
-        from tasks.maintenance.startup_history_cleanup_task import StartupHistoryCleanupTask
-        StartupHistoryCleanupTask(rm).run()
-    except Exception as e:
-        logger.warning(f"启动历史清理失败: {e}")
-
     # 场景化触发器注册（默认关闭，需 config 开启）
     try:
         from modules.triggers.cold_group import ColdGroupTrigger
@@ -4441,4 +4429,51 @@ def _start_with_task_scheduler(rm):
     except Exception as e:
         logger.warning(f"调度监控附加失败（非致命）: {e}")
 
+    # 先落一次跨进程心跳并启动调度器，再异步执行耗时的全员扫描。
+    # 否则数千人的 Telegram API 调用会在 scheduler.start() 前阻塞数分钟，
+    # Dashboard 将旧心跳判为 503，外部 watchdog 还会形成误重启循环。
+    _persist_startup_heartbeat(rm)
     scheduler.start()
+    _start_startup_maintenance(rm)
+
+
+def _persist_startup_heartbeat(rm):
+    """启动扫描前立即写入内存与数据库心跳。"""
+    now = int(time.time())
+    try:
+        from tasks.monitoring.heartbeat_task import update_heartbeat
+        update_heartbeat()
+        rm.db.set_system_state("last_heartbeat", str(now))
+    except Exception as e:
+        logger.warning(f"启动心跳写入失败: {e}")
+
+
+def _run_startup_maintenance(rm):
+    """后台串行执行启动扫描和历史清理，不阻塞 scheduler/polling。"""
+    try:
+        from tasks.maintenance.startup_member_scan_task import StartupMemberScanTask
+        StartupMemberScanTask(rm).run()
+    except Exception as e:
+        logger.warning(f"启动成员扫描失败: {e}")
+
+    try:
+        from tasks.maintenance.startup_history_cleanup_task import StartupHistoryCleanupTask
+        StartupHistoryCleanupTask(rm).run()
+    except Exception as e:
+        logger.warning(f"启动历史清理失败: {e}")
+
+
+def _start_startup_maintenance(rm):
+    """启动唯一的后台维护线程；返回线程供测试与诊断。"""
+    global _startup_maintenance_thread
+    if _startup_maintenance_thread is not None and _startup_maintenance_thread.is_alive():
+        logger.warning("启动维护线程已在运行，跳过重复启动")
+        return _startup_maintenance_thread
+    _startup_maintenance_thread = threading.Thread(
+        target=_run_startup_maintenance,
+        args=(rm,),
+        name="mory-startup-maintenance",
+        daemon=True,
+    )
+    _startup_maintenance_thread.start()
+    return _startup_maintenance_thread

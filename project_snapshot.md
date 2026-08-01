@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-07-30。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-01。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -13,8 +13,8 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；合同模式屏蔽旧毒舌/敷衍桶，FAQ/缓存/模型结果统一走动作旁白和敌意发送前门禁。普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
-| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 09:05 今日黄历、13:05 三张塔罗、20:35 易经一卦取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总；短期业务原文每分钟清理；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py`、`core/handlers/member_handlers.py` | L0–L4 五层；入群显示名/username、Bio、Premium emoji 状态和头像任一高置信命中即统一处置，验证码解限后补审延迟 Bio/头像；头像只采纳明确暴露、广告文字/二维码或批量相似证据，弱视觉统计不定罪；消息层覆盖 QQ 群数字联系方式，q裙/扣郡等谐音需叠加关系招揽、兼职、资源或上门锚点；数据库追溯只删除当前窗口内有明确广告证据的消息 |
+| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 `tasks/` 下 45 个 BaseTask 子类、50 个调度项 | 09:05 今日黄历、13:05 三张塔罗、20:35 易经一卦取代新闻，旧定向塔罗不再注册；FAQ每日23:50汇总；短期业务原文每分钟清理；启动时先持久化心跳并启动 scheduler，再由唯一 daemon 线程串行执行成员扫描和历史清理，避免耗时扫描触发 health 503 与 watchdog 误重启；`modules/auto_tasks.py` 为 legacy |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_marketing_patterns.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/security_handlers.py`、`core/handlers/member_handlers.py` | L0–L4 五层；入群显示名/username、Bio、Premium emoji 状态和头像任一高置信命中即统一处置，验证码解限后补审延迟 Bio/头像；头像只采纳明确暴露、广告文字/二维码或批量相似证据，弱视觉统计不定罪；消息层覆盖 QQ 数字群号、露出邀约 q裙色情招揽及彩票代称+货量+庄家交易三要素，拆字与正反语序受限，新闻教学、户外摄影和实物履约冲突语境放行；外部 SPB 单探针熔断失败降级，本地规则继续执行；数据库追溯只删除当前窗口内有明确广告证据的消息 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`（同步冲突副本不计入）；繁体“簽到”/QD提示使用无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史运行键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` 开关 |
@@ -35,14 +35,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录；legacy 与 modular 路径一致 |
 
 ## 当前版本
-v5.38.11（2026-07-30）
+v5.38.12（2026-08-01）
 
-生产状态：v5.38.11 可信提交 `8c35ad9` 已原子增量部署，备份 `/home/ubuntu/mory_assistant/backups/deploy_v53811_20260730_144350`，7/7 文件哈希一致；双服务 active+enabled、NRestarts=0、health OK、运行版本 v5.38.11，DB 委托 197/197。生产两条原文均 `score=3/action=ban`，3 条普通反例均 0 分。两名账号 `5373806283/6474680856` 均为 Telegram restricted 且禁止发言，本地/全局黑名单和永久禁言记录各 1，消息快照均 `is_ad=1/deleted=1`；Telegram 复删返回消息不存在。启动追溯从真实持久证据再次完成永久禁言 2 人并清除已消费追踪记录。
+生产状态：v5.38.12 广告规则已增量部署；三条生产漏判原文已统一处置为 Telegram 永久限制、本地/全局黑名单和永久禁言记录，消息快照均为广告且已删除。生产 7 条广告/7 条正常反例与 32 线程外部故障熔断探针通过。服务器日志另发现 3979 人同步启动扫描曾令数据库心跳超过 120 秒并触发 watchdog 误重启；scheduler 优先、即时持久心跳和后台维护修复已通过 267 项相关回归与独立审查，待增量部署后的跨 120 秒健康观察收口。
 
 ## 最近 3 条大事
-1. 2026-07-30 v5.38.11 覆盖 QQ 群数字联系方式与 q裙/扣郡关系招揽变体，歧义谐音要求第二广告锚点。
-2. 2026-07-30 v5.38.10 六类群自动回复统一温情、轻微绿茶感、俏皮和含蓄纯欲合同，屏蔽旧敌意桶并统一发送前门禁。
-3. 2026-07-30 v5.38.10 禁止头像颜色、尺寸、比例和文件大小弱特征直接执法，保留高置信视觉/OCR和批量相似证据。
+1. 2026-08-01 v5.38.12 覆盖新澳门六叔公、新澳六彩盒和露出邀约 q裙群号等局部三要素变体，为外部 SPB 增加线程安全单探针熔断，并将启动扫描移到 scheduler/心跳之后的后台线程。
+2. 2026-07-30 v5.38.11 覆盖 QQ 群数字联系方式与 q裙/扣郡关系招揽变体，歧义谐音要求第二广告锚点。
+3. 2026-07-30 v5.38.10 六类群自动回复统一温情、轻微绿茶感、俏皮和含蓄纯欲合同，屏蔽旧敌意桶并统一发送前门禁。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

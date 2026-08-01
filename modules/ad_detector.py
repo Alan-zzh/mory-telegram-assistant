@@ -17,6 +17,7 @@ import re
 import json
 import uuid
 import time
+import threading
 import unicodedata
 import urllib.request
 from datetime import datetime, timezone
@@ -38,6 +39,14 @@ from modules.ad_marketing_patterns import (
 )
 
 logger = get_logger("ad_detector")
+
+
+# SPB 是广告判定的辅助信号。端点不可用时短暂熔断，避免每条新消息都阻塞在外部重试。
+SPB_COOLDOWN_SECONDS = 15 * 60
+_spb_cooldown_until = 0.0
+_spb_probe_in_flight = False
+_spb_circuit_generation = 0
+_spb_circuit_lock = threading.Lock()
 
 # ──────────────────────────────────────────────────────
 # 内置规则（硬编码，不可删除，只能禁用）
@@ -156,6 +165,218 @@ def _check_crypto_overlap() -> None:
 
 # 启动时调用一次，保证两个列表不重叠
 _check_crypto_overlap()
+
+
+# 彩票交易灰产：围绕彩票代称取局部窗口，不把消息开头当作唯一锚点。
+_LOTTERY_SEP = r"[0-9A-Za-z\s/.,，、·・:：;；_!*#@|+?？~～\-]{0,3}"
+_LOTTERY_IDENTIFIER_RE = re.compile(
+    rf"(?:特{_LOTTERY_SEP}[码碼]|"
+    rf"六{_LOTTERY_SEP}叔{_LOTTERY_SEP}公|"
+    rf"六{_LOTTERY_SEP}彩{_LOTTERY_SEP}[盒和合]|"
+    rf"六{_LOTTERY_SEP}合{_LOTTERY_SEP}彩|"
+    rf"六{_LOTTERY_SEP}合(?![区區村镇鎮街])|六{_LOTTERY_SEP}肖|"
+    rf"六{_LOTTERY_SEP}[码碼])",
+    re.IGNORECASE,
+)
+_LOTTERY_SUPPLY_RE = re.compile(
+    rf"(?:[单單]{_LOTTERY_SEP}子|[有出收]{_LOTTERY_SEP}量|[货貨]{_LOTTERY_SEP}[量源])",
+    re.IGNORECASE,
+)
+_LOTTERY_DEALER_ACTION_RE = re.compile(
+    rf"(?:有{_LOTTERY_SEP}(?<![农農])[庄莊](?![园園])(?:{_LOTTERY_SEP}家)?{_LOTTERY_SEP}(?:来{_LOTTERY_SEP})?收|"
+    rf"(?<![农農])[庄莊](?![园園])(?:{_LOTTERY_SEP}家)?{_LOTTERY_SEP}(?:来{_LOTTERY_SEP})?收|"
+    rf"收{_LOTTERY_SEP}(?<![农農])[庄莊](?![园園])|"
+    rf"找{_LOTTERY_SEP}(?:靠{_LOTTERY_SEP}谱{_LOTTERY_SEP})?[庄莊](?![园園])|"
+    rf"(?<![农農])[庄莊](?![园園])(?:{_LOTTERY_SEP}家)?{_LOTTERY_SEP}合作|"
+    rf"合作{_LOTTERY_SEP}(?<![农農])[庄莊](?![园園])(?:{_LOTTERY_SEP}家)?)",
+    re.IGNORECASE,
+)
+_LOTTERY_TEMA_RECEIVE_RE = re.compile(rf"有{_LOTTERY_SEP}收", re.IGNORECASE)
+_LOTTERY_ENTITY_PREFIX_RE = re.compile(
+    r"[农農村山酒茶]\s*(?:[0-9A-Za-z/.,，、·・:：;；_!*#@|+?？~～\-]\s*){0,3}$",
+    re.IGNORECASE,
+)
+_LOTTERY_EXPLICIT_DEALER_FAMILY_RE = re.compile(
+    rf"^[庄莊]{_LOTTERY_SEP}家", re.IGNORECASE
+)
+_LOTTERY_ENTITY_FULFILLMENT_RE = re.compile(
+    rf"^[庄莊]{_LOTTERY_SEP}(?:(?:来{_LOTTERY_SEP})?收{_LOTTERY_SEP}"
+    rf"(?:(?:这|那){_LOTTERY_SEP})?(?:批{_LOTTERY_SEP})?"
+    rf"(?:[货貨购購]|水果|果蔬|农产品|葡萄|茶叶|物资)|"
+    rf"合作{_LOTTERY_SEP}收{_LOTTERY_SEP}[购購])",
+    re.IGNORECASE,
+)
+_LOTTERY_REGION_RE = re.compile(r"(?:新?澳门|新澳|港澳|香港)")
+_LOTTERY_REPORT_PREFIX_RE = re.compile(
+    r"(?:媒体报道|新闻(?:曝光|报道)|反诈(?:提示|教学|科普|教材)?|(?:语文)?教学(?:案例|引用)?)"
+)
+_LOTTERY_SIXUNCLE_PHYSICAL_RE = re.compile(
+    r"^(?:的)?(?:水果|农产品|果蔬)[\s\S]{0,32}[农農]庄[\s\S]{0,8}(?:收购|采购|收货)"
+)
+_LOTTERY_SIXCOLOR_PHYSICAL_RE = re.compile(
+    r"^(?:包装订单|包装)[\s\S]{0,32}(?:工厂[\s\S]{0,8}(?:排产|设计(?:新)?包装|收货|发货)|"
+    r"设计(?:新)?包装|收发货|收货|发货)"
+)
+_LOTTERY_STRONG_DEAL_ACTION_RE = re.compile(
+    rf"(?:有{_LOTTERY_SEP}(?<![农農])[庄莊](?![园園])(?:{_LOTTERY_SEP}家)?{_LOTTERY_SEP}(?:来{_LOTTERY_SEP})?收|"
+    rf"收{_LOTTERY_SEP}(?<![农農])[庄莊](?![园園])|"
+    rf"找{_LOTTERY_SEP}(?:靠{_LOTTERY_SEP}谱{_LOTTERY_SEP})?[庄莊](?![园園])|"
+    rf"(?<![农農])[庄莊](?![园園])(?:{_LOTTERY_SEP}家)?{_LOTTERY_SEP}(?:来{_LOTTERY_SEP})?收)",
+    re.IGNORECASE,
+)
+_LOTTERY_CONTRAST_RE = re.compile(r"(?:而是|实为|实际是|其实是|但(?:是)?|不过)")
+_LOTTERY_REPORT_POSITIVE_RE = {
+    "police": re.compile(
+        r"(?:警方[^，,。；;！？!?]{0,6}?(?:已|已经)?(?:立案|查处|破获)|"
+        r"(?:后来|现已|已经|已)[^，,。；;！？!?]{0,2}(?:立案|查处|破获))"
+    ),
+    "scam": re.compile(r"(?:属于|是|为)?[^，,。；;！？!?]{0,4}诈骗(?:话术|引流|活动)?"),
+    "gray": re.compile(r"(?:属于|是|为)?[^，,。；;！？!?]{0,4}灰产(?:话术|引流|活动)?"),
+    "illegal": re.compile(r"(?:属于|是|为)?[^，,。；;！？!?]{0,4}非法(?:话术|引流|活动)?"),
+}
+_LOTTERY_REPORT_NEGATIVE_RE = {
+    "police": re.compile(
+        r"(?:警方[^，,。；;！？!?]{0,4}?)?(?:未|尚未|没有|并没有|并未)"
+        r"[^，,。；;！？!?]{0,4}?(?:查处|立案|破获)"
+    ),
+    "scam": re.compile(
+        r"(?:并非|绝非|非(?!法)|(?:并)?不(?:是|属于|为|算)?)"
+        r"[^，,。；;！？!?]{0,12}?诈骗"
+    ),
+    "gray": re.compile(
+        r"(?:并非|绝非|(?:并)?不(?:是|属于|为|算)?)"
+        r"[^，,。；;！？!?]{0,12}?灰产"
+    ),
+    "illegal": re.compile(
+        r"(?:并非|绝非|(?:并)?不(?:是|属于|为|算)?)"
+        r"[^，,。；;！？!?]{0,12}?非法"
+    ),
+}
+
+
+def _has_positive_lottery_report_conclusion(text: str) -> bool:
+    """按警方/诈骗/灰产/非法四类分别保留最后结论，避免不同类别相互覆盖。"""
+    decisions = {category: None for category in _LOTTERY_REPORT_POSITIVE_RE}
+    for segment in _LOTTERY_CONTRAST_RE.split(text):
+        for category, positive_re in _LOTTERY_REPORT_POSITIVE_RE.items():
+            negative_matches = list(_LOTTERY_REPORT_NEGATIVE_RE[category].finditer(segment))
+            events = [(match.start(), False) for match in negative_matches]
+            for match in positive_re.finditer(segment):
+                # “不是诈骗/警方未查处”内部也包含正向字样，重叠正向不能反转否定。
+                if any(match.start() < negative.end() and negative.start() < match.end()
+                       for negative in negative_matches):
+                    continue
+                events.append((match.start(), True))
+            if events:
+                decisions[category] = max(events, key=lambda event: event[0])[1]
+    return any(value is True for value in decisions.values())
+
+
+def _has_non_entity_dealer_action(pattern: re.Pattern, text: str) -> bool:
+    """仅排除实体的收货/收购；显式“庄家”始终属于交易动作。"""
+    for match in pattern.finditer(text):
+        dealer = re.search(r"[庄莊]", match.group())
+        if dealer is None:
+            return True
+        dealer_start = match.start() + dealer.start()
+        prefix = text[max(0, dealer_start - 32):dealer_start]
+        dealer_tail = text[dealer_start:min(len(text), dealer_start + 24)]
+        is_entity_fulfillment = bool(
+            _LOTTERY_ENTITY_PREFIX_RE.search(prefix)
+            and not _LOTTERY_EXPLICIT_DEALER_FAMILY_RE.search(dealer_tail)
+            and _LOTTERY_ENTITY_FULFILLMENT_RE.search(dealer_tail)
+        )
+        if is_entity_fulfillment:
+            continue
+        return True
+    return False
+
+
+# 色情 q裙招揽：只允许符号/字母拆字，不允许“露肩上衣出售”跨中文词拼成“露出”。
+_QQ_SKIRT_NOISE = r"[0-9A-Za-z\s/.,，·・:：._*#@|+\-]{0,4}"
+_QQ_SKIRT_MARKER_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?:q{{1,2}}|扣{{1,2}}){_QQ_SKIRT_NOISE}[裙郡]"
+    rf"{_QQ_SKIRT_NOISE}(?:号{_QQ_SKIRT_NOISE})?"
+    r"[1-9Il|](?:[\s._\-,，/·・]{0,2}[0-9OoIl|]){5,11}"
+    r"(?![\s._\-,，/·・]{0,2}[0-9OoIl|])",
+    re.IGNORECASE,
+)
+_QQ_SKIRT_EXPOSURE_RE = re.compile(
+    rf"(?:户外{_QQ_SKIRT_NOISE}露{_QQ_SKIRT_NOISE}出|"
+    rf"露{_QQ_SKIRT_NOISE}出[\s\S]{{0,8}}小{_QQ_SKIRT_NOISE}癖{_QQ_SKIRT_NOISE}好)",
+    re.IGNORECASE,
+)
+_QQ_SKIRT_STRONG_INVITE_RE = re.compile(
+    rf"(?:小{_QQ_SKIRT_NOISE}癖{_QQ_SKIRT_NOISE}好|私{_QQ_SKIRT_NOISE}约)",
+    re.IGNORECASE,
+)
+_QQ_SKIRT_INVITE_RE = re.compile(
+    rf"(?:{_QQ_SKIRT_STRONG_INVITE_RE.pattern}|"
+    rf"可{_QQ_SKIRT_NOISE}(?:以{_QQ_SKIRT_NOISE})?约(?:哦|吗)?)",
+    re.IGNORECASE,
+)
+_QQ_SKIRT_NORMAL_PHOTO_ORDER_RE = re.compile(
+    rf"户外{_QQ_SKIRT_NOISE}露{_QQ_SKIRT_NOISE}出(?:主题)?摄影"
+    rf"[\s\S]{{0,24}}(?:服装|上衣|裙子)[\s\S]{{0,24}}"
+    rf"可{_QQ_SKIRT_NOISE}(?:以{_QQ_SKIRT_NOISE})?约[\s\S]{{0,8}}(?:时间)?取货"
+)
+_QQ_SKIRT_NORMAL_ORDER_SUFFIX_RE = re.compile(r"^\s*[，,]?\s*是\s*服装订单号")
+
+
+def _is_sexual_qq_skirt_invite(msg: str) -> bool:
+    """q裙群号附近同时有露出语义和癖好/邀约，才按色情引流计分。"""
+    for marker in _QQ_SKIRT_MARKER_RE.finditer(msg):
+        window = msg[max(0, marker.start() - 80):min(len(msg), marker.end() + 80)]
+        if not _QQ_SKIRT_EXPOSURE_RE.search(window) or not _QQ_SKIRT_INVITE_RE.search(window):
+            continue
+        normal_photo_order = bool(
+            _QQ_SKIRT_NORMAL_PHOTO_ORDER_RE.search(window)
+            and _QQ_SKIRT_NORMAL_ORDER_SUFFIX_RE.search(msg[marker.end():marker.end() + 24])
+        )
+        if not _QQ_SKIRT_STRONG_INVITE_RE.search(window) and normal_photo_order:
+            continue
+        return True
+    return False
+
+
+def _is_lottery_trade_slang(msg: str) -> bool:
+    """只在彩票代称前后各 40 字内确认交易三要素，并处理可验证的冲突语境。"""
+    for marker in _LOTTERY_IDENTIFIER_RE.finditer(msg):
+        window_start = max(0, marker.start() - 40)
+        window_end = min(len(msg), marker.end() + 40)
+        window = msg[window_start:window_end]
+        if not _LOTTERY_SUPPLY_RE.search(window):
+            continue
+        action_found = _has_non_entity_dealer_action(_LOTTERY_DEALER_ACTION_RE, window)
+        # 旧生产样本“特码有量，有收的吗”保留兼容；其他代称仍要求庄家动作。
+        if not action_found and marker.group().replace(" ", "").startswith("特"):
+            action_found = bool(_LOTTERY_TEMA_RECEIVE_RE.search(window))
+        if not action_found:
+            continue
+
+        before_marker = msg[window_start:marker.start()]
+        after_marker = msg[marker.end():window_end]
+        # 前置报道/教学与后置查处、诈骗、灰产或非法结论必须成对，单安全前缀不豁免。
+        if (
+            _LOTTERY_REPORT_PREFIX_RE.search(before_marker)
+            and _has_positive_lottery_report_conclusion(after_marker)
+        ):
+            continue
+        # 实物履约要求代称后紧邻具体实体和后续履约动作，禁止用散词“物流/包装发货”洗白。
+        marker_compact = re.sub(r"[0-9A-Za-z\s/._*#@|+\-]", "", marker.group())
+        is_physical_fulfillment = (
+            marker_compact == "六叔公" and _LOTTERY_SIXUNCLE_PHYSICAL_RE.search(after_marker)
+        ) or (
+            marker_compact == "六彩盒" and _LOTTERY_SIXCOLOR_PHYSICAL_RE.search(after_marker)
+        )
+        if (
+            not _LOTTERY_REGION_RE.search(window)
+            and is_physical_fulfillment
+            and not _has_non_entity_dealer_action(_LOTTERY_STRONG_DEAL_ACTION_RE, window)
+        ):
+            continue
+        return True
+    return False
 
 # ──────────────────────────────────────────────────────
 # 独立工具函数（供 group_mgr 等模块直接调用）
@@ -390,28 +611,43 @@ class AdDetector:
 
     def _check_spb(self, user_id: int) -> tuple:
         """[TRAE SOLO CN] v5.8.0 新增：查询SPB(SpamProtection)垃圾评分"""
-        now = time.time()
-        if user_id in self._spb_cache:
-            cached_result, cached_time = self._spb_cache[user_id]
-            if now - cached_time < 3600:
-                return cached_result
+        global _spb_cooldown_until, _spb_probe_in_flight, _spb_circuit_generation
+
+        now = time.monotonic()
+        with _spb_circuit_lock:
+            if user_id in self._spb_cache:
+                cached_result, cached_time = self._spb_cache[user_id]
+                if now - cached_time < 3600:
+                    return cached_result
+            # OPEN 时直接降级；HALF_OPEN 时只允许一个探针，其余线程立即降级。
+            if now < _spb_cooldown_until or _spb_probe_in_flight:
+                return (0.0, False)
+            _spb_probe_in_flight = True
+            probe_generation = _spb_circuit_generation
         try:
             # 使用统一HTTP客户端
             client = get_http_client()
             url = f"https://api.intellivoid.net/spamprotection/v1/lookup?query={user_id}"
-            data = client.get(url, timeout=3)
+            data = client.get(url, timeout=1, retry_times=0)
             spam_prediction = data.get("spam_prediction", {})
             spam_probability = float(spam_prediction.get("spam_probability", 0.0))
             is_spam = bool(spam_prediction.get("is_spam", False))
             result = (spam_probability, is_spam)
-        except HTTPRequestError:
-            # 查询失败，返回默认值
-            result = (0.0, False)
         except Exception:
-            result = (0.0, False)
-        self._spb_cache[user_id] = (result, now)
-        if len(self._spb_cache) > self._AD_CACHE_MAX:
-            self._spb_cache.pop(next(iter(self._spb_cache)))
+            # 外部辅助端点失败不阻断本地检测；15 分钟内跳过该端点。
+            with _spb_circuit_lock:
+                _spb_probe_in_flight = False
+                _spb_circuit_generation += 1
+                _spb_cooldown_until = time.monotonic() + SPB_COOLDOWN_SECONDS
+            return (0.0, False)
+        with _spb_circuit_lock:
+            _spb_probe_in_flight = False
+            # 仅当前探针仍是最新状态时关闭熔断，陈旧成功不能覆盖后续失败。
+            if probe_generation == _spb_circuit_generation:
+                _spb_cooldown_until = 0.0
+                self._spb_cache[user_id] = (result, now)
+                if len(self._spb_cache) > self._AD_CACHE_MAX:
+                    self._spb_cache.pop(next(iter(self._spb_cache)))
         return result
 
     def _check_metadata(self, msg: str, message_meta: dict, bio_score: int, username_anomaly_score: int) -> tuple:
@@ -657,6 +893,20 @@ class AdDetector:
                         break  # 每个维度只计一次最高分
                 except re.error:
                     pass
+        if _is_lottery_trade_slang(msg) and not any(
+            dimension.startswith("灰色产业") for dimension in hit_dimensions
+        ):
+            weight = BUILTIN_KEYWORD_GROUPS["gray_industry"]["weight"]
+            total += weight
+            hit_dimensions.append(f"灰色产业(+{weight})")
+            logger.info("[AD] 彩票交易三要素命中: 权重=+%s, 消息=%s", weight, msg[:80])
+        if _is_sexual_qq_skirt_invite(msg) and not any(
+            dimension.startswith("联系方式/引流") for dimension in hit_dimensions
+        ):
+            weight = BUILTIN_KEYWORD_GROUPS["contact_info"]["weight"]
+            total += weight
+            hit_dimensions.append(f"联系方式/引流(+{weight})")
+            logger.info("[AD] 露出邀约 q裙三要素命中: 权重=+%s, 消息=%s", weight, msg[:80])
         if total > 0:
             logger.info(f"[AD] 内容评分结果: 总分={total}, 命中维度={hit_dimensions}, 消息={msg[:80]}")
         return total, hit_dimensions

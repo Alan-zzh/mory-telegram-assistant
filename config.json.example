@@ -1,6 +1,6 @@
 {
-  "_CONFIG_VERSION": "5.38.10",
-  "_CONFIG_UPDATED": "2026-07-30",
+  "_CONFIG_VERSION": "5.38.12",
+  "_CONFIG_UPDATED": "2026-08-01",
   "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。",
   "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
   "API_KEY": "YOUR_DASHSCOPE_API_KEY",
