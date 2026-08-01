@@ -37,7 +37,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.13（2026-08-02）
 
-生产状态：v5.38.12 正在运行且健康；8 月 1 日 43 项“今日未执行”已证实为监控误报，生产当天 SQLite lock 日志为 0、`scheduler_metrics` 104 行均为 success。v5.38.13 本地整仓门禁已通过，待可信提交后增量部署并验证重启水合、双服务、health、当前 PID 日志与真实任务回执。
+生产状态：v5.38.13 已于 2026-08-02 增量部署，运行提交 `d83c153`，备份 `/home/ubuntu/mory_assistant/backups/deploy_v53813_20260802_012406`。双服务 active+enabled、PID `159369/159370`、NRestarts=0、health OK；104 条调度指标跨重启恢复，两个 5 分钟落盘窗口累计成功 `2777→2809→2845`，失败/错过为 0；当前 PID 的 SQLite lock/Traceback/ERROR/CRITICAL 与旧“今日未执行/数据库锁异常”均为 0。旧进程遗留 1 条 running 已终结并释放锁；3993 人启动扫描在后台真实 running 且有持续进度，不阻塞 scheduler/heartbeat。
 
 ## 最近 3 条大事
 1. 2026-08-02 v5.38.13 纠正 43 项任务健康误报，补齐调度指标跨重启水合、SQLite/审计失败上浮、任务锁恢复与 FAQ 三态。
