@@ -30,7 +30,7 @@ class TrackingRepo:
     def track_reply(self, bot_msg_id: int, chat_id: int, user_msg_id: int):
         """记录机器人回复，追踪原消息是否被删（复合主键：bot_msg_id+chat_id）
 
-        [v5.24.0] 改回标准模式，由 WriteQueueConnectionProxy 自动拦截走队列
+        [v5.24.0] 改回标准模式；v5.32.0 移除 WriteQueueConnectionProxy，回归原生 SQLite 连接。
         """
         if not bot_msg_id or not chat_id or not user_msg_id:
             logger.error(f"📌 track_reply参数无效: bot={bot_msg_id} chat={chat_id} user={user_msg_id}")

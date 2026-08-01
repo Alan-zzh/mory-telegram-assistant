@@ -252,7 +252,7 @@ class ConfigRepo:
     def check_integrity(self) -> str:
         """执行 PRAGMA integrity_check，返回完整性检查结果字符串
 
-        PRAGMA 在 WriteQueueConnectionProxy 中被识别为读操作，直接执行不走队列。
+        PRAGMA 为读操作，直接在原生 SQLite 连接上执行（v5.32.0 起无 WriteQueueConnectionProxy）。
 
         Returns:
             "ok" 表示完整性正常；否则返回错误描述字符串；异常时返回 "error: ..."

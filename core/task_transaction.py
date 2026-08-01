@@ -272,12 +272,14 @@ class TaskTransactionManager:
         """【v5.31.2 修复】释放数据库任务锁
 
         之前直接走 self.db.conn.execute + commit，绕过 Repo 层的锁管理，
-        在 WriteQueueConnectionProxy 下会出现 'cannot commit - no transaction is active'
+        在旧 WriteQueueConnectionProxy 下会出现 'cannot commit - no transaction is active'
         导致 DELETE 没生效，task_log 残留锁，后续重试被 claim_task 拦截。
+        v5.32.0 已移除 WriteQueueConnectionProxy，回归原生 SQLite 连接，
+        但保留 Repo 层 + 直连兜底双保险以防回归。
 
         修复方案：
         1. 走 Repo 层 self.db.release_task（已注册，自带 thread lock）
-        2. 失败时回退到直接 SQL，但用独立的 raw connection 避开 WriteQueue
+        2. 失败时回退到直接 SQL，用 _real_conn（兼容引用）直接执行
         3. 都失败则记录 CRITICAL 让上层感知
         """
         released = False
@@ -291,9 +293,9 @@ class TaskTransactionManager:
         except Exception as e:
             logger.warning(f"⚠️ [{self.task_name}] release_task(Repo层)异常: {e}")
 
-        # 方案 2：直接 SQL 兜底（绕过 WriteQueue，用底层真实连接）
-        # WriteQueueConnectionProxy 下 self.db.conn.execute 的 DELETE 可能因队列满静默丢弃，
-        # 因此取 _real_conn 直接执行，保证 DELETE 真正落库。
+        # 方案 2：直接 SQL 兜底（用底层真实连接，v5.32.0 后 _real_conn 等同 self.conn）
+        # 旧 WriteQueueConnectionProxy 下 self.db.conn.execute 的 DELETE 可能因队列满静默丢弃，
+        # v5.32.0 移除代理后此路径仍保留作为 Repo 层失败的兜底，保证 DELETE 真正落库。
         # 【P1-1 修复】同时删除今天和昨天的记录,处理跨天边界:
         # 任务在 23:59:59 claim_task 写入 today,00:00:01 release 时 today 已变,
         # DELETE WHERE exec_date=today 找不到旧记录,导致 task_log 残留锁。
