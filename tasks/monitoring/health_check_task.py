@@ -112,7 +112,7 @@ class HealthCheckTask(BaseTask):
                 else:
                     logger.debug(f"🏥 [health_check] ✅ {task_desc} 今日已执行")
 
-            anomalies = get_task_guard().audit_task_log(self.rm.db)
+            lock_record_anomalies = get_task_guard().audit_task_log(self.rm.db)
 
             parts = []
             if missed:
@@ -125,8 +125,11 @@ class HealthCheckTask(BaseTask):
                     f"本进程今日 {start_text} 才启动，以下任务已过当天触发窗口，不会自动补跑：\n"
                     + "\n".join(late_missed)
                 )
-            if anomalies:
-                parts.append(f"🚨 <b>数据库锁异常</b>\n" + "\n".join(anomalies))
+            if lock_record_anomalies:
+                parts.append(
+                    f"🚨 <b>任务防重记录异常</b>\n"
+                    + "\n".join(lock_record_anomalies)
+                )
 
             if parts:
                 msg = f"🏥 <b>任务健康检查</b> · {today}\n\n" + "\n\n".join(parts)
@@ -136,7 +139,9 @@ class HealthCheckTask(BaseTask):
                     logger.warning(f"⚠️ [health_check] 发现异常，已通知管理员")
                 except Exception as e:
                     logger.error(f"⚠️ [health_check] 通知发送失败：{e}")
+                    raise
             else:
                 logger.info(f"✅ [health_check] 所有关键任务均正常执行，数据库无异常")
         except Exception as e:
             logger.error(f"❌ [health_check] 健康检查失败：{e}")
+            raise

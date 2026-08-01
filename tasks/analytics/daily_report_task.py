@@ -72,11 +72,14 @@ class DailyReportTask(BaseTask):
                 self._send_daily_channel_report(ctx, admin_id, today, trend)
 
                 logger.info("✅ 每日数据报告已发送（群+频道）")
-        except TaskAbort:
-            pass
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             logger.error(f"每日数据报告失败：{e}")
             retry_task(ctx.rm, lambda rm: DailyReportTask(rm).run(), "daily_report")
+            raise
 
     def _send_daily_group_report(self, ctx: TaskContext, admin_id: int, today: str, yesterday: str, gid: int, trend_fn):
         """群数据日报：原始数据优先，分析后置，不做主观裁判。"""

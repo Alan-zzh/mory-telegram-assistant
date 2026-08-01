@@ -628,7 +628,8 @@ class AdDetector:
             # 使用统一HTTP客户端
             client = get_http_client()
             url = f"https://api.intellivoid.net/spamprotection/v1/lookup?query={user_id}"
-            data = client.get(url, timeout=1, retry_times=0)
+            # 可选外部信号失败会进入 15 分钟熔断并安全降级，不应污染 ERROR 告警。
+            data = client.get(url, timeout=1, retry_times=0, log_final_failure=False)
             spam_prediction = data.get("spam_prediction", {})
             spam_probability = float(spam_prediction.get("spam_probability", 0.0))
             is_spam = bool(spam_prediction.get("is_spam", False))

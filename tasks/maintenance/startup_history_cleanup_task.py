@@ -29,70 +29,66 @@ class StartupHistoryCleanupTask(BaseTask):
         return []
 
     def execute(self, ctx: TaskContext) -> None:
-        try:
-            bot = self.rm.bot
-            db = self.rm.db
-            config = self.rm.config
+        bot = self.rm.bot
+        db = self.rm.db
+        config = self.rm.config
 
-            if not can_delete_message(config):
-                logger.info("[启动历史清理] 消息删除全局开关关闭，跳过")
-                return
+        if not can_delete_message(config):
+            logger.info("[启动历史清理] 消息删除全局开关关闭，跳过")
+            return
 
-            chat_ids = []
-            gid = config.get("GROUP_ID", 0)
-            if gid:
-                chat_ids = [gid]
-            else:
+        gid = config.get("GROUP_ID", 0)
+        if gid:
+            chat_ids = [gid]
+        else:
+            try:
+                managed_groups = config.get("MANAGED_GROUPS", [])
+                chat_ids = [managed_groups] if isinstance(managed_groups, int) else list(managed_groups or [])
+            except Exception as e:
+                logger.error(f"获取管理群组列表失败: {e}")
+                raise
+
+        if not chat_ids:
+            logger.info("[启动历史清理] 未找到管理的群组，跳过")
+            return
+
+        failures = []
+        all_banned_uids = set()
+        for table, column in (("blacklist", "uid"), ("global_blacklist", "user_id")):
+            try:
+                for row in db.conn.execute(f"SELECT {column} FROM {table}").fetchall():
+                    all_banned_uids.add(int(row[0]))
+            except Exception as e:
+                logger.error(f"查询{table}表失败: {e}")
+                failures.append(e)
+
+        if not all_banned_uids:
+            if failures:
+                raise ExceptionGroup("启动历史清理查询黑名单失败", failures)
+            logger.info("[启动历史清理] 无黑名单用户，跳过")
+            return
+
+        logger.info(f"[启动历史清理] 开始清理 {len(all_banned_uids)} 个黑名单用户的历史消息")
+        total_deleted = 0
+        for uid in all_banned_uids:
+            for cid in chat_ids:
                 try:
-                    mg = config.get("MANAGED_GROUPS", [])
-                    if isinstance(mg, int):
-                        chat_ids = [mg]
-                    elif mg:
-                        chat_ids = list(mg)
+                    msgs = db.get_user_messages(uid, cid, limit=500)
                 except Exception as e:
-                    logger.warning(f"获取管理群组列表失败: {e}")
-                    chat_ids = []
-
-            if not chat_ids:
-                logger.info("[启动历史清理] 未找到管理的群组，跳过")
-                return
-
-            all_banned_uids = set()
-            try:
-                for row in db.conn.execute("SELECT uid FROM blacklist").fetchall():
-                    all_banned_uids.add(int(row[0]))
-            except Exception as e:
-                logger.warning(f"查询blacklist表失败: {e}")
-            try:
-                for row in db.conn.execute("SELECT user_id FROM global_blacklist").fetchall():
-                    all_banned_uids.add(int(row[0]))
-            except Exception as e:
-                logger.warning(f"查询global_blacklist表失败: {e}")
-
-            if not all_banned_uids:
-                logger.info("[启动历史清理] 无黑名单用户，跳过")
-                return
-
-            logger.info(f"[启动历史清理] 开始清理 {len(all_banned_uids)} 个黑名单用户的历史消息")
-            total_deleted = 0
-            for uid in all_banned_uids:
-                for cid in chat_ids:
+                    logger.error(f"读取黑名单用户历史失败 uid={uid} cid={cid}: {e}")
+                    failures.append(e)
+                    continue
+                for message in msgs:
+                    if message.get("deleted") or not (message_id := message.get("msg_id")):
+                        continue
                     try:
-                        msgs = db.get_user_messages(uid, cid, limit=500)
-                    except Exception:
-                        msgs = []
-                    for mm in msgs:
-                        if mm.get("deleted"):
-                            continue
-                        mid = mm.get("msg_id")
-                        if not mid:
-                            continue
-                        try:
-                            bot.delete_message(cid, mid)
-                            db.mark_message_deleted(cid, mid)
-                            total_deleted += 1
-                        except Exception:
-                            pass
-            logger.info(f"[启动历史清理] 完成，共清理 {total_deleted} 条黑名单用户历史消息")
-        except Exception as e:
-            logger.error(f"[启动历史清理] 异常: {e}")
+                        bot.delete_message(cid, message_id)
+                        db.mark_message_deleted(cid, message_id)
+                        total_deleted += 1
+                    except Exception as e:
+                        logger.warning(f"删除黑名单历史消息失败 cid={cid} mid={message_id}: {e}")
+                        failures.append(e)
+
+        logger.info(f"[启动历史清理] 完成，共清理 {total_deleted} 条黑名单用户历史消息")
+        if failures:
+            raise ExceptionGroup("启动历史清理任务失败", failures)

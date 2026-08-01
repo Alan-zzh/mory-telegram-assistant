@@ -59,11 +59,14 @@ class WeeklyReportTask(BaseTask):
                 self._send_weekly_channel_report(ctx, admin_id, today, week_ago, week_ago_ts, now_ts)
 
                 logger.info("✅ 每周数据报告已发送（群+频道）")
-        except TaskAbort:
-            pass
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             logger.error(f"每周数据报告失败：{e}")
             retry_task(ctx.rm, lambda rm: WeeklyReportTask(rm).run(), "weekly_report")
+            raise
 
     def _send_weekly_group_report(self, ctx: TaskContext, admin_id: int, today: str, week_ago: str, two_weeks_ago: str):
         """群数据周报：原始数据优先，再补充趋势分析，不做主观裁判。"""

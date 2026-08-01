@@ -41,3 +41,4 @@ class RemindersTask(BaseTask):
             check_reminders(self.rm.bot, self.rm.config, self.rm.db)
         except Exception as e:
             logger.error(f"检查提醒异常：{e}")
+            raise

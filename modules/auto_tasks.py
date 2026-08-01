@@ -3895,6 +3895,43 @@ def _is_mystic_enabled(config: dict) -> bool:
     return bool(cfg.get("enabled", False))
 
 
+def _is_broadcast_scheduled_for_date(broadcast: dict, today: str) -> bool:
+    """按实际 APScheduler 日期约束判断动态播报今天是否应执行。"""
+    try:
+        day = datetime.strptime(today, "%Y-%m-%d")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"无效健康检查日期: {today}") from exc
+
+    day_of_week = broadcast.get("day_of_week")
+    if day_of_week is not None:
+        weekday_names = {
+            "mon": 0, "tue": 1, "wed": 2, "thu": 3,
+            "fri": 4, "sat": 5, "sun": 6,
+        }
+        normalized = weekday_names.get(str(day_of_week).strip().lower())
+        if normalized is None:
+            try:
+                normalized = int(day_of_week)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"无效 day_of_week: {day_of_week}") from exc
+        if normalized not in range(7):
+            raise ValueError(f"无效 day_of_week: {day_of_week}")
+        if day.weekday() != normalized:
+            return False
+
+    day_of_month = broadcast.get("day_of_month")
+    if day_of_month is not None:
+        try:
+            normalized_day = int(day_of_month)
+            if normalized_day not in range(1, 32):
+                raise ValueError(f"无效 day_of_month: {day_of_month}")
+            if day.day != normalized_day:
+                return False
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"无效 day_of_month: {day_of_month}") from exc
+    return True
+
+
 def _build_critical_tasks(config: dict, today: str) -> list[dict]:
     """从真实配置生成健康检查任务，避免硬编码 ID/时间造成误报或漏报。"""
     tasks = []
@@ -3941,7 +3978,13 @@ def _build_critical_tasks(config: dict, today: str) -> list[dict]:
     try:
         from modules.scheduled_broadcast import get_broadcast_schedule
         group_ids = _get_all_group_ids(config)
-        for bc in get_broadcast_schedule(config):
+        due_broadcasts = [
+            bc for bc in get_broadcast_schedule(config)
+            if _is_broadcast_scheduled_for_date(bc, today)
+        ]
+        if due_broadcasts and not group_ids:
+            raise ValueError("存在今日已启用的定点播报，但未配置任何管理群")
+        for bc in due_broadcasts:
             bc_id = bc.get("id", "")
             if not bc_id:
                 continue
@@ -3959,7 +4002,8 @@ def _build_critical_tasks(config: dict, today: str) -> list[dict]:
                 "keys": keys,
             })
     except Exception as e:
-        logger.warning(f"🏥 [health_check] 动态播报任务生成失败: {e}")
+        logger.error(f"🏥 [health_check] 动态播报任务生成失败: {e}")
+        raise
 
     return tasks
 
@@ -4012,7 +4056,7 @@ def _job_health_check(rm):
         if missed:
             parts.append(f"⚠️ <b>任务未执行</b>\n" + "\n".join(missed))
         if anomalies:
-            parts.append(f"🚨 <b>数据库锁异常</b>\n" + "\n".join(anomalies))
+            parts.append(f"🚨 <b>任务防重记录异常</b>\n" + "\n".join(anomalies))
 
         if parts:
             msg = f"🏥 <b>任务健康检查</b> · {today}\n\n" + "\n\n".join(parts)
@@ -4022,10 +4066,12 @@ def _job_health_check(rm):
                 logger.warning(f"⚠️ [health_check] 发现异常，已通知管理员")
             except Exception as e:
                 logger.error(f"⚠️ [health_check] 通知发送失败：{e}")
+                raise
         else:
             logger.info(f"✅ [health_check] 所有关键任务仅正常执行，数据库无异常")
     except Exception as e:
         logger.error(f"❌ [health_check] 健康检查失败：{e}")
+        raise
 
 
 # ── 【v4.13.1新增】夜间模式定时任务 ───────────────────────────────────
@@ -4406,46 +4452,34 @@ def _start_with_task_scheduler(rm):
     scheduler = create_scheduler(rm)
     _scheduler_instance = scheduler.scheduler
 
-    # 启动看门狗（不进入 APScheduler，单独后台线程）
-    try:
-        from tasks.monitoring.watchdog_task import WatchdogTask
-        WatchdogTask(rm).start(timeout_sec=_WATCHDOG_TIMEOUT_SEC)
-    except Exception as e:
-        logger.warning(f"看门狗启动失败: {e}")
-
     # 场景化触发器注册（默认关闭，需 config 开启）
-    try:
-        from modules.triggers.cold_group import ColdGroupTrigger
-        from modules.triggers.night_hint import NightHintTrigger
-        ColdGroupTrigger().register(_scheduler_instance, rm)
-        NightHintTrigger().register(_scheduler_instance, rm)
-    except Exception as e:
-        logger.warning(f"场景化触发器注册失败: {e}")
+    from modules.triggers.cold_group import ColdGroupTrigger
+    from modules.triggers.night_hint import NightHintTrigger
+    ColdGroupTrigger().register(_scheduler_instance, rm)
+    NightHintTrigger().register(_scheduler_instance, rm)
 
     # 附加调度监控（监听 EXECUTED/ERROR/MISSED 事件）
-    try:
-        from core.scheduler_monitor import attach_to_scheduler
-        attach_to_scheduler(_scheduler_instance)
-    except Exception as e:
-        logger.warning(f"调度监控附加失败（非致命）: {e}")
+    from core.scheduler_monitor import attach_to_scheduler
+    attach_to_scheduler(_scheduler_instance, db=rm.db)
 
-    # 先落一次跨进程心跳并启动调度器，再异步执行耗时的全员扫描。
+    # 注册/监控均成功后才启动并落跨进程心跳，再异步执行耗时的全员扫描。
     # 否则数千人的 Telegram API 调用会在 scheduler.start() 前阻塞数分钟，
     # Dashboard 将旧心跳判为 503，外部 watchdog 还会形成误重启循环。
-    _persist_startup_heartbeat(rm)
     scheduler.start()
+    _persist_startup_heartbeat(rm)
+
+    # 看门狗必须在 scheduler 与首个持久心跳成功后启动，失败则阻止残缺服务继续。
+    from tasks.monitoring.watchdog_task import WatchdogTask
+    WatchdogTask(rm).start(timeout_sec=_WATCHDOG_TIMEOUT_SEC)
     _start_startup_maintenance(rm)
 
 
 def _persist_startup_heartbeat(rm):
     """启动扫描前立即写入内存与数据库心跳。"""
     now = int(time.time())
-    try:
-        from tasks.monitoring.heartbeat_task import update_heartbeat
-        update_heartbeat()
-        rm.db.set_system_state("last_heartbeat", str(now))
-    except Exception as e:
-        logger.warning(f"启动心跳写入失败: {e}")
+    from tasks.monitoring.heartbeat_task import update_heartbeat
+    update_heartbeat()
+    rm.db.set_system_state("last_heartbeat", str(now))
 
 
 def _run_startup_maintenance(rm):

@@ -43,3 +43,4 @@ class CleanRelaySessionsTask(BaseTask):
                 logger.info(f"🧹 中继会话清理：删除{deleted}条过期记录")
         except Exception as e:
             logger.warning(f"中继会话清理失败：{e}")
+            raise

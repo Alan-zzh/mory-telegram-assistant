@@ -71,5 +71,6 @@ class HeartbeatTask(BaseTask):
         try:
             ctx.db.set_system_state("last_heartbeat", str(int(time.time())))
         except Exception as e:
-            logger.debug(f"心跳写入数据库失败: {e}")
+            logger.error(f"心跳写入数据库失败: {e}")
+            raise
         logger.debug("💓 心跳更新")

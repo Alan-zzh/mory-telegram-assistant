@@ -73,19 +73,29 @@ class TaskScheduler:
 
     def _discover_and_load_tasks(self):
         """自动发现并实例化所有任务类。"""
+        errors = []
         for package_name in _TASK_PACKAGES:
             try:
                 package = importlib.import_module(package_name)
             except Exception as e:
-                logger.warning(f"加载任务包 {package_name} 失败: {e}")
+                logger.error(f"加载任务包 {package_name} 失败: {e}")
+                errors.append(RuntimeError(f"加载任务包 {package_name} 失败: {e}"))
                 continue
 
-            for _, module_name, _ in pkgutil.iter_modules(getattr(package, "__path__", [])):
+            try:
+                modules = list(pkgutil.iter_modules(getattr(package, "__path__", [])))
+            except Exception as e:
+                logger.error(f"扫描任务包 {package_name} 失败: {e}")
+                errors.append(RuntimeError(f"扫描任务包 {package_name} 失败: {e}"))
+                continue
+
+            for _, module_name, _ in modules:
                 full_name = f"{package_name}.{module_name}"
                 try:
                     module = importlib.import_module(full_name)
                 except Exception as e:
-                    logger.warning(f"加载任务模块 {full_name} 失败: {e}")
+                    logger.error(f"加载任务模块 {full_name} 失败: {e}")
+                    errors.append(RuntimeError(f"加载任务模块 {full_name} 失败: {e}"))
                     continue
 
                 for _, obj in inspect.getmembers(module, inspect.isclass):
@@ -96,26 +106,44 @@ class TaskScheduler:
                     try:
                         task = obj(self.rm)
                     except Exception as e:
-                        logger.warning(f"实例化任务 {obj.__name__} 失败: {e}")
+                        logger.error(f"实例化任务 {obj.__name__} 失败: {e}")
+                        errors.append(RuntimeError(f"实例化任务 {obj.__name__} 失败: {e}"))
                         continue
 
                     if task.task_id in self.tasks:
-                        logger.warning(f"任务 {task.task_id} 重复注册，跳过 {full_name}")
+                        error = RuntimeError(f"任务 {task.task_id} 重复注册: {full_name}")
+                        logger.error(str(error))
+                        errors.append(error)
                         continue
                     self.tasks[task.task_id] = task
                     logger.debug(f"加载任务: {task.task_id} ({obj.__name__})")
 
+        if errors:
+            summary = "; ".join(str(error) for error in errors[:10])
+            raise RuntimeError(f"任务发现失败，共 {len(errors)} 项: {summary}") from ExceptionGroup(
+                "任务发现失败明细", errors
+            )
+
     def _register_tasks(self):
         """将所有任务的 schedule() 配置注册到 APScheduler。"""
         registered = 0
+        errors = []
         for task_id, task in self.tasks.items():
-            for cfg in task.schedule():
+            try:
+                schedule_items = task.schedule()
+            except Exception as e:
+                logger.error(f"读取任务 {task_id} 调度配置失败: {e}")
+                errors.append(RuntimeError(f"读取任务 {task_id} 调度配置失败: {e}"))
+                continue
+            for cfg in schedule_items:
                 if not cfg:
                     continue
                 trigger = cfg.get("trigger", "cron")
                 job_id = cfg.get("job_id")
                 if not job_id:
-                    logger.warning(f"任务 {task_id} 的调度配置缺少 job_id，跳过")
+                    error = ValueError(f"任务 {task_id} 的调度配置缺少 job_id")
+                    logger.error(str(error))
+                    errors.append(error)
                     continue
 
                 params = cfg.get("params", {})
@@ -155,6 +183,13 @@ class TaskScheduler:
                     logger.info(f"注册任务: {job_id} ({trigger} {trigger_kwargs})")
                 except Exception as e:
                     logger.error(f"注册任务 {job_id} 失败: {e}")
+                    errors.append(RuntimeError(f"注册任务 {job_id} 失败: {e}"))
+
+        if errors:
+            summary = "; ".join(str(error) for error in errors[:10])
+            raise RuntimeError(f"任务注册失败，共 {len(errors)} 项: {summary}") from ExceptionGroup(
+                "任务注册失败明细", errors
+            )
 
         logger.info(f"✅ 任务调度器准备就绪，共注册 {registered} 个调度任务")
 

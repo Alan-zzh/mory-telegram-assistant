@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from modules import scheduled_broadcast
 from core.broadcast_formatter import build_greeting_html
 from core.telebot_compat import (
@@ -19,6 +21,7 @@ class _FakeDb:
     def __init__(self):
         self.tracked = []
         self.claimed = []
+        self.released = []
         self.profiles = {}
 
     def is_task_executed_today(self, task_key):
@@ -29,6 +32,7 @@ class _FakeDb:
         return True
 
     def release_task(self, task_key):
+        self.released.append(task_key)
         return True
 
     def track_channel_message(self, chat_id, message_id, content_type):
@@ -118,6 +122,102 @@ def test_execute_scheduled_broadcast_wraps_plain_text_as_html(monkeypatch):
     assert "<blockquote expandable>" in captured["text"]
     assert captured["kwargs"]["parse_mode"] == "HTML"
     assert captured["kwargs"]["reply_markup"] is not None
+
+
+@pytest.mark.parametrize("content_type", ["rich_message", "text", "voice", "poll", "checklist"])
+def test_terminal_send_failure_releases_claim_and_raises(monkeypatch, content_type):
+    db = _FakeDb()
+    item = {
+        "id": f"failure_{content_type}",
+        "enabled": True,
+        "type": content_type,
+        "content": "测试内容",
+    }
+    if content_type == "rich_message":
+        item["rich_message"] = {"text": "测试内容"}
+        monkeypatch.setattr(
+            scheduled_broadcast,
+            "send_rich_message_compat",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(ConnectionError("network down")),
+        )
+    elif content_type == "text":
+        monkeypatch.setattr(
+            scheduled_broadcast,
+            "send_message_compat",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(ConnectionError("network down")),
+        )
+    elif content_type == "voice":
+        class _Bot:
+            def send_voice(self, *_args, **_kwargs):
+                raise ConnectionError("network down")
+        bot = _Bot()
+    elif content_type == "poll":
+        item.update({"question": "选一个", "options": ["A", "B"]})
+        monkeypatch.setattr(
+            scheduled_broadcast,
+            "send_poll_compat",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(ConnectionError("network down")),
+        )
+    else:
+        item.update({"business_connection_id": "biz", "tasks": ["A"]})
+        monkeypatch.setattr(
+            scheduled_broadcast,
+            "send_checklist_compat",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(ConnectionError("network down")),
+        )
+
+    bot = locals().get("bot", object())
+    cfg = {"SCHEDULED_BROADCASTS": [item]}
+    with pytest.raises(ConnectionError, match="network down"):
+        scheduled_broadcast.execute_scheduled_broadcast(
+            bot, -1001, cfg, db, target_broadcast_id=item["id"]
+        )
+
+    assert len(db.claimed) == 1
+    assert db.released == db.claimed
+
+
+def test_image_fallback_success_keeps_claim_and_returns_success(monkeypatch):
+    db = _FakeDb()
+    monkeypatch.setattr(
+        scheduled_broadcast,
+        "send_photo_compat",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ConnectionError("photo down")),
+    )
+    monkeypatch.setattr(
+        scheduled_broadcast,
+        "send_message_compat",
+        lambda *_args, **_kwargs: SimpleNamespace(message_id=808),
+    )
+    cfg = {"SCHEDULED_BROADCASTS": [{
+        "id": "image_fallback",
+        "enabled": True,
+        "type": "image",
+        "content": "missing-file.jpg",
+        "caption": "图片暂不可用，先看文字。",
+    }]}
+
+    scheduled_broadcast.execute_scheduled_broadcast(
+        object(), -1001, cfg, db, target_broadcast_id="image_fallback"
+    )
+
+    assert db.released == []
+    assert db.tracked == [(-1001, 808, "text")]
+
+
+@pytest.mark.parametrize("item", [
+    {"id": "bad_poll", "enabled": True, "type": "poll", "question": "", "options": []},
+    {"id": "bad_checklist", "enabled": True, "type": "checklist", "tasks": ["A"]},
+])
+def test_invalid_claimed_broadcast_releases_and_raises(item):
+    db = _FakeDb()
+    with pytest.raises(ValueError, match="配置无效"):
+        scheduled_broadcast.execute_scheduled_broadcast(
+            object(), -1001, {"SCHEDULED_BROADCASTS": [item]}, db,
+            target_broadcast_id=item["id"],
+        )
+
+    assert db.released == db.claimed
 
 
 def test_execute_scheduled_broadcast_applies_profile_and_template_variation(monkeypatch):

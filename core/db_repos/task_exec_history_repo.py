@@ -188,38 +188,58 @@ class TaskExecHistoryRepo:
         }
 
     def cleanup_zombie_running(self, timeout_seconds: int = 1800) -> int:
-        """【P1-2】将超期 running 记录标记为 failed,返回受影响行数。
+        """将上个进程遗留的 running 记录终结，并同步释放任务锁。
 
         进程被 SIGKILL 时 task_execution_history 卡 running,无清理机制。
-        本方法在启动时被调用,将 start_ts 早于 (now - timeout_seconds) 的 running
-        记录标记为 failed,避免僵尸状态永久残留污染成功率统计。
+        timeout_seconds=0 用于新进程启动恢复：此时尚无本进程任务运行，数据库中
+        所有 running 都属于已退出的旧进程，可安全立即终结。正值保留历史的超时清理语义。
 
         Args:
-            timeout_seconds: running 状态超时阈值(秒),默认 1800(30 分钟)。
-                [P2-NEW-12] 由 3600s 降为 1800s，平衡 5 分钟间隔任务与误清理风险。
+            timeout_seconds: 0 表示清理全部旧进程 running；正值表示超时阈值。
         Returns:
             受影响行数。
         """
         now = int(time.time())
+        timeout_seconds = max(0, int(timeout_seconds or 0))
         cutoff_ts = now - timeout_seconds
         with self.lock:
             try:
-                cur = self.conn.execute(
-                    "UPDATE task_execution_history SET status='failed', "
-                    "end_ts=?, error_msg='process killed or timeout', "
-                    "duration_ms=? WHERE status='running' AND start_ts < ?",
-                    (now, (now - cutoff_ts) * 1000, cutoff_ts),
+                rows = self.conn.execute(
+                    "SELECT id, task_key, exec_date, start_ts FROM task_execution_history "
+                    "WHERE status='running' AND start_ts <= ?",
+                    (cutoff_ts,),
+                ).fetchall()
+                reason = (
+                    "process_restarted_before_completion"
+                    if timeout_seconds == 0 else "process killed or timeout"
                 )
+                for task_id, task_key, exec_date, start_ts in rows:
+                    self.conn.execute(
+                        "UPDATE task_execution_history SET status='failed', end_ts=?, "
+                        "error_msg=?, duration_ms=? WHERE id=? AND status='running'",
+                        (now, reason, max(0, now - int(start_ts)) * 1000, int(task_id)),
+                    )
+                    self.conn.execute(
+                        "DELETE FROM task_log WHERE task_key=? AND exec_date=?",
+                        (task_key, exec_date),
+                    )
                 self.conn.commit()
-                affected = cur.rowcount
+                affected = len(rows)
                 if affected > 0:
                     logger.warning(
-                        f"📊 [task_exec] cleanup_zombie_running: {affected} 条僵尸 running 记录已标记为 failed"
+                        f"📊 [task_exec] cleanup_zombie_running: {affected} 条旧进程 running "
+                        "已标记为 failed 并释放任务锁"
                     )
                 return affected
             except Exception as exc:
-                logger.warning(f"📊 [task_exec] cleanup_zombie_running 失败: {exc}")
-                return 0
+                try:
+                    self.conn.rollback()
+                except Exception as rollback_exc:
+                    logger.critical(
+                        f"📊 [task_exec] cleanup_zombie_running 回滚失败: {rollback_exc}"
+                    )
+                logger.error(f"📊 [task_exec] cleanup_zombie_running 失败: {exc}")
+                raise
 
     def cleanup_old_history(self, days: int = 90) -> int:
         """【P2-1】清理超过 N 天的历史记录,返回删除行数。

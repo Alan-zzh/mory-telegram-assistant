@@ -44,3 +44,4 @@ class AbWeeklyTask(BaseTask):
             run_weekly_ab_report_job(ab_db, ctx.config)
         except Exception as e:
             logger.error(f"A/B 周度分析异常：{e}")
+            raise

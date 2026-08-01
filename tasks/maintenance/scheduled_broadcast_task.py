@@ -67,15 +67,14 @@ class ScheduledBroadcastTask(BaseTask):
         broadcast_id = ctx.params.get("broadcast_id", "")
         chat_id = ctx.params.get("chat_id", 0)
         if not broadcast_id:
-            logger.warning("⚠️ 定点播报缺少 broadcast_id，跳过")
-            return
+            raise ValueError("定点播报缺少 broadcast_id")
 
         try:
             group_ids = get_all_group_ids(self.rm.config)
             if not group_ids:
-                logger.warning(f"⚠️ 定点播报 {broadcast_id} 无管理群，跳过")
-                return
+                raise ValueError(f"定点播报 {broadcast_id} 已启用但无管理群")
 
+            failures = []
             for gid in group_ids:
                 try:
                     execute_scheduled_broadcast(
@@ -85,5 +84,12 @@ class ScheduledBroadcastTask(BaseTask):
                     )
                 except Exception as e:
                     logger.warning(f"📢 定点播报 {broadcast_id} 发送到群 {gid} 失败: {e}")
+                    failures.append((gid, e))
+            if failures:
+                failed_groups = ",".join(str(gid) for gid, _ in failures)
+                raise RuntimeError(
+                    f"定点播报 {broadcast_id} 有 {len(failures)} 个群失败: {failed_groups}"
+                ) from failures[0][1]
         except Exception as e:
             logger.error(f"📢 定点播报执行失败 {broadcast_id}: {e}")
+            raise

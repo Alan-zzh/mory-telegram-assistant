@@ -144,13 +144,16 @@ class FaqDistillTask(BaseTask):
                     )
                 else:
                     logger.info("📋 FAQ蒸馏完成：无新高频问题候选")
-                    raise TaskAbort("无新高频问题候选")
-        except TaskAbort:
-            pass
+                    raise TaskAbort("无新高频问题候选", expected=True)
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             task_name = "FAQ每日问题汇总" if operation == "daily_summary" else "FAQ蒸馏"
             logger.error(f"{task_name}失败：{e}")
             get_fault_reporter().report(f"{task_name}失败", str(e)[:200], "⚠️")
+            raise
 
     @staticmethod
     def _send_daily_summary(ctx: TaskContext) -> None:

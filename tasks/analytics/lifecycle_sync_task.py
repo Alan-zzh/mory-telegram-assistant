@@ -41,3 +41,4 @@ class LifecycleSyncTask(BaseTask):
             logger.info(f"用户生命周期同步完成: {dist}")
         except Exception as e:
             logger.error(f"用户生命周期同步失败：{e}")
+            raise

@@ -86,14 +86,16 @@ class TaskTransactionManager:
         if not self._try_claim_db():
             return self
 
-        if not self._acquire_resource_locks():
+        try:
+            locks_acquired = self._acquire_resource_locks()
+            if not locks_acquired:
+                raise RuntimeError(f"resource lock acquisition failed: {self.task_name}")
+        except Exception as lock_error:
+            duration_ms = int((time.time() - self._exec_start_ts) * 1000)
+            self._record_exec_failure_safe(str(lock_error), duration_ms)
             self._release_task()
-            # 【P0-2 修复】资源锁失败时必须重置 _claimed = False,
-            # 否则 __exit__ 仍走 success 分支(_confirm_task_done 设内存锁),
-            # 导致任务被错误标记为已完成,无法重试。
-            # claimed property 直接返回 self._claimed,无需单独同步。
             self._claimed = False
-            return self
+            raise
 
         # 【P1-4 注释】claim_task 和 record_task_start 各自计算 today,
         # 理论上存在毫秒级跨天风险(claim_task 用 23:59:59.xxx,
@@ -207,13 +209,19 @@ class TaskTransactionManager:
             try:
                 self._exec_history_id = self.db.record_task_start(self.task_name)
             except Exception as e:
-                logger.warning(f"⚠️ [{self.task_name}] record_task_start 失败(忽略): {e}")
+                logger.error(f"❌ [{self.task_name}] record_task_start 失败: {e}")
                 self._exec_history_id = None
+            if self._exec_history_id is None:
+                # 抢占已落 task_log，但审计起点失败时不能继续执行正文或遗留日锁。
+                self._release_task()
+                self._claimed = False
+                raise RuntimeError(f"record_task_start failed: {self.task_name}")
             return True
         except Exception as e:
-            # 【TRAE SOLO CN v5.18.3审计修复】异常时 abort，绝不放行，防止重复播发
+            # 数据库异常不等于“今日已执行”。向上抛给 APScheduler，
+            # 让 EVENT_JOB_ERROR / journal / 既有重试链能看到真实失败。
             logger.error(f"❌ [{self.task_name}] claim_task异常，abort任务: {e}")
-            return False
+            raise
 
     def _acquire_resource_locks(self) -> bool:
         if not self.resources:
@@ -221,8 +229,7 @@ class TaskTransactionManager:
 
         rm = _rm_instance
         if rm is None:
-            logger.warning(f"⚠️ [{self.task_name}] ResourceManager未绑定，跳过资源锁")
-            return True
+            raise RuntimeError(f"[{self.task_name}] ResourceManager未绑定，无法获取资源锁")
 
         sorted_names = sorted(self.resources)
         for name in sorted_names:
@@ -232,13 +239,13 @@ class TaskTransactionManager:
                 for acquired_lock in self._acquired_locks:
                     acquired_lock.release()
                 self._acquired_locks.clear()
-                return False
+                raise RuntimeError(f"[{self.task_name}] 未知资源: {name}")
             if not lock.acquire(timeout=30.0):
                 logger.warning(f"⚠️ [{self.task_name}] 获取资源 {name} 锁超时")
                 for acquired_lock in self._acquired_locks:
                     acquired_lock.release()
                 self._acquired_locks.clear()
-                return False
+                raise TimeoutError(f"[{self.task_name}] 获取资源 {name} 锁超时")
             self._acquired_locks.append(lock)
 
         logger.debug(f"🔒 [{self.task_name}] 已获取资源锁: {sorted_names}")

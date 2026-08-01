@@ -17,18 +17,25 @@ _ssh_known_hosts
 
 # ── 🟡 敏感脚本（临时诊断/修复用，含VPS密码）─────────────────────────────
 force_*.py
+!modules/force_channel.py
+!modules/force_subscribe.py
 verify_*.py
+!scripts/verify_db_methods.py
 check_*.py
+!tasks/maintenance/check_db_migration_task.py
+!tasks/maintenance/check_expired_redpackets_task.py
 fix_*.py
 diagnostic*.py
 scan*.py
 deploy_*.py
 !deploy_vps.py
+!core/deploy_utils.py
 full_sync*.py
 
 # ── 根目录临时测试文件（下划线前缀，已归档到 tests/_archive/）────────────
 _*.py
 _*_*.py
+!**/__init__.py
 
 # ── 备份 & 临时文件 ──────────────────────────────────────────────────────
 backup_*/

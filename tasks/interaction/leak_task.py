@@ -75,8 +75,11 @@ class LeakTask(BaseTask):
                 if save_fn:
                     save_fn()
                 logger.info(f"每周轻互动触发(周{current_week})：{leak[:30]}")
-        except TaskAbort:
-            pass
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             logger.error(f"每周轻互动失败：{e}")
             retry_task(self.rm, self.run, "leak")
+            raise

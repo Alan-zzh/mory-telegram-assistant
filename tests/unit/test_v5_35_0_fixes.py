@@ -100,7 +100,7 @@ _FIXED_MODULES = [
     'ad_blocker', 'afool_member', 'auto_rules', 'bot_list', 'bot_settings',
     'bottom_button', 'channel_link', 'chat_points_cost', 'chat_settings',
     'config_template', 'content_archive', 'crypto_detector', 'entertainment_games',
-    'force_channel', 'group_commands', 'group_list', 'group_members',
+    'force_channel', 'force_subscribe', 'group_commands', 'group_list', 'group_members',
     'group_message_push', 'group_migration', 'group_props', 'group_report',
     'group_safety_center', 'group_todo', 'image_manager', 'invite_link_manager',
     'join_settings', 'language_whitelist', 'message_library', 'new_member_probation',

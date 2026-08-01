@@ -65,21 +65,24 @@ class WakeupTask(BaseTask):
         }]
 
     def execute(self, ctx: TaskContext) -> None:
-        try:
-            now = datetime.now(_CST)
-            time_str = now.strftime("%H:%M")
+        now = datetime.now(_CST)
+        time_str = now.strftime("%H:%M")
 
-            # 只在读取时持有 db 锁，避免与 ai→config 顺序冲突
-            with self.rm.locked('db'):
-                wake_ups = [(uid, wt) for uid, wt in self.rm.db.get_all_wake_ups() if wt == time_str]
+        # 只在读取时持有 db 锁，避免与 ai→config 顺序冲突。
+        # 没有匹配用户是预期空集；读取失败则必须让调度器记录失败。
+        with self.rm.locked('db'):
+            wake_ups = [(uid, wt) for uid, wt in self.rm.db.get_all_wake_ups() if wt == time_str]
 
-            for uid, _ in wake_ups:
-                try:
-                    wake_msg = _generate_wakeup_message(uid, now, self.rm)
-                    with self.rm.locked('bot'):
-                        self.rm.bot.send_message(uid, wake_msg)
-                    logger.info(f"⏰ 叫醒服务：uid={uid}")
-                except Exception as e:
-                    logger.warning(f"叫醒服务发送失败 uid={uid}：{e}")
-        except Exception as e:
-            logger.error(f"叫醒服务检查失败：{e}")
+        failures = []
+        for uid, _ in wake_ups:
+            try:
+                wake_msg = _generate_wakeup_message(uid, now, self.rm)
+                with self.rm.locked('bot'):
+                    self.rm.bot.send_message(uid, wake_msg)
+                logger.info(f"⏰ 叫醒服务：uid={uid}")
+            except Exception as e:
+                logger.warning(f"叫醒服务发送失败 uid={uid}：{e}")
+                failures.append(e)
+
+        if failures:
+            raise ExceptionGroup("叫醒服务发送失败", failures)

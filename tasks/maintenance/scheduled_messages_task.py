@@ -41,3 +41,4 @@ class ScheduledMessagesTask(BaseTask):
             run_scheduled_messages(self.rm.bot, self.rm.config, self.rm.db)
         except Exception as e:
             logger.error(f"定时消息发送异常：{e}")
+            raise

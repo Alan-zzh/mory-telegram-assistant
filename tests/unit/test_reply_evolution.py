@@ -67,7 +67,8 @@ def test_evolution_hint_only_uses_approved_enabled_samples():
 
 def test_reply_contract_config_is_safe_and_manual():
     root = Path(__file__).resolve().parents[2]
-    for name in ("config.json", "config.json.example"):
+    # config.json 含运行时凭据且被 Git 忽略；可复现契约只检查版本化示例。
+    for name in ("config.json.example",):
         cfg = json.loads((root / name).read_text(encoding="utf-8"))
         assert cfg["REPLY_CONTRACT_VERSION"] == "1.0.0"
         assert cfg["REPLY_EVOLUTION_CONFIG"] == {

@@ -592,8 +592,11 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
 
             record_abort(task_name, "新闻发送失败")
             raise TaskAbort("新闻发送失败")
-    except TaskAbort:
-        pass
+    except TaskAbort as exc:
+        if exc.expected:
+            return
+        raise
     except Exception as e:
         logger.error(f"{time_desc}新闻播报失败：{e}")
         retry_task(rm, lambda rm_inner: execute_news_task(rm_inner, task_name, time_desc), task_name)
+        raise

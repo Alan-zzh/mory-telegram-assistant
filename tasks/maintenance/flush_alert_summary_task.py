@@ -43,3 +43,4 @@ class FlushAlertSummaryTask(BaseTask):
                 logger.info(f"[告警汇总] 本次 flush 发送 {count} 条合并汇总")
         except Exception as e:
             logger.error(f"告警汇总 flush 异常：{e}")
+            raise

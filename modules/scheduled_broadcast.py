@@ -157,6 +157,16 @@ def _extract_send_error(e: Exception) -> tuple:
     return exc_type, status_code, err_summary
 
 
+def _release_failed_broadcast(db, task_key: str, failure: Exception) -> None:
+    """发送终态失败时尽力释放防重锁，并把原始失败上浮给调度器。"""
+    if db and task_key:
+        try:
+            db.release_task(task_key)
+        except Exception as release_err:
+            logger.error(f"release_task 失败 task_key={task_key}: {release_err}")
+    raise failure
+
+
 def _looks_like_local_path(s: str) -> bool:
     """粗略判断字符串是否像本地文件路径（而非 Telegram file_id）。"""
     if not s:
@@ -386,6 +396,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
             logger.debug(f"获取用户画像失败（已忽略）: {e}")
 
     for raw_bc in broadcasts:
+        task_key = ""
         bc = _adapt_scheduled_broadcast_item(raw_bc)
         if not bc.get("enabled", False):
             continue
@@ -454,12 +465,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     f"[broadcast] 发送失败 {broadcast_id}, chat={chat_id}, type=rich_message, "
                     f"exc={exc_type}, status={status_code}, err={err_summary}"
                 )
-                if db:
-                    try:
-                        db.release_task(task_key)
-                    except Exception as e:
-                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
-                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
+                _release_failed_broadcast(db, task_key, e)
             continue
 
         if content_type == "text":
@@ -495,12 +501,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     f"[broadcast] 发送失败 {broadcast_id}, chat={chat_id}, type=text, "
                     f"exc={exc_type}, status={status_code}, err={err_summary}"
                 )
-                if db:
-                    try:
-                        db.release_task(task_key)
-                    except Exception as e:
-                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
-                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
+                _release_failed_broadcast(db, task_key, e)
         elif content_type == "image":
             # content 可以是 file_id 或 URL
             caption = normalize_text(bc.get("caption", ""))
@@ -544,6 +545,8 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     f"exc={exc_type}, status={status_code}, err={err_summary}"
                 )
                 # 失败时尝试用 caption/文案回退到文本播报
+                fallback_succeeded = False
+                fallback_error = None
                 if caption:
                     logger.info(f"[broadcast] 图片发送失败，回退到文本播报 {broadcast_id}, chat={chat_id}")
                     try:
@@ -570,18 +573,16 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                         )
                         if db:
                             db.track_channel_message(chat_id, fallback_msg.message_id, "text")
+                        fallback_succeeded = True
                     except Exception as fallback_err:
+                        fallback_error = fallback_err
                         exc_type2, status_code2, err_summary2 = _extract_send_error(fallback_err)
                         logger.warning(
                             f"[broadcast] 文本回退发送失败 {broadcast_id}, chat={chat_id}, "
                             f"exc={exc_type2}, status={status_code2}, err={err_summary2}"
                         )
-                if db:
-                    try:
-                        db.release_task(task_key)
-                    except Exception as e:
-                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
-                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
+                if not fallback_succeeded:
+                    _release_failed_broadcast(db, task_key, fallback_error or e)
         elif content_type == "voice":
             try:
                 msg = bot.send_voice(chat_id, content)
@@ -590,12 +591,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     db.track_channel_message(chat_id, msg.message_id, "voice")
             except Exception as e:
                 logger.warning(f"定点播报发送失败(语音) {broadcast_id}: {e}")
-                if db:
-                    try:
-                        db.release_task(task_key)
-                    except Exception as e:
-                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
-                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
+                _release_failed_broadcast(db, task_key, e)
         elif content_type == "poll":
             try:
                 question = str(bc.get("question") or content or "").strip()
@@ -603,8 +599,9 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                 if isinstance(options, str):
                     options = [item.strip() for item in options.split("|") if item.strip()]
                 if not question or len(options) < 2:
-                    logger.warning(f"定点播报投票配置无效 {broadcast_id}: question/options缺失")
-                    continue
+                    raise ValueError(
+                        f"定点播报投票配置无效 {broadcast_id}: question/options缺失"
+                    )
                 msg = send_poll_compat(
                     bot,
                     chat_id,
@@ -643,12 +640,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     db.track_channel_message(chat_id, msg.message_id, "poll")
             except Exception as e:
                 logger.warning(f"定点播报发送失败(投票) {broadcast_id}: {e}")
-                if db:
-                    try:
-                        db.release_task(task_key)
-                    except Exception as e:
-                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
-                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
+                _release_failed_broadcast(db, task_key, e)
         elif content_type == "checklist":
             try:
                 business_connection_id = (
@@ -670,11 +662,11 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                         ],
                     }
                 if not business_connection_id:
-                    logger.warning(f"定点清单跳过 {broadcast_id}: TELEGRAM_BUSINESS_CONNECTION_ID 未配置")
-                    continue
+                    raise ValueError(
+                        f"定点清单配置无效 {broadcast_id}: TELEGRAM_BUSINESS_CONNECTION_ID 未配置"
+                    )
                 if not checklist.get("tasks"):
-                    logger.warning(f"定点清单配置无效 {broadcast_id}: tasks缺失")
-                    continue
+                    raise ValueError(f"定点清单配置无效 {broadcast_id}: tasks缺失")
                 msg = send_checklist_compat(
                     bot,
                     business_connection_id,
@@ -691,12 +683,13 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     db.track_channel_message(chat_id, msg.message_id, "checklist")
             except Exception as e:
                 logger.warning(f"定点播报发送失败(清单) {broadcast_id}: {e}")
-                if db:
-                    try:
-                        db.release_task(task_key)
-                    except Exception as e:
-                        # 【v5.31.2 修复】release_task 失败会导致 task_log 残留锁，下次定时触发被拦截
-                        logger.warning(f"release_task 失败 task_key={task_key}: {e}")
+                _release_failed_broadcast(db, task_key, e)
+        else:
+            _release_failed_broadcast(
+                db,
+                task_key,
+                ValueError(f"不支持的定点播报类型 {broadcast_id}: {content_type}"),
+            )
 def get_broadcast_schedule(config: dict):
     """获取播报时间表（用于定时任务注册）"""
     broadcasts = config.get("SCHEDULED_BROADCASTS", [])

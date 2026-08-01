@@ -76,3 +76,4 @@ class SaveConfigTask(BaseTask):
                     logger.info(f"💾 配置已保存：{', '.join(reason)}")
         except Exception as e:
             logger.error(f"配置保存失败：{e}")
+            raise

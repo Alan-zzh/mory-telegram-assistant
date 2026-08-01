@@ -41,3 +41,4 @@ class VoteKickTask(BaseTask):
             check_expired_votes(self.rm.bot, self.rm.config, self.rm.db)
         except Exception as e:
             logger.error(f"投票踢人过期检查异常：{e}")
+            raise

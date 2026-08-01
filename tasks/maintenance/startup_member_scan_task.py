@@ -55,7 +55,8 @@ class StartupMemberScanTask(BaseTask):
                         elif mg:
                             group_ids = mg
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        logger.error(f"读取管理群配置失败: {e}")
+                        raise
 
                 if not group_ids:
                     logger.info("[启动扫描] 未找到管理的群组，跳过成员扫描")
@@ -69,18 +70,18 @@ class StartupMemberScanTask(BaseTask):
 
                 total_banned = 0
                 total_scanned = 0
+                failures = []
 
                 for chat_id in group_ids:
                     try:
                         admins = bot.get_chat_administrators(chat_id)
                         admin_ids = {a.user.id for a in admins}
                         admin_ids.add(bot.get_me().id)
-                    except Exception:
-                        admin_ids = set()
-                        try:
-                            admin_ids.add(bot.get_me().id)
-                        except Exception as e:
-                            logger.debug(f"操作异常: {e}")
+                    except Exception as e:
+                        # 管理员集合不可知时继续扫描可能误禁管理员；该群本轮安全跳过并标记失败。
+                        logger.error(f"[启动扫描] 群{chat_id}管理员列表读取失败: {e}")
+                        failures.append(e)
+                        continue
 
                     all_uids = set()
                     uid_queries = [
@@ -106,13 +107,15 @@ class StartupMemberScanTask(BaseTask):
                                 if uid and isinstance(uid, int) and uid > 0:
                                     all_uids.add(uid)
                         except Exception as e:
-                            logger.debug(f"操作异常: {e}")
+                            logger.error(f"[启动扫描] UID 聚合查询失败 query={query}: {e}")
+                            failures.append(e)
                     try:
                         gm_rows = db.conn.execute("SELECT uid FROM group_members WHERE chat_id=?", (chat_id,)).fetchall()
                         for row in gm_rows:
                             all_uids.add(row[0])
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        logger.error(f"[启动扫描] group_members 查询失败 chat={chat_id}: {e}")
+                        failures.append(e)
                     logger.info(f"[启动扫描] 群{chat_id}: 聚合{len(all_uids)}个用户ID")
 
                     for uid in all_uids:
@@ -204,9 +207,11 @@ class StartupMemberScanTask(BaseTask):
                                             except Exception as e:
                                                 logger.debug(f"操作异常: {e}")
                                     except Exception as e:
-                                        logger.debug(f"操作异常: {e}")
+                                        logger.error(f"[启动扫描] 历史消息查询失败 uid={user.id}: {e}")
+                                        failures.append(e)
                             except Exception as e:
-                                logger.debug(f"[启动扫描] 封禁失败 {user_name}({user.id}): {e}")
+                                logger.error(f"[启动扫描] 封禁失败 {user_name}({user.id}): {e}")
+                                failures.append(e)
 
                         if total_scanned % 30 == 0:
                             time.sleep(1.5)
@@ -219,7 +224,11 @@ class StartupMemberScanTask(BaseTask):
                             f"👥 检查成员：{total_scanned}人\n"
                             f"🚫 封禁广告号：{total_banned}人")
                     except Exception as e:
-                        logger.debug(f"操作异常: {e}")
+                        logger.error(f"[启动扫描] 管理员摘要发送失败: {e}")
+                        failures.append(e)
                 logger.info(f"[启动扫描] 完成：扫描{len(group_ids)}群/{total_scanned}人，封禁{total_banned}人")
+                if failures:
+                    raise ExceptionGroup("启动成员扫描任务失败", failures)
         except Exception as e:
             logger.error(f"启动成员扫描失败：{e}")
+            raise

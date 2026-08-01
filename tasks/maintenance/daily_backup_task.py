@@ -83,3 +83,4 @@ class DailyBackupTask(BaseTask):
             logger.info(f"💾 每日备份完成：数据库+配置文件（清理 {removed_count} 个旧备份）")
         except Exception as e:
             logger.error(f"每日备份失败：{e}")
+            raise

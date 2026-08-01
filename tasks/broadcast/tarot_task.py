@@ -375,7 +375,10 @@ seed={convert_seed}"""
                 except Exception as e:
                     logger.error(f"塔罗搭讪发送失败：{e}")
                     raise
-        except TaskAbort:
-            pass
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             logger.error(f"塔罗搭讪任务失败：{e}")
+            raise

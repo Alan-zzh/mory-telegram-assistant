@@ -58,7 +58,11 @@ def test_spb_failure_cools_down_different_users_and_recovers(monkeypatch, reset_
     assert detector._check_spb(101) == (0.0, False)
     assert detector._check_spb(202) == (0.0, False)
     assert len(client.calls) == 1
-    assert client.calls[0][1] == {"timeout": 1, "retry_times": 0}
+    assert client.calls[0][1] == {
+        "timeout": 1,
+        "retry_times": 0,
+        "log_final_failure": False,
+    }
 
     now["value"] += SPB_COOLDOWN_SECONDS + 1
     assert detector._check_spb(303) == (0.9, True)

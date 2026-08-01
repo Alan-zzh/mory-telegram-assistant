@@ -34,10 +34,73 @@ _metrics = {
     "total_miss": 0,
     "started_at": 0,
 }
+_metrics_hydrated = False
 
 
-def attach_to_scheduler(scheduler):
-    """附加事件监听器到 APScheduler 实例"""
+def load_scheduler_metrics(db) -> int:
+    """从持久化表恢复跨重启指标，只补当前进程尚未观察到的任务。"""
+    global _metrics_hydrated
+    if db is None:
+        return 0
+    try:
+        with db.lock:
+            rows = db.conn.execute(
+                "SELECT job_id, last_status, success_count, fail_count, miss_count, "
+                "last_run, last_duration, last_error FROM scheduler_metrics"
+            ).fetchall()
+    except Exception as exc:
+        if "no such table: scheduler_metrics" in str(exc).lower():
+            # 首次运行尚无历史基线，等价于成功读取空表。
+            with _metrics_lock:
+                for info in _metrics["jobs"].values():
+                    info["_persisted_loaded"] = True
+                _metrics_hydrated = True
+            return 0
+        logger.debug(f"调度指标恢复跳过: {exc}")
+        return 0
+
+    restored = 0
+    persisted_job_ids = {row[0] for row in rows}
+    with _metrics_lock:
+        for row in rows:
+            job_id = row[0]
+            if job_id in _metrics["jobs"]:
+                current = _metrics["jobs"][job_id]
+                if current.get("_persisted_loaded"):
+                    continue
+                # 当前状态优先，但持久累计值要作为基线合并，避免晚水合后归零。
+                current["success_count"] = int(row[2] or 0) + int(current.get("success_count", 0))
+                current["fail_count"] = int(row[3] or 0) + int(current.get("fail_count", 0))
+                current["miss_count"] = int(row[4] or 0) + int(current.get("miss_count", 0))
+                current["_persisted_loaded"] = True
+                restored += 1
+                continue
+            _metrics["jobs"][job_id] = {
+                "last_status": row[1] or "",
+                "success_count": int(row[2] or 0),
+                "fail_count": int(row[3] or 0),
+                "miss_count": int(row[4] or 0),
+                "last_run": int(row[5] or 0),
+                "last_duration": int(row[6] or 0),
+                "last_error": row[7] or "",
+                "_persisted_loaded": True,
+            }
+            restored += 1
+        # 成功读取后，表中不存在的当前任务已确定没有历史基线。
+        for job_id, info in _metrics["jobs"].items():
+            if job_id not in persisted_job_ids:
+                info["_persisted_loaded"] = True
+        _metrics["total_success"] = sum(int(info.get("success_count", 0)) for info in _metrics["jobs"].values())
+        _metrics["total_fail"] = sum(int(info.get("fail_count", 0)) for info in _metrics["jobs"].values())
+        _metrics["total_miss"] = sum(int(info.get("miss_count", 0)) for info in _metrics["jobs"].values())
+        _metrics_hydrated = True
+    if restored:
+        logger.info(f"✅ 调度指标已从数据库恢复: {restored} 个任务")
+    return restored
+
+
+def attach_to_scheduler(scheduler, db=None):
+    """恢复跨进程指标并附加 APScheduler 事件监听器。"""
     try:
         from apscheduler.events import (
             EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
@@ -46,6 +109,7 @@ def attach_to_scheduler(scheduler):
         logger.warning("APScheduler 未安装，调度监控无法启动")
         return
 
+    load_scheduler_metrics(db)
     with _metrics_lock:
         _metrics["started_at"] = int(time.time())
 
@@ -56,6 +120,9 @@ def attach_to_scheduler(scheduler):
 
         with _metrics_lock:
             job_info = _metrics["jobs"][job_id]
+            if "_persisted_loaded" not in job_info:
+                # 成功水合后的新任务没有历史基线；水合失败期间的新任务等待晚水合合并。
+                job_info["_persisted_loaded"] = _metrics_hydrated
 
             if event.code == EVENT_JOB_EXECUTED:
                 # 成功执行
@@ -145,7 +212,11 @@ def sync_metrics_to_db(db) -> int:
         写入的 job 记录数
     """
     try:
+        # 未恢复历史基线前禁止 REPLACE 覆盖累计计数；数据库恢复后再落盘。
+        load_scheduler_metrics(db)
         with _metrics_lock:
+            if not _metrics_hydrated:
+                raise RuntimeError("scheduler_metrics 持久化水合不可用，拒绝覆盖历史计数")
             jobs_snapshot = {jid: dict(info) for jid, info in _metrics["jobs"].items()}
             totals = {
                 "total_success": _metrics["total_success"],
@@ -194,8 +265,8 @@ def sync_metrics_to_db(db) -> int:
         logger.debug(f"[Scheduler] 指标落盘完成: {len(jobs_snapshot)} 个任务")
         return len(jobs_snapshot)
     except Exception as e:
-        logger.debug(f"调度指标落盘失败: {e}")
-        return 0
+        logger.error(f"调度指标落盘失败: {e}")
+        raise
 
 
 # 【v5.31.1 第四层防御】关键用户可感知任务的预期执行时间表
@@ -374,7 +445,11 @@ def check_critical_jobs_health(scheduler=None, config=None, db=None):
         # 【P1-Task08】跨天重置后，从 DB 恢复今天的告警状态（重启场景：内存清零但 DB 仍在）
         _load_alerted_jobs_from_db(db)
 
+    # attach 阶段若数据库短暂不可用，健康检查仍可补载持久证据。
+    load_scheduler_metrics(db)
     with _metrics_lock:
+        if db is not None and not _metrics_hydrated:
+            raise RuntimeError("scheduler_metrics 不可用，无法判定关键任务健康状态")
         jobs_snapshot = {jid: dict(info) for jid, info in _metrics["jobs"].items()}
 
     alerts = []

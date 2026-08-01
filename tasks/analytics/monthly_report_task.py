@@ -60,11 +60,14 @@ class MonthlyReportTask(BaseTask):
                 self._send_monthly_channel_report(ctx, admin_id, today, month_start, prev_month_start)
 
                 logger.info("✅ 每月数据报告已发送（群+频道）")
-        except TaskAbort:
-            pass
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             logger.error(f"每月数据报告失败：{e}")
             retry_task(ctx.rm, lambda rm: MonthlyReportTask(rm).run(), "monthly_report")
+            raise
 
     def _send_monthly_group_report(self, ctx: TaskContext, admin_id: int, today: str, month_start: str, prev_month_start: str):
         """群数据月报：原始数据优先，再补充趋势分析，不做主观裁判。"""

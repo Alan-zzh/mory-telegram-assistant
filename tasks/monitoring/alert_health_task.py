@@ -41,3 +41,4 @@ class AlertHealthTask(BaseTask):
             run_health_check()
         except Exception as e:
             logger.error(f"告警健康巡检异常：{e}")
+            raise

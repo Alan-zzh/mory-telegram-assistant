@@ -116,8 +116,10 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
                 f"（mode={payload['mode']}，msg={sent.message_id}，"
                 f"cta={(payload.get('cta') or {}).get('target', 'none')}）"
             )
-    except TaskAbort:
-        pass
+    except TaskAbort as exc:
+        if exc.expected:
+            return
+        raise
     except Exception as exc:
         logger.error(f"玄学播报失败：{exc}")
         retry_task(
@@ -125,6 +127,7 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
             lambda rm_inner: execute_mystic_broadcast_task(rm_inner, task_name, period),
             task_name,
         )
+        raise
 
 
 class MysticBroadcastTask(BaseTask):

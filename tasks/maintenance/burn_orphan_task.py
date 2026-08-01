@@ -51,6 +51,7 @@ def _handle_orphan_disabled_alert(rm, orphan_count: int):
         logger.info(f"📨 孤儿清理告警已发管理员 admin_id={admin_id}")
     except Exception as e:
         logger.error(f"孤儿清理告警发送失败: {e}")
+        raise
 
 
 class BurnOrphanTask(BaseTask):
@@ -75,6 +76,7 @@ class BurnOrphanTask(BaseTask):
         }]
 
     def execute(self, ctx: TaskContext) -> None:
+        failures = []
         try:
             logger.info("🔍 [Phase1] 检查超时Bot消息（30分钟窗口）...")
             orphans = self.rm.db.get_orphan_messages()
@@ -84,6 +86,7 @@ class BurnOrphanTask(BaseTask):
                     active_messages = self.rm.db.get_expired_channel_messages()
                 except Exception as active_err:
                     logger.warning(f"主动播报追踪查询失败，继续清理reply_tracking: {active_err}")
+                    failures.append(active_err)
 
             pending = {}
             for bot_mid, cid, user_mid in orphans:
@@ -108,10 +111,15 @@ class BurnOrphanTask(BaseTask):
                         except Exception as del_err:
                             fail_count += 1
                             logger.debug(f"  删除失败：bot_mid={bot_mid}, err={del_err}")
-                        if hasattr(self.rm.db, "delete_bot_message_records"):
-                            self.rm.db.delete_bot_message_records(cid, bot_mid)
-                        else:
-                            self.rm.db.delete_tracked(bot_mid, cid)
+                            failures.append(del_err)
+                        try:
+                            if hasattr(self.rm.db, "delete_bot_message_records"):
+                                self.rm.db.delete_bot_message_records(cid, bot_mid)
+                            else:
+                                self.rm.db.delete_tracked(bot_mid, cid)
+                        except Exception as record_err:
+                            logger.error(f"删除孤儿追踪记录失败 bot_mid={bot_mid}: {record_err}")
+                            failures.append(record_err)
                     logger.info(f"✅ Phase1完成：成功{success_count}条，失败{fail_count}条")
                     try:
                         self.rm.db.log_orphan_cleanup(
@@ -121,7 +129,8 @@ class BurnOrphanTask(BaseTask):
                             trigger="scheduled",
                         )
                     except Exception as log_err:
-                        logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
+                        logger.error(f"orphan_cleanup_log 写入失败: {log_err}")
+                        failures.append(log_err)
                 else:
                     _handle_orphan_disabled_alert(self.rm, len(targets))
                     logger.info(f"[孤儿清理] ORPHAN_CLEANUP_ENABLED=False, 跳过删除{len(targets)}条孤儿消息")
@@ -134,7 +143,8 @@ class BurnOrphanTask(BaseTask):
                             trigger="scheduled",
                         )
                     except Exception as log_err:
-                        logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
+                        logger.error(f"orphan_cleanup_log 写入失败: {log_err}")
+                        failures.append(log_err)
             else:
                 logger.info("✅ Phase1：无超时Bot消息")
                 try:
@@ -143,27 +153,33 @@ class BurnOrphanTask(BaseTask):
                         trigger="scheduled",
                     )
                 except Exception as log_err:
-                    logger.debug(f"orphan_cleanup_log 写入失败: {log_err}")
+                    logger.error(f"orphan_cleanup_log 写入失败: {log_err}")
+                    failures.append(log_err)
 
             logger.info("✅ [Phase2] 已跳过forward探测（v4.5.35废弃），依赖Phase1 TTL清理")
 
-            # ── Phase 3: [Bug-03 修复] channel_tracking 孤儿兜底清扫 ──
-            # Phase1 通过 get_expired_channel_messages + delete_bot_message_records 清理，
-            # 但当查询失败、LIMIT 截断或消息已被 Telegram 删除时，channel_tracking 表仍会残留。
-            # 这里按 posted_at 时间戳批量删除超过 47 小时的孤儿记录，作为兜底。
-            try:
-                if hasattr(self.rm.db, "cleanup_channel_tracking_orphan"):
-                    deleted_ct = self.rm.db.cleanup_channel_tracking_orphan(max_age_hours=47)
-                    if deleted_ct > 0:
-                        logger.info(f"🧹 [Phase3] channel_tracking 兜底清理：{deleted_ct} 条孤儿记录")
-            except Exception as ct_err:
-                logger.warning(f"🧹 [Phase3] channel_tracking 兜底清理失败: {ct_err}")
         except Exception as e:
             logger.error(f"❌ 阅后即焚孤儿清理失败：{e}", exc_info=True)
+            failures.append(e)
             try:
                 self.rm.db.log_orphan_cleanup(
                     found_count=0, deleted_count=0, skipped_count=0,
                     error=str(e)[:200], trigger="scheduled",
                 )
-            except Exception:
+            except Exception as log_err:
                 logger.debug(f"记录孤儿清理日志失败: {e}")
+                failures.append(log_err)
+
+        # ── Phase 3: channel_tracking 孤儿兜底清扫 ──
+        # 即使 Phase1 查询或删除失败，也继续执行独立的过期追踪清理。
+        try:
+            if hasattr(self.rm.db, "cleanup_channel_tracking_orphan"):
+                deleted_ct = self.rm.db.cleanup_channel_tracking_orphan(max_age_hours=47)
+                if deleted_ct > 0:
+                    logger.info(f"🧹 [Phase3] channel_tracking 兜底清理：{deleted_ct} 条孤儿记录")
+        except Exception as ct_err:
+            logger.warning(f"🧹 [Phase3] channel_tracking 兜底清理失败: {ct_err}")
+            failures.append(ct_err)
+
+        if failures:
+            raise ExceptionGroup("阅后即焚孤儿清理任务失败", failures)

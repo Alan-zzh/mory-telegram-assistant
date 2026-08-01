@@ -22,7 +22,7 @@ class TaskGuard:
     核心能力：
       1. 记录每次任务调用时间戳，同一任务 5 分钟内被调用 ≥2 次 → 告警管理员
       2. 记录抢占失败原因，连续失败 ≥3 次 → 告警管理员
-      3. 健康检查时审计数据库 task_log，检测异常重复记录
+      3. 健康检查时审计数据库 task_log，只检测异常重复记录
     """
 
     _ALERT_WINDOW_SEC = 300
@@ -136,31 +136,8 @@ class TaskGuard:
                 anomalies.append(f"• {task_key}：今日{cnt}条记录（正常应1条）")
                 logger.warning(f"🚨 [TaskGuard] 数据库异常：{task_key} 今日有{cnt}条task_log记录")
         except Exception as e:
-            logger.warning(f"⚠️ [TaskGuard] 审计task_log失败: {e}")
-
-        # [P2-NEW-18] 检测缺失执行：调度器中应执行的任务，今日 task_log 无记录
-        try:
-            from tasks import task_scheduler as _ts_mod
-            sched = _ts_mod._scheduler_instance
-            if sched is not None and getattr(sched, "tasks", None):
-                expected_tasks = {
-                    t.task_id for t in sched.tasks.values()
-                    if getattr(t, "enabled", True)
-                }
-                if expected_tasks:
-                    from core.helpers import db_lock_from_db
-                    with db_lock_from_db(db):
-                        executed_rows = db.conn.execute(
-                            "SELECT DISTINCT task_key FROM task_log WHERE exec_date=?",
-                            (today,)
-                        ).fetchall()
-                    executed_tasks = {row[0] for row in executed_rows}
-                    missing = expected_tasks - executed_tasks
-                    for task_name in sorted(missing):
-                        anomalies.append(f"• {task_name}：今日未执行（预期应执行）")
-                        logger.warning(f"🚨 [TaskGuard] 数据库异常：{task_name} 今日未执行")
-        except Exception as e:
-            logger.debug(f"[TaskGuard] 缺失检测失败: {e}")
+            logger.error(f"⚠️ [TaskGuard] 审计task_log失败: {e}")
+            raise
 
         return anomalies
 

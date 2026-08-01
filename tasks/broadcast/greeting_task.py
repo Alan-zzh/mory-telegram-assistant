@@ -23,6 +23,16 @@ from tasks.support.task_config import get_greeting_time, is_greeting_enabled, ge
 logger = get_logger("tasks.broadcast.greeting")
 
 
+class GreetingDeliveryError(RuntimeError):
+    """至少一个目标群投递失败；partial 标识是否已有其他群发送成功。"""
+
+    def __init__(self, period: str, failures: list, partial: bool):
+        self.failures = failures
+        self.partial = partial
+        failed_groups = ",".join(str(gid) for gid, _ in failures)
+        super().__init__(f"{period} 问候有 {len(failures)} 个群失败: {failed_groups}")
+
+
 class GreetingTask(BaseTask):
     """早/午/晚安问候任务。"""
 
@@ -84,7 +94,8 @@ class GreetingTask(BaseTask):
                 rich_html = build_rich_greeting_html(period, msg, suffix.strip())
                 rich_message_html = build_rich_greeting_card_message(period, msg, suffix.strip())
 
-                sent_any = False
+                sent_count = 0
+                failures = []
                 for gid in group_ids:
                     try:
                         sent = send_greeting(
@@ -93,15 +104,24 @@ class GreetingTask(BaseTask):
                             reply_markup=build_mory_contact_markup(period),
                         )
                         if sent:
-                            sent_any = True
+                            sent_count += 1
                             logger.info(f"🌅 {period} 问候已发送到群 {gid}：{msg}")
+                        else:
+                            failures.append((gid, RuntimeError("send_greeting 返回 False")))
                     except Exception as e:
                         logger.warning(f"🌅 {period} 问候发送到群 {gid} 失败: {e}")
+                        failures.append((gid, e))
 
-                if not sent_any:
-                    raise TaskAbort(f"{period} 问候全部群发送失败")
-        except TaskAbort:
-            pass
+                if failures:
+                    error = GreetingDeliveryError(period, failures, partial=sent_count > 0)
+                    raise error from failures[0][1]
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             logger.error(f"{period} 问候失败：{e}")
-            retry_task(self.rm, lambda rm: self.run({"period": period}), f"greeting_{period}")
+            # 部分群已成功时不做整批自动重试，避免给成功群重复发送；调度器仍记录 ERROR。
+            if not isinstance(e, GreetingDeliveryError) or not e.partial:
+                retry_task(self.rm, lambda rm: self.run({"period": period}), f"greeting_{period}")
+            raise

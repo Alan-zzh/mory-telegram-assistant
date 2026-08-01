@@ -80,8 +80,11 @@ class NightModeTask(BaseTask):
                 else:
                     end_night_mode(self.rm.bot, gid, self.rm.config)
                     logger.info(f"☀️ 夜间模式已关闭：群 {gid}")
-        except TaskAbort:
-            pass
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             emoji = "🌙" if action == "start" else "☀️"
             logger.error(f"{emoji} 夜间模式{action}失败：{e}")
+            raise

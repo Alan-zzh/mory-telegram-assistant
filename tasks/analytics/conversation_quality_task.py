@@ -44,3 +44,4 @@ class ConversationQualityTask(BaseTask):
             logger.info(f"📊 内容质量评估任务完成: {result}")
         except Exception as e:
             logger.error(f"内容质量评估任务失败: {e}")
+            raise

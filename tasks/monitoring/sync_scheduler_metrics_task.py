@@ -42,4 +42,5 @@ class SyncSchedulerMetricsTask(BaseTask):
             if count:
                 logger.debug(f"[Scheduler] 指标落盘 {count} 个任务")
         except Exception as e:
-            logger.debug(f"调度指标落盘异常：{e}")
+            logger.error(f"调度指标落盘异常：{e}")
+            raise

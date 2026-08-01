@@ -42,3 +42,4 @@ class AbGuardianTask(BaseTask):
             run_ab_guardian_job(ctx.bot, ab_db, ctx.config)
         except Exception as e:
             logger.error(f"A/B 守护巡检异常：{e}")
+            raise

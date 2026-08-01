@@ -39,61 +39,64 @@ class LogCleanupTask(BaseTask):
         }]
 
     def execute(self, ctx: TaskContext) -> None:
+        failures = []
         try:
             retention_days = self.rm.config.get("LOG_RETENTION_DAYS", 30)
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             log_dir = os.path.join(base_dir, "logs")
-
             removed_count = cleanup_old_logs(log_dir, retention_days)
             if removed_count > 0:
                 logger.info(f"🧹 日志清理完成：删除 {removed_count} 个超过 {retention_days} 天的日志文件")
+        except Exception as e:
+            logger.error(f"日志文件清理失败：{e}")
+            failures.append(e)
 
+        try:
             now_ts = int(_time.time())
             cutoff_30 = now_ts - 30 * 86400
             cutoff_90 = now_ts - 90 * 86400
-
-            try:
-                db = self.rm.db
-                with db.lock:
-                    tables_30 = {
-                        "task_log": "exec_ts",
-                        "spam_track": "window_start",
-                        "puzzle_daily": "ts",
-                        "broadcast_tracking": "ts",
-                        "orphan_cleanup_log": "run_at",
-                        "group_join_log": "ts",
-                        "group_left_log": "ts",
-                        "proactive_engage_log": "ts",
-                        "retroactive_scan_log": "ts",
-                        "button_click_stats": "last_updated",
-                    }
-                    for table, ts_col in tables_30.items():
-                        try:
-                            # 安全：table/ts_col 来自上方硬编码字典字面量，非用户输入，无注入风险
-                            db.conn.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff_30,))
-                        except Exception as de:
-                            logger.debug(f"清理 {table} 跳过: {de}")
-
-                    tables_90 = {
-                        "admin_logs": "ts",
-                        "telemetry_events": "ts",
-                        "conversation_telemetry": "ts",
-                        "ab_guardian_log": "ts",
-                        "points_log": "ts",
-                        "deleted_messages": "ts",
-                        "message_snapshots": "ts",
-                        "ab_test_stats": "ts",
-                        "weekly_ab_report": "generated_at",
-                    }
-                    for table, ts_col in tables_90.items():
-                        try:
-                            # 安全：table/ts_col 来自上方硬编码字典字面量，非用户输入，无注入风险
-                            db.conn.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff_90,))
-                        except Exception as de:
-                            logger.debug(f"清理 {table} 跳过: {de}")
+            db = self.rm.db
+            with db.lock:
+                tables_30 = {
+                    "task_log": "exec_ts",
+                    "spam_track": "window_start",
+                    "puzzle_daily": "ts",
+                    "broadcast_tracking": "ts",
+                    "orphan_cleanup_log": "run_at",
+                    "group_join_log": "ts",
+                    "group_left_log": "ts",
+                    "proactive_engage_log": "ts",
+                    "retroactive_scan_log": "ts",
+                    "button_click_stats": "last_updated",
+                }
+                tables_90 = {
+                    "admin_logs": "ts",
+                    "telemetry_events": "ts",
+                    "conversation_telemetry": "ts",
+                    "ab_guardian_log": "ts",
+                    "points_log": "ts",
+                    "deleted_messages": "ts",
+                    "message_snapshots": "ts",
+                    "ab_test_stats": "ts",
+                    "weekly_ab_report": "generated_at",
+                }
+                for table, ts_col in {**tables_30, **tables_90}.items():
+                    cutoff = cutoff_30 if table in tables_30 else cutoff_90
+                    try:
+                        # table/ts_col 均来自上方硬编码字典，非用户输入。
+                        db.conn.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff,))
+                    except Exception as e:
+                        logger.error(f"清理 {table} 失败: {e}")
+                        failures.append(e)
+                try:
                     db.conn.commit()
-                logger.info(f"🧹 数据库日志表清理完成（30天+90天）")
-            except Exception as dbe:
-                logger.warning(f"数据库日志表清理失败（非致命）: {dbe}")
+                except Exception as e:
+                    logger.error(f"数据库日志表提交失败: {e}")
+                    failures.append(e)
+            logger.info(f"🧹 数据库日志表清理完成（30天+90天）")
         except Exception as e:
-            logger.error(f"日志清理失败：{e}")
+            logger.error(f"数据库日志表清理失败：{e}")
+            failures.append(e)
+
+        if failures:
+            raise ExceptionGroup("日志清理任务失败", failures)

@@ -95,6 +95,7 @@ class CartRecoveryTask(BaseTask):
                     return
 
                 sent_count = 0
+                failures = []
                 max_per_round = max(0, min(int(cfg.get("max_per_round", 10)), 20))
                 pending = self.rm.db.get_pending_cart_recoveries(limit=max_per_round)
 
@@ -118,16 +119,26 @@ class CartRecoveryTask(BaseTask):
                             "chat not found", "bot was blocked", "forbidden",
                             "bot was kicked", "user is deactivated"
                         )):
-                            self.rm.db.delete_user(uid)
-                            self.rm.db.cancel_cart_recovery(uid)
-                            logger.debug(f"💔 购物车挽回跳过无效用户 uid={uid}（已清理）")
+                            try:
+                                self.rm.db.delete_user(uid)
+                                self.rm.db.cancel_cart_recovery(uid)
+                                logger.debug(f"💔 购物车挽回跳过无效用户 uid={uid}（已清理）")
+                            except Exception as cleanup_err:
+                                logger.error(f"购物车无效用户清理失败 uid={uid}: {cleanup_err}")
+                                failures.append(cleanup_err)
                         else:
                             logger.warning(f"购物车挽回发送失败 uid={uid} stage={stage}: {e}")
+                            failures.append(e)
 
+                if failures:
+                    raise ExceptionGroup("购物车挽回发送失败", failures)
                 if sent_count == 0:
                     raise TaskAbort("无发送目标", expected=True)
                 logger.info(f"🛒 购物车挽回本轮发送 {sent_count} 条")
-        except TaskAbort:
-            pass
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             logger.error(f"购物车挽回失败：{e}")
+            raise

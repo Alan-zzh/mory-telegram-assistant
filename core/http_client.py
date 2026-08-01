@@ -136,7 +136,8 @@ class HTTPClient:
         timeout: Optional[int] = None,
         retry_times: Optional[int] = None,
         retry_delay: Optional[float] = None,
-        raw_text: bool = False
+        raw_text: bool = False,
+        log_final_failure: bool = True,
     ) -> Union[Dict, str]:
         """
         发送GET请求
@@ -165,7 +166,8 @@ class HTTPClient:
             timeout=timeout,
             retry_times=retry_times,
             retry_delay=retry_delay,
-            raw_text=raw_text
+            raw_text=raw_text,
+            log_final_failure=log_final_failure,
         )
     
     def post(
@@ -222,7 +224,8 @@ class HTTPClient:
         timeout: Optional[int] = None,
         retry_times: Optional[int] = None,
         retry_delay: Optional[float] = None,
-        raw_text: bool = False
+        raw_text: bool = False,
+        log_final_failure: bool = True,
     ) -> Union[Dict, str]:
         """
         内部请求方法（带重试机制）
@@ -293,7 +296,7 @@ class HTTPClient:
         
         # 所有重试都失败，抛出异常
         error_msg = f"HTTP请求失败: {method} {url} - {str(last_error)[:100]}"
-        if self.config["enable_logging"]:
+        if self.config["enable_logging"] and log_final_failure:
             logger.error(error_msg)
         raise HTTPRequestError(error_msg) from last_error
     

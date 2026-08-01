@@ -96,6 +96,7 @@ class ReactivateTask(BaseTask):
                 inactive = self.rm.db.get_inactive_users(three_days_ago, self.rm.config.get("ADMIN_ID", 0))
 
                 sent_count = 0
+                failures = []
                 max_per_run = max(0, min(int(cfg.get("max_per_run", 3)), 10))
                 sample_rate = max(0.0, min(float(cfg.get("sample_rate", 0.25)), 1.0))
                 for uid, _name in inactive[:max_per_run]:
@@ -110,14 +111,24 @@ class ReactivateTask(BaseTask):
                         except Exception as e:
                             err_str = str(e).lower()
                             if "chat not found" in err_str or "bot was blocked" in err_str or "forbidden" in err_str:
-                                self.rm.db.delete_user(uid)
-                                logger.debug(f"非活跃用户问候跳过无效用户 uid={uid}（已清理）")
+                                try:
+                                    self.rm.db.delete_user(uid)
+                                    logger.debug(f"非活跃用户问候跳过无效用户 uid={uid}（已清理）")
+                                except Exception as cleanup_err:
+                                    logger.error(f"非活跃无效用户清理失败 uid={uid}: {cleanup_err}")
+                                    failures.append(cleanup_err)
                             else:
                                 logger.warning(f"非活跃用户问候发送失败 uid={uid}：{e}")
+                                failures.append(e)
 
+                if failures:
+                    raise ExceptionGroup("非活跃用户问候发送失败", failures)
                 if sent_count == 0:
                     raise TaskAbort("无发送目标", expected=True)
-        except TaskAbort:
-            pass
+        except TaskAbort as exc:
+            if exc.expected:
+                return
+            raise
         except Exception as e:
             logger.error(f"非活跃用户问候失败：{e}")
+            raise

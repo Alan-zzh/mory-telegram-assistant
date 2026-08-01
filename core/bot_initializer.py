@@ -499,6 +499,22 @@ class BotContext:
 # ═══════════════════════════════════════════════════════════════
 #  initialize_bot() 工厂函数
 # ═══════════════════════════════════════════════════════════════
+def _recover_zombie_tasks_or_raise(db, attempts: int = 3, sleep_fn=time.sleep) -> int:
+    """启动前有界重试回收旧任务；失败则阻止带脏锁启动。"""
+    task_logger = _get_logger()
+    attempts = max(1, int(attempts))
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return db.cleanup_zombie_running(timeout_seconds=0)
+        except Exception as exc:
+            last_error = exc
+            task_logger.error(f"启动清理旧任务失败 ({attempt}/{attempts}): {exc}")
+            if attempt < attempts:
+                sleep_fn(min(2.0, 0.5 * attempt))
+    raise RuntimeError("启动清理旧任务连续失败，拒绝启动调度器") from last_error
+
+
 def initialize_bot() -> BotContext:
     """初始化Bot所有核心组件，返回BotContext"""
 
@@ -593,13 +609,10 @@ def initialize_bot() -> BotContext:
 
     # 13.5 【P1-2】清理 task_execution_history 僵尸 running 记录
     # 进程被 SIGKILL 时 running 状态永久残留,启动时一次性清理
-    # [P2-NEW-12] 阈值由 3600s 降为 1800s，平衡 5 分钟间隔任务与误清理风险
-    try:
-        zombie_count = db.cleanup_zombie_running(timeout_seconds=1800)
-        if zombie_count > 0:
-            logger.warning(f"🧹 启动清理: {zombie_count} 条僵尸 running 任务记录已标记为 failed")
-    except Exception as e:
-        logger.warning(f"启动清理僵尸 running 记录失败(非致命): {e}")
+    # 此处在后台任务启动前执行，现存 running 均属于旧进程，可立即回收。
+    zombie_count = _recover_zombie_tasks_or_raise(db)
+    if zombie_count > 0:
+        logger.warning(f"🧹 启动清理: {zombie_count} 条僵尸 running 任务记录已标记为 failed")
 
     # 14. 数据库写入测试（内存测试，不写生产库）
     _test_db_write()

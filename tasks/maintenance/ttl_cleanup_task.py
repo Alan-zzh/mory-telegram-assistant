@@ -37,6 +37,7 @@ class TtlCleanupTask(BaseTask):
         }]
 
     def execute(self, ctx: TaskContext) -> None:
+        failures = []
         try:
             ts = int(time.time())
             cutoff = ts - 7 * 86400
@@ -48,25 +49,33 @@ class TtlCleanupTask(BaseTask):
             try:
                 self.rm.db.cleanup_old_history(days=90)
             except Exception as e:
-                logger.debug(f"task_execution_history 清理跳过: {e}")
+                logger.error(f"task_execution_history 清理失败: {e}")
+                failures.append(e)
         except Exception as e:
             logger.error(f"TTL清理失败：{e}")
+            failures.append(e)
 
         try:
             from core.message_dispatcher import _cleanup_conv_tracker, _cleanup_radar_cooldown
             _cleanup_conv_tracker()
             _cleanup_radar_cooldown()
         except Exception as e:
-            logger.debug(f"内存字典清理跳过：{e}")
+            logger.error(f"内存字典清理失败：{e}")
+            failures.append(e)
 
         try:
             from modules.antiflood import cleanup_flood_cache
             cleanup_flood_cache(max_age=300)
         except Exception as e:
-            logger.debug(f"刷屏缓存清理跳过：{e}")
+            logger.error(f"刷屏缓存清理失败：{e}")
+            failures.append(e)
 
         try:
             from modules.edit_detector import cleanup_old_snapshots
             cleanup_old_snapshots(max_age=86400)
         except Exception as e:
-            logger.debug(f"编辑快照清理跳过：{e}")
+            logger.error(f"编辑快照清理失败：{e}")
+            failures.append(e)
+
+        if failures:
+            raise ExceptionGroup("TTL 清理任务失败", failures)

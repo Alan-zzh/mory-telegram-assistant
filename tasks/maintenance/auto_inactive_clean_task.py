@@ -42,3 +42,4 @@ class AutoInactiveCleanTask(BaseTask):
             run_auto_inactive_clean(self.rm.bot, self.rm.config, self.rm.db)
         except Exception as e:
             logger.error(f"自动清理不活跃用户异常：{e}")
+            raise

@@ -42,3 +42,4 @@ class PointsDecayTask(BaseTask):
             run_points_decay(self.rm.bot, self.rm.config, self.rm.db)
         except Exception as e:
             logger.error(f"积分衰减异常：{e}")
+            raise

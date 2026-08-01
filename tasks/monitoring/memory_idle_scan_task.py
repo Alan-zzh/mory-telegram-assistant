@@ -42,4 +42,5 @@ class MemoryIdleScanTask(BaseTask):
             if triggered:
                 logger.info(f"[MEMORY] 静默扫描触发 {triggered} 个用户的记忆摘要")
         except Exception as e:
-            logger.debug(f"记忆静默扫描异常：{e}")
+            logger.error(f"记忆静默扫描异常：{e}")
+            raise

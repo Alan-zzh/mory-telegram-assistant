@@ -3,6 +3,8 @@
 from contextlib import nullcontext
 from types import SimpleNamespace
 
+import pytest
+
 import modules.auto_tasks as legacy
 import modules.group_mgr as group_mgr
 import tasks.interaction.cart_recovery_task as cart_module
@@ -55,6 +57,7 @@ class _DB:
         self.advanced = []
         self.reset = []
         self.deleted = []
+        self.tracked_messages = []
 
     def get_pending_cart_recoveries(self, limit=20):
         self.pending_calls += 1
@@ -75,6 +78,12 @@ class _DB:
 
     def delete_user(self, uid):
         self.deleted.append(uid)
+
+    def track_channel_message(self, chat_id, message_id, content_type):
+        self.tracked_messages.append((chat_id, message_id, content_type))
+
+    def track_bot_message(self, chat_id, message_id):
+        self.tracked_messages.append((chat_id, message_id, "bot"))
 
 
 class _RM:
@@ -131,6 +140,53 @@ def test_cart_recovery_enabled_sends_once_then_cancels(monkeypatch):
     for _chat_id, text, _kwargs in modular.bot.sent + legacy_rm.bot.sent:
         assert "@moryselect" in text.lower()
         assert "@morychannelbot" not in text.lower()
+
+
+def test_cart_recovery_network_failure_is_not_expected_abort(monkeypatch):
+    _patch_transactions(monkeypatch)
+    rm = _RM(
+        {"CART_RECOVERY_CONFIG": {"enabled": True, "max_per_round": 10}},
+        db=_DB(pending=[(101, 0)]),
+    )
+    rm.bot.send_message = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        ConnectionError("network down")
+    )
+
+    with pytest.raises(ExceptionGroup, match="购物车挽回发送失败"):
+        CartRecoveryTask(rm).execute(SimpleNamespace())
+
+
+def test_cart_recovery_partial_network_failure_still_raises(monkeypatch):
+    _patch_transactions(monkeypatch)
+    rm = _RM(
+        {"CART_RECOVERY_CONFIG": {"enabled": True, "max_per_round": 10}},
+        db=_DB(pending=[(101, 0), (202, 0)]),
+    )
+
+    def _send(chat_id, *_args, **_kwargs):
+        if chat_id == 101:
+            raise ConnectionError("network down")
+        return SimpleNamespace(message_id=1)
+
+    rm.bot.send_message = _send
+    with pytest.raises(ExceptionGroup, match="购物车挽回发送失败"):
+        CartRecoveryTask(rm).execute(SimpleNamespace())
+    assert rm.db.cancelled == [202]
+
+
+def test_reactivate_network_failure_is_not_expected_abort(monkeypatch):
+    _patch_transactions(monkeypatch)
+    monkeypatch.setattr(reactivate_module.random, "random", lambda: 0.0)
+    rm = _RM(
+        {"REACTIVATE_CONFIG": {"enabled": True, "max_per_run": 3, "sample_rate": 1.0}},
+        db=_DB(inactive=[(101, "u")]),
+    )
+    rm.bot.send_message = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        ConnectionError("network down")
+    )
+
+    with pytest.raises(ExceptionGroup, match="非活跃用户问候发送失败"):
+        ReactivateTask(rm).execute(SimpleNamespace())
 
 
 def test_reactivate_and_leak_default_off_in_both_paths(monkeypatch):

@@ -98,3 +98,4 @@ class BackupTask(BaseTask):
             _do_backup(self.rm.db.db_file)
         except Exception as e:
             logger.error(f"数据库备份失败：{e}")
+            raise

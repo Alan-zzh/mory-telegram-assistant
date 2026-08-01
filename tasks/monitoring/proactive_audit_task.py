@@ -99,6 +99,7 @@ class ProactiveAuditTask(BaseTask):
     def execute(self, ctx: TaskContext) -> None:
         try:
             issues = []
+            failures = []
 
             try:
                 if hasattr(self.rm.db, "check_integrity"):
@@ -107,6 +108,7 @@ class ProactiveAuditTask(BaseTask):
                         issues.append(f"🔴 [P0] 数据库完整性异常: {result}")
             except Exception as e:
                 issues.append(f"🟡 [P1] 数据库检查失败: {e}")
+                failures.append(e)
 
             try:
                 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -118,6 +120,7 @@ class ProactiveAuditTask(BaseTask):
                     issues.append(f"🔴 [P0] 配置缺失 {len(missing)} 项: {missing[:5]}...")
             except Exception as e:
                 issues.append(f"🟡 [P1] 配置检查失败: {e}")
+                failures.append(e)
 
             try:
                 if self.rm.ai and hasattr(self.rm.ai, "ping"):
@@ -125,6 +128,7 @@ class ProactiveAuditTask(BaseTask):
                         issues.append("🔴 [P0] AI 引擎不可用")
             except Exception as e:
                 issues.append(f"🟡 [P1] AI 检查失败: {e}")
+                failures.append(e)
 
             try:
                 if hasattr(self.rm.db, "get_recent_task_logs"):
@@ -134,7 +138,8 @@ class ProactiveAuditTask(BaseTask):
                         if failed > 0:
                             issues.append(f"🟡 [P1] 24h 内 {failed} 个任务执行失败")
             except Exception as e:
-                logger.debug(f"任务执行率检查失败: {e}")
+                logger.error(f"任务执行率检查失败: {e}")
+                failures.append(e)
 
             try:
                 total, used, free = shutil.disk_usage("/")
@@ -144,7 +149,8 @@ class ProactiveAuditTask(BaseTask):
                 elif free_pct < 20:
                     issues.append(f"🟡 [P1] 磁盘空间偏紧: {free_pct:.1f}%")
             except Exception as e:
-                logger.debug(f"磁盘空间检查失败: {e}")
+                logger.error(f"磁盘空间检查失败: {e}")
+                failures.append(e)
 
             try:
                 backup_dir = os.path.join(base_dir, "backup")
@@ -161,7 +167,8 @@ class ProactiveAuditTask(BaseTask):
                         if age_hours >= 25 or file_size <= 0:
                             issues.append(f"🔴 [P0] 备份异常：最新备份 {age_hours:.0f} 小时前，大小 {file_size} 字节")
             except Exception as e:
-                logger.debug(f"备份文件检查失败: {e}")
+                logger.error(f"备份文件检查失败: {e}")
+                failures.append(e)
 
             health_score = _compute_health_score(self.rm)
             if health_score < 60:
@@ -184,5 +191,8 @@ class ProactiveAuditTask(BaseTask):
                 with self.rm.locked('bot'):
                     self.rm.bot.send_message(admin_id, report)
             logger.info(f"预防性自审计完成: 健康度={health_score} 问题={len(issues)}")
+            if failures:
+                raise ExceptionGroup("预防性自审计失败", failures)
         except Exception as e:
             logger.error(f"预防性自审计失败: {e}")
+            raise

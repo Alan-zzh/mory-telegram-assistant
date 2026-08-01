@@ -36,11 +36,13 @@ class PrometheusMetricsTask(BaseTask):
         }]
 
     def execute(self, ctx: TaskContext) -> None:
+        failures = []
         try:
             from core.metrics import update_metrics
             update_metrics()
         except Exception as e:
             logger.error(f"Prometheus 指标采集异常：{e}")
+            failures.append(e)
 
         # v5.31.2 修复：LLMCostGuard 刷盘，避免累计成本数据丢失
         try:
@@ -51,4 +53,8 @@ class PrometheusMetricsTask(BaseTask):
                 if raw_conn:
                     guard.flush_to_db(raw_conn)
         except Exception as _flush_err:
-            logger.debug(f"LLMCostGuard flush_to_db 跳过: {_flush_err}")
+            logger.error(f"LLMCostGuard flush_to_db 失败: {_flush_err}")
+            failures.append(_flush_err)
+
+        if failures:
+            raise ExceptionGroup("Prometheus 指标采集任务失败", failures)
