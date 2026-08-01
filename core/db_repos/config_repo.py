@@ -166,7 +166,8 @@ class ConfigRepo:
         """【v4.5.32→v4.7.0】数据库级原子抢占：跨进程防重核心防线
         纯INSERT OR IGNORE + UNIQUE索引，无SELECT（SELECT会引入竞态窗口）
         SQLite的UNIQUE约束保证跨进程原子性：后到者插入被拒绝
-        返回True表示抢占成功，False表示已被抢占（同次或历史执行）"""
+        返回True表示抢占成功，False仅表示已被抢占（同次或历史执行）。
+        数据库错误必须向上抛出，禁止伪装成正常去重。"""
         today = datetime.now(_CST).strftime("%Y-%m-%d")
         ts = time.time()
         with self.lock:
@@ -186,7 +187,7 @@ class ConfigRepo:
                     report_fault("数据库任务抢占失败", f"claim_task({task_key})异常: {str(e)[:100]}", "⚠️")
                 except Exception as fault_err:
                     self._db._log_db_error("report_fault 调用", fault_err, "error", f"task_key={task_key}")
-                return False
+                raise
 
     def is_task_executed_today(self, task_key: str) -> bool:
         """查询任务今日是否已执行"""
@@ -251,7 +252,7 @@ class ConfigRepo:
     def check_integrity(self) -> str:
         """执行 PRAGMA integrity_check，返回完整性检查结果字符串
 
-        PRAGMA 在 WriteQueueConnectionProxy 中被识别为读操作，直接执行不走队列。
+        PRAGMA 为读操作，直接在原生 SQLite 连接上执行（v5.32.0 起无 WriteQueueConnectionProxy）。
 
         Returns:
             "ok" 表示完整性正常；否则返回错误描述字符串；异常时返回 "error: ..."

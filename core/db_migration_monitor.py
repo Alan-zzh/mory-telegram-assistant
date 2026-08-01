@@ -87,17 +87,12 @@ def record_sample() -> None:
 def _get_real_conn(db_conn) -> Any:
     """解包连接代理，获取真实 sqlite3 连接
 
-    支持三种输入：
-    - DB 对象（core/database.py）：有 _real_conn 属性
-    - WriteQueueConnectionProxy（core/db_connection_proxy.py）：有 _real 属性
+    支持两种输入：
+    - DB 对象（core/database.py）：有 _real_conn 属性（v5.32.0 起等同 self.conn）
     - 原始 sqlite3.Connection：直接返回
     """
-    # DB 对象：有 _real_conn 属性
+    # DB 对象：有 _real_conn 属性（v5.32.0 移除 WriteQueueConnectionProxy 后保留的兼容引用）
     real = getattr(db_conn, "_real_conn", None)
-    if real is not None:
-        return real
-    # WriteQueueConnectionProxy：有 _real 属性
-    real = getattr(db_conn, "_real", None)
     if real is not None:
         return real
     # 原始 sqlite3 连接
@@ -395,7 +390,7 @@ def check_migration_indicators(db_conn) -> dict:
     任一指标超阈值时，自动调用 alert_bot.send_alert 推送警告。
 
     Args:
-        db_conn: DB 对象 / WriteQueueConnectionProxy / 原始 sqlite3 连接
+        db_conn: DB 对象 / 原始 sqlite3 连接
 
     Returns:
         {indicator_name: {value, threshold, exceeded, message}}
@@ -454,7 +449,7 @@ def get_migration_status(db_conn) -> dict:
     - 仍会记录采样，确保数据连续性
 
     Args:
-        db_conn: DB 对象 / WriteQueueConnectionProxy / 原始 sqlite3 连接
+        db_conn: DB 对象 / 原始 sqlite3 连接
 
     Returns:
         {ok, indicators, exceeded_count, exceeded_list, db_file, ts}
