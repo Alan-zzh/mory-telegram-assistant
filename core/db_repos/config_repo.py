@@ -67,7 +67,17 @@ class ConfigRepo:
                 (key, str(value), ts)
             )
             self.conn.commit()
-            logger.debug(f"📌 系统状态更新: {key}={value}")
+            # 日志脱敏：只记录键+类型/长度，禁止明文值进入 DEBUG（防止长 list/dict/意外 token 落盘）
+            _v = value
+            if _v is None:
+                _safe = "None"
+            elif isinstance(_v, str):
+                _safe = f"str(len={len(_v)})"
+            elif isinstance(_v, (list, dict, tuple, set)):
+                _safe = f"{type(_v).__name__}(len={len(_v)})"
+            else:
+                _safe = type(_v).__name__
+            logger.debug(f"📌 系统状态更新: {key}=<{_safe}>")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 【v4.4.9新增】关键词自动回复系统

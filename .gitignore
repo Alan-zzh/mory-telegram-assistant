@@ -60,7 +60,12 @@ data/
 tmp_*.txt
 test_out.txt
 test*.txt
-=
+
+# 播报视觉样张与运行时缓存（生成产物，不提交）
+assets/
+runtime/cache/
+runtime/demo_*.py
+runtime/demo_*.png
 
 # 临时诊断/运维脚本（含硬编码VPS路径/Token/群ID，不提交）
 scripts/vps_*.py

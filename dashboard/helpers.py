@@ -103,7 +103,8 @@ def read_config():
         _config_cache["mtime"] = mtime
         _config_cache["loaded_at"] = now
         return data
-    except Exception:
+    except Exception as e:
+        logger.debug(f"config读取失败，回退到缓存或空配置（非致命）：{e}")
         return _config_cache["data"] or {}
 
 

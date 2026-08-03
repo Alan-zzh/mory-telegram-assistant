@@ -101,13 +101,14 @@ def add_spoiler_hint(text: str) -> str:
     return f"<tg-spoiler>{safe}</tg-spoiler>"
 
 
-# ── 统一富文本卡片构建器（v5.0）──────────────────────────────────────────────
+# ── 统一富文本卡片构建器（v5.38.15）────────────────────────────────────────────
 def build_card_html(
     title: str,
     body: str,
     footer: str = "",
     badge: str = "",
     emoji: str = "📢",
+    closing: str = "",
 ) -> str:
     """
     统一富文本卡片构建器。所有播报类型共用此函数。
@@ -119,6 +120,8 @@ def build_card_html(
     <空行>
     正文内容
     <空行>
+    💬 结尾引导语（可选）
+    <空行>
     <blockquote expandable>折叠补充</blockquote>
 
     参数：
@@ -127,6 +130,7 @@ def build_card_html(
         footer: 折叠补充内容（纯文本，自动转义）
         badge: 角标（如 "Mory来报到啦"）
         emoji: 标题前 emoji
+        closing: 正文结尾自然引导语（与按钮配套）
     """
     safe_title = escape_html_text(title)
     head = f"<b><i>{emoji} {safe_title}</i></b>"
@@ -138,20 +142,22 @@ def build_card_html(
 
     safe_body = escape_html_text(normalize_text(body))
 
-    footer_html = ""
-    if footer:
-        safe_footer = escape_html_text(footer)
-        footer_html = f"<blockquote expandable>{safe_footer}</blockquote>"
-
     parts = [head]
     if badge_line:
         parts.append("")
         parts.append(badge_line)
     parts.append("")
     parts.append(safe_body)
-    if footer_html:
+
+    if closing:
+        safe_closing = escape_html_text(closing)
         parts.append("")
-        parts.append(footer_html)
+        parts.append(f"💬 {safe_closing}")
+
+    if footer:
+        safe_footer = escape_html_text(footer)
+        parts.append("")
+        parts.append(f"<blockquote expandable>{safe_footer}</blockquote>")
 
     return "\n".join(parts)
 
@@ -214,6 +220,7 @@ def build_greeting_html(
     footer: str = "",
     badge: str = "",
     user_profile: dict = None,
+    closing: str = "",
 ) -> str:
     """
     问候卡片（早安/午安/晚安）。
@@ -234,7 +241,7 @@ def build_greeting_html(
         if "vip" in tags or level >= 5:
             emoji = "✨"
         if "tarot" in interests and period in ("evening", "night"):
-            emoji = ""
+            emoji = "🔮"
         elif "treehole" in interests:
             emoji = "🌳"
 
@@ -244,6 +251,7 @@ def build_greeting_html(
         footer=footer,
         badge=badge,
         emoji=emoji,
+        closing=closing,
     )
 
 
@@ -255,6 +263,7 @@ def build_broadcast_html(
     badge: str = "",
     period: str = "",
     user_profile: dict = None,
+    closing: str = "",
 ) -> str:
     """定点播报卡片。"""
     emoji = "📢"
@@ -271,7 +280,7 @@ def build_broadcast_html(
         if "tarot" in interests and period in ("evening", "night"):
             emoji = "🔮"
         elif "treehole" in interests:
-            emoji = ""
+            emoji = "🌳"
 
     return build_card_html(
         title=title,
@@ -279,6 +288,7 @@ def build_broadcast_html(
         footer=footer,
         badge=badge,
         emoji=emoji,
+        closing=closing,
     )
 
 
@@ -320,6 +330,7 @@ def build_news_html(
     time_desc: str,
     news_content: str,
     source_name: str = "",
+    closing: str = "",
 ) -> str:
     """
     新闻播报卡片。
@@ -331,9 +342,9 @@ def build_news_html(
     📌 新闻2
     ...
     <blockquote expandable><i>观察行</i></blockquote>
+    💬 结尾引导语（可选）
     <空行>
-    ─ ─ ─ ─  ─ ─ ─ ─ ─
-    <b><i>自然引导</i></b>
+    <i>@MoryMateBot</i>
     """
     period_emojis = {
         "早间": "☀️",
@@ -357,6 +368,10 @@ def build_news_html(
             f"<blockquote expandable><i>{observation}</i></blockquote>"
         )
 
+    if closing:
+        safe_closing = escape_html_text(closing)
+        formatted_lines.append(f"💬 {safe_closing}")
+
     formatted_body = "\n".join(formatted_lines)
 
     # 底部自然引导（不用分隔线，用折叠区）
@@ -376,6 +391,7 @@ def build_rich_broadcast_html(**kwargs) -> str:
         badge=kwargs.get("badge", ""),
         period=kwargs.get("period", ""),
         user_profile=kwargs.get("user_profile"),
+        closing=kwargs.get("closing", ""),
     )
 
 
@@ -389,6 +405,7 @@ def build_rich_greeting_html(
         footer=footer,
         badge=kwargs.get("badge", ""),
         user_profile=kwargs.get("user_profile"),
+        closing=kwargs.get("closing", ""),
     )
 
 
@@ -397,7 +414,12 @@ def build_rich_news_html(time_desc: str, news_content: str, source_name: str = "
 
     source_name 仅用于兼容旧调用方，当前排版不展示来源。
     """
-    return build_news_html(time_desc=time_desc, news_content=news_content, source_name=source_name)
+    return build_news_html(
+        time_desc=time_desc,
+        news_content=news_content,
+        source_name=source_name,
+        closing=kwargs.get("closing", ""),
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -431,14 +453,18 @@ def build_rich_card_message(
     footer: str = "",
     badge: str = "",
     emoji: str = "📢",
+    closing: str = "",
 ) -> str:
-    """[v5.32] Rich Message 通用卡片（块级标签）。
+    """[v5.38.15] Rich Message 通用卡片（块级标签）。
 
     排版结构：
         <h2>emoji 标题</h2>
         <p><i>角标</i></p>
         <p>正文段落1</p>
         <p>正文段落2</p>
+        <p>💬 结尾引导语（可选）</p>
+        <hr>
+        <footer>@MoryMateBot</footer>
         <details><summary>更多</summary>...footer...</details>
 
     返回 HTML 字符串，调用方用 send_rich_message_compat(bot, chat_id, html) 发送。
@@ -452,6 +478,13 @@ def build_rich_card_message(
 
     for para in _rich_split_paragraphs(body):
         parts.append(f"<p>{para}</p>")
+
+    if closing:
+        safe_closing = escape_html_text(closing)
+        parts.append(f"<p>💬 {safe_closing}</p>")
+
+    parts.append("<hr>")
+    parts.append(f"<footer>{BROADCAST_SENDER_HANDLE}</footer>")
 
     if footer:
         safe_footer = escape_html_text(footer)
@@ -468,8 +501,9 @@ def build_rich_greeting_card_message(
     footer: str = "",
     badge: str = "",
     user_profile: dict = None,
+    closing: str = "",
 ) -> str:
-    """[v5.32] Rich Message 问候卡片（早/午/晚安）。"""
+    """[v5.38.15] Rich Message 问候卡片（早/午/晚安）。"""
     style = PERIOD_STYLES.get(period, {})
     emoji = style.get("emoji", "📢")
     greeting = style.get("greeting", "你好")
@@ -491,6 +525,7 @@ def build_rich_greeting_card_message(
         footer=footer,
         badge=badge,
         emoji=emoji,
+        closing=closing,
     )
 
 
@@ -501,8 +536,9 @@ def build_rich_broadcast_card_message(
     badge: str = "",
     period: str = "",
     user_profile: dict = None,
+    closing: str = "",
 ) -> str:
-    """[v5.32] Rich Message 定点播报卡片。"""
+    """[v5.38.15] Rich Message 定点播报卡片。"""
     emoji = "📢"
     if period:
         style = PERIOD_STYLES.get(period, {})
@@ -525,6 +561,7 @@ def build_rich_broadcast_card_message(
         footer=footer,
         badge=badge,
         emoji=emoji,
+        closing=closing,
     )
 
 
@@ -584,10 +621,11 @@ def build_rich_news_card_message(
 
 
 def build_mystic_html(payload: dict) -> str:
-    """传统文化栏目的 Telegram HTML 降级卡片。"""
+    """[v5.38.15] 传统文化栏目的 Telegram HTML 降级卡片。"""
+    # 标题统一 <b><i> 风格，与 build_card_html / build_news_html 一致
     parts = [
-        f"<b>{escape_html_text(payload.get('emoji', '🔮'))} "
-        f"{escape_html_text(payload.get('title', '今日栏目'))}</b>",
+        f"<b><i>{escape_html_text(payload.get('emoji', '🔮'))} "
+        f"{escape_html_text(payload.get('title', '今日栏目'))}</i></b>",
     ]
     kicker = str(payload.get("kicker", "") or "")
     if kicker:
@@ -605,14 +643,15 @@ def build_mystic_html(payload: dict) -> str:
     if insight:
         parts.extend(["", f"<blockquote>{escape_html_text(insight)}</blockquote>"])
     cta = payload.get("cta")
-    if isinstance(cta, dict) and cta.get("closing"):
-        parts.extend(["", f"💬 {escape_html_text(cta['closing'])}"])
+    closing = cta.get("closing") if isinstance(cta, dict) else ""
+    if closing:
+        parts.extend(["", f"💬 {escape_html_text(closing)}"])
     parts.extend(["", f"<i>{BROADCAST_SENDER_HANDLE}</i>"])
     return "\n".join(parts)
 
 
 def build_rich_mystic_card_message(payload: dict) -> str:
-    """三时段传统文化栏目的分区 Rich Message 卡片。"""
+    """[v5.38.15] 三时段传统文化栏目的分区 Rich Message 卡片。"""
     parts = [
         f"<h2>{escape_html_text(payload.get('emoji', '🔮'))} "
         f"{escape_html_text(payload.get('title', '今日栏目'))}</h2>",
@@ -633,8 +672,9 @@ def build_rich_mystic_card_message(payload: dict) -> str:
     if insight:
         parts.append(f"<blockquote>{escape_html_text(insight)}</blockquote>")
     cta = payload.get("cta")
-    if isinstance(cta, dict) and cta.get("closing"):
-        parts.append(f"<p>💬 {escape_html_text(cta['closing'])}</p>")
+    closing = cta.get("closing") if isinstance(cta, dict) else ""
+    if closing:
+        parts.append(f"<p>💬 {escape_html_text(closing)}</p>")
     parts.extend(["<hr>", f"<footer>{BROADCAST_SENDER_HANDLE}</footer>"])
     return "\n".join(parts)
 

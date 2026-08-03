@@ -89,8 +89,9 @@ def get_user_role_from_db(db, user_id: int) -> str:
         if row:
             return row[0]
         return "viewer"
-    except Exception:
+    except Exception as e:
         # 表不存在或查询异常，降级为 viewer（最小权限原则）
+        logging.getLogger("dashboard.audit").debug(f"角色查询异常，降级为viewer（非致命）：{e}")
         return "viewer"
 
 
@@ -159,8 +160,9 @@ def get_permissions_from_db(db, role: str) -> set:
             (role,),
         )
         return {row[0] for row in cur.fetchall()}
-    except Exception:
+    except Exception as e:
         # 表不存在或查询异常，返回空集合（调用方负责回退）
+        logging.getLogger("dashboard.audit").debug(f"权限集合查询异常，返回空集（非致命）：{e}")
         return set()
 
 

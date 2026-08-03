@@ -69,6 +69,66 @@
 - 解法：六类对话意图每轮注入同一温情合同，轻微绿茶感只做柔软反差，俏皮只做轻巧接梗，纯欲只来自干净含蓄措辞；合同模式强制忽略生产旧敌意桶；FAQ、直接入口、缓存和模型回复统一经过动作旁白与敌意降级门禁。
 - 预防：人设回归必须覆盖六类意图×群/私渠道、旧配置污染、截图式敌意原句、动作旁白、预览/订阅目标和静态旁路；随机风格只能改变表达温度，不能改变友好边界、事实或 CTA。
 
+### 6.6 CTA 文案池 label/image_label 两处硬编码不同步（v5.38.16 新增）
+- 问题：mystic 三池子（almanac/tarot/iching）× 三目标（contact/preview/subscribe）共 24 条 img_label 历史上全部拼接“· 点击头像”视觉后缀，但图片按钮视觉与真实 InlineKeyboard 按钮视觉无法对应，validate_cta_consistency 校验全失败。
+- 根因：v5.38.15 初版文案池的 img_label 是给人读的“点击头像提示”，不是给 draw_card 画按钮的正文；两处独立维护没有单一真相源。
+- 解法：v5.38.16 引入 derive_image_label = strip_visual_emoji(label) 统一派生，把运行时 image_label 强制等于派生结果；同步清理 24 条池内 img_label 后缀残留（iching 的 ☯️ 变体选择符 FE0F 也同步与 strip 结果一致）。
+- 预防：新增/修改 CTA 文案池条目，必须同步满足 label→strip→img_label 一致；每次改动后跑 test_all_cta_pool_entries_pass_consistency_check；运行路径强制走 derive_image_label 覆盖池内覆盖值，不接受第二套真实值。
+
+### 6.7 部署文件收集缺体积/路径黑名单，临时大目录会被误传（v5.38.16 新增）
+- 问题：runtime/cache（图片缓存）、runtime/logs（大日志）、runtime/audit-reports、runtime/demo、__pycache__、.git 等目录或超大文件（>20MB）会被 _collect_upload_files 误收，拉长部署并可能把旧日志/缓存覆盖生产。
+- 根因：deploy_vps.py 之前只有扩展名白名单和根文档列表过滤，没有按路径片段和体积拒绝。
+- 解法：v5.38.16 引入 `MAX_UPLOAD_FILE_SIZE=20MB` 和 `SKIP_PATH_FRAGMENTS=("runtime/cache", "runtime/logs", "runtime/audit-reports", "runtime/demo", "__pycache__", ".git/")` 两道硬门禁。v5.38.17 补 SKIP_PATH_FRAGMENTS=("_quarantine_", "EXECUTION_", "_tmp_") 路径片段兜底 + EXCLUDE_NAMES=EXECUTION_LOG.md/EXECUTION_REPORT.md 根目录过程流水精确排除，与 AGENTS.md 文档路由表一致。
+- 预防：部署脚本的路径扩展必须同步加过滤逻辑的回归单测（test_deploy_vps_filters_oversize_and_runtime_cache_paths）；新增根目录治理类文件要同步进 EXCLUDE_NAMES + SKIP_PATH_FRAGMENTS 双重防线。
+
+### 6.8 配置三处同步漏同步 .get() 默认值（v5.38.17 新增）
+- 问题：config.json.example 写了 "AI_REQUEST_TIMEOUT": 30 / "AI_MAX_ATTEMPTS": 2，但代码里 `config.get("AI_REQUEST_TIMEOUT", 15)` / `config.get("AI_MAX_ATTEMPTS", 3)`，example 没配这两项时运行态默认值反而比 example 更激进（更短超时、更多重试），导致高频超时或吞吐下降。
+- 根因：三处同步规则（example + 代码 .get() 默认值 + Dashboard UI）只改了 example 或 UI，代码中的 fallback 默认值没有跟随更新；`config.get(key, FALLBACK)` 的 FALLBACK 是"最终兜底值"，不是"建议初始值"。
+- 解法：统一把代码中的 FALLBACK 值改成与 config.json.example 中声明的一致；优先顺序保持不变（真实 config.json 覆盖 example，example 覆盖代码 FALLBACK）。
+- 预防：① 修改任一配置项的默认值时，必须同时查三处：config.json.example 声明值、代码中 `config.get("KEY", X)` 的 X 与 Dashboard 端点默认值；② 新增配置项必须跑"无 config.json.example 时的代码默认值行为"回归测试，不能只跑 example 存在的 happy path。
+
+### 6.9 裸 except: pass 吞掉异常导致零可观测性（v5.38.17 新增）
+- 问题：ai_engine.py wave_tilde_daily 更新、dashboard/audit.py 多处长 `except Exception: pass`，发生异常时没有任何日志、没有上下文，用户感知是"功能偶尔失效但查不到原因"，排障成本极高。
+- 根因：开发者知道这段是非致命、失败了也不影响主流程继续跑，就顺手写了 pass，但"非致命"不等于"不需要观测"。
+- 解法：非致命异常统一降级为 logger.debug 或 logger.warning 保留堆栈和上下文，绝对禁止纯 pass（只有在防御性兼容旧版本库 import 失败且完全有替代实现、不需要观察时例外）。
+- 预防：① 全仓静态审查禁止裸 except: pass；允许的模式只有：`except ImportError: # 兼容旧版库` + 有真实替代实现 / `except Exception as e: logger.debug(f"...跳过（非致命）：{e}")`；② 新增 try/except 时必须说明"为什么失败可接受"并保留最基本的 debug 留痕。
+
+### 6.10 三处同步第三处（Dashboard 白名单 ALLOWED_CONFIG_FIELDS）漏加导致 UI 无法改配置（v5.38.18 新增）
+- 问题：config.json.example 声明了 AI_REQUEST_TIMEOUT=30、AI_MAX_ATTEMPTS=2，代码里 `config.get("KEY", fallback)` 的 fallback 也已修到与 example 对齐，但 Dashboard 端 /config/update 的 ALLOWED_CONFIG_FIELDS 白名单里没有这两个键，用户在 UI 上提交修改会被拒绝，只能 ssh 上 VPS 改 config.json，不符合三处同步规则（example + 代码默认 + Dashboard UI 三处必须一致）。
+- 根因：三处同步规则默认只检查前两处，忘了 ALLOWED_CONFIG_FIELDS 是第三道门——任何允许通过 HTTP 修改的配置字段都必须显式在白名单中。
+- 解法：v5.38.18 在 dashboard/api/config_api.py ALLOWED_CONFIG_FIELDS 的"模型与路由"分组下显式加入 AI_REQUEST_TIMEOUT、AI_MAX_ATTEMPTS。
+- 预防：① 新增或调整任何配置项的默认值/声明时，必须同时查三处：config.json.example → 代码 config.get() fallback → dashboard/api/config_api.py ALLOWED_CONFIG_FIELDS；② 配置三处同步的静态审查改为 diff 三者集合差（example.keys() ∩ ALLOWED_CONFIG_FIELDS 至少包含业务配置项，不能只靠人工记忆）。
+
+### 6.11 错误详情（str(e)）直接返回前端导致 DB 路径/列名/凭据片段泄露（v5.38.18 新增）
+- 问题：dashboard/api/metrics_api.py /api/metrics 端点的 except Exception as e 分支把 `f"指标生成失败: {str(e)}"` 直接 jsonify 返回给浏览器。若 e 来自 SQLite、file IO、Prometheus client 内部异常，可能把 DB 路径（/opt/moryassistant/mory.db）、列名、失败的 SQL、配置文件路径等敏感信息原样返回给 Dashboard 操作者；越权或 XSS 情况下，这些信息可用于构造注入攻击。
+- 根因：写代码图省事，"后端报错了顺便写给前端看，省得查日志"，忘记 Dashboard 是用户可见 HTTP 响应，不是 CLI stderr。
+- 解法：固定返回 "指标生成失败，请查看服务器日志获取详情"，完整异常详情保留在 logger.error（已存在且覆盖到位），前端只返回统一错误文案。
+- 预防：① 所有 Flask/FastAPI 路由 except Exception 分支禁止把 str(e) / repr(e) / traceback.format_exc 直接 jsonify 或拼进返回字符串；② 允许返回给前端的只有固定语义文案 + 结构化错误代码（如 "ok": False, "code": "METRICS_GENERATE_FAILED"）；③ 运营需要看详情时走服务器日志或审计面板，不走 API 响应体。
+
+### 6.12 系统状态/动态状态值明文落入 DEBUG 日志导致配置/凭据/长 list 泄露（v5.38.19 新增）
+- 问题：core/bot_initializer.py `_load_dynamic_state` 把 `cfg[key]` 整体 `={cfg[key]}` 打印到 logger.debug；core/db_repos/config_repo.py `update_system_state` 把 `={value}` 整体打印。两处都是动态状态表/系统状态表的全量值，包含人设部署副本、黑名单长 list、偶尔塞进 system_states 的 API key、用户数据 list，当运行时 DEBUG 级别日志会被滚动归档（默认 logs/ 下保留 30 天），形成"配置值/临时凭据被无意落盘"，运维、审计脚本、外部同步工具或日志泄露都会变成持久化的敏感信息池。
+- 根因：为了调试方便"打个 log 看值"，忘记日志是持久化到磁盘并保留多日的；同时默认思维是 "只有 INFO 以上才有人看"，但实际上 DEBUG 也会被轮转写盘、被 grep、被 Agent 或巡检工具扫描。
+- 解法：两处统一脱敏为 `<类型(长度)>` 占位：None → `<None>`；str → `<str(len=123)>`；list/dict/tuple/set → `<list(len=456)>` 等；其他标量 → `<int>`/`<float>`/`<bool>`。禁止任何容器、字符串全值落入 DEBUG。只保留键名 + 类型/长度，便于排障又不泄露明文。
+- 预防：① 任何 logger.debug / logger.info 写入配置表/动态状态表/用户内容相关对象时，统一先脱敏或只写类型/长度，禁止全明文；② 敏感状态表（system_states / dynamic_states 等）的 set/get 辅助类默认在 __repr__ 处脱敏，或禁止在日志中直接 `%s`/`f-string` 打印；③ 新增 CI 级 smoke：用正则断言 "动态状态加载/系统状态更新" 这两句日志行中不含 `={cfg[` 或 `={value}` 明文拼接模式（已随 v5.38.19 新 test_log_sanitization_and_trace_smoke.py 4 smoke 覆盖）。
+
+### 6.13 定时任务群人数 API 失败回退 DB 裸 except 吞错导致完全不可观测（v5.38.19 新增）
+- 问题：tasks/analytics/daily_report_task.py 每日报告生成时，对 `rm.bot.get_chat_member_count(gid)` 失败后直接回退 DB 值 `rm.db.get_group_total_members_latest(gid)`，except Exception 后面既不绑定异常名也不留任何日志。每日/每群发生了多少次、是超时、是 Bot 被踢、权限、网络瞬断、限流、参数 gid 类型错误等完全没有上下文。当 DB 兜底数据本身陈旧时，报告值偏差也无从溯源。
+- 根因：写代码时把"回退"当成"一切正常"，遗漏了"即便回退也得把失败原因 + gid + 次数记录在案"的可观测性铁律；尤其每日报告是运营指标，偏差发生时最需要知道"今天这数字真实来自 DB 兜底"。
+- 解法：改为 `except Exception as e: logger.debug(f"群人数API失败，回退DB（非致命）：gid={gid} err={e}")`，保留 gid（非 PII）+ 异常上下文（通常是超时/被踢/Rate limit 等），并作为 DEBUG 级落盘，不影响 ERROR 告警阈值但保留可排障线索。
+- 预防：① 任何"try 主路径失败 → 回退次要路径"模式，必须在回退分支写 `logger.debug` 级日志包含主路径失败原因 + 关键上下文，禁止裸 except: + 直接赋值；② 新增 CI 级 smoke：对 get_chat_member_count 紧邻回退段出现"裸 except 不绑定 + 不写日志"反例（已随 v5.38.19 新 smoke 覆盖）。
+
+### 6.14 Flask API 响应体把异常/内部状态明文串进 HTTP 响应（v5.38.20 新增）
+- 问题：dashboard/api/faq_api.py 共 11 处 except Exception as e 块把 f"失败：{e}" 直接塞进 jsonify 返回；dashboard/api/health_api.py 中 scores.detail 和 audit 缺失键字段把 f"检查失败: {e}"、f"integrity: {r}"、f"缺失 5 键: {missing[:5]}" 等内部错误/检查结果/配置键名样本直接写进 HTTP body。这些字段即便 @login_required 也会被 Dashboard 前端渲染、写入浏览器历史、抓包工具捕获；尤其健康检查部分未登录也能拿到。真实 e 信息包含 sqlite3.Error 的 DB 文件路径/表名/列名/约束冲突、OSError/IOError 路径、Permission denied 账号等敏感信息；integrity 失败细节会暴露 SQLite PRAGMA integrity_check 对业务表、索引的具体报错；missing[:5] 泄露配置 schema 键名结构便于攻击者有定向枚举。
+- 根因：开发时为了"前端看一眼就知道啥错"，把服务端日志该写的东西推到了响应体，没有区分"对用户可见的错误文案"与"写服务器日志的错误详情"两条链路；@login_required 被当成"安全边界"，忘记登录用户也是攻击者模型之一；audit 中 missing[:5] 本意"排障方便"但把 sample 写进了响应体，而不是写在日志里。
+- 解法：① 统一除 400 系列用户输入校验（"xx 不能为空"/"该配置项不允许修改"）外，所有 500/503/兜底响应的错误文案一律固定为"动作失败，请查看服务器日志获取详情"/"配置检查失败（详情见服务器日志）"等常量，禁止在 HTTP 响应的任何字段（含嵌套 JSON 的 detail/error/note/message 字段）拼接 str(e)、repr(e)、traceback、exception args、f-string 或格式化带异常对象；② 每处 except 块在固定返回之前写日志：异常上下文用 logger.exception（自动带堆栈，适合 except 最末），降级分支用 logger.debug / logger.warning（只写上下文），排障所需样本（如 missing[:5]）统一写日志，不写进响应体；③ faq_api 11 端点全部前置 logger.exception + 固定 msg；health_api 5 处 score.detail 泄露 + audit 缺失键样本 + 7 处 except 无日志全部按此改造。
+- 预防：① 写任何 jsonify({"ok": False, ...}) 返回之前，自检 msg/detail/error 字段是否出现 e/r/missing 等动态对象；② 作为团队规则：except 块第一句先 logger.exception / logger.warning，第二句再 jsonify 固定错误，形成肌肉记忆；③ 在 CI 加静态断言：grep 禁止 jsonify(.*f"{e}" / jsonify(.*str(e) 模式出现。
+
+### 6.15 裸 except Graph Mode 连续三轮残余未净的"回退暗病"反复出现（v5.38.20 新增）
+- 问题：v5.38.17 修 wave_tilde_daily 裸 except；v5.38.18 修 ai_engine 9 处 + dashboard 7 处 + daily_report 回退；v5.38.19 修 daily_report 回退补全后，v5.38.20 再扫仍发现 weekly_report_task/monthly_report_task 2 处群人数 API 回退仍裸 except，health_api 7 处仍裸 except 不绑定。Graph Mode 按维度扫描但每轮没对"try 主路径 API + except 回退赋值"这种复合模式做全局反例匹配，导致"回退就裸 except"的坏模式反复在不同文件、不同任务中出现。
+- 根因：旧坏模式"回退=成功"、"有回退不需要留痕"在不同业务模块中独立复现；每轮扫描只查模块局部/最近改动文件，缺少"复合语法模式反例"（A=try 调外部 API, B=except 不绑定异常名, C=except 体内只赋值回退数据 + 不写日志 = 命中）的全仓组合规则；周报/月报和日报是三个不同文件但复制粘贴了相同裸 except 段，修复日报时没按文件名 pattern 扫月报/周报兄弟文件。
+- 解法：① 按文件名 pattern 成组扫描：daily_report_task.py 修后自动对 weekly_report_task.py / monthly_report_task.py 同样语义位置做二次扫；② 把"外部 API + 回退赋值 + except 不绑定 + 不写日志"提升为项目级语法反例，每次 Graph Mode 都用复合 Grep 扫（关键词组合：get_chat_member_count / getChat / requests.get / bot. + except Exception: + 下一行 = db. 回退）；③ weekly/monthly 2 处、health_api 7 处全部 as e + logger.debug 绑定上下文+动作标签，动作标签包括 aborts/jobs/audit/task_success_rate/root/task_checker/config_missing_keys 等可溯源到具体端点的短标签。
+- 预防：① 新增 Graph Mode 每轮的必扫复合清单：不裸 except × 3（except Exception: 不绑定 / except: pass / except Exception 绑定了但不写日志）；② 代码评审时，看到 try 调外部 API（bot/requests/子进程/SSH/SFTP）必须检查 except 块是否：绑定异常名 + 写至少 debug 级日志 + 回退数据说明是回退值；③ 形成命名约定：每次回退 logger.debug 里带 `（非致命）/（回退）/（降级）`，方便巡检工具按关键词抽失败率。
+
 ### 7. 新闻 / 问候消息超时不删
 - 问题：定时播报 / 问候消息发出后未清理，长期堆积。
 - 根因：发送与清理链未同步接入。
@@ -263,3 +323,33 @@
 - 根因：只审计 BaseTask 顶层 `except`，没有跟进它调用的真实发送/治理/启动函数；多目标流程用“任一成功”覆盖部分失败，初始化把关键组件错误误当可降级能力。
 - 解法：单目标终态失败释放锁并上抛，多目标继续独立对象后聚合失败；图片文本降级成功保留防重锁；启动发现、注册、监听、资源锁、持久心跳和旧锁恢复全部 fail closed，数据库部分写失败先 rollback。
 - 预防：回归必须覆盖真实内层函数、全部失败、部分失败、无投递目标、非法日期、模块缺失、实例化/add_job/listener 失败、资源锁超时以及 execute/commit 回滚；只有明确 expected 空集或永久无效用户且清理成功才能记 aborted/success。
+
+### 48. 告警规则用累计失败计数 + TaskGuard 把网络 IO 放进锁内
+- 问题：生产每 2 分钟触发一次 `调度任务失败告警 CRITICAL`，且告警一旦触发就长期不解除；TaskGuard 在告警阈值达到时还会与其它任务抢占同一把锁，存在死锁风险。
+- 根因：`check_scheduler_failures` 使用 `total_fail`（启动至今不重置的累计计数）做判定，任一历史失败都会让告警永久 pending；TaskGuard `record_call`/`record_claim_fail` 在锁内构造告警消息并调用告警通道（网络 IO），把外部延迟引入了任务抢占关键路径。
+- 解法：告警改用最近 30 分钟 `_SCHED_FAIL_WINDOW` 内 `last_status==error` 且 `last_run` 在窗口内的 active failed 任务计数；任务恢复成功后告警自动解除。TaskGuard 把告警消息构造移出锁外，仅保留计数和阈值判断在锁内，告警发送在锁释放后执行。
+- 预防：告警规则必须区分“累计历史”和“当前活跃问题”，恢复成功要能自动解除告警；任何锁内代码不得调用网络 IO、文件 IO 或可能阻塞的外部接口，锁内只做内存计数与判定。
+
+### 49. 启动历史清理把 Telegram not_found 当成任务失败
+- 问题：部署重启后日志频繁出现 `启动历史清理失败: 启动历史清理任务失败 (1 sub-exception)`，但实际黑名单用户消息早已删除，目标已经达成。
+- 根因：`startup_history_cleanup_task` 在 `bot.delete_message(cid, message_id)` 抛 `message to delete not found` 时直接 `failures.append(e)`，最后 `raise ExceptionGroup` 把单条 not_found 升级为整个启动清理任务失败；DB 里这些消息也没标记 `deleted=True`，下次启动会再次尝试删除同样的不存在的消息。
+- 解法：捕获异常后检查 `str(e).lower()` 是否包含 `not found` 或 `message to delete`，命中则视为目标达成，调用 `db.mark_message_deleted(cid, message_id)` 同步 DB 状态并 `continue`，不再加入 `failures`；其他异常仍走原失败链。
+- 预防：删除类操作的“已不存在”是幂等成功，不是失败。任何按 ID 删除 Telegram 消息的清理任务都必须区分“真失败”和“目标已达成”，并同步本地持久化状态以避免重复尝试；启动类任务尤其要把单条失败与整体失败解耦，禁止让单条 not_found 升级为 ExceptionGroup。
+
+### 50. 增量部署清单遗漏 version.py + BROADCAST_TEMPLATE_VARIATION_ENABLED 配置漂移
+- 问题：v5.38.14 增量部署后 VPS `version.py` 仍是 v5.38.13；`BROADCAST_TEMPLATE_VARIATION_ENABLED` 在本地 config.json 和 VPS 均为 True，但 memory 明确记录"会导致播报内容添加尴尬场景句，已关闭"。
+- 根因：增量部署脚本 `INCREMENTAL_FILES` 清单只列了 8 个 .py 文件，遗漏了 `version.py`；`BROADCAST_TEMPLATE_VARIATION_ENABLED` 在某次配置调整中被错误开启，而 `config.json.example` 已是 False，本地 config.json 和 VPS 反向漂移。
+- 解法：补丁2 单独上传 `version.py` + `safe_upload_config` 安全合并 config（关闭开关）；部署后验证 VPS version=v5.38.14、BROADCAST_TEMPLATE_VARIATION_ENABLED=False。
+- 预防：增量部署清单必须包含 `version.py`（版本号是生产身份标识，缺失会导致监控/告警/回滚误判）；任何已被 memory 记录为"已关闭"的配置开关，禁止在 config.json 中反向开启，配置漂移检测应纳入部署前检查。
+
+### 51. 文档宣称全播报类型接入图片卡，但新闻播报遗留路径未接入
+- 问题：`project_snapshot.md` 已写“黄历/塔罗/易经/新闻/问候/定点播报均支持统一视觉图片卡”，但 `modules/auto_tasks.py` 的 `_execute_news_task` 仍只发送富文本/HTML，未走 `build_news_image_payload` + `build_broadcast_image_card`。
+- 根因：图片卡改造主要覆盖 `tasks/broadcast/` 和 `modules/scheduled_broadcast.py`，而新闻播报因历史原因留在 legacy 的 `auto_tasks.py` 中，改造时只检索了“broadcast”文件名和 scheduled_broadcast，遗漏了 `_execute_news_task` 这个真实调用点。
+- 解法：为 `_execute_news_task` 补入图片卡分支：读取 `BROADCAST_IMAGE_CARD_ENABLED` 与 `NEWS_BROADCAST_CONFIG.image_card_enabled` 双开关，生成新闻图片卡后优先 `send_photo_compat` 发送，失败再回退 `build_rich_news_html` / 纯文本；复用现有 `build_news_image_payload` 与 `build_broadcast_image_card`。
+- 预防：新增“全类型统一能力”时，必须按业务场景（mystic/news/greeting/scheduled）逐个 grep 真实发送调用点，不能只核对模块列表或快照文字；每个场景至少有一个测试或样张生成路径验证实际行为。
+
+### 52. 非代码运行态资源不随 deploy 上传 + 跨平台绘图代码写死 Windows 单平台字体路径 → Linux 生产汉字全部变豆腐块
+- 问题：v5.38.15 PIL 图片卡上线后，VPS 上四种字体风格（kai/hei/bold/song）实际全部落到 PIL 默认英文字体，汉字变豆腐块；验收发现仓库内楷体 `LXGWWenKai-Regular.ttf` 根本没有上传到 VPS，而 hei/bold/song 三个非楷风格甚至没有把仓库字体当最终兜底。
+- 根因：① `deploy_vps.py` 的 `SCAN_DIRS` 只列了 `core/modules/dashboard/scripts/tasks/migrations/i18n`，新增的 `assets/` 资源目录完全不在扫描范围内；`SCAN_DIR_EXTS` 只给 i18n 声明了 `.json`，assets 默认继承 `.py`，当然扫不到字体。② `core/broadcast_image_card.py` 的 `FONT_HEI/FONT_HEI_BOLD/FONT_SONG` 四个硬编码常量直接写了 `C:/Windows/Fonts/*.ttc` 单平台绝对路径，没有按平台分支，也没有为 Linux 追加 Noto CJK/WenQuanYi/Arphic 等常见系统字体；三个非楷风格没有把仓库自带 `FONT_KAI` 追加进最终兜底池，导致 Linux 上这些风格全部失败后落到 PIL 默认英文字体。
+- 解法：① `deploy_vps.py`：`SCAN_DIRS` 追加 `assets/`；`SCAN_DIR_EXTS` 新增 assets → `[".ttf", ".ttc", ".otf", ".woff", ".woff2", ".png", ".jpg", ".jpeg", ".gif"]`，把字体和图片资源完整纳入部署清单。② `broadcast_image_card.py`：重写字体常量为 `if os.name == 'nt'` Windows 池 vs Linux 池（含 Noto/WQY/Arphic 全量路径）；`FONT_HEI_POOL/FONT_HEI_BOLD_POOL/FONT_SONG_POOL` 三个非楷池尾部统一 `append(FONT_KAI)` 把仓库楷体作为跨平台最终保证；`font()` 函数最后再 `ImageFont.truetype(FONT_KAI, size)` 一次，然后才允许 PIL 默认字体兜底。③ 部署后 VPS 生产 `python -c` 跑 `font(24, 'kai'/'hei'/'bold'/'song')` 四风格均应返回 FreeTypeFont 对象（不再出现 FontLoadError 或 PIL 默认字体）。
+- 预防：任何新增 runtime 依赖（字体、模型权重、模板、图片资源）必须同步检查两条：(a) 资源文件不在默认 `.py` 扫描范围内 → 必须显式加 `SCAN_DIRS` + 对应扩展名到 `SCAN_DIR_EXTS`，部署后 `ls` 远端验证存在性和大小；(b) 新增跨平台绘图/IO 代码绝不能直接写死 `C:/Windows`、`/Users/xxx`、`C:\Program Files` 这类单平台硬编码路径 → 必须有平台分支或系统字体探测，最后兜底必须指向**仓库内可部署**的资源（已经在 deploy_vps.py 清单内的文件）。

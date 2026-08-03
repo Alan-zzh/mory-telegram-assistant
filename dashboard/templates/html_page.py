@@ -2495,8 +2495,20 @@ async function loadBroadcastFormat() {
         </div>
         <div style="margin-bottom:16px;">
           <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; cursor:pointer;">
-            <input type="checkbox" id="templateVariationEnabled" ${data.broadcast_template_variation_enabled !== false ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
-            <span>启用模板轻变化（保留旧模板骨架，每天微调折叠补充）</span>
+            <input type="checkbox" id="imgCardEnabled" ${data.broadcast_image_card_enabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
+            <span>全局启用图片卡（各播报类型仍需单独开启才会实际生图）</span>
+          </label>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="themeEnabled" ${data.broadcast_theme_enabled !== false ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
+            <span>启用主题引擎（根据时段/内容自动匹配配色）</span>
+          </label>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="display:flex; align-items:center; gap:8px; color:#94a3b8; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="templateVariationEnabled" ${data.broadcast_template_variation_enabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;">
+            <span>启用模板轻变化（已清空变体库，开启无实际效果）</span>
           </label>
         </div>
         <div style="margin-bottom:16px;">
@@ -2530,8 +2542,10 @@ async function loadBroadcastFormat() {
         <h3 style="color:#fff; margin-bottom:12px;">📊 当前生效状态</h3>
         <p style="color:#94a3b8; font-size:13px;">Rich Message: <span style="color:${data.rich_message_enabled?'#10b981':'#6b7280'};">${data.rich_message_enabled?'启用':'关闭'}</span></p>
         <p style="color:#94a3b8; font-size:13px;">格式版本: <span style="color:#60a5fa;">${data.broadcast_format_version}</span></p>
-        <p style="color:#94a3b8; font-size:13px;">模板轻变化: <span style="color:${data.broadcast_template_variation_enabled!==false?'#10b981':'#6b7280'};">${data.broadcast_template_variation_enabled!==false?'启用':'关闭'}</span></p>
-        <p style="color:#94a3b8; font-size:13px;">说明：关闭 Rich Message 时所有播报使用 HTML 卡片（v3.1+）；开启时优先尝试 Rich Message 组件，失败自动回退 HTML。</p>
+        <p style="color:#94a3b8; font-size:13px;">全局图片卡: <span style="color:${data.broadcast_image_card_enabled?'#10b981':'#6b7280'};">${data.broadcast_image_card_enabled?'启用':'关闭'}</span></p>
+        <p style="color:#94a3b8; font-size:13px;">主题引擎: <span style="color:${data.broadcast_theme_enabled!==false?'#10b981':'#6b7280'};">${data.broadcast_theme_enabled!==false?'启用':'关闭'}</span></p>
+        <p style="color:#94a3b8; font-size:13px;">模板轻变化: <span style="color:${data.broadcast_template_variation_enabled?'#10b981':'#6b7280'};">${data.broadcast_template_variation_enabled?'启用':'关闭'}</span></p>
+        <p style="color:#94a3b8; font-size:13px;">说明：关闭 Rich Message 时所有播报使用 HTML 卡片；开启时优先尝试 Rich Message，失败自动回退 HTML。图片卡需全局开关与类型开关同时开启。</p>
       </div>
     `;
   } catch(e) { showToast('加载失败', 'error'); }
@@ -2542,6 +2556,8 @@ async function saveBroadcastFormat() {
     const body = {
       rich_message_enabled: document.getElementById('richMsgEnabled').checked,
       broadcast_format_version: document.getElementById('bcFmtVersion').value,
+      broadcast_image_card_enabled: document.getElementById('imgCardEnabled').checked,
+      broadcast_theme_enabled: document.getElementById('themeEnabled').checked,
       broadcast_template_variation_enabled: document.getElementById('templateVariationEnabled').checked,
       rich_message_style: {
         title_bold: document.getElementById('styTitle').checked,
@@ -3781,12 +3797,14 @@ async function loadGreetingConfig() {
       <div class="form-group"><label>午安时间</label><input type="time" id="grAfternoonTime" value="${cfg.afternoon_time || '12:35'}" class="input-field"></div>
       <div class="toggle-row"><span>晚安播报</span><label class="toggle-switch"><input type="checkbox" id="grNightEn" ${cfg.evening_enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="form-group"><label>晚安时间</label><input type="time" id="grNightTime" value="${cfg.evening_time || '23:05'}" class="input-field"></div>
+      <div class="toggle-row"><span>问候使用图片卡</span><label class="toggle-switch"><input type="checkbox" id="grImgCardEn" ${cfg.image_card_enabled?'checked':''}><span class="slider"></span></label></div>
+      <div class="toggle-row"><span>全局图片卡总开关</span><label class="toggle-switch"><input type="checkbox" id="grGlobalImgCardEn" ${cfg.broadcast_image_card_enabled?'checked':''}><span class="slider"></span></label></div>
       <button class="btn btn-primary" onclick="saveGreetingConfig()">保存设置</button></div>`;
   } catch (e) { document.getElementById('greetingContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
 }
 async function saveGreetingConfig() {
   try {
-    const res = await api('/api/settings/greeting', { method: 'POST', body: JSON.stringify({ morning_enabled: document.getElementById('grMorningEn').checked, morning_time: document.getElementById('grMorningTime').value, afternoon_enabled: document.getElementById('grAfternoonEn').checked, afternoon_time: document.getElementById('grAfternoonTime').value, evening_enabled: document.getElementById('grNightEn').checked, evening_time: document.getElementById('grNightTime').value }) });
+    const res = await api('/api/settings/greeting', { method: 'POST', body: JSON.stringify({ morning_enabled: document.getElementById('grMorningEn').checked, morning_time: document.getElementById('grMorningTime').value, afternoon_enabled: document.getElementById('grAfternoonEn').checked, afternoon_time: document.getElementById('grAfternoonTime').value, evening_enabled: document.getElementById('grNightEn').checked, evening_time: document.getElementById('grNightTime').value, image_card_enabled: document.getElementById('grImgCardEn').checked, broadcast_image_card_enabled: document.getElementById('grGlobalImgCardEn').checked }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadGreetingConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
@@ -3799,6 +3817,8 @@ async function loadMysticConfig() {
       <div class="toggle-row"><span>启用三档栏目</span><label class="toggle-switch"><input type="checkbox" id="mysticEnable" ${cfg.enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="toggle-row"><span>启用单按钮引导（每天三档轮换联系 Mory、预览福利、自助订阅）</span><label class="toggle-switch"><input type="checkbox" id="mysticCtaEnable" ${cfg.cta_enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="toggle-row"><span>启用私聊本地占卜（风水、塔罗、算卦请求自动回复，不调用 LLM）</span><label class="toggle-switch"><input type="checkbox" id="mysticPrivateReplyEnable" ${cfg.private_reply_enabled?'checked':''}><span class="slider"></span></label></div>
+      <div class="toggle-row"><span>传统文化播报使用图片卡</span><label class="toggle-switch"><input type="checkbox" id="mysticImgCardEn" ${cfg.image_card_enabled?'checked':''}><span class="slider"></span></label></div>
+      <div class="toggle-row"><span>全局图片卡总开关</span><label class="toggle-switch"><input type="checkbox" id="mysticGlobalImgCardEn" ${cfg.broadcast_image_card_enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="form-group"><label>📜 早间 · 今日黄历</label><div class="hint-text">真实农历、干支、宜忌、冲煞、值日、星宿、吉神方位、节气与彭祖百忌。</div><input type="time" id="mysticMorningTime" value="${cfg.morning_time || '09:05'}" class="input-field"></div>
       <div class="form-group"><label>🔮 午间 · 三张塔罗</label><div class="hint-text">每天无重复抽取主牌、助力、提醒，包含正逆位、元素与组合解读。</div><input type="time" id="mysticAfternoonTime" value="${cfg.afternoon_time || '13:05'}" class="input-field"></div>
       <div class="form-group"><label>☯️ 晚间 · 易经一卦</label><div class="hint-text">六十四卦中起本卦与动爻，计算真实之卦，并给出一个适合群聊延伸的观察问题。</div><input type="time" id="mysticEveningTime" value="${cfg.evening_time || '20:35'}" class="input-field"></div>
@@ -3808,7 +3828,7 @@ async function loadMysticConfig() {
 }
 async function saveMysticConfig() {
   try {
-    const res = await api('/api/settings/mystic', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('mysticEnable').checked, cta_enabled: document.getElementById('mysticCtaEnable').checked, private_reply_enabled: document.getElementById('mysticPrivateReplyEnable').checked, morning_time: document.getElementById('mysticMorningTime').value, afternoon_time: document.getElementById('mysticAfternoonTime').value, evening_time: document.getElementById('mysticEveningTime').value }) });
+    const res = await api('/api/settings/mystic', { method: 'POST', body: JSON.stringify({ enabled: document.getElementById('mysticEnable').checked, cta_enabled: document.getElementById('mysticCtaEnable').checked, private_reply_enabled: document.getElementById('mysticPrivateReplyEnable').checked, image_card_enabled: document.getElementById('mysticImgCardEn').checked, broadcast_image_card_enabled: document.getElementById('mysticGlobalImgCardEn').checked, morning_time: document.getElementById('mysticMorningTime').value, afternoon_time: document.getElementById('mysticAfternoonTime').value, evening_time: document.getElementById('mysticEveningTime').value }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadMysticConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }

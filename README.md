@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.13**：任务健康检查只报告真实的重复防重记录，不再把全部 BaseTask 与动态 `task_log` 键做错误精确比对；`scheduler_metrics` 在重启后恢复，当前进程的新失败仍优先。SQLite 抢占或审计起点异常会向 APScheduler 上浮，FAQ 空候选记正常中止，旧进程遗留的 running 与任务锁在启动时一并回收；可选 SpamProtection 超时走熔断降级且不污染系统 ERROR。
+当前版本 **v5.38.15**：全播报类型统一接入 PIL 图片卡（黄历/塔罗/易经/新闻/问候/定点播报），右下角 `Mory / 沫沫的沫` 印章，底部 CTA 视觉与真实 Inline Keyboard 按钮一致，失败自动回退 Rich Message/HTML；新增 Dashboard `/settings/broadcast-style` 全局样式面板，`config.json.example` 同步 `BROADCAST_IMAGE_CARD_ENABLED`、`BROADCAST_THEME_ENABLED`、`BUTTON_STYLE_ENABLED`、`RICH_MESSAGE_STYLE` 等开关；新闻播报遗留路径补齐图片卡分支。
 
 ## 快速开始
 
@@ -115,9 +115,9 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 > 普通用户命令见 `/help`；管理员在私聊触发 `/help` 会额外附带上述清单。
 
 ## 目录结构
-- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（77 个业务 `.py`）。
+- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（81 个业务 `.py`）。
 - `modules/`：135 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等 v5.34.0+ 默认关闭）。
-- `dashboard/`：运营后台（`app` + `api`，162 路由，含人工审核风格样本 API）。
+- `dashboard/`：运营后台（`app` + `api`，164 路由，含人工审核风格样本 API）。
 - `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
 - `scripts/`：工具脚本（含 `doc_consistency.py` 自检）。
 - `tests/`：单元测试。
@@ -126,9 +126,31 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `runtime/audit-reports/`：审计报告与完工报告。
 - `config/`：systemd 服务文件。
 
-## 客观指标（2026-07-19 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 135，core 业务 `.py` = 77，`_job_` = 50，DB 表 = 170，Dashboard 路由 = 162，消息分发函数 = 9，model_router 映射 = 10。
+## 客观指标（2026-08-03 实测，`scripts/doc_consistency.py` 全过）
+modules 业务 `.py` = 135，core 业务 `.py` = 81，`_job_` = 36，DB 表 = 173，Dashboard 路由 = 164，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
+
+## 播报图片卡（PIL 图片卡）
+全播报类型统一走图片卡视觉输出，失败自动回退 Rich Message / HTML，不丢内容。
+
+**支持类型**（6 类）：黄历（早间）、塔罗（午间）、易经（晚间）、新闻、问候、定点播报。
+
+**统一视觉**：Mory 品牌配色（墨绿+金+朱砂）、右上角日期标签、`Mory / 沫沫的沫` 右下角红章、底部渐变 CTA 按钮视觉。
+
+**关键开关**（三处同步：`config.json.example` + 代码 `.get()` + Dashboard 面板）：
+- `BROADCAST_IMAGE_CARD_ENABLED`：总开关（默认 False，测试通过后开启）
+- 六类子开关：`ALMANAC_IMAGE_CARD_ENABLED` / `TAROT_IMAGE_CARD_ENABLED` / `ICHING_IMAGE_CARD_ENABLED` / `NEWS_IMAGE_CARD_ENABLED` / `GREETING_IMAGE_CARD_ENABLED` / `SCHEDULED_IMAGE_CARD_ENABLED`
+- `BROADCAST_THEME_ENABLED`：主题色开关
+- `BUTTON_STYLE_ENABLED`：Inline Keyboard 彩色按钮样式
+- `RICH_MESSAGE_STYLE`：回退链路样式
+
+**回退链路**（三层，任一失败自动降级）：图片卡 → Rich Message → 纯 HTML/Markdown。
+
+**字体兜底**（v5.38.15+）：Windows 走微软雅黑/宋体 → Linux 走 Noto CJK → 仓库自带 `assets/fonts/LXGWWenKai-Regular.ttf`，避免 VPS 汉字变方块。
+
+**CTA 强绑定**（v5.38.16+）：图片按钮文案由真实 InlineKeyboard 文案经 `strip_visual_emoji()` 派生，杜绝两处硬编码不一致。
+
+**性能**：`font()` LRU(128) 缓存；临时 `Image` 用完 `close()`；单区块异常隔离（一个区块报错不崩整张卡）。
 
 ## 六大文档索引
 - `AGENTS.md`：项目规则唯一入口（铁律 / 流程 / 约定 / 文档路由表）。

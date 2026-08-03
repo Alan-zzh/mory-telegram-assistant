@@ -61,4 +61,4 @@ def prometheus_metrics():
 
     except Exception as e:
         logger.error(f"❌ 指标端点生成失败: {e}")
-        return jsonify({"ok": False, "msg": f"指标生成失败: {str(e)}"}), 500
+        return jsonify({"ok": False, "msg": "指标生成失败，请查看服务器日志获取详情"}), 500

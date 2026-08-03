@@ -136,7 +136,8 @@ class DailyReportTask(BaseTask):
                 try:
                     with rm.locked('bot'):
                         total_members = rm.bot.get_chat_member_count(gid)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Telegram群组人数查询失败，回退DB历史值（非致命）：{e}")
                     total_members = rm.db.get_group_total_members_latest(gid)
             active_today = rm.db.get_daily_active_users(today, gid)
             row = rm.db.conn.execute(
@@ -347,7 +348,8 @@ class DailyReportTask(BaseTask):
             try:
                 with rm.locked('bot'):
                     total_members_group = rm.bot.get_chat_member_count(gid)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"群人数API失败，回退DB（非致命）：gid={gid} err={e}")
                 total_members_group = rm.db.get_group_total_members_latest(gid)
         activity_rate = (active_today / max(total_members_group, 1)) * 100
 

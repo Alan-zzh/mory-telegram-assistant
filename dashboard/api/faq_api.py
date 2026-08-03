@@ -14,8 +14,11 @@ dashboard/api/faq_api.py  ·  FAQ 统计与管理 API
 - DELETE /api/faq/knowledge/<faq_id>         - 删除 FAQ 条目
 - POST /api/faq/distill                      - 手动触发 FAQ 蒸馏
 """
+import logging
 from flask import Blueprint, jsonify, request, session
 from dashboard.helpers import login_required, admin_required, get_db
+
+logger = logging.getLogger(__name__)
 
 faq_bp = Blueprint("faq_api", __name__, url_prefix="/api/faq")
 
@@ -35,7 +38,8 @@ def get_stats():
         stats = db.get_question_stats()
         return jsonify({"ok": True, "data": stats})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"查询失败：{e}"}), 500
+        logger.exception("FAQ API 查询接口异常")
+        return jsonify({"ok": False, "msg": "查询失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/questions", methods=["GET"])
@@ -81,7 +85,8 @@ def get_questions():
             }
         })
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"查询失败：{e}"}), 500
+        logger.exception("FAQ API 查询接口异常")
+        return jsonify({"ok": False, "msg": "查询失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/candidates", methods=["GET"])
@@ -111,7 +116,8 @@ def get_candidates():
 
         return jsonify({"ok": True, "data": {"candidates": candidates}})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"查询失败：{e}"}), 500
+        logger.exception("FAQ API 查询接口异常")
+        return jsonify({"ok": False, "msg": "查询失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/candidates/<int:cid>/approve", methods=["POST"])
@@ -144,7 +150,8 @@ def approve_candidate(cid):
 
         return jsonify({"ok": True, "data": {"faq_id": faq_id}})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"批准失败：{e}"}), 500
+        logger.exception("FAQ API 批准候选异常")
+        return jsonify({"ok": False, "msg": "批准失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/candidates/<int:cid>/reject", methods=["POST"])
@@ -166,7 +173,8 @@ def reject_candidate(cid):
 
         return jsonify({"ok": True, "msg": "已拒绝"})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"拒绝失败：{e}"}), 500
+        logger.exception("FAQ API 拒绝候选异常")
+        return jsonify({"ok": False, "msg": "拒绝失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/knowledge", methods=["GET"])
@@ -203,7 +211,8 @@ def get_knowledge():
             }
         })
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"查询失败：{e}"}), 500
+        logger.exception("FAQ API 查询接口异常")
+        return jsonify({"ok": False, "msg": "查询失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/knowledge", methods=["POST"])
@@ -241,7 +250,8 @@ def add_knowledge():
 
         return jsonify({"ok": True, "data": {"id": faq_id}})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"新增失败：{e}"}), 500
+        logger.exception("FAQ API 新增知识库条目异常")
+        return jsonify({"ok": False, "msg": "新增失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/knowledge/<int:faq_id>", methods=["PUT"])
@@ -279,7 +289,8 @@ def update_knowledge(faq_id):
 
         return jsonify({"ok": True, "msg": "已更新"})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"更新失败：{e}"}), 500
+        logger.exception("FAQ API 更新知识库条目异常")
+        return jsonify({"ok": False, "msg": "更新失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/knowledge/<int:faq_id>", methods=["DELETE"])
@@ -299,7 +310,8 @@ def delete_knowledge(faq_id):
 
         return jsonify({"ok": True, "msg": "已删除"})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"删除失败：{e}"}), 500
+        logger.exception("FAQ API 删除知识库条目异常")
+        return jsonify({"ok": False, "msg": "删除失败，请查看服务器日志获取详情"}), 500
 
 
 @faq_bp.route("/distill", methods=["POST"])
@@ -319,4 +331,5 @@ def distill():
 
         return jsonify({"ok": True, "data": {"new_candidates_count": new_count}})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"蒸馏失败：{e}"}), 500
+        logger.exception("FAQ API 蒸馏候选异常")
+        return jsonify({"ok": False, "msg": "蒸馏失败，请查看服务器日志获取详情"}), 500

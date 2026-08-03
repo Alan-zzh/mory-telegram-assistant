@@ -122,7 +122,8 @@ class StartupMemberScanTask(BaseTask):
                             continue
 
                         try:
-                            member = bot.get_chat_member(chat_id, uid)
+                            # v5.38.14：加 request_timeout 防护单次 API 慢响应阻塞 scheduler
+                            member = bot.get_chat_member(chat_id, uid, request_timeout=10)
                             if member.status in ("left", "kicked"):
                                 continue
                             user = member.user
@@ -148,7 +149,7 @@ class StartupMemberScanTask(BaseTask):
 
                         bio_text = ""
                         try:
-                            chat_info = bot.get_chat(user.id)
+                            chat_info = bot.get_chat(user.id, request_timeout=10)
                             bio_text = getattr(chat_info, 'bio', None) or ""
                         except Exception as e:
                             logger.debug(f"操作异常: {e}")

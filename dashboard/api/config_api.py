@@ -13,6 +13,8 @@ config_bp = Blueprint('config', __name__, url_prefix='/api')
 ALLOWED_CONFIG_FIELDS = {
     # 模型与路由
     "MODEL_COSTS", "MODEL_POOLS", "MODE_ROUTING",
+    # AI 请求行为（与 config.json.example 三处同步，允许 Dashboard 端调整）
+    "AI_REQUEST_TIMEOUT", "AI_MAX_ATTEMPTS",
     # 人设与提示词（含人设引擎 v5.19.0）
     "SYSTEM_PROMPT", "BASE_PERSONA", "PROMPT_TEMPLATES",
     "PERSONA_ENGINE_ENABLED", "DIALOGUE_TONE_CONTRACTS",
@@ -33,6 +35,8 @@ ALLOWED_CONFIG_FIELDS = {
     "EPHEMERAL_MESSAGE_ENABLED",
     "CUSTOM_EMOJI_ENABLED", "CUSTOM_EMOJI_POOL",
     "USER_PROFILE_ENABLED",
+    # [TRAE SOLO CN] v5.38.16 图片卡播报样式配置（三处同步第三处）
+    "BROADCAST_IMAGE_CARD_ENABLED", "BROADCAST_THEME_ENABLED",
     # [TRAE SOLO CN] v5.19.0 场景触发引擎
     "INTENT_ROUTING_ENABLED", "INTENT_LLM_ENABLED", "INTENT_RULE_THRESHOLD",
     "COLD_GROUP_TRIGGER_ENABLED", "COLD_GROUP_THRESHOLD_MIN", "COLD_GROUP_COOLDOWN_MIN", "COLD_GROUP_MAX_PER_RUN",
@@ -219,7 +223,10 @@ def api_broadcast_format_config():
             "data": {
                 "rich_message_enabled": cfg.get("RICH_MESSAGE_ENABLED", False),
                 "broadcast_format_version": cfg.get("BROADCAST_FORMAT_VERSION", "html"),
+                "broadcast_image_card_enabled": cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False),
+                "broadcast_theme_enabled": cfg.get("BROADCAST_THEME_ENABLED", True),
                 "broadcast_template_variation_enabled": cfg.get("BROADCAST_TEMPLATE_VARIATION_ENABLED", False),
+                "button_style_enabled": cfg.get("BUTTON_STYLE_ENABLED", False),
                 "rich_message_style": cfg.get("RICH_MESSAGE_STYLE", {
                     "title_bold": True,
                     "badge_italic": True,
@@ -238,8 +245,14 @@ def api_broadcast_format_config():
         version = str(data["broadcast_format_version"]).lower()
         if version in ["html", "rich", "auto"]:
             cfg["BROADCAST_FORMAT_VERSION"] = version
+    if "broadcast_image_card_enabled" in data:
+        cfg["BROADCAST_IMAGE_CARD_ENABLED"] = bool(data["broadcast_image_card_enabled"])
+    if "broadcast_theme_enabled" in data:
+        cfg["BROADCAST_THEME_ENABLED"] = bool(data["broadcast_theme_enabled"])
     if "broadcast_template_variation_enabled" in data:
         cfg["BROADCAST_TEMPLATE_VARIATION_ENABLED"] = bool(data["broadcast_template_variation_enabled"])
+    if "button_style_enabled" in data:
+        cfg["BUTTON_STYLE_ENABLED"] = bool(data["button_style_enabled"])
     if "rich_message_style" in data and isinstance(data["rich_message_style"], dict):
         cfg["RICH_MESSAGE_STYLE"] = data["rich_message_style"]
 

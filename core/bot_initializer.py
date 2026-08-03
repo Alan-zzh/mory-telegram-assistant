@@ -379,13 +379,24 @@ def _load_dynamic_states(cfg: dict, db_instance=None):
             elif key in ("IMAGE_POOL", "VOICE_POOL"):
                 try:
                     cfg[key] = json.loads(db_value)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"动态状态{key} JSON解析失败，回退默认值（非致命）：{e}")
                     cfg[key] = []
             elif key == "_LAST_LEAK_WEEK":
                 cfg[key] = int(db_value) if db_value else -1
             else:
                 cfg[key] = db_value
-            logger.debug(f"📌 动态状态加载: {key}={cfg[key]}")
+            # 日志脱敏：只记录键+类型/长度，禁止明文值进入 DEBUG（防止 token/key/长 list 意外落盘）
+            _v = cfg[key]
+            if _v is None:
+                _safe = "None"
+            elif isinstance(_v, str):
+                _safe = f"str(len={len(_v)})"
+            elif isinstance(_v, (list, dict, tuple, set)):
+                _safe = f"{type(_v).__name__}(len={len(_v)})"
+            else:
+                _safe = type(_v).__name__
+            logger.debug(f"📌 动态状态加载: {key}=<{_safe}>")
 
 
 def _check_config_hot_reload(cfg: dict):

@@ -39,7 +39,8 @@ MERGE_FIELDS = [
 try:
     from modules.natural_cmd import ALL_CONFIGS as _NATURAL_ALL_CONFIGS
     _natural_keys = set(_NATURAL_ALL_CONFIGS.keys())
-except Exception:
+except Exception as e:
+    logger.debug(f"natural_cmd导入失败，RUNTIME_SYNC_FIELDS默认空集（非致命）：{e}")
     _natural_keys = set()
 
 _MERGE_SET = set(MERGE_FIELDS)

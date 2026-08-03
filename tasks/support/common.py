@@ -4,6 +4,7 @@ tasks/support/common.py - 任务模块通用工具函数
 将 auto_tasks.py 中可被多个任务复用的工具函数集中到这里。
 """
 
+import os
 import random
 import re
 import threading
@@ -16,11 +17,13 @@ from core.broadcast_formatter import (
     _parse_news_copy,
     build_rich_news_html,
 )
+from core.broadcast_image_card import build_broadcast_image_card
+from core.broadcast_image_payload import build_news_image_payload
 from core.helpers import can_delete_message, get_broadcast_auto_delete_config
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
 from core.task_transaction import TaskTransactionManager
-from core.telebot_compat import send_message_compat
+from core.telebot_compat import send_message_compat, send_photo_compat
 from tasks.support.fault_reporter import get_fault_reporter
 from tasks.support.message_templates import MessageTemplates
 from telebot import types
@@ -128,8 +131,12 @@ def send_and_track(rm: ResourceManager, chat_id: int, text: str, parse_mode=None
         return None
 
 
-def build_mory_contact_markup(period: str = ""):
-    """按播报场景生成低打扰按钮；问候和新闻不夹带成交入口。"""
+def build_mory_contact_markup(period: str = "", config: dict = None):
+    """按播报场景生成低打扰按钮；问候和新闻不夹带成交入口。
+
+    v5.38.14：当 config.BUTTON_STYLE_ENABLED=true 时走 create_colored_button 统一上色
+    （"看看预览"=了解语义→primary 蓝），与定点播报/玄学栏目视觉统一。
+    """
     actions = {
         "afternoon": ("👀 看看预览", "https://t.me/moryselect"),
         "night": ("👀 看看预览", "https://t.me/moryselect"),
@@ -139,12 +146,12 @@ def build_mory_contact_markup(period: str = ""):
         return None
     label, url = action
     markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton(
-            label,
-            url=url,
-        )
-    )
+    button_style_enabled = bool((config or {}).get("BUTTON_STYLE_ENABLED", False))
+    if button_style_enabled:
+        from core.telebot_compat import create_colored_button
+        markup.add(create_colored_button(text=label, url=url, style="primary"))
+    else:
+        markup.add(types.InlineKeyboardButton(label, url=url))
     return markup
 
 
@@ -155,11 +162,15 @@ def send_greeting(
     category: str = "greeting",
     rich_text: str = "",
     reply_markup=None,
+    image_path: str = "",
 ):
     """发送早安/午安/晚安问候，支持"发新删旧"链式互删。
 
     [v5.32] 新增 rich_text 参数：当 RICH_MESSAGE_ENABLED=true 且 BROADCAST_FORMAT_VERSION
     ∈ {"rich","auto"} 时优先用 rich_text 走 sendRichMessage，失败回退到 text + HTML。
+
+    [v5.38.15] 新增 image_path 参数：当提供有效本地图片路径时，优先以图片卡形式发送，
+    失败回退 Rich Message / HTML。
     """
     auto_cfg = get_broadcast_auto_delete_config(rm.config)
 
@@ -183,29 +194,51 @@ def send_greeting(
         except Exception as e:
             logger.debug(f"链式互删查询失败（继续发新问候）: {e}")
 
-    # [v5.32] 优先尝试 Rich Message 路径
     sent = None
-    cfg = rm.config or {}
-    rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
-    format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
-    if rich_enabled and rich_text and format_version in ("rich", "auto"):
+
+    # [v5.38.15] 优先尝试图片卡路径
+    if image_path and os.path.isfile(image_path):
         try:
             with rm.locked('bot'):
-                from core.telebot_compat import send_rich_message_compat
-                sent = send_rich_message_compat(
+                sent = send_photo_compat(
                     rm.bot,
                     chat_id,
-                    rich_text,
+                    image_path,
+                    caption=None,
                     reply_markup=reply_markup,
                 )
             if sent and hasattr(sent, 'message_id'):
                 schedule_auto_delete(rm, chat_id, sent.message_id, 24 * 3600)
                 if chat_id < 0:
-                    rm.db.track_channel_message(chat_id, sent.message_id, "text")
+                    rm.db.track_channel_message(chat_id, sent.message_id, "image")
                     rm.db.track_bot_message(chat_id, sent.message_id)
         except Exception as e:
-            logger.warning(f"问候 Rich Message 发送失败，回退 HTML: {e}")
+            logger.warning(f"问候图片卡发送失败，回退 Rich Message/HTML: {e}")
             sent = None
+
+    # [v5.32] 优先尝试 Rich Message 路径
+    if sent is None:
+        cfg = rm.config or {}
+        rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
+        format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
+        if rich_enabled and rich_text and format_version in ("rich", "auto"):
+            try:
+                with rm.locked('bot'):
+                    from core.telebot_compat import send_rich_message_compat
+                    sent = send_rich_message_compat(
+                        rm.bot,
+                        chat_id,
+                        rich_text,
+                        reply_markup=reply_markup,
+                    )
+                if sent and hasattr(sent, 'message_id'):
+                    schedule_auto_delete(rm, chat_id, sent.message_id, 24 * 3600)
+                    if chat_id < 0:
+                        rm.db.track_channel_message(chat_id, sent.message_id, "text")
+                        rm.db.track_bot_message(chat_id, sent.message_id)
+            except Exception as e:
+                logger.warning(f"问候 Rich Message 发送失败，回退 HTML: {e}")
+                sent = None
 
     # 回退到 HTML parse_mode 路径
     if sent is None:
@@ -537,8 +570,41 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                 )
                 markup = None
 
-                # [v5.32] 优先尝试 Rich Message 路径
+                # [v5.38.15] 优先尝试图片卡路径（新闻属于无入口资讯，图片卡不附加真实按钮）
                 cfg = rm.config or {}
+                global_image_enabled = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
+                news_cfg = cfg.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
+                news_image_enabled = global_image_enabled and bool(news_cfg.get("image_card_enabled", False))
+                if news_image_enabled:
+                    try:
+                        image_payload = build_news_image_payload(news, time_desc=time_desc)
+                        cache_key = f"news_{time_desc}_{datetime.now(_CST).strftime('%Y%m%d')}"
+                        image_path = build_broadcast_image_card(
+                            image_payload,
+                            cache_key=cache_key,
+                            cta_pool="news",
+                            min_height=1100,
+                        )
+                        if image_path and os.path.isfile(image_path):
+                            with rm.locked('bot'):
+                                sent = send_photo_compat(
+                                    rm.bot,
+                                    gid,
+                                    image_path,
+                                    caption=None,
+                                    reply_markup=markup,
+                                )
+                            if sent and hasattr(sent, 'message_id'):
+                                schedule_auto_delete(rm, gid, sent.message_id, 24 * 3600)
+                                rm.db.track_channel_message(gid, sent.message_id, "image")
+                                rm.db.track_bot_message(gid, sent.message_id)
+                                remember_news_lines(lines)
+                                logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，图片卡，无入口）")
+                                return
+                    except Exception as e:
+                        logger.warning(f"{time_desc}新闻图片卡发送失败，回退 Rich Message/HTML: {e}")
+
+                # [v5.32] 优先尝试 Rich Message 路径
                 rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
                 format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
 

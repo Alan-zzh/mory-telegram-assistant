@@ -72,8 +72,8 @@ def _record_bot_reply_for_emotion(text: str):
         cnt = text.count("～") + text.count("~")
         if cnt > 0:
             _wave_tilde_daily["count"] += cnt
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"波浪号统计更新跳过（非致命）：{e}")
 
 
 def _get_emotion_ratio_hint() -> str:
@@ -117,7 +117,8 @@ def _get_emotion_ratio_hint() -> str:
         if not hints:
             return ""
         return "\n\n【情绪比例锁（v5.33 代码强制）】\n" + "\n".join(hints)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"情绪比例锁提示计算跳过（非致命）：{e}")
         return ""
 
 
@@ -208,7 +209,8 @@ def _get_anti_ai_style_hint() -> str:
         if not hints:
             return ""
         return "\n\n【去AI结构性铁律（v5.33 代码强制）】\n" + "\n".join(hints)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"去AI结构铁律提示计算跳过（非致命）：{e}")
         return ""
 
 
@@ -1425,8 +1427,8 @@ class AIEngine:
             from core.keyword_manager import is_convert_rejection_message
             if is_convert_rejection_message(msg_lower):
                 return "help"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"拒买关键词检测跳过（非致命）：{e}")
         scores = {}
         for intent, cfg in self._INTENT_KEYWORDS.items():
             kws = cfg.get("keywords", [])
@@ -1893,8 +1895,8 @@ class AIEngine:
         except ImportError:
             # pinyin_util 未安装，跳过拼音检测（不影响主流程）
             pass
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"拼音身份泄露检测跳过（非致命）：{e}")
         return False
 
     @staticmethod
@@ -2232,16 +2234,16 @@ class AIEngine:
             _emotion_hint = _get_emotion_ratio_hint()
             if _emotion_hint:
                 persona += _emotion_hint
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"情绪比例锁注入跳过（非致命）：{e}")
 
         # [v5.33] 去AI结构性铁律：补强 4 条代码校验（长度/数字英文/排比/价格）
         try:
             _anti_ai_hint = _get_anti_ai_style_hint()
             if _anti_ai_hint:
                 persona += _anti_ai_hint
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"去AI结构铁律注入跳过（非致命）：{e}")
 
         # 最后追加本轮六类语气合同与输出合同，压过旧配置、记忆摘要、
         # 情绪桶或模型适配中的冲突表述。
@@ -2377,7 +2379,7 @@ class AIEngine:
         
         # 限制最大重试次数，同时按三层路由的实际候选模型数放宽上限。
         # 之前固定最多 5 次，轻量池两个模型超时后还没机会切到 glm/标准/旗舰池就误报“全部失败”。
-        max_attempt_cap = int(self.config.get("AI_MAX_ATTEMPTS", 3) or 3)
+        max_attempt_cap = int(self.config.get("AI_MAX_ATTEMPTS", 2) or 2)
         max_attempt_cap = max(1, min(8, max_attempt_cap))
         if use_tier_routing:
             candidate_count = max(1, self._retry_model_count_for(tier))
@@ -2632,7 +2634,7 @@ class AIEngine:
                 api_attempts += 1
                 attempt_no = api_attempts
                 _req_start = time.time()
-                request_timeout = float(self.config.get("AI_REQUEST_TIMEOUT", 15) or 15)
+                request_timeout = float(self.config.get("AI_REQUEST_TIMEOUT", 30) or 30)
                 request_timeout = max(5.0, min(45.0, request_timeout))
                 resp = requests.post(req_url, json=payload,
                                      headers=headers, timeout=request_timeout)
@@ -2722,8 +2724,8 @@ class AIEngine:
                             _out_tok = _usage.get("completion_tokens", 0)
                             record_cost(_uid, req_model, self._mode_to_task_type(mode),
                                         _in_tok, _out_tok, _cost_tier)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"LLM成本记录跳过（非致命）：{e}")
                         # [阶段2-C] 记录 A/B 测试指标（仅 AB_TEST_ENABLED 时）
                         # converted 此处置 False，实际转化由 conversion_events 关联统计
                         if _ab_group:
@@ -2737,13 +2739,13 @@ class AIEngine:
                                     cost=0.0,
                                     converted=False,
                                 )
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"A/B测试指标记录跳过（非致命）：{e}")
                         # [v5.33] 情绪光谱比例锁：记录 bot 回复到全局缓冲
                         try:
                             _record_bot_reply_for_emotion(sanitized)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"bot回复情绪记录跳过（非致命）：{e}")
                         return sanitized
                     logger.warning(f"⚠️ 模型{active_model}返回空choices，切换模型重试")
                     try:

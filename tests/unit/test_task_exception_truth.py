@@ -160,13 +160,13 @@ def test_startup_member_scan_enforcement_failure_reaches_scheduler(monkeypatch):
             return SimpleNamespace(fetchall=lambda: rows)
 
     class _Bot(_StartupBot):
-        def get_chat_member(self, _chat_id, uid):
+        def get_chat_member(self, _chat_id, uid, **kwargs):
             user = SimpleNamespace(
                 id=uid, first_name="spam", last_name="", username="spam101", is_bot=False
             )
             return SimpleNamespace(status="member", user=user)
 
-        def get_chat(self, _uid):
+        def get_chat(self, _uid, **kwargs):
             return SimpleNamespace(bio="广告")
 
     task = StartupMemberScanTask(SimpleNamespace(

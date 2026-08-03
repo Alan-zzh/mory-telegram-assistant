@@ -55,6 +55,8 @@ class TaskGuard:
 
     def record_call(self, task_name: str):
         now = int(time.time())
+        # v5.38.14 修复：告警发送（网络IO）移到锁外，避免阻塞其他任务的 record_call
+        alert_msg = None
         with self._lock:
             if task_name not in self._call_history:
                 self._call_history[task_name] = []
@@ -73,14 +75,13 @@ class TaskGuard:
                     )
                     from datetime import datetime, timezone, timedelta
                     ts = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
-                    msg = (
+                    alert_msg = (
                         f"🚨 <b>并发异常预警</b>\n"
                         f"📋 任务：{task_name}\n"
                         f"⚡ {self._ALERT_WINDOW_SEC}秒内被调用{count}次\n"
                         f"🕐 时间：{ts}\n"
                         f"💡 可能存在并发重复执行，请检查日志"
                     )
-                    self._send_alert(msg)
 
             # [P2-NEW-08] 清理过大的 _alerted 集合，避免内存泄漏
             # 时间分桶的 key（如 "taskname_1234567"）天然按字符串有序
@@ -89,6 +90,10 @@ class TaskGuard:
                 self._alerted = set(sorted_keys[-5000:])
                 logger.info(f"TaskGuard _alerted 集合已清理，保留最近 5000 条")
 
+        # 锁外发送告警（网络IO）
+        if alert_msg:
+            self._send_alert(alert_msg)
+
     def record_intercept(self, task_name: str, reason: str):
         """记录正常拦截（内存锁/数据库锁），不触发告警。"""
         with self._lock:
@@ -96,6 +101,8 @@ class TaskGuard:
 
     def record_claim_fail(self, task_name: str, reason: str):
         now = int(time.time())
+        # v5.38.14 修复：告警发送（网络IO）移到锁外，避免阻塞其他任务的 record_claim_fail
+        alert_msg = None
         with self._lock:
             self._claim_fail_count[task_name] = self._claim_fail_count.get(task_name, 0) + 1
             count = self._claim_fail_count[task_name]
@@ -106,7 +113,7 @@ class TaskGuard:
                     logger.warning(f"🚨 [TaskGuard] {task_name} 连续{count}次抢占失败（{reason}）")
                     from datetime import datetime, timezone, timedelta
                     ts = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
-                    msg = (
+                    alert_msg = (
                         f"⚠️ <b>任务抢占异常</b>\n"
                         f"📋 任务：{task_name}\n"
                         f"🔒 连续{count}次抢占失败\n"
@@ -114,8 +121,11 @@ class TaskGuard:
                         f"🕐 时间：{ts}\n"
                         f"💡 可能是锁未正确释放，请检查数据库task_log"
                     )
-                    self._send_alert(msg)
                 self._claim_fail_count[task_name] = 0
+
+        # 锁外发送告警（网络IO）
+        if alert_msg:
+            self._send_alert(alert_msg)
 
     def record_claim_ok(self, task_name: str):
         with self._lock:

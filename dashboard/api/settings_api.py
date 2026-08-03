@@ -35,6 +35,8 @@ def _get_greeting_config(cfg: dict) -> dict:
     raw.setdefault("afternoon_time", _normalize_hhmm(cfg.get("AFTERNOON_GREETING_HOUR", "12:35"), "12:35"))
     raw.setdefault("evening_enabled", bool(cfg.get("AUTO_GOODNIGHT", cfg.get("AUTO_GREETING", False))))
     raw.setdefault("evening_time", _normalize_hhmm(cfg.get("GOODNIGHT_HOUR", "23:05"), "23:05"))
+    raw.setdefault("image_card_enabled", False)
+    raw["broadcast_image_card_enabled"] = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
     raw["morning_time"] = _normalize_hhmm(raw.get("morning_time"), "08:05")
     raw["afternoon_time"] = _normalize_hhmm(raw.get("afternoon_time"), "12:35")
     raw["evening_time"] = _normalize_hhmm(raw.get("evening_time"), "23:05")
@@ -49,6 +51,8 @@ def _get_news_config(cfg: dict) -> dict:
     raw.setdefault("morning_time", _normalize_hhmm(cfg.get("NEWS_HOUR_MORNING", "09:05"), "09:05"))
     raw.setdefault("afternoon_time", _normalize_hhmm(cfg.get("NEWS_HOUR_AFTERNOON", "13:05"), "13:05"))
     raw.setdefault("evening_time", _normalize_hhmm(cfg.get("NEWS_HOUR_EVENING", "20:35"), "20:35"))
+    raw.setdefault("image_card_enabled", False)
+    raw["broadcast_image_card_enabled"] = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
     raw["morning_time"] = _normalize_hhmm(raw.get("morning_time"), "09:05")
     raw["afternoon_time"] = _normalize_hhmm(raw.get("afternoon_time"), "13:05")
     raw["evening_time"] = _normalize_hhmm(raw.get("evening_time"), "20:35")
@@ -63,6 +67,8 @@ def _get_mystic_config(cfg: dict) -> dict:
     raw.setdefault("enabled", False)
     raw.setdefault("cta_enabled", False)
     raw.setdefault("private_reply_enabled", False)
+    raw.setdefault("image_card_enabled", False)
+    raw["broadcast_image_card_enabled"] = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
     defaults = {
         "morning": ("09:05", "almanac"),
         "afternoon": ("13:05", "tarot"),
@@ -806,6 +812,10 @@ def api_settings_greeting():
         greeting_cfg["evening_enabled"] = bool(data["evening_enabled"])
     if "evening_time" in data:
         greeting_cfg["evening_time"] = _normalize_hhmm(data["evening_time"], greeting_cfg["evening_time"])
+    if "image_card_enabled" in data:
+        greeting_cfg["image_card_enabled"] = bool(data["image_card_enabled"])
+    if "broadcast_image_card_enabled" in data:
+        cfg["BROADCAST_IMAGE_CARD_ENABLED"] = bool(data["broadcast_image_card_enabled"])
     cfg["GREETING_CONFIG"] = greeting_cfg
     cfg["AUTO_GREETING"] = bool(greeting_cfg["morning_enabled"])
     cfg["AUTO_GOODNIGHT"] = bool(greeting_cfg["evening_enabled"])
@@ -840,6 +850,10 @@ def api_settings_news():
         news_cfg["afternoon_time"] = _normalize_hhmm(data["afternoon_time"], news_cfg["afternoon_time"])
     if "evening_time" in data:
         news_cfg["evening_time"] = _normalize_hhmm(data["evening_time"], news_cfg["evening_time"])
+    if "image_card_enabled" in data:
+        news_cfg["image_card_enabled"] = bool(data["image_card_enabled"])
+    if "broadcast_image_card_enabled" in data:
+        cfg["BROADCAST_IMAGE_CARD_ENABLED"] = bool(data["broadcast_image_card_enabled"])
     if news_cfg["preferred_source"] not in {"real_first", "trendradar_first"}:
         news_cfg["preferred_source"] = "real_first"
     cfg["NEWS_BROADCAST_CONFIG"] = news_cfg
@@ -871,6 +885,10 @@ def api_settings_mystic():
         mystic_cfg["cta_enabled"] = bool(data["cta_enabled"])
     if "private_reply_enabled" in data:
         mystic_cfg["private_reply_enabled"] = bool(data["private_reply_enabled"])
+    if "image_card_enabled" in data:
+        mystic_cfg["image_card_enabled"] = bool(data["image_card_enabled"])
+    if "broadcast_image_card_enabled" in data:
+        cfg["BROADCAST_IMAGE_CARD_ENABLED"] = bool(data["broadcast_image_card_enabled"])
     defaults = {
         "morning": ("09:05", "almanac"),
         "afternoon": ("13:05", "tarot"),
@@ -1564,4 +1582,53 @@ def api_settings_relay_mode():
     cfg["RELAY_MODE_ENABLED"] = bool(data.get("enabled", cfg.get("RELAY_MODE_ENABLED", False)))
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "中继模式开关配置已保存"})
+    return jsonify({"ok": False, "msg": "保存失败"}), 500
+
+
+@settings_bp.route("/settings/broadcast-style", methods=["GET", "POST"])
+@login_required
+def api_settings_broadcast_style():
+    """[v5.38.15] 全局播报样式配置：富文本、图片卡、按钮样式等开关。"""
+    if request.method == "GET":
+        cfg = read_config()
+        return jsonify({"ok": True, "data": {
+            "rich_message_enabled": bool(cfg.get("RICH_MESSAGE_ENABLED", False)),
+            "broadcast_format_version": str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower(),
+            "broadcast_image_card_enabled": bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False)),
+            "broadcast_theme_enabled": bool(cfg.get("BROADCAST_THEME_ENABLED", True)),
+            "broadcast_template_variation_enabled": bool(cfg.get("BROADCAST_TEMPLATE_VARIATION_ENABLED", False)),
+            "button_style_enabled": bool(cfg.get("BUTTON_STYLE_ENABLED", False)),
+            "rich_message_style": cfg.get("RICH_MESSAGE_STYLE", {
+                "title_bold": True,
+                "badge_italic": True,
+                "body_normal": True,
+                "footer_expandable": True,
+                "emoji_custom": False,
+            }),
+        }})
+    _adm = _check_admin()
+    if _adm:
+        return _adm
+    data = request.get_json() or {}
+    cfg = read_config()
+
+    if "rich_message_enabled" in data:
+        cfg["RICH_MESSAGE_ENABLED"] = bool(data["rich_message_enabled"])
+    if "broadcast_format_version" in data:
+        version = str(data["broadcast_format_version"] or "html").lower()
+        if version in ("html", "rich", "auto"):
+            cfg["BROADCAST_FORMAT_VERSION"] = version
+    if "broadcast_image_card_enabled" in data:
+        cfg["BROADCAST_IMAGE_CARD_ENABLED"] = bool(data["broadcast_image_card_enabled"])
+    if "broadcast_theme_enabled" in data:
+        cfg["BROADCAST_THEME_ENABLED"] = bool(data["broadcast_theme_enabled"])
+    if "broadcast_template_variation_enabled" in data:
+        cfg["BROADCAST_TEMPLATE_VARIATION_ENABLED"] = bool(data["broadcast_template_variation_enabled"])
+    if "button_style_enabled" in data:
+        cfg["BUTTON_STYLE_ENABLED"] = bool(data["button_style_enabled"])
+    if "rich_message_style" in data and isinstance(data["rich_message_style"], dict):
+        cfg["RICH_MESSAGE_STYLE"] = data["rich_message_style"]
+
+    if write_config(cfg):
+        return jsonify({"ok": True, "msg": "播报样式配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500

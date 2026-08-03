@@ -27,7 +27,10 @@
 """
 
 from flask import jsonify, session, request
+import logging
 from dashboard.audit import get_current_role, has_permission, log_audit, _summarize_payload
+
+logger = logging.getLogger(__name__)
 
 # 写方法
 _WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
@@ -116,7 +119,8 @@ def enforce_rbac():
     try:
         from dashboard.helpers import get_db
         db = get_db()
-    except Exception:
+    except Exception as e:
+        logger.debug(f"RBAC DB连接回退到硬编码字典（非致命）：{e}")
         db = None  # 无请求上下文或 DB 异常，has_permission 内部会回退到字典
 
     allowed = has_permission(permission, role, db=db)

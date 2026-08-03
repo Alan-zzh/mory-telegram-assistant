@@ -80,7 +80,8 @@ class WeeklyReportTask(BaseTask):
             try:
                 with rm.locked('bot'):
                     total_members = rm.bot.get_chat_member_count(gid)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"群人数API失败，回退DB（非致命）：gid={gid} err={e}")
                 total_members = rm.db.get_group_total_members_latest(gid)
 
         def pct(cur, prev):

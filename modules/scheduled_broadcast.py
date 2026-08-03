@@ -24,6 +24,7 @@ import os
 import random
 from datetime import datetime, timezone, timedelta
 from telebot import types
+from core.broadcast_cta import build_cta_markup, get_broadcast_cta
 from core.broadcast_formatter import (
     build_broadcast_html,
     build_rich_broadcast_html,
@@ -31,6 +32,8 @@ from core.broadcast_formatter import (
     looks_like_html,
     normalize_text,
 )
+from core.broadcast_image_card import build_broadcast_image_card
+from core.broadcast_image_payload import build_scheduled_image_payload
 from core.telebot_compat import send_checklist_compat, send_message_compat, send_photo_compat, send_poll_compat, send_rich_message_compat
 from core.logging_util import get_logger
 from core.theme_engine import build_broadcast_context
@@ -203,14 +206,22 @@ def _parse_broadcast_time(item: dict):
     return None, None
 
 
-def _build_markup(item: dict, config: dict = None):
-    """可选的单按钮，适合下单引导或详情跳转。支持彩色按钮。"""
+def _build_markup(item: dict, config: dict = None, cta: dict = None):
+    """可选的单按钮，适合下单引导或详情跳转。支持彩色按钮与 Mini App。"""
     button_text = str(item.get("button_text", "") or "").strip()
     button_url = str(item.get("button_url", "") or "").strip()
-    if not button_text or not button_url:
-        return None
 
-    # 尝试使用彩色按钮
+    # 用户未配置按钮时，使用统一 CTA 文案池（保证与图片卡一致）
+    if not button_text or not button_url:
+        if cta is None:
+            cta = get_broadcast_cta(
+                scene="scheduled",
+                period=str(item.get("period", "") or ""),
+                config=config,
+            )
+        return build_cta_markup(cta, config=config)
+
+    # 用户已配置按钮：兼容旧版彩色按钮参数
     if config and config.get("BUTTON_STYLE_ENABLED", False):
         from core.telebot_compat import create_colored_button
         button_style = item.get("button_style", "primary")
@@ -246,8 +257,8 @@ def _merge_footer_with_variant(footer: str, variant: str) -> str:
     return f"{footer}\n\n{variant}"
 
 
-def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict = None):
-    """[v5.32] 按配置把播报渲染成 HTML 卡片，同时返回 Rich Message 版本。
+def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict = None, cta: dict = None):
+    """[v5.38.15] 按配置把播报渲染成 HTML 卡片，同时返回 Rich Message 版本。
 
     返回三元组 (html_text, parse_mode, rich_html)：
     - html_text：HTML parse_mode 路径用（旧客户端兼容）
@@ -272,6 +283,11 @@ def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict =
     button_text = str(item.get("button_text", "") or "").strip()
     button_url = str(item.get("button_url", "") or "").strip()
     broadcast_id = str(item.get("id", "") or "").strip()
+    # [v5.38.15] 用户自定义按钮时，不使用自动 CTA 的 closing，避免话术 mismatch
+    has_custom_button = bool(button_text and button_url)
+    closing = ""
+    if not has_custom_button and isinstance(cta, dict):
+        closing = cta.get("closing", "")
 
     # 使用多样性引擎构建播报上下文（[v5.32] 已移除 slang/photo/conversion hint，
     # theme/tone 仍可用作 AI prompt 上下文，但此处不再拼接到 footer）
@@ -297,6 +313,7 @@ def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict =
         button_text=button_text,
         button_url=button_url,
         user_profile=user_profile,
+        closing=closing,
     )
 
     # [v5.32] 新版 Rich Message 卡片（块级标签，Bot API 10.1+）
@@ -307,6 +324,7 @@ def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict =
         badge=badge,
         period=period,
         user_profile=user_profile,
+        closing=closing,
     )
 
     return html_text, "HTML", rich_html
@@ -431,7 +449,15 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                 bc = dict(bc)  # 复制避免污染原配置
                 bc["content"] = ai_content
                 content = ai_content
-        reply_markup = _build_markup(bc, config)
+
+        # [v5.38.15] 统一 CTA：文字版 closing、图片卡文案、真实按钮保持一致
+        cta = get_broadcast_cta(
+            scene="scheduled",
+            period=str(bc.get("period", "") or ""),
+            config=config,
+            user_profile=user_profile,
+        )
+        reply_markup = _build_markup(bc, config, cta=cta)
         disable_notification = bool(bc.get("silent", False))
         protect_content = bool(bc.get("protect_content", False))
         disable_preview = bool(bc.get("disable_preview", False))
@@ -470,7 +496,56 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
 
         if content_type == "text":
             try:
-                text, parse_mode, rich_html = _render_broadcast_text(bc, user_profile=user_profile, config=config)
+                # [v5.38.15] 传入 cta，让文字版 closing 与真实按钮一致
+                # 注意：用户自定义按钮时，_render_broadcast_text 内部会忽略自动 closing
+                text, parse_mode, rich_html = _render_broadcast_text(
+                    bc, user_profile=user_profile, config=config, cta=cta
+                )
+
+                # [v5.38.15] 图片卡优先（仅 text 类型，且全局/单条均开启）
+                global_image_enabled = bool(config.get("BROADCAST_IMAGE_CARD_ENABLED", False))
+                item_image_enabled = bool(bc.get("image_card_enabled", False))
+                image_sent = False
+                if global_image_enabled and item_image_enabled:
+                    try:
+                        image_payload = build_scheduled_image_payload(bc, user_profile=user_profile)
+                        today = datetime.now(_CST).strftime("%Y%m%d")
+                        image_path = build_broadcast_image_card(
+                            image_payload,
+                            cache_key=f"scheduled_{broadcast_id}_{today}",
+                            cta_pool="scheduled",
+                            min_height=1000,
+                            cta_text=cta.get("image_label", ""),
+                        )
+                        if image_path and os.path.isfile(image_path):
+                            logger.info(f"[broadcast] 准备发送 {broadcast_id} 到 chat={chat_id}, type=image_card")
+                            msg = send_photo_compat(
+                                bot,
+                                chat_id,
+                                image_path,
+                                caption=None,
+                                disable_notification=disable_notification,
+                                protect_content=protect_content,
+                                reply_markup=reply_markup,
+                                allow_paid_broadcast=allow_paid_broadcast,
+                                message_effect_id=message_effect_id,
+                                direct_messages_topic_id=direct_messages_topic_id,
+                            )
+                            logger.info(f"[broadcast] 发送成功 {broadcast_id}, chat={chat_id}, msg_id={msg.message_id}, type=image_card")
+                            if db:
+                                db.track_channel_message(chat_id, msg.message_id, "image")
+                                _log_broadcast_attribution(db, chat_id, broadcast_id, "image_card")
+                            image_sent = True
+                    except Exception as img_err:
+                        exc_type, status_code, err_summary = _extract_send_error(img_err)
+                        logger.warning(
+                            f"[broadcast] 图片卡发送失败 {broadcast_id}, chat={chat_id}, "
+                            f"exc={exc_type}, status={status_code}, err={err_summary}，回退 text"
+                        )
+
+                if image_sent:
+                    continue
+
                 logger.info(f"[broadcast] 准备发送 {broadcast_id} 到 chat={chat_id}, type=text")
                 msg = _send_formatted_text(
                     bot,

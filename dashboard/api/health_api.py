@@ -14,12 +14,15 @@ import shutil
 import glob
 import os
 import sqlite3
+import logging
 from datetime import datetime, timedelta, timezone
 # 【v5.31.2 修复】VPS 运行在 UTC，运维显示时间必须用 CST（UTC+8）
 _CST = timezone(timedelta(hours=8))
 from flask import Blueprint, jsonify
 
 from dashboard.helpers import login_required, get_db, read_config
+
+logger = logging.getLogger(__name__)
 
 health_bp = Blueprint("health", __name__, url_prefix="/api")
 
@@ -52,7 +55,8 @@ def api_health_check():
         except sqlite3.Error:
             pass  # system_states 表不存在或无心跳记录，不阻塞健康检查
         return jsonify({"status": "ok"})
-    except Exception:
+    except Exception as e:
+        logger.debug(f"health root 异常：{e}")
         return jsonify({"status": "down", "msg": "db unavailable"}), 503
 
 
@@ -79,14 +83,16 @@ def api_health_score():
             else:
                 scores["tasks"] = {"score": 100, "weight": 30, "detail": "无任务记录"}
         except Exception as e:
-            scores["tasks"] = {"score": 80, "weight": 30, "detail": f"检查失败: {e}"}
+            logger.debug(f"health score tasks 检查异常：{e}")
+            scores["tasks"] = {"score": 80, "weight": 30, "detail": "检查失败（详情见服务器日志）"}
 
         # 2. AI 引擎可用性（基础探测）
         try:
             cfg = read_config()
             scores["ai"] = {"score": 75, "weight": 25, "detail": "未实时 ping（AI 在 bot 进程内）"}
-        except Exception:
-            scores["ai"] = {"score": 70, "weight": 25, "detail": "配置读取失败"}
+        except Exception as e:
+            logger.debug(f"health score AI 配置读取异常：{e}")
+            scores["ai"] = {"score": 70, "weight": 25, "detail": "配置读取失败（详情见服务器日志）"}
 
         # 3. 数据库完整性
         try:
@@ -95,9 +101,11 @@ def api_health_score():
             if r and r[0] == "ok":
                 scores["db"] = {"score": 100, "weight": 20, "detail": "PRAGMA integrity_check = ok"}
             else:
-                scores["db"] = {"score": 70, "weight": 20, "detail": f"integrity: {r}"}
+                logger.warning(f"DB integrity check 异常：{r}")
+                scores["db"] = {"score": 70, "weight": 20, "detail": "完整性检查异常（详情见服务器日志）"}
         except Exception as e:
-            scores["db"] = {"score": 70, "weight": 20, "detail": f"检查失败: {e}"}
+            logger.debug(f"health score DB integrity 异常：{e}")
+            scores["db"] = {"score": 70, "weight": 20, "detail": "完整性检查失败（详情见服务器日志）"}
 
         # 4. 配置一致性
         try:
@@ -114,7 +122,8 @@ def api_health_score():
             else:
                 scores["config"] = {"score": 80, "weight": 15, "detail": "无 example 文件"}
         except Exception as e:
-            scores["config"] = {"score": 70, "weight": 15, "detail": f"检查失败: {e}"}
+            logger.debug(f"health score config 检查异常：{e}")
+            scores["config"] = {"score": 70, "weight": 15, "detail": "配置检查失败（详情见服务器日志）"}
 
         # 5. 磁盘空间
         try:
@@ -127,7 +136,8 @@ def api_health_score():
             else:
                 scores["disk"] = {"score": 30, "weight": 10, "detail": f"不足 {free_pct:.1f}%"}
         except Exception as e:
-            scores["disk"] = {"score": 80, "weight": 10, "detail": f"检查失败: {e}"}
+            logger.debug(f"health score disk 检查异常：{e}")
+            scores["disk"] = {"score": 80, "weight": 10, "detail": "磁盘检查失败（详情见服务器日志）"}
 
         # 计算总分
         total_score = sum(s["score"] * s["weight"] / 100 for s in scores.values())
@@ -169,7 +179,8 @@ def api_health_aborts():
             "recent": [],
             "note": "task_log 表无 status 列，失败任务不写入；如需失败历史请查 llm_cost_logs",
         })
-    except Exception:
+    except Exception as e:
+        logger.debug(f"health aborts 异常：{e}")
         return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500
 
 
@@ -197,7 +208,8 @@ def api_health_jobs():
                 "last_ts": last_ts,
             })
         return jsonify({"ok": True, "jobs": jobs, "total": len(jobs)})
-    except Exception:
+    except Exception as e:
+        logger.debug(f"health jobs 异常：{e}")
         return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500
 
 
@@ -220,9 +232,11 @@ def api_health_audit():
                 with open(example_path, encoding="utf-8") as f:
                     example = json.load(f)
                 missing = [k for k in example.keys() if k not in cfg and k not in ("TOKEN", "ADMIN_ID")]
+                if missing:
+                    logger.warning(f"health audit config 缺失键 count={len(missing)} sample={missing[:5]}")
                 audit["checks"]["config"] = {
                     "ok": len(missing) == 0,
-                    "detail": "完整" if not missing else f"缺失 {len(missing)} 键: {missing[:5]}",
+                    "detail": "完整" if not missing else f"缺失 {len(missing)} 键（详情见服务器日志）",
                 }
         except Exception as e:
             audit["checks"]["config"] = {"ok": False, "detail": "配置检查失败"}
@@ -268,7 +282,8 @@ def api_health_audit():
         audit["failed_checks"] = failed
 
         return jsonify(audit)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"health audit 异常：{e}")
         return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500
 
 
@@ -334,5 +349,6 @@ def api_health_task_success_rate():
             "stats": stats,
             "note": "基于 task_execution_history 真实四态统计,替代旧 task_log 100% 失真",
         })
-    except Exception:
+    except Exception as e:
+        logger.debug(f"health task_success_rate 异常：{e}")
         return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500

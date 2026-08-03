@@ -70,3 +70,59 @@ def test_deploy_manifest_excludes_sync_conflicts_and_includes_truth_docs():
         "migrations/versions/0003_business_conversation_context.py",
         "tasks/maintenance/conversation_context_cleanup_task.py",
     }.issubset(set(deploy_vps.UPLOAD_FILES))
+
+
+def test_skip_path_fragments_hits_quarantine_execution_tmp():
+    """[v5.38.17 Graph Mode] 新增路径片段黑名单 _quarantine_ / EXECUTION_ / _tmp_ 必须命中，
+    同时确保原 runtime/cache/logs 等仍在黑名单里。"""
+    import deploy_vps
+
+    # 构造命中场景的相对路径（与 _collect_upload_files 中 as_posix() 格式一致）
+    hit_cases = (
+        "_quarantine_/orphan_review.json",
+        "docs/archive/EXECUTION_LOG.md",
+        "runtime/_tmp_/cache_snapshot.db",
+    )
+    for rel in hit_cases:
+        assert any(frag in rel for frag in deploy_vps.SKIP_PATH_FRAGMENTS), (
+            f"SKIP_PATH_FRAGMENTS 应命中但未命中: {rel}"
+        )
+
+    # 确认原黑名单继续生效（回归 guard）
+    legacy_hits = (
+        "runtime/cache/some_image.png",
+        "runtime/logs/bot.log",
+        "__pycache__/core.cpython-312.pyc",
+        ".git/config",
+    )
+    for rel in legacy_hits:
+        assert any(frag in rel for frag in deploy_vps.SKIP_PATH_FRAGMENTS), (
+            f"Legacy SKIP_PATH_FRAGMENTS 应命中但未命中: {rel}"
+        )
+
+    # 不应该命中的正常路径（负样本）
+    safe_cases = (
+        "core/ai_engine.py",
+        "modules/content.py",
+        "tasks/analytics/daily_report_task.py",
+        "VERSION.md",
+    )
+    for rel in safe_cases:
+        assert not any(frag in rel for frag in deploy_vps.SKIP_PATH_FRAGMENTS), (
+            f"SKIP_PATH_FRAGMENTS 不应命中正常路径: {rel}"
+        )
+
+
+def test_exclude_names_hits_execution_root_docs():
+    """[v5.38.17 Graph Mode] EXCLUDE_NAMES 必须精确包含 EXECUTION_LOG.md / EXECUTION_REPORT.md，
+    避免根目录过程流水文件误上传 VPS。"""
+    import deploy_vps
+
+    required = {"EXECUTION_LOG.md", "EXECUTION_REPORT.md"}
+    missing = required - deploy_vps.EXCLUDE_NAMES
+    assert not missing, f"EXCLUDE_NAMES 缺少关键保护项: {sorted(missing)}"
+
+    # 核心保护项仍在（回归 guard）
+    legacy_required = {"config.json", ".env", "mory.db", "deploy_vps.py", ".sync-conflict-"}
+    missing_legacy = legacy_required - deploy_vps.EXCLUDE_NAMES
+    assert not missing_legacy, f"EXCLUDE_NAMES 缺少历史保护项: {sorted(missing_legacy)}"

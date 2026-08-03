@@ -37,12 +37,14 @@ import html
 from typing import Any, Dict
 from datetime import datetime, timedelta, timezone
 from core.broadcast_formatter import build_greeting_html, build_rich_greeting_html, build_rich_news_html
+from core.broadcast_image_card import build_broadcast_image_card
+from core.broadcast_image_payload import build_news_image_payload
 from core.helpers import can_delete_message, can_orphan_cleanup, get_broadcast_auto_delete_config
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
 from core.task_transaction import TaskTransactionManager
 from tasks.support.message_templates import MessageTemplates
-from core.telebot_compat import send_message_compat
+from core.telebot_compat import send_message_compat, send_photo_compat
 from modules.redpacket import check_expired_redpackets
 
 
@@ -1253,7 +1255,48 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
                 # 使用 v1.0 富文本新闻排版（自动 HTML 转义 + emoji 点缀 + 观察行 blockquote）
                 rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
 
+                # [v5.38.15] 新闻播报也支持图片卡（全局总闸 + NEWS_BROADCAST_CONFIG.image_card_enabled）
+                cfg = rm.config or {}
+                global_image_enabled = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
+                news_cfg = cfg.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
+                news_image_enabled = global_image_enabled and bool(news_cfg.get("image_card_enabled", False))
+                image_path = ""
+                if news_image_enabled:
+                    try:
+                        image_payload = build_news_image_payload(news, time_desc=time_desc)
+                        today = datetime.now(_CST).strftime("%Y%m%d")
+                        image_path = build_broadcast_image_card(
+                            image_payload,
+                            cache_key=f"news_{time_desc}_{today}",
+                            cta_pool="news",
+                            config=cfg,
+                            min_height=1100,
+                        ) or ""
+                        if image_path and not os.path.isfile(image_path):
+                            image_path = ""
+                    except Exception as e:
+                        logger.warning(f"📰 {time_desc}新闻图片卡生成失败，回退文字: {e}")
+                        image_path = ""
+
                 # 新闻不附带销售或私聊按钮。
+                if image_path:
+                    try:
+                        with rm.locked('bot'):
+                            sent = send_photo_compat(
+                                rm.bot, gid, image_path,
+                                caption=None,
+                                disable_notification=False,
+                            )
+                        if sent and hasattr(sent, 'message_id'):
+                            _schedule_auto_delete(rm, gid, sent.message_id, 24 * 3600)
+                            rm.db.track_channel_message(gid, sent.message_id, "image")
+                            rm.db.track_bot_message(gid, sent.message_id)
+                            _remember_news_lines(lines)
+                            logger.info(f"✅ {time_desc}新闻图片卡已发送（来源: {source_name}）")
+                            return
+                    except Exception as e:
+                        logger.warning(f"📰 {time_desc}新闻图片卡发送失败，回退文字: {e}")
+
                 try:
                     with rm.locked('bot'):
                         sent = send_message_compat(

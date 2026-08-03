@@ -41,6 +41,109 @@ _CTA_URLS = {
     "subscribe": "https://t.me/MorychannelBot",
 }
 
+# 玄学播报 CTA 文案池（按 mode 与 target 细分，避免歧义、避免“原版详情”）
+_CTA_LABEL_POOLS = {
+    "almanac": {
+        "contact": [
+            "🧭 问 Mory 专属风水",
+            "🧭 想算个人方位？找 Mory",
+            "🧭 个人择日咨询",
+        ],
+        "preview": [
+            "🎁 看预览与福利",
+            "🎁 先看一眼群内福利",
+            "🎁 预览入口",
+        ],
+        "subscribe": [
+            "🛒 自助订阅",
+            "🛒 开通每日推送",
+            "🛒 查看当前选项",
+        ],
+    },
+    "tarot": {
+        "contact": [
+            "🔮 找 Mory 单独抽牌",
+            "🔮 想抽个人牌阵？找 Mory",
+            "🔮 个人塔罗咨询",
+        ],
+        "preview": [
+            "🎁 看预览与福利",
+            "🎁 先看一眼群内福利",
+            "🎁 预览入口",
+        ],
+        "subscribe": [
+            "🛒 自助订阅",
+            "🛒 开通每日推送",
+            "🛒 查看当前选项",
+        ],
+    },
+    "iching": {
+        "contact": [
+            "☯️ 找 Mory 问一卦",
+            "☯️ 想起个人卦象？找 Mory",
+            "☯️ 个人易经咨询",
+        ],
+        "preview": [
+            "🎁 看预览与福利",
+            "🎁 先看一眼群内福利",
+            "🎁 预览入口",
+        ],
+        "subscribe": [
+            "🛒 自助订阅",
+            "🛒 开通每日推送",
+            "🛒 查看当前选项",
+        ],
+    },
+}
+
+_CTA_CLOSING_POOLS = {
+    "almanac": {
+        "contact": [
+            "想看个人方位或择日，可以先整理出生时间、所在城市和具体问题，再找 Mory 单独聊。",
+            "空间风水、择日办事这类具体问题，适合把信息准备齐后找 Mory 单独看。",
+        ],
+        "preview": [
+            "想先看看内容和群内福利，下面有预览入口，合不合适看完再说。",
+            "不确定要不要订，可以先去预览里看看实际内容和氛围。",
+        ],
+        "subscribe": [
+            "已经了解过、想继续的话，下面可以查看当前选项并自助订阅。",
+            "看完预览觉得合适的话，可以直接从这里查看可选项。",
+        ],
+    },
+    "tarot": {
+        "contact": [
+            "想看自己的专属牌阵，先想好一个具体问题，再找 Mory 单独抽牌。",
+            "个人塔罗更适合带着具体问题来抽，把问题想清楚后找 Mory 单独聊。",
+        ],
+        "preview": [
+            "想先看看内容和群内福利，下面有预览入口，合不合适看完再说。",
+            "不确定要不要订，可以先去预览里看看实际内容和氛围。",
+        ],
+        "subscribe": [
+            "已经了解过、想继续的话，下面可以查看当前选项并自助订阅。",
+            "看完预览觉得合适的话，可以直接从这里查看可选项。",
+        ],
+    },
+    "iching": {
+        "contact": [
+            "想问自己的具体主题，可以先把问题压成一句话，再找 Mory 单独起卦。",
+            "易经问事越具体越准，先把问题整理成一句话，再找 Mory 单独起卦。",
+        ],
+        "preview": [
+            "想先看看内容和群内福利，下面有预览入口，合不合适看完再说。",
+            "不确定要不要订，可以先去预览里看看实际内容和氛围。",
+        ],
+        "subscribe": [
+            "已经了解过、想继续的话，下面可以查看当前选项并自助订阅。",
+            "看完预览觉得合适的话，可以直接从这里查看可选项。",
+        ],
+    },
+}
+
+_HOUR_NAMES = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
+_HOUR_STARTS = [23, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21]
+
 _THING_ALIASES = {
     "结婚姻": "嫁娶",
     "宴会": "聚会宴请",
@@ -271,6 +374,37 @@ def _normalize_now(now: datetime | None) -> datetime:
     return now.astimezone(_CST)
 
 
+def _extract_almanac_hours(lunar: Any) -> list[tuple[str, int, str]]:
+    """从 cnlunar 提取今日十二时辰吉凶，返回 [(名称, 起始时, 吉凶), ...]。"""
+    try:
+        lucky_list = lunar.get_twohourLuckyList()
+    except Exception:
+        lucky_list = []
+    if not lucky_list:
+        return []
+    # cnlunar 返回 13 项（子…亥 + 下一个子），取前 12 项对应十二时辰
+    lucky_list = lucky_list[:12]
+    return [
+        (name, start, str(luck))
+        for name, start, luck in zip(_HOUR_NAMES, _HOUR_STARTS, lucky_list)
+    ]
+
+
+def _extract_lucky_directions(lunar: Any) -> dict[str, str]:
+    """从 cnlunar 吉神方位中提取财神、喜神方位。"""
+    result: dict[str, str] = {}
+    try:
+        directions = lunar.get_luckyGodsDirection()
+    except Exception:
+        directions = []
+    for item in directions:
+        text = str(item or "")
+        for key, cfg_key in (("财神", "wealth"), ("喜神", "joy")):
+            if text.startswith(key):
+                result[cfg_key] = text.replace(key, "").strip() or text
+    return result
+
+
 def resolve_mystic_mode(config: dict[str, Any], period: str, now: datetime | None = None) -> str:
     """三时段产品身份固定，避免三个时间段再次变成同一种栏目。"""
     _ = config, now
@@ -326,6 +460,7 @@ def _build_almanac(now: datetime, rng: random.Random) -> dict[str, Any]:
             "黄历给的是传统择日视角，真正落地仍要把天气、交通、合同与个人状态一起考虑。",
         ))
 
+    directions = _extract_lucky_directions(lunar)
     return {
         "mode": "almanac",
         "emoji": "📜",
@@ -362,6 +497,9 @@ def _build_almanac(now: datetime, rng: random.Random) -> dict[str, Any]:
             },
         ],
         "insight": insight,
+        "hours": _extract_almanac_hours(lunar),
+        "wealth_direction": directions.get("wealth", ""),
+        "joy_direction": directions.get("joy", ""),
         "source": "cnlunar-0.2.4",
     }
 
@@ -481,38 +619,19 @@ def _build_cta(
     plan_rng.shuffle(targets)
     index = {"morning": 0, "afternoon": 1, "evening": 2}.get(period, 0)
     target = targets[index]
-    if target == "contact":
-        labels = {
-            "almanac": "🧭 问 Mory 专属风水",
-            "tarot": "🔮 找 Mory 单独抽牌",
-            "iching": "☯️ 找 Mory 问一卦",
-        }
-        closings = {
-            "almanac": "想看个人方位或择日，可以先整理出生时间、所在城市和具体问题，再找 Mory 单独聊。",
-            "tarot": "想看自己的专属牌阵，先想好一个具体问题，再找 Mory 单独抽牌。",
-            "iching": "想问自己的具体主题，可以先把问题压成一句话，再找 Mory 单独起卦。",
-        }
-        return {
-            "target": target,
-            "label": labels[mode],
-            "url": _CTA_URLS[target],
-            "style": "primary",
-            "closing": closings[mode],
-        }
-    if target == "preview":
-        return {
-            "target": target,
-            "label": "🎁 看预览与福利",
-            "url": _CTA_URLS[target],
-            "style": "success",
-            "closing": "想先看看内容和群内福利，下面有预览入口，合不合适看完再说。",
-        }
+
+    label_pool = _CTA_LABEL_POOLS.get(mode, _CTA_LABEL_POOLS["almanac"]).get(target, [])
+    closing_pool = _CTA_CLOSING_POOLS.get(mode, _CTA_CLOSING_POOLS["almanac"]).get(target, [])
+    choice_rng = _stable_rng(date_key, f"cta-{mode}-{period}", target)
+    label = choice_rng.choice(label_pool) if label_pool else "点击头像 · 了解更多"
+    closing = choice_rng.choice(closing_pool) if closing_pool else ""
+    style = "success" if target == "subscribe" else "primary"
     return {
         "target": target,
-        "label": "🛒 自助订阅",
+        "label": label,
         "url": _CTA_URLS[target],
-        "style": "default",
-        "closing": "已经了解过、想继续的话，下面可以查看当前选项并自助订阅。",
+        "style": style,
+        "closing": closing,
     }
 
 

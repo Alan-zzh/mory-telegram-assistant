@@ -15,6 +15,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
+import time
 import traceback
 from typing import Optional, Callable
 
@@ -26,7 +27,10 @@ logger = get_logger("alert_rules")
 # 阈值常量
 _QSIZE_WARN = 50
 _QSIZE_CRIT = 150
-_SCHED_FAIL_THRESHOLD = 1   # 调度失败次数超过此值即告警
+# 调度失败告警：只看最近 _SCHED_FAIL_WINDOW 秒内主动失败的任务
+# （v5.38.14 修复：原 total_fail 累计值不重置，导致任一历史失败永久误告警）
+_SCHED_FAIL_WINDOW = 1800       # 30 分钟窗口
+_SCHED_FAIL_ACTIVE_THRESHOLD = 1  # 窗口内主动失败任务数 >= 此值才告警
 _DASH_RESTART_THRESHOLD = 3  # Dashboard 重启次数告警阈值
 
 
@@ -60,32 +64,49 @@ def check_write_queue_backlog() -> Optional[dict]:
 
 def check_scheduler_failures() -> Optional[dict]:
     """
-    检查调度任务失败次数。
-    scheduler_monitor 统计的 total_fail 超过阈值 → CRITICAL。
+    检查调度任务近期失败情况。
+    v5.38.14 修复：原实现使用累计 total_fail（启动至今不重置），
+    导致任一历史失败触发永久误告警。现改为只看最近 _SCHED_FAIL_WINDOW
+    秒内 last_status==error 的任务；任务恢复成功后告警自动解除。
     """
     try:
         from core.scheduler_monitor import get_scheduler_stats
         stats = get_scheduler_stats()
-        total_fail = stats.get("total_fail", 0)
-        if total_fail > _SCHED_FAIL_THRESHOLD:
-            # 收集失败最严重的 job
-            jobs = stats.get("jobs", {})
-            failed_jobs = {
-                jid: info for jid, info in jobs.items()
-                if info.get("last_status") == "error"
-            }
+        jobs = stats.get("jobs", {})
+        now = int(time.time())
+        # 收集窗口内主动失败的任务（last_status==error 且 last_run 在窗口内）
+        active_failed = {}
+        for jid, info in jobs.items():
+            if info.get("last_status") != "error":
+                continue
+            last_run = int(info.get("last_run", 0) or 0)
+            if last_run and (now - last_run) <= _SCHED_FAIL_WINDOW:
+                active_failed[jid] = info
+
+        if len(active_failed) >= _SCHED_FAIL_ACTIVE_THRESHOLD:
+            # 摘要：任务名 + 失败次数 + 最近错误 + 距今秒数
+            summary = []
+            for jid, info in list(active_failed.items())[:5]:
+                ago = now - int(info.get("last_run", 0) or 0)
+                summary.append(f"{jid}(失败{info.get('fail_count',0)}次/{ago}s前)")
             return {
                 "level": "CRITICAL",
                 "title": "调度任务失败告警",
-                "message": f"调度器累计失败 {total_fail} 次，最近失败任务: {list(failed_jobs.keys())[:5]}",
+                "message": (
+                    f"近{_SCHED_FAIL_WINDOW//60}分钟内有 {len(active_failed)} 个任务主动失败: "
+                    + "; ".join(summary)
+                ),
                 "context": {
-                    "total_fail": total_fail,
+                    "active_failed_count": len(active_failed),
+                    "window_seconds": _SCHED_FAIL_WINDOW,
+                    "total_fail_cumulative": stats.get("total_fail", 0),
                     "total_miss": stats.get("total_miss", 0),
                     "failed_jobs": {
                         jid: {
                             "fail_count": info.get("fail_count", 0),
                             "last_error": info.get("last_error", ""),
-                        } for jid, info in failed_jobs.items()
+                            "last_run_ago_seconds": now - int(info.get("last_run", 0) or 0),
+                        } for jid, info in active_failed.items()
                     },
                 },
             }

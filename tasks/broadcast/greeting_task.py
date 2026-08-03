@@ -4,10 +4,15 @@ tasks/broadcast/greeting_task.py - 早/午/晚安问候任务
 负责按配置时间向管理群发送早安、午安、晚安问候，支持链式互删。
 """
 
+import os
 import random
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from core.broadcast_cta import build_cta_markup, get_broadcast_cta
 from core.broadcast_formatter import build_rich_greeting_html, build_rich_greeting_card_message
+from core.broadcast_image_card import build_broadcast_image_card
+from core.broadcast_image_payload import build_greeting_image_payload
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
@@ -90,9 +95,41 @@ class GreetingTask(BaseTask):
                 # v5.35.6：正文与按钮分工，不再追加一段固定“温柔收尾”破坏短文案。
                 msg = msg.strip()[:120]
                 suffix = ""
+
+                # [v5.38.15] 统一 CTA：文字版 closing、图片卡文案、真实按钮全部一致
+                cfg = self.rm.config or {}
+                cta = get_broadcast_cta(scene="greeting", period=period, config=cfg)
+                closing = cta.get("closing", "")
+                reply_markup = build_cta_markup(cta, config=cfg)
+
                 # [v5.32] 同时构建 HTML 版本和 Rich Message 版本
-                rich_html = build_rich_greeting_html(period, msg, suffix.strip())
-                rich_message_html = build_rich_greeting_card_message(period, msg, suffix.strip())
+                rich_html = build_rich_greeting_html(period, msg, suffix.strip(), closing=closing)
+                rich_message_html = build_rich_greeting_card_message(period, msg, suffix.strip(), closing=closing)
+
+                # [v5.38.15] 按需生成问候图片卡
+                global_image_enabled = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
+                greeting_cfg = cfg.get("GREETING_CONFIG", {}) if isinstance(cfg, dict) else {}
+                greeting_image_enabled = global_image_enabled and bool(greeting_cfg.get("image_card_enabled", False))
+                image_path = ""
+                if greeting_image_enabled:
+                    try:
+                        badge = str(greeting_cfg.get(f"{period}_badge", "") or "").strip()
+                        image_payload = build_greeting_image_payload(period, msg, badge=badge)
+                        _cst = timezone(timedelta(hours=8))
+                        cache_key = f"greeting_{period}_{datetime.now(_cst).strftime('%Y%m%d')}"
+                        image_path = build_broadcast_image_card(
+                            image_payload,
+                            cache_key=cache_key,
+                            cta_pool="greeting",
+                            config=cfg,
+                            min_height=900,
+                            cta_text=cta.get("image_label", ""),
+                        ) or ""
+                        if image_path and not os.path.isfile(image_path):
+                            image_path = ""
+                    except Exception as e:
+                        logger.warning(f"🌅 {period} 问候图片卡生成失败，回退文字: {e}")
+                        image_path = ""
 
                 sent_count = 0
                 failures = []
@@ -101,7 +138,8 @@ class GreetingTask(BaseTask):
                         sent = send_greeting(
                             self.rm, gid, rich_html, f"greeting_{period}",
                             rich_text=rich_message_html,
-                            reply_markup=build_mory_contact_markup(period),
+                            reply_markup=reply_markup,
+                            image_path=image_path,
                         )
                         if sent:
                             sent_count += 1

@@ -64,6 +64,8 @@ EXCLUDE_NAMES = {
     "_ssh_known_hosts",
     # 运行日志（运行态产物，不应上传）
     "dashboard.log", "fault_alerts.log",
+    # 过程流水文件（不应传 VPS：执行日志/审计报告/隔离目录名）
+    "EXECUTION_LOG.md", "EXECUTION_REPORT.md",
 }
 
 # 【死代码清理列表】本地已删除的文件，部署时自动从服务器删除，保持服务器干净
@@ -92,13 +94,26 @@ SCAN_DIRS = [
     "tasks",
     "migrations",
     "i18n",
-]  # 运行代码、自动任务、Alembic 迁移与 i18n 语言包必须随同一次版本部署
+    "assets",
+]  # 运行代码、自动任务、Alembic 迁移与 i18n 语言包必须随同一次版本部署；assets 含 PIL 图片卡中文字体（LXGWWenKai），VPS 缺失会导致汉字变豆腐块
 
 # 各扫描目录的扩展名映射（未列出的目录默认扫描 .py）
-# i18n 目录只含 .json 语言包，需显式声明
+# i18n 目录只含 .json 语言包；assets 含字体/图片等二进制资源，需显式声明扩展名。
 SCAN_DIR_EXTS = {
     "i18n": [".json"],
+    "assets": [".ttf", ".ttc", ".otf", ".woff", ".woff2", ".png", ".jpg", ".jpeg", ".gif"],
 }
+
+# 单文件体积上限（字节）。超过则跳过并警告，避免误上传缓存图片/旧数据库/视频。
+# 字体文件通常几 MB 量级，给 20MB 足够；数据库/视频不可能混进 SCAN_DIRS，但作为兜底。
+MAX_UPLOAD_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
+
+# 无论是否在 SCAN_DIRS 中，命中这些路径片段都直接跳过（兜底）。
+SKIP_PATH_FRAGMENTS = (
+    "runtime/cache", "runtime/logs", "runtime/audit-reports",
+    "runtime/demo", "__pycache__", ".git/",
+    "_quarantine_", "EXECUTION_", "_tmp_",
+)
 
 # 根目录下需要上传的文件
 ROOT_FILES = [
@@ -126,11 +141,20 @@ SERVICE_FILES = [
 
 
 def _collect_upload_files():
-    """动态收集所有需要上传的代码/资源文件"""
+    """动态收集所有需要上传的代码/资源文件。
+
+    三层过滤：
+    1. EXCLUDE_NAMES：明确的文件名/目录黑名单
+    2. SKIP_PATH_FRAGMENTS：路径片段（如 runtime/cache）
+    3. MAX_UPLOAD_FILE_SIZE：单文件体积上限（20MB，避免误传缓存/数据库）
+    """
     files = []
+    skipped_large = []
+    skipped_path = []
     # 根目录文件
     for f in ROOT_FILES:
-        if (ROOT / f).exists():
+        fp = ROOT / f
+        if fp.exists():
             files.append(f)
     # 递归扫描子目录（按目录决定扩展名，默认 .py；i18n 等目录走 SCAN_DIR_EXTS）
     for dir_name in SCAN_DIRS:
@@ -141,10 +165,30 @@ def _collect_upload_files():
         for ext in exts:
             for py_file in sorted(dir_path.rglob(f"*{ext}")):
                 rel = py_file.relative_to(ROOT).as_posix()
-                # 跳过排除文件
+                # 1. 排除文件/目录名
                 if any(exc in rel for exc in EXCLUDE_NAMES):
                     continue
+                # 2. 路径片段黑名单（兜底，避免 runtime/cache 混进 SCAN_DIRS）
+                if any(frag in rel for frag in SKIP_PATH_FRAGMENTS):
+                    skipped_path.append(rel)
+                    continue
+                # 3. 体积上限（字体/图像应远小于 20MB；命中大概率是缓存 PNG 或意外文件）
+                try:
+                    size = py_file.stat().st_size
+                    if size > MAX_UPLOAD_FILE_SIZE:
+                        skipped_large.append((rel, size // 1024 // 1024))
+                        continue
+                except OSError:
+                    pass
                 files.append(rel)
+    if skipped_large:
+        print(f"  ⚠️ [收集] 跳过 {len(skipped_large)} 个超大文件（>{MAX_UPLOAD_FILE_SIZE//1024//1024}MB）:")
+        for rel, mb in skipped_large[:5]:
+            print(f"     - {rel} ({mb}MB)")
+        if len(skipped_large) > 5:
+            print(f"     ... 其余 {len(skipped_large)-5} 个省略")
+    if skipped_path:
+        print(f"  ℹ️ [收集] 按路径黑名单跳过 {len(skipped_path)} 个文件")
     return files
 
 
@@ -323,11 +367,27 @@ def main():
         # 5. 上传代码文件
         print("\n[4/5] 上传代码文件 ...")
         files_to_upload = []
+        skipped_ul = []
         for rel_path in UPLOAD_FILES:
             local_full = ROOT / rel_path
-            if local_full.exists():
-                remote_path = f"{VPS_PATH}/{rel_path}"
-                files_to_upload.append((rel_path, remote_path))
+            if not local_full.exists():
+                continue
+            # 上传前二次检查（兜底：防止 _collect_upload_files 后本地又新增大文件）
+            try:
+                sz = local_full.stat().st_size
+                if sz > MAX_UPLOAD_FILE_SIZE:
+                    skipped_ul.append((rel_path, sz // 1024 // 1024))
+                    continue
+            except OSError:
+                pass
+            if any(frag in rel_path for frag in SKIP_PATH_FRAGMENTS):
+                continue
+            remote_path = f"{VPS_PATH}/{rel_path}"
+            files_to_upload.append((rel_path, remote_path))
+        if skipped_ul:
+            print(f"  ⚠️ [上传前] 二次过滤跳过 {len(skipped_ul)} 个超大文件:")
+            for rp, mb in skipped_ul[:3]:
+                print(f"     - {rp} ({mb}MB)")
 
         uploaded = upload_files(sftp, str(ROOT), VPS_PATH, files_to_upload,
             progress_cb=lambda done, total: print(f"  ⏳ 上传进度: {done}/{total}", end="\r") if done % 20 == 0 or done == total else None)

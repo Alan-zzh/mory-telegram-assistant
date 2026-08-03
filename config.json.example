@@ -359,7 +359,7 @@
   },
   "SCHEDULED_BROADCASTS": [
     {
-      "_doc": "[v5.32] ai_generate=true 时调用 AI 动态生成 content，静态 content 作为 fallback。footer 不再硬塞营销。",
+      "_doc": "[v5.32] ai_generate=true 时调用 AI 动态生成 content，静态 content 作为 fallback。footer 不再硬塞营销。[v5.38.15] image_card_enabled 控制是否生成图片卡（还需 BROADCAST_IMAGE_CARD_ENABLED=true）。",
       "id": "morning_nudge",
       "hour": 10,
       "minute": 0,
@@ -372,6 +372,7 @@
       "footer": "",
       "button_text": "",
       "button_url": "",
+      "image_card_enabled": false,
       "silent": false,
       "protect_content": false,
       "enabled": true
@@ -389,6 +390,7 @@
       "footer": "",
       "button_text": "👀 看看预览",
       "button_url": "https://t.me/moryselect",
+      "image_card_enabled": false,
       "silent": false,
       "protect_content": false,
       "enabled": true
@@ -406,6 +408,7 @@
       "footer": "",
       "button_text": "",
       "button_url": "",
+      "image_card_enabled": false,
       "silent": false,
       "protect_content": false,
       "enabled": true
@@ -423,6 +426,7 @@
       "footer": "",
       "button_text": "👀 看看预览",
       "button_url": "https://t.me/moryselect",
+      "image_card_enabled": false,
       "silent": true,
       "protect_content": false,
       "enabled": true
@@ -450,12 +454,22 @@
     "afternoon_enabled": false,
     "afternoon_time": "12:35",
     "evening_enabled": false,
-    "evening_time": "23:05"
+    "evening_time": "23:05",
+    "image_card_enabled": false
+  },
+  "NEWS_BROADCAST_CONFIG": {
+    "enabled": false,
+    "preferred_source": "real_first",
+    "morning_time": "09:05",
+    "afternoon_time": "13:05",
+    "evening_time": "20:35",
+    "image_card_enabled": false
   },
   "MYSTIC_BROADCAST_CONFIG": {
     "enabled": false,
     "cta_enabled": false,
     "private_reply_enabled": false,
+    "image_card_enabled": false,
     "morning_time": "09:05",
     "morning_mode": "almanac",
     "afternoon_time": "13:05",
@@ -549,7 +563,8 @@
   "ORPHAN_CLEANUP_ENABLED": true,
   "AD_CLEANUP_REACTIONS": true,
   "RICH_MESSAGE_ENABLED": true,
-  "BROADCAST_FORMAT_VERSION": "html",
+  "BROADCAST_FORMAT_VERSION": "auto",
+  "BROADCAST_IMAGE_CARD_ENABLED": false,
   "BROADCAST_TEMPLATE_VARIATION_ENABLED": false,
   "BROADCAST_THEME_ENABLED": true,
   "RICH_MESSAGE_STYLE": {
@@ -559,7 +574,7 @@
     "footer_expandable": true,
     "emoji_custom": false
   },
-  "BUTTON_STYLE_ENABLED": false,
+  "BUTTON_STYLE_ENABLED": true,
   "BUTTON_COLOR_MAP": {
     "buy": "success",
     "cancel": "danger",
