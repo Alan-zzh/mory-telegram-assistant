@@ -205,7 +205,20 @@ def test_proxy_receipt_normal_business_context_is_not_ad(detector, text):
     assert result["score"] == 0
 
 
-@pytest.mark.parametrize("text", ["代收日结", "代付返佣", "代收有量", "代x收日结", "代1付返佣"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "代收日结",
+        "代付返佣",
+        "代收有量",
+        "代x收日结",
+        "代1付返佣",
+        "代 收 有 量",
+        "代1付返x佣",
+        "日 结 代 x 收",
+        "返佣 代 付",
+    ],
+)
 def test_proxy_receipt_gray_trade_anchor_variants_are_ad(detector, text):
     result = detector.detect(username="随机账号", msg=text)
     assert result["is_ad"] is True
