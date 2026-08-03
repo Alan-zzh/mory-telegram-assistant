@@ -7,7 +7,6 @@ tasks/maintenance/startup_history_cleanup_task.py - 启动历史清理任务
 from datetime import timezone, timedelta
 from typing import Any, Dict, List
 
-from core.helpers import can_delete_message
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
@@ -32,10 +31,6 @@ class StartupHistoryCleanupTask(BaseTask):
         bot = self.rm.bot
         db = self.rm.db
         config = self.rm.config
-
-        if not can_delete_message(config):
-            logger.info("[启动历史清理] 消息删除全局开关关闭，跳过")
-            return
 
         gid = config.get("GROUP_ID", 0)
         if gid:
@@ -68,24 +63,30 @@ class StartupHistoryCleanupTask(BaseTask):
             logger.info("[启动历史清理] 无黑名单用户，跳过")
             return
 
-        logger.info(f"[启动历史清理] 开始清理 {len(all_banned_uids)} 个黑名单用户的历史消息")
+        logger.info(f"[启动历史清理] 开始重试清理 {len(all_banned_uids)} 个黑名单用户的逐条确证广告")
         total_deleted = 0
         for uid in all_banned_uids:
             for cid in chat_ids:
                 try:
-                    msgs = db.get_user_messages(uid, cid, limit=500)
+                    msgs = db.get_user_ad_messages(uid, cid, limit=500)
                 except Exception as e:
                     logger.error(f"读取黑名单用户历史失败 uid={uid} cid={cid}: {e}")
                     failures.append(e)
                     continue
                 for message in msgs:
-                    if message.get("deleted") or not (message_id := message.get("msg_id")):
+                    if not (message_id := message.get("msg_id")):
                         continue
                     try:
-                        bot.delete_message(cid, message_id)
-                        db.mark_message_deleted(cid, message_id)
-                        total_deleted += 1
+                        from modules.ad_enforcement import delete_confirmed_ad_message
+                        deletion = delete_confirmed_ad_message(bot, db, cid, message_id)
+                        if deletion["deleted"]:
+                            total_deleted += 1
                     except Exception as e:
+                        # v5.38.14 修复：消息已被删除/不存在属于目标达成，不应作为失败
+                        # 否则单条 not_found 会导致整个启动清理任务抛 ExceptionGroup
+                        msg_text = str(e).lower()
+                        if "not found" in msg_text or "message to delete" in msg_text:
+                            continue
                         logger.warning(f"删除黑名单历史消息失败 cid={cid} mid={message_id}: {e}")
                         failures.append(e)
 

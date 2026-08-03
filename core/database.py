@@ -2027,9 +2027,11 @@ class DB:
         'check_spam': 'groups',
         # [v5.28.3 新增] 以下 4 个方法一直漏注册导致 message_snapshots 全为空
         'snapshot_message': 'groups',
+        'mark_message_ad': 'groups',
         'mark_message_deleted': 'groups',
         'get_user_messages': 'groups',
         'get_user_undeleted_messages': 'groups',
+        'get_user_ad_messages': 'groups',
         'record_channel_member_snapshot': 'groups', 'get_channel_member_changes': 'groups',
         'get_channel_weekly_member_changes': 'groups', 'get_channel_monthly_member_changes': 'groups',
         'upsert_group_member': 'groups', 'remove_group_member': 'groups',

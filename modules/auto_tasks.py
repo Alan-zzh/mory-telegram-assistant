@@ -3625,13 +3625,9 @@ def _job_startup_history_cleanup(rm):
     修复后所有进分发流程的消息都入 message_snapshots，未来再发生类似情况 100% 可追溯
     """
     try:
-        from core.helpers import can_delete_message
         bot = rm.bot
         db = rm.db
         CONFIG = rm.config
-        if not can_delete_message(CONFIG):
-            logger.info("[启动历史清理] 消息删除全局开关关闭，跳过")
-            return
         # 找管理的群
         chat_ids = []
         gid = CONFIG.get("GROUP_ID", 0)
@@ -3670,18 +3666,18 @@ def _job_startup_history_cleanup(rm):
         for uid in all_banned_uids:
             for cid in chat_ids:
                 try:
-                    msgs = db.get_user_messages(uid, cid, limit=500)
+                    msgs = db.get_user_ad_messages(uid, cid, limit=500)
                 except Exception as e:
                     logger.warning(f"auto_task 获取用户消息失败，降级空列表: {e}")
                     msgs = []
                 for mm in msgs:
-                    if mm.get("deleted"): continue
                     mid = mm.get("msg_id")
                     if not mid: continue
                     try:
-                        bot.delete_message(cid, mid)
-                        db.mark_message_deleted(cid, mid)
-                        total_deleted += 1
+                        from modules.ad_enforcement import delete_confirmed_ad_message
+                        deletion = delete_confirmed_ad_message(bot, db, cid, mid)
+                        if deletion["deleted"]:
+                            total_deleted += 1
                     except Exception:
                         # 消息已删/无权/超时，静默
                         pass
@@ -3845,20 +3841,6 @@ def _job_startup_member_scan(rm):
                             )
                             total_banned += 1
                             logger.warning(f"[启动扫描] 🚫 永久禁言: {user_name}({user.id}) {ban_reason}")
-                            # 额外兜底删除该用户最近的历史消息
-                            if can_delete_message(CONFIG):
-                                try:
-                                    recent_msgs = db.conn.execute(
-                                        "SELECT msg_id FROM message_snapshots WHERE user_id=? AND chat_id=? ORDER BY ts DESC LIMIT 20",
-                                        (user.id, chat_id)
-                                    ).fetchall()
-                                    for (mid,) in recent_msgs:
-                                        try:
-                                            bot.delete_message(chat_id, int(mid))
-                                        except Exception as e:
-                                            logger.debug(f"操作异常: {e}")
-                                except Exception as e:
-                                    logger.debug(f"操作异常: {e}")
                         except Exception as e:
                             logger.debug(f"[启动扫描] 封禁失败 {user_name}({user.id}): {e}")
 

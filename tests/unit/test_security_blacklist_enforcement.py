@@ -62,7 +62,7 @@ class _FakeDB:
         return True
 
 
-def test_check_blacklist_uses_unified_enforcement_and_cleans_history():
+def test_check_blacklist_uses_unified_enforcement_without_deleting_unproven_history():
     from core.handlers.security_handlers import check_blacklist
 
     bot = _FakeBot()
@@ -83,7 +83,7 @@ def test_check_blacklist_uses_unified_enforcement_and_cleans_history():
     })()
 
     assert check_blacklist(dctx) is True
-    assert bot.deleted == [(-1001, 99), (-1001, 10), (-1001, 11)]
+    assert bot.deleted == [(-1001, 99)]
     assert len(bot.restricted) == 1
     assert db.blacklist == [(42, "黑名单拦截:广告号")]
     assert (-1001, 99) in db.marked

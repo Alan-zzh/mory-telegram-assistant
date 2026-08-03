@@ -181,7 +181,7 @@ def test_avatar_unsure_falls_back_to_ocr(monkeypatch):
     assert "OCR命中" in result[1]
 
 
-def test_member_avatar_gate_enforces_high_but_not_borderline(monkeypatch):
+def test_member_avatar_gate_never_enforces_from_avatar_alone(monkeypatch):
     from core.handlers import member_handlers
     from modules import avatar_detector
 
@@ -209,8 +209,8 @@ def test_member_avatar_gate_enforces_high_but_not_borderline(monkeypatch):
             {"type": "adult"},
         ),
     )
-    assert member_handlers._review_member_avatar(_Bot(), user, {}, object(), -1001) is True
-    assert len(enforced) == 1
+    assert member_handlers._review_member_avatar(_Bot(), user, {}, object(), -1001) is False
+    assert enforced == []
 
     enforced.clear()
     monkeypatch.setattr(

@@ -1,10 +1,11 @@
 def can_delete_message(config):
     """检查全局消息删除开关是否启用
 
-    ENABLE_MESSAGE_DELETION 控制所有自动消息删除行为：
-    - 夜间模式删除、广告检测删除、慢速模式删除、消息锁删除等
+    ENABLE_MESSAGE_DELETION 控制普通自动消息删除行为：
+    - 夜间模式删除、慢速模式删除、消息锁删除等
     - 不影响管理员手动命令（如 /del, /purge, /scan）
     - 不影响 Bot 自身消息的清理
+    - 已确认广告由 modules.ad_enforcement 独立执行逐条证据删除，不受此总闸影响
 
     Args:
         config: 配置字典

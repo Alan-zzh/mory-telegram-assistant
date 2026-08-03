@@ -9,7 +9,6 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
-from core.helpers import can_delete_message
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
@@ -195,20 +194,6 @@ class StartupMemberScanTask(BaseTask):
                                 total_banned += 1
                                 logger.warning(f"[启动扫描] 🚫 永久禁言: {user_name}({user.id}) {ban_reason}")
 
-                                if can_delete_message(config):
-                                    try:
-                                        recent_msgs = db.conn.execute(
-                                            "SELECT msg_id FROM message_snapshots WHERE user_id=? AND chat_id=? ORDER BY ts DESC LIMIT 20",
-                                            (user.id, chat_id)
-                                        ).fetchall()
-                                        for (mid,) in recent_msgs:
-                                            try:
-                                                bot.delete_message(chat_id, int(mid))
-                                            except Exception as e:
-                                                logger.debug(f"操作异常: {e}")
-                                    except Exception as e:
-                                        logger.error(f"[启动扫描] 历史消息查询失败 uid={user.id}: {e}")
-                                        failures.append(e)
                             except Exception as e:
                                 logger.error(f"[启动扫描] 封禁失败 {user_name}({user.id}): {e}")
                                 failures.append(e)

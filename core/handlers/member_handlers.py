@@ -129,7 +129,7 @@ def _review_member_profile(bot, user, bio, config, db, chat_id, ctx=None, stage=
 def _review_member_avatar(
     bot, user, config, db, chat_id, stage="join", check_similarity=False
 ):
-    """只用明确视觉/OCR证据及批量相似证据审核头像。命中返回 True。"""
+    """审核头像并记录辅助证据；头像或相似头像不得单信号封禁。"""
     user_id = user.id
     user_display = (user.first_name or "") + (user.last_name or "")
     try:
@@ -143,27 +143,17 @@ def _review_member_avatar(
         )
         if avatar_hit and avatar_score >= 2:
             logger.warning(
-                f"🚫 [入群头像审核] stage={stage} uid={user_id} score={avatar_score} "
-                f"ai_type={ai_result.get('type', 'none')} outcome=block reason={avatar_reason[:120]}"
+                f"⚠️ [入群头像审核] stage={stage} uid={user_id} score={avatar_score} "
+                f"ai_type={ai_result.get('type', 'none')} outcome=evidence_only reason={avatar_reason[:120]}"
             )
-            _enforce_member_ad(
-                bot, db, config, chat_id, user_id, user_display,
-                f"入群头像审核({stage}): {avatar_reason}",
-            )
-            return True
 
         if check_similarity:
             similar, similarity_reason, _ = check_avatar_similarity(bot, user_id, chat_id, db)
             if similar:
                 logger.warning(
-                    f"🚫 [入群头像审核] stage={stage} uid={user_id} score=2 "
-                    f"outcome=block reason={similarity_reason[:120]}"
+                    f"⚠️ [入群头像审核] stage={stage} uid={user_id} score=2 "
+                    f"outcome=evidence_only reason={similarity_reason[:120]}"
                 )
-                _enforce_member_ad(
-                    bot, db, config, chat_id, user_id, user_display,
-                    f"入群头像相似({stage}): {similarity_reason}",
-                )
-                return True
 
         logger.info(
             f"[入群头像审核] stage={stage} uid={user_id} score={avatar_score} "

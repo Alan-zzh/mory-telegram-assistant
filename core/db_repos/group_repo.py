@@ -250,15 +250,29 @@ class GroupRepo:
         """[TRAE SOLO CN] v5.15.3 新增：标记消息已删除（用于追溯审计）"""
         try:
             with self.lock:
-                self.conn.execute(
+                cursor = self.conn.execute(
                     "UPDATE message_snapshots SET deleted=1 WHERE chat_id=? AND msg_id=?",
                     (chat_id, msg_id)
                 )
                 self.conn.commit()
-            return True
+            return cursor.rowcount > 0
         except Exception as e:
             # 【v5.31.2 修复】广告治理审计路径，失败必须告警
             logger.warning(f"mark_message_deleted 失败 chat_id={chat_id} msg_id={msg_id}: {e}")
+            return False
+
+    def mark_message_ad(self, chat_id: int, msg_id: int) -> bool:
+        """固化逐条广告判定；删除是否成功由 deleted 字段独立表达。"""
+        try:
+            with self.lock:
+                cursor = self.conn.execute(
+                    "UPDATE message_snapshots SET is_ad=1 WHERE chat_id=? AND msg_id=?",
+                    (chat_id, msg_id),
+                )
+                self.conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.warning(f"mark_message_ad 失败 chat_id={chat_id} msg_id={msg_id}: {e}")
             return False
 
     def get_user_messages(self, user_id: int, chat_id: int = None, limit: int = 100) -> list:
@@ -289,6 +303,30 @@ class GroupRepo:
         deleted=1，导致群里实际残留的广告消息后续被跳过；广告处置时必须按快照重试。
         """
         return self.get_user_messages(user_id, chat_id=chat_id, limit=limit)
+
+    def get_user_ad_messages(self, user_id: int, chat_id: int = None, limit: int = 2000) -> list:
+        """只返回已逐条确认为广告的快照，供治理链安全重试删除。"""
+        try:
+            with self.lock:
+                if chat_id:
+                    rows = self.conn.execute(
+                        "SELECT chat_id, msg_id, text, ts, deleted FROM message_snapshots "
+                        "WHERE user_id=? AND chat_id=? AND is_ad=1 ORDER BY ts DESC LIMIT ?",
+                        (user_id, chat_id, limit),
+                    ).fetchall()
+                else:
+                    rows = self.conn.execute(
+                        "SELECT chat_id, msg_id, text, ts, deleted FROM message_snapshots "
+                        "WHERE user_id=? AND is_ad=1 ORDER BY ts DESC LIMIT ?",
+                        (user_id, limit),
+                    ).fetchall()
+            return [
+                {"chat_id": r[0], "msg_id": r[1], "text": r[2], "ts": r[3], "deleted": r[4]}
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning(f"get_user_ad_messages 失败 user_id={user_id} chat_id={chat_id}: {e}")
+            return []
 
     def is_blacklisted(self, uid: int) -> bool:
         with self.lock:

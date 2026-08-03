@@ -21,6 +21,11 @@ class _ProtectedContentBot:
         return True
 
 
+class _AlreadyAbsentBot(_ProtectedContentBot):
+    def delete_message(self, chat_id, message_id):
+        raise RuntimeError("Bad Request: message to delete not found")
+
+
 def _make_db():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.execute(
@@ -38,14 +43,14 @@ def _make_db():
     return SimpleNamespace(conn=conn)
 
 
-def _scan(detector, bot, chat_id=-1001, start=1, end=200):
+def _scan(detector, bot, chat_id=-1001, start=1, end=200, deletion_enabled=True):
     return detector.retroactive_scan(
         bot,
         chat_id,
         start,
         end,
         admin_id=999,
-        config={"ENABLE_MESSAGE_DELETION": True},
+        config={"ENABLE_MESSAGE_DELETION": deletion_enabled},
     )
 
 
@@ -102,10 +107,11 @@ def test_explicit_confirmed_ad_can_still_be_deleted():
         text="加我微信日赚千元",
         score=0,
         is_ad=True,
+        direct_message_is_ad=True,
     )
     bot = _ProtectedContentBot()
 
-    result = _scan(detector, bot, start=80, end=90)
+    result = _scan(detector, bot, start=80, end=90, deletion_enabled=False)
 
     assert result["ads_found"] == 1
     assert result["deleted"] == 1
@@ -122,6 +128,7 @@ def test_legacy_high_score_ad_can_still_be_deleted():
         chat_id=-1001,
         text="加我微信",
         score=3,
+        direct_message_score=3,
     )
     messages = json.loads(
         db.conn.execute(
@@ -143,6 +150,25 @@ def test_legacy_high_score_ad_can_still_be_deleted():
     assert result["ads_found"] == 1
     assert result["deleted"] == 1
     assert bot.deleted == [(-1001, 99)]
+
+
+def test_already_absent_confirmed_ad_is_resolved_not_failed():
+    detector = AdDetector(config={}, db=_make_db())
+    detector.track_suspicious_user(
+        user_id=789,
+        msg_id=77,
+        chat_id=-1001,
+        text="广告",
+        score=3,
+        direct_message_score=3,
+    )
+    result = _scan(detector, _AlreadyAbsentBot(), start=70, end=80, deletion_enabled=False)
+
+    assert result["ads_found"] == 1
+    assert result["deleted"] == 0
+    assert result["not_found"] == 1
+    assert result["failed"] == 0
+    assert result["details"][0]["resolved"] is True
 
 
 def test_latest_snapshot_id_is_read_without_group_probe():

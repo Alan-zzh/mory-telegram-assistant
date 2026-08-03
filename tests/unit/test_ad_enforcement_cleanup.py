@@ -43,11 +43,12 @@ class _FakeDB:
         self.conn = _FakeConn()
         self.blacklist = []
         self.marked = []
+        self.ad_marked = []
 
     def blacklist_add(self, uid, reason):
         self.blacklist.append((uid, reason))
 
-    def get_user_undeleted_messages(self, uid, chat_id=None, limit=2000):
+    def get_user_ad_messages(self, uid, chat_id=None, limit=2000):
         return [
             {"chat_id": -1001, "msg_id": 10, "deleted": 0},
             {"chat_id": -1001, "msg_id": 11, "deleted": 1},
@@ -56,6 +57,10 @@ class _FakeDB:
 
     def mark_message_deleted(self, chat_id, msg_id):
         self.marked.append((chat_id, msg_id))
+        return True
+
+    def mark_message_ad(self, chat_id, msg_id):
+        self.ad_marked.append((chat_id, msg_id))
         return True
 
 
@@ -74,10 +79,13 @@ def test_cleanup_retries_deleted_marked_rows_and_marks_only_success():
         uname="广告号",
         reason="[Codex] 单测广告",
         current_msg_id=99,
+        current_message_is_ad=True,
         notify_admin=False,
     )
 
     assert result["data"]["deleted_count"] == 3
+    assert result["data"]["evidence_persisted"] is True
+    assert db.ad_marked == [(-1001, 99)]
     assert bot.deleted == [(-1001, 99), (-1001, 10), (-1001, 11)]
     assert (-1001, 11) in db.marked
     assert (-1001, 12) not in db.marked

@@ -117,6 +117,7 @@ class _FakeDB:
     def __init__(self):
         self.conn = _FakeConn()
         self.blacklist = []
+        self.ad_marked = []
 
     def is_blacklisted(self, uid):
         return False
@@ -128,6 +129,10 @@ class _FakeDB:
         return []
 
     def mark_message_deleted(self, chat_id, msg_id):
+        return True
+
+    def mark_message_ad(self, chat_id, msg_id):
+        self.ad_marked.append((chat_id, msg_id))
         return True
 
 
@@ -150,7 +155,7 @@ class _FakeShortMessage:
     from_user = _FakeUser()
 
 
-def test_short_message_still_blocks_profile_status_ad():
+def test_profile_ad_deletes_even_when_general_deletion_is_disabled():
     from core.handlers.security_handlers import check_ad_detection
 
     bot = _FakeBot([_FakeSticker(set_name="kanwo 看我简介")])
@@ -162,10 +167,11 @@ def test_short_message_still_blocks_profile_status_ad():
     bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
     bot.restrict_chat_member = lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
 
+    db = _FakeDB()
     ctx = type("Ctx", (), {
         "bot": bot,
-        "db": _FakeDB(),
-        "config": {"ENABLE_MESSAGE_DELETION": True},
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
         "ad_detector": _FakeAdDetector(),
     })()
     dctx = type("Dctx", (), {
@@ -181,6 +187,8 @@ def test_short_message_still_blocks_profile_status_ad():
     assert check_ad_detection(dctx) is True
     assert bot.deleted == [(-1001, 88)]
     assert bot.restricted[0][0:2] == (-1001, 42)
+    # 账号资料是广告证据，但正文“1”不是广告；仍删除拦截，不伪造逐条广告真值。
+    assert db.ad_marked == []
 
 
 def test_profile_status_ad_does_not_block_whitelisted_user():

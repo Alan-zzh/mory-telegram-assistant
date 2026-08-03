@@ -51,6 +51,10 @@ from modules.ad_patterns_encoded import BIO_PATTERNS
 
 logger = get_logger("group_mgr")
 
+# 这些词有大量正常业务语境，旧版子串兜底不得把它们作为单一封禁证据。
+# 强组合与拆字变体由 AdDetector 的多维规则负责。
+_AMBIGUOUS_LEGACY_AD_KEYWORDS = frozenset({"代收", "代付"})
+
 # 模块级缓存bot id，避免每次调用bot.get_me()
 _bot_cached_id = None
 
@@ -146,17 +150,15 @@ def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
         except Exception as e:
             logger.debug(f"BIO检测失败 {user_display}: {e}")
 
-        # ── 综合判断：任一检测命中 → 广告处置 ──
-        if matched_keyword or is_suspicious or avatar_ocr_hit or bio_hit:
+        # 头像只作为辅助证据，不能单信号封禁；名字/Bio仍按各自强规则处置。
+        if matched_keyword or is_suspicious or bio_hit:
             if matched_keyword:
                 logger.warning(f"🚫 已加黑名单：{user_display} 命中关键词={matched_keyword}")
                 notify_reason = f"🔑 命中关键词：{matched_keyword}"
-            elif avatar_ocr_hit:
-                logger.warning(f"🚫 已加黑名单：{user_display} 原因=头像OCR广告文字")
-                notify_reason = f"🔑 原因：头像包含广告文字（OCR识别）文字={avatar_ocr_text[:30]}"
             elif bio_hit:
                 logger.warning(f"🚫 已加黑名单：{user_display} 原因=BIO简介广告")
-                notify_reason = f"🔑 原因：简介/BIO包含广告内容 bio={bio_text[:30]}"
+                avatar_note = f"；头像OCR辅助={avatar_ocr_text[:20]}" if avatar_ocr_hit else ""
+                notify_reason = f"🔑 原因：简介/BIO包含广告内容 bio={bio_text[:30]}{avatar_note}"
             else:
                 logger.warning(f"🚫 已加黑名单：{user_display} 原因={suspicious_reason}")
                 notify_reason = f"🔑 原因：{suspicious_reason}"
@@ -243,33 +245,33 @@ def check_ad_content(bot, m, config: dict, db, keyword_manager=None) -> bool:
         ad_keywords = config.get("AD_KEYWORDS", _DEFAULT_AD_KEYWORDS)
 
     hit_kw = None
+    message_hit_kw = None
     msg_lower = msg.lower()
     uname_lower = uname.lower()
-    # [Trae] v4.6.6 修复：同时检测消息内容和用户显示名称
+    # 先完整扫描正文，再扫描昵称，避免较早的昵称词遮住后续正文证据。
     for kw in ad_keywords:
         kw_lower = kw.lower()
-        if kw_lower in msg_lower or kw_lower in uname_lower:
+        if kw_lower in _AMBIGUOUS_LEGACY_AD_KEYWORDS:
+            continue
+        if kw_lower in msg_lower:
             hit_kw = kw
+            message_hit_kw = kw
             break
+    if not hit_kw:
+        for kw in ad_keywords:
+            kw_lower = kw.lower()
+            if kw_lower in _AMBIGUOUS_LEGACY_AD_KEYWORDS:
+                continue
+            if kw_lower in uname_lower:
+                hit_kw = kw
+                break
 
     if not hit_kw:
         return False
     
     logger.warning(f"🚫 广告检测命中: {user_display} 关键词={hit_kw}")
     
-    if config.get("ENABLE_MESSAGE_DELETION", False):
-        try:
-            bot.delete_message(chat_id, m.message_id)
-            logger.info(f"[广告检测] 已删除消息 msg_id={m.message_id} uid={uid}")
-        except Exception as e:
-            err_msg = str(e)
-            if "message to delete not found" in err_msg.lower():
-                logger.debug(f"[广告检测] 消息已被删除或不存在 msg_id={m.message_id}")
-            else:
-                logger.warning(f"[广告检测] 删除消息失败: {e}")
-    else:
-        logger.info(f"[广告检测] 消息删除已禁用，跳过删除: msg_id={m.message_id} uid={uid}")
-    
+    # 删除、禁言与审计统一由 enforce_ad_user 执行，避免旧链重复删除或受普通总闸影响。
     from modules.ad_enforcement import enforce_ad_user
     enforce_ad_user(
         bot=bot,
@@ -281,6 +283,7 @@ def check_ad_content(bot, m, config: dict, db, keyword_manager=None) -> bool:
         reason=f"旧版关键词兜底命中: {hit_kw}",
         message=m,
         current_msg_id=m.message_id,
+        current_message_is_ad=message_hit_kw is not None,
         notify_admin=True,
     )
     

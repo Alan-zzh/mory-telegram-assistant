@@ -3,27 +3,29 @@
 广告账号统一处置：不踢人，只永久禁言、删消息、双黑名单。
 """
 
-from core.helpers import can_delete_message, format_user_mention
+from core.helpers import format_user_mention
 from core.logging_util import get_logger
 from core.telebot_compat import delete_all_message_reactions_compat, restrict_chat_member_compat
 
 logger = get_logger("ad_enforcement")
 
 
-def _safe_delete(bot, db, chat_id: int, msg_id: int) -> bool:
-    """删除消息并标记快照，失败不影响主流程。"""
+def _delete_message_with_status(bot, db, chat_id: int, msg_id: int) -> str:
+    """删除消息并返回 deleted/already_absent/failed 三态。"""
     if not msg_id:
-        return False
-    deleted = False
+        return "failed"
+    status = "failed"
     should_mark_deleted = False
     try:
-        bot.delete_message(chat_id, msg_id)
-        deleted = True
-        should_mark_deleted = True
+        result = bot.delete_message(chat_id, msg_id)
+        if result is not False:
+            status = "deleted"
+            should_mark_deleted = True
     except Exception as e:
         err = str(e).lower()
         if "not found" in err:
             logger.debug(f"广告消息已不存在: chat={chat_id} msg={msg_id}")
+            status = "already_absent"
             should_mark_deleted = True
         else:
             logger.debug(f"删除广告消息失败: chat={chat_id} msg={msg_id} err={e}")
@@ -32,13 +34,40 @@ def _safe_delete(bot, db, chat_id: int, msg_id: int) -> bool:
             db.mark_message_deleted(chat_id, msg_id)
     except Exception as e:
         logger.debug(f"标记广告消息删除失败: chat={chat_id} msg={msg_id} err={e}")
-    return deleted
+    return status
+
+
+def _safe_delete(bot, db, chat_id: int, msg_id: int) -> bool:
+    """兼容布尔调用：只有本次真实删除成功才计入 deleted_count。"""
+    return _delete_message_with_status(bot, db, chat_id, msg_id) == "deleted"
+
+
+def _mark_current_message_ad(db, chat_id: int, msg_id: int) -> bool:
+    """先固化逐条广告判定，再执行外部删除，避免删除失败时丢失审计真值。"""
+    if not db or not chat_id or not msg_id or not hasattr(db, "mark_message_ad"):
+        return False
+    try:
+        return bool(db.mark_message_ad(chat_id, msg_id))
+    except Exception as e:
+        logger.warning(f"标记广告消息失败: chat={chat_id} msg={msg_id} err={e}")
+        return False
+
+
+def delete_confirmed_ad_message(bot, db, chat_id: int, msg_id: int) -> dict:
+    """只处理已逐条确证的广告消息；独立于普通删除总闸。"""
+    evidence_persisted = _mark_current_message_ad(db, chat_id, msg_id)
+    status = _delete_message_with_status(bot, db, chat_id, msg_id)
+    return {
+        "evidence_persisted": evidence_persisted,
+        "deleted": status == "deleted",
+        "status": status,
+    }
 
 
 def _mute_forever(bot, db, chat_id: int, uid: int, reason: str = "广告检测") -> bool:
     """永久禁言广告账号，不踢出群。同步写入 mute_records 表。"""
     try:
-        restrict_chat_member_compat(
+        restriction_result = restrict_chat_member_compat(
             bot,
             chat_id,
             uid,
@@ -57,6 +86,9 @@ def _mute_forever(bot, db, chat_id: int, uid: int, reason: str = "广告检测")
                 "can_react_to_messages": False,
             },
         )
+        if restriction_result is False:
+            logger.warning(f"永久禁言广告账号返回失败: chat={chat_id} uid={uid}")
+            return False
         # 【v5.31.6 修复】禁封时写入 mute_records，与解封时清理 mute_records 对称
         if db is not None:
             try:
@@ -100,7 +132,10 @@ def _write_blacklists(bot, db, uid: int, reason: str) -> bool:
             logger.error(f"广告处置告警上报失败(global_blacklist): {e2}")
     try:
         if hasattr(db, "blacklist_add"):
-            db.blacklist_add(uid, reason)
+            local_result = db.blacklist_add(uid, reason)
+            if local_result is False:
+                ok = False
+                logger.warning(f"写入本地blacklist返回失败: uid={uid}")
     except Exception as e:
         ok = False
         logger.warning(f"写入blacklist失败: uid={uid} err={e}")
@@ -444,9 +479,11 @@ def _cleanup_user_reactions(bot, config: dict, uid: int, chat_id: int) -> bool:
 
 
 def _cleanup_user_messages(bot, db, config: dict, uid: int, chat_id: int, current_msg_id: int = 0) -> int:
-    """删除已追踪的广告用户历史消息。"""
-    if not can_delete_message(config):
-        return 0
+    """删除当前拦截消息，以及数据库中逐条确认为广告的历史消息。
+
+    广告治理必须独立于普通自动删消息总闸。`ENABLE_MESSAGE_DELETION` 只控制
+    夜间模式、慢速模式等普通自动清理，不能让已确认广告留在群内。
+    """
     deleted_count = 0
     seen = set()
     if current_msg_id:
@@ -457,10 +494,8 @@ def _cleanup_user_messages(bot, db, config: dict, uid: int, chat_id: int, curren
     except Exception:
         limit = 2000
     try:
-        if hasattr(db, "get_user_undeleted_messages"):
-            messages = db.get_user_undeleted_messages(uid, chat_id, limit=limit)
-        elif hasattr(db, "get_user_messages"):
-            messages = db.get_user_messages(uid, chat_id, limit=limit)
+        if hasattr(db, "get_user_ad_messages"):
+            messages = db.get_user_ad_messages(uid, chat_id, limit=limit)
         else:
             messages = []
     except Exception as e:
@@ -531,12 +566,20 @@ def enforce_ad_user(
     reason: str = "广告检测",
     message=None,
     current_msg_id: int = 0,
+    current_message_is_ad: bool = False,
     notify_admin: bool = True,
 ) -> dict:
-    """统一广告处置入口，接口返回固定结构。"""
+    """统一广告账号处置入口。
+
+    账号证据与逐条消息证据严格分离：资料/Bio/黑名单命中可禁言并删除当前
+    发言，但只有内容规则明确命中时，调用方才传 ``current_message_is_ad=True``。
+    """
     reason = str(reason or "广告检测")
     if not current_msg_id and message is not None:
         current_msg_id = getattr(message, "message_id", 0) or 0
+    evidence_persisted = False
+    if current_message_is_ad:
+        evidence_persisted = _mark_current_message_ad(db, chat_id, current_msg_id)
     deleted_count = _cleanup_user_messages(bot, db, config or {}, uid, chat_id, current_msg_id)
     muted = _mute_forever(bot, db, chat_id, uid, reason)
     reactions_cleaned = _cleanup_user_reactions(bot, config or {}, uid, chat_id)
@@ -571,6 +614,7 @@ def enforce_ad_user(
             "muted": muted,
             "blacklisted": blacklisted,
             "deleted_count": deleted_count,
+            "evidence_persisted": evidence_persisted,
             "reactions_cleaned": reactions_cleaned,
         },
         "msg": "success",

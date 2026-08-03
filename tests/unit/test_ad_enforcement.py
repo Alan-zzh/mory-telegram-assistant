@@ -47,6 +47,11 @@ class _FakeBot:
         self.sent.append((chat_id, text, kwargs))
 
 
+class _FalseDeleteBot(_FakeBot):
+    def delete_message(self, chat_id, msg_id):
+        return False
+
+
 class _FakeConn:
     def __init__(self):
         self.executed = []
@@ -69,15 +74,20 @@ class _FakeDB:
             {"chat_id": -1001, "msg_id": 61, "deleted": 1},
         ]
         self.marked = []
+        self.ad_marked = []
 
     def blacklist_add(self, uid, reason):
         self.blacklist.append((uid, reason))
 
-    def get_user_messages(self, uid, chat_id=None, limit=100):
+    def get_user_ad_messages(self, uid, chat_id=None, limit=2000):
         return self.user_messages
 
     def mark_message_deleted(self, chat_id, msg_id):
         self.marked.append((chat_id, msg_id))
+        return True
+
+    def mark_message_ad(self, chat_id, msg_id):
+        self.ad_marked.append((chat_id, msg_id))
         return True
 
 
@@ -98,6 +108,7 @@ def test_enforce_ad_user_mutes_deletes_and_never_kicks_or_bans():
         reason="[Codex] 单测广告",
         message=msg,
         current_msg_id=66,
+        current_message_is_ad=True,
         notify_admin=True,
     )
 
@@ -114,6 +125,8 @@ def test_enforce_ad_user_mutes_deletes_and_never_kicks_or_bans():
     assert (-1001, 66) in db.marked
     assert (-1001, 60) in db.marked
     assert (-1001, 61) in db.marked
+    assert db.ad_marked == [(-1001, 66)]
+    assert result["data"]["evidence_persisted"] is True
     assert any(call[0] == 99 for call in bot.sent)
     admin_message = next(call for call in bot.sent if call[0] == 99)
     markup = admin_message[2].get("reply_markup")
@@ -122,7 +135,7 @@ def test_enforce_ad_user_mutes_deletes_and_never_kicks_or_bans():
     assert markup.keyboard[0][0].callback_data == "ad_unban:42:-1001"
 
 
-def test_enforce_ad_user_keeps_mute_and_blacklist_when_deletion_disabled():
+def test_enforce_ad_user_deletes_confirmed_ads_when_general_deletion_disabled():
     from modules.ad_enforcement import enforce_ad_user
 
     bot = _FakeBot()
@@ -137,11 +150,14 @@ def test_enforce_ad_user_keeps_mute_and_blacklist_when_deletion_disabled():
         uname="广告号",
         reason="[Codex] 删除关闭",
         current_msg_id=66,
+        current_message_is_ad=True,
     )
 
     assert result["code"] == 200
-    assert bot.deleted == []
+    assert bot.deleted == [(-1001, 66), (-1001, 60), (-1001, 61)]
     assert len(bot.restricted) == 1
+    assert db.ad_marked == [(-1001, 66)]
+    assert result["data"]["evidence_persisted"] is True
     assert result["data"]["reactions_cleaned"] is False
     assert db.blacklist == [(42, "[Codex] 删除关闭")]
     assert bot.ban_calls == []
@@ -168,6 +184,52 @@ def test_enforce_ad_user_reports_reaction_cleanup(monkeypatch):
     )
 
     assert result["data"]["reactions_cleaned"] is True
+
+
+def test_blacklist_reblock_deletes_current_but_does_not_falsify_message_evidence():
+    from modules.ad_enforcement import enforce_ad_user
+
+    bot = _FakeBot()
+    db = _FakeDB()
+    db.user_messages = []
+
+    result = enforce_ad_user(
+        bot=bot,
+        db=db,
+        config={"ENABLE_MESSAGE_DELETION": False},
+        chat_id=-1001,
+        uid=42,
+        reason="黑名单拦截",
+        current_msg_id=77,
+        current_message_is_ad=False,
+        notify_admin=False,
+    )
+
+    assert bot.deleted == [(-1001, 77)]
+    assert db.ad_marked == []
+    assert result["data"]["evidence_persisted"] is False
+
+
+def test_delete_false_never_marks_snapshot_deleted():
+    from modules.ad_enforcement import enforce_ad_user
+
+    bot = _FalseDeleteBot()
+    db = _FakeDB()
+    db.user_messages = []
+    result = enforce_ad_user(
+        bot=bot,
+        db=db,
+        config={"ENABLE_MESSAGE_DELETION": False},
+        chat_id=-1001,
+        uid=42,
+        current_msg_id=78,
+        current_message_is_ad=True,
+        notify_admin=False,
+    )
+
+    assert result["data"]["deleted_count"] == 0
+    assert db.ad_marked == [(-1001, 78)]
+    assert db.marked == []
 
 
 def test_restore_ad_user_removes_blacklists_and_restores_permissions():

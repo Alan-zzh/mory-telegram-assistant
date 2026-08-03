@@ -45,6 +45,22 @@ def _is_benign_ad_bypass_text(text: str) -> bool:
     return False
 
 
+def _direct_message_ad_result(ad_detector, text: str) -> dict:
+    """只用消息正文复判逐条广告真值，不混入昵称、Bio、头像或历史评分。"""
+    if not ad_detector or not (text or "").strip():
+        return {"is_ad": False, "action": "none", "score": 0}
+    try:
+        return ad_detector.detect(username="", msg=text, bio="")
+    except Exception as e:
+        logger.debug(f"[AD] 正文独立复判失败: {e}")
+        return {"is_ad": False, "action": "none", "score": 0}
+
+
+def _has_direct_message_ad_evidence(ad_detector, text: str) -> bool:
+    result = _direct_message_ad_result(ad_detector, text)
+    return bool(result.get("is_ad") and result.get("action") == "ban")
+
+
 def check_blacklist(dctx) -> bool:
     """P1 黑名单用户过滤（在活跃度更新之前，避免污染数据）
 
@@ -233,6 +249,7 @@ def check_ad_detection(dctx) -> bool:
         profile_score = int(profile_result.get("score", 0) or 0)
         if profile_result.get("is_ad"):
             from modules.ad_enforcement import enforce_ad_user
+            message_is_ad = _has_direct_message_ad_evidence(ad_detector, ad_text)
             enforce_ad_user(
                 bot=bot,
                 db=db,
@@ -243,6 +260,7 @@ def check_ad_detection(dctx) -> bool:
                 reason=f"资料广告检测-{profile_result.get('reason', '')}",
                 message=m,
                 current_msg_id=getattr(m, "message_id", 0),
+                current_message_is_ad=message_is_ad,
                 notify_admin=True,
             )
             clear_logging_context()
@@ -384,14 +402,15 @@ def check_ad_detection(dctx) -> bool:
             if avatar_ocr_suspicious and avatar_ocr_score >= 2:
                 # 头像OCR明确命中广告文字
                 bio_score_val = ad_result.get("bio_score", 0)
+                content_score_before_avatar = ad_result.get("score", 0)
                 if bio_score_val >= 1:
                     # Bio+头像OCR组合直接封禁
                     logger.warning(f"[AD] 🚫 Bio+头像OCR组合直接封禁: uid={uid} 头像文字={avatar_ocr_text[:30]}, Bio得分={bio_score_val}")
                     ad_result["is_ad"] = True
                     ad_result["action"] = "ban"
                     ad_result["reason"] = f"Bio+头像OCR组合封禁: 头像含'{avatar_ocr_text[:20]}'"
-                else:
-                    # 头像OCR命中但Bio未命中，增加评分
+                elif content_score_before_avatar >= 1:
+                    # 头像只可强化独立的正文信号，不能凭头像或昵称异常单独定罪。
                     logger.info(f"[AD] 头像OCR命中广告文字: uid={uid} 文字={avatar_ocr_text[:30]}, 评分+{avatar_ocr_score}")
                     ad_result["score"] = ad_result.get("score", 0) + avatar_ocr_score
                     # 如果总分达到阈值，也触发封禁
@@ -399,6 +418,11 @@ def check_ad_detection(dctx) -> bool:
                         ad_result["is_ad"] = True
                         ad_result["action"] = "ban"
                         ad_result["reason"] = f"头像OCR广告文字触发: {avatar_ocr_text[:30]}"
+                else:
+                    logger.info(
+                        f"[AD] 头像OCR仅作辅助证据，不单独处置: uid={uid} "
+                        f"文字={avatar_ocr_text[:30]}"
+                    )
             
         except Exception as e:
             logger.debug(f"头像检测异常: {e}")
@@ -426,6 +450,10 @@ def check_ad_detection(dctx) -> bool:
     total_score = content_score + profile_score
     if profile_score > 0:
         logger.info(f"[AD] 资料层可疑信号: uid={uid} profile_score={profile_score} reason={profile_result.get('reason', '')[:80] if profile_result else ''}")
+    direct_result = _direct_message_ad_result(ad_detector, ad_text)
+    direct_message_is_ad = bool(
+        direct_result.get("is_ad") and direct_result.get("action") == "ban"
+    )
     track_result = ad_detector.track_suspicious_user(
         user_id=uid,
         msg_id=m.message_id,
@@ -433,6 +461,8 @@ def check_ad_detection(dctx) -> bool:
         text=ad_result.get("ad_text", msg) or msg,
         score=total_score,
         is_ad=ad_result.get("is_ad", False) is True,
+        direct_message_score=int(direct_result.get("score", 0) or 0),
+        direct_message_is_ad=direct_message_is_ad,
     )
     if track_result["action"] == "ban":
         if _handle_delayed_ad_tracking(dctx, track_result):
@@ -491,6 +521,10 @@ def _handle_immediate_ad(dctx, ad_result: dict) -> bool:
     """处理即时命中的广告：永久禁言+删消息+双黑名单，不踢人。"""
     from modules.ad_enforcement import enforce_ad_user
 
+    reason = str(ad_result.get("reason", "") or "")
+    message_is_ad = _has_direct_message_ad_evidence(dctx.ctx.ad_detector, dctx.text)
+    if "emoji" in reason.lower() or "消息emoji面具" in reason:
+        message_is_ad = True
     enforce_ad_user(
         bot=dctx.ctx.bot,
         db=dctx.ctx.db,
@@ -501,6 +535,7 @@ def _handle_immediate_ad(dctx, ad_result: dict) -> bool:
         reason=f"广告检测-{ad_result.get('reason', '')}",
         message=dctx.msg,
         current_msg_id=getattr(dctx.msg, "message_id", 0),
+        current_message_is_ad=message_is_ad,
         notify_admin=True,
     )
     clear_logging_context()

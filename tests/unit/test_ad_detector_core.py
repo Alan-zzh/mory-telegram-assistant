@@ -164,12 +164,52 @@ def test_screenshot_income_shorthand_scores_as_ad(detector, text):
     assert "赚钱承诺" in dims[0]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "微信代收 一天一W",
+        "微信代收一天一w",
+        "微 信 代 收 一天一Ｗ",
+    ],
+)
+def test_screenshot_wechat_proxy_receipt_income_is_immediate_ad(detector, text):
+    result = detector.detect(username="guanjing", msg=text)
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+
+
 @pytest.mark.parametrize("text", ["我每天跑1万米", "微信业务怎么迁移", "一天跑1w米太累了"])
 def test_income_shorthand_rule_does_not_match_normal_context(detector, text):
     """L3: 正常运动与微信业务讨论不因新规则被误判"""
     score, dims = detector._check_content_score(text)
     assert score == 0
     assert dims == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "微信代收3个快递，下午来拿",
+        "公司微信代收货款，一天一万元流水",
+        "微信代收业务一天一W营业额",
+        "今天帮商户代付2笔货款",
+        "公司一天1W营业额，微信代收货款",
+        "门店一天10000元营业额，微信代收货款",
+        "公司一天1万元流水，今天代付两笔货款",
+    ],
+)
+def test_proxy_receipt_normal_business_context_is_not_ad(detector, text):
+    result = detector.detect(username="正常用户", msg=text)
+    assert result["is_ad"] is False
+    assert result["score"] == 0
+
+
+@pytest.mark.parametrize("text", ["代收日结", "代付返佣", "代收有量", "代x收日结", "代1付返佣"])
+def test_proxy_receipt_gray_trade_anchor_variants_are_ad(detector, text):
+    result = detector.detect(username="随机账号", msg=text)
+    assert result["is_ad"] is True
+    assert result["score"] >= SCORE_THRESHOLD
 
 
 @pytest.mark.parametrize(
