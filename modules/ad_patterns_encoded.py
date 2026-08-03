@@ -267,22 +267,6 @@ GRAY_PATTERNS = [
     # 避免单条正则无法处理长前缀、报道引用和实物履约的局部上下文。
 ]
 
-# 代收/代付等歧义词只有和强交易锚点组合才定罪；两侧关键词都容忍最多三个
-# 空格/数字/字母/符号插入，覆盖“代 收 有 量”“代 x 收”“代1付返x佣”等规避写法。
-_OBFUSCATION_GAP = r"[\s0-9A-Za-z._*#@|+\-]{0,3}"
-_PROXY_TRADE_VERB = (
-    rf"(?:\u8dd1{_OBFUSCATION_GAP}\u5206|"
-    rf"\u5237{_OBFUSCATION_GAP}\u5355|"
-    rf"\u4ee3{_OBFUSCATION_GAP}[\u6536\u4ed8])"
-)
-_PROXY_TRADE_ANCHOR = (
-    rf"(?:\u4f63{_OBFUSCATION_GAP}\u91d1|\u65e5{_OBFUSCATION_GAP}\u7ed3|"
-    rf"\u6536{_OBFUSCATION_GAP}[\u6b3e\u94b1]|\u8fd4{_OBFUSCATION_GAP}\u4f63|"
-    rf"\u5361{_OBFUSCATION_GAP}\u5546|\u901a{_OBFUSCATION_GAP}\u9053|"
-    rf"\u8d39{_OBFUSCATION_GAP}\u7387|\u63a5{_OBFUSCATION_GAP}\u5355|"
-    rf"\u653e{_OBFUSCATION_GAP}\u91cf|\u6709{_OBFUSCATION_GAP}\u91cf|USDT|\bU\b)"
-)
-
 # 加密货币/洗钱类
 CRYPTO_PATTERNS = [
     r"usdt", r"u\u5546",
@@ -338,8 +322,17 @@ CRYPTO_PATTERNS = [
     r"\u8dd1\u5206[\s\S]{0,5}[0-9]+",  # 跑分+数字
     # “代收3个快递”等数字业务量仍是正常语境，不保留代收付+裸数字规则。
     # [Codex] v5.38.7：跑分/刷单/代收付的拆字变体属于歧义词，必须再带交易锚点才命中。
-    rf"{_PROXY_TRADE_VERB}[\s\S]{{0,16}}{_PROXY_TRADE_ANCHOR}",
-    rf"{_PROXY_TRADE_ANCHOR}[\s\S]{{0,16}}{_PROXY_TRADE_VERB}",
+    r"(?:\u8dd1[0-9A-Za-z._*#@|+\-]{0,2}\u5206|"
+    r"\u5237[0-9A-Za-z._*#@|+\-]{0,2}\u5355|"
+    r"\u4ee3[0-9A-Za-z._*#@|+\-]{0,2}[\u6536\u4ed8])"
+    r"[\s\S]{0,16}(?:\u4f63\u91d1|\u65e5\u7ed3|\u6536\u6b3e|\u6536\u94b1|\u8fd4\u4f63|"
+    r"\u5361\u5546|\u901a\u9053|\u8d39\u7387|\u63a5\u5355|\u653e\u91cf|\u6709\u91cf|"
+    r"USDT|\bU\b)",
+    r"(?:\u4f63\u91d1|\u65e5\u7ed3|\u6536\u6b3e|\u6536\u94b1|\u8fd4\u4f63|\u5361\u5546|"
+    r"\u901a\u9053|\u8d39\u7387|\u63a5\u5355|\u653e\u91cf|\u6709\u91cf|USDT|\bU\b)[\s\S]{0,16}"
+    r"(?:\u8dd1[0-9A-Za-z._*#@|+\-]{0,2}\u5206|"
+    r"\u5237[0-9A-Za-z._*#@|+\-]{0,2}\u5355|"
+    r"\u4ee3[0-9A-Za-z._*#@|+\-]{0,2}[\u6536\u4ed8])",
     # 洗钱/洗米本身语义明确，可容忍一个数字或字母插入。
     r"\u6d17[0-9A-Za-z._*#@|+\-]{1,2}[\u94b1\u7c73]",
 ]
