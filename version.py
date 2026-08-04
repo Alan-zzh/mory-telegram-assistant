@@ -6,8 +6,8 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.38.22"
-CONFIG_VERSION = "5.38.22"
+VERSION = "v5.38.23"
+CONFIG_VERSION = "5.38.23"
 __version__ = VERSION
 
 VERSION_HISTORY = [
