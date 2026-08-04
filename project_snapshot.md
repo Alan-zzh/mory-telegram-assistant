@@ -36,14 +36,15 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录 |
 
 ## 当前版本
-v5.38.22（2026-08-05）· 本地验证通过，待可信 Git 提交后增量部署
+v5.38.23（2026-08-05）· 已提交（3db1df8/dc4bd1e）并增量部署 VPS：双服务 active、health 200、生产版本 v5.38.23
 
-生产状态：**v5.38.22 本地验证通过，待可信 Git 提交后增量部署**。本地验收：py_compile 全改动文件通过、全仓 pytest 850+ passed/7 skipped、doc_consistency 7/7、verify_db_methods 199/199、check_config_sync 退出 0、demo 6 张样张生成、CTA 旧符号零残留。上一版 v5.38.21 已完成 VPS 增量部署并验收通过（双服务 active、health 200、mystic 三任务注册、news 零注册、NRestarts=0）。
+生产状态：**v5.38.23 已增量部署 VPS 并验收通过**（双服务 active、health 200、生产版本 v5.38.23、Bot 心跳任务正常运行、config 完整性 TOKEN/API_KEY/6 池全保留）。本地验收：全仓 pytest 862 passed/7 skipped、flake8 8 文件清单 0 错、mypy 3 文件通过、verify_db_methods 199/199、doc_consistency 通过。上一版 v5.38.22 已完成 VPS 增量部署并验收通过（双服务 active、health 200）。
 
 ## 最近 3 条大事
-1. 2026-08-05 v5.38.22 四项整改收尾：CTA 三套真相源收敛为统一 `core/broadcast_cta.py` 单一真相源（删旧 CTA 池/死参/mystic 第二套 CTA，发送层统一生成回填）+ 四路图片卡开关收敛 + 视觉常量对齐 + 缓存短路/原子写/确定性种子；广告处置配置级白名单豁免前置 + `get_chat_member` 失败三态降级 + 启动追溯跳过计数修正 + 入群检测豁免拉齐；新增 `scripts/check_config_sync.py` 三处同步差集断言 + 白名单补 10 业务键；AI_DEBUG_HISTORY 归档 362→93 行、CHANGELOG 近期超长条目压缩。
-2. 2026-08-05 v5.38.21 广告处置群管豁免（热修）：`enforce_ad_user` 统一处置链顶部新增 `_is_chat_admin_member`（`bot.get_chat_member` 查 status ∈ administrator/creator），群内管理/群主直接返回 `skipped_reason=admin_or_creator`，不做永久禁言、双黑名单、删消息、清反应；查询失败按非管理继续处置不放过可疑号。覆盖 message_dispatcher / member_handlers / security_handlers / ad_detector 启动追溯 / group_mgr / auto_tasks / startup_member_scan_task 全部调用链（此前仅入群检测处豁免）。生产实例：群管 1193526296 因资料命中 t.me/morychat 被误封禁言+黑名单+删消息。新增单测断言管理不删消息/不禁言/不写黑名单。
-3. 2026-08-04 v5.38.20 Graph Mode 第四轮 4 维度补扫残余漏洞闭环（4 维度残余：PII 泄露/裸 except/三处同步 ALLOWED_CONFIG_FIELDS 差集/SQL 注入 0 命中），落地 5 P0+9 P1+2 P2 最小加固：① P0 faq_api 11 端点 f"失败：{e}" HTTP 明文响应全换固定文案 + logger.exception；health_api 6 处 score.detail / audit 缺失键样本明文外泄全治（integrity: {r}、f"检查失败: {e}"×4、missing[:5] 样本外泄）；② P1 裸 except 残余清场：weekly/monthly 2 处周报月报群人数回退裸 except 清掉 + health_api 7 处 except 无绑定无日志补 as e + logger.debug；③ P2 三处同步第三处 BROADCAST_IMAGE_CARD_ENABLED、BROADCAST_THEME_ENABLED 加入 ALLOWED_CONFIG_FIELDS 白名单（播报图片卡 v5.38.16 配置键三处同步闭环）；SQL 注入维度全仓 0 项命中（未发现 .execute() 中 f-string/格式化字符串非 ? 占位）。
+1. 2026-08-05 v5.38.23 Harness 审查六项修复：CI 门禁断链修复（失效文件引用移除、database.py/ai_engine.py 纳入 flake8、verify_db_methods/doc_consistency 接入 CI、--fail-under=25）；ai_engine 输出门禁状态残留三路径清理（含 get_pool_info 隐藏 NameError 修复）；.venv 重建 3.12.10；request_id 日志关联键贯穿失败链。
+2. 2026-08-05 v5.38.22 四项整改收尾：CTA 三套真相源收敛为统一 `core/broadcast_cta.py` 单一真相源（删旧 CTA 池/死参/mystic 第二套 CTA，发送层统一生成回填）+ 四路图片卡开关收敛 + 视觉常量对齐 + 缓存短路/原子写/确定性种子；广告处置配置级白名单豁免前置 + `get_chat_member` 失败三态降级 + 启动追溯跳过计数修正 + 入群检测豁免拉齐；新增 `scripts/check_config_sync.py` 三处同步差集断言 + 白名单补 10 业务键；AI_DEBUG_HISTORY 归档 362→93 行、CHANGELOG 近期超长条目压缩。
+3. 2026-08-05 v5.38.21 广告处置群管豁免（热修）：`enforce_ad_user` 统一处置链顶部新增 `_is_chat_admin_member`（`bot.get_chat_member` 查 status ∈ administrator/creator），群内管理/群主直接返回 `skipped_reason=admin_or_creator`，不做永久禁言、双黑名单、删消息、清反应；查询失败按非管理继续处置不放过可疑号。覆盖 message_dispatcher / member_handlers / security_handlers / ad_detector 启动追溯 / group_mgr / auto_tasks / startup_member_scan_task 全部调用链（此前仅入群检测处豁免）。生产实例：群管 1193526296 因资料命中 t.me/morychat 被误封禁言+黑名单+删消息。新增单测断言管理不删消息/不禁言/不写黑名单。
+4. 2026-08-04 v5.38.20 Graph Mode 第四轮 4 维度补扫残余漏洞闭环（4 维度残余：PII 泄露/裸 except/三处同步 ALLOWED_CONFIG_FIELDS 差集/SQL 注入 0 命中），落地 5 P0+9 P1+2 P2 最小加固：① P0 faq_api 11 端点 f"失败：{e}" HTTP 明文响应全换固定文案 + logger.exception；health_api 6 处 score.detail / audit 缺失键样本明文外泄全治（integrity: {r}、f"检查失败: {e}"×4、missing[:5] 样本外泄）；② P1 裸 except 残余清场：weekly/monthly 2 处周报月报群人数回退裸 except 清掉 + health_api 7 处 except 无绑定无日志补 as e + logger.debug；③ P2 三处同步第三处 BROADCAST_IMAGE_CARD_ENABLED、BROADCAST_THEME_ENABLED 加入 ALLOWED_CONFIG_FIELDS 白名单（播报图片卡 v5.38.16 配置键三处同步闭环）；SQL 注入维度全仓 0 项命中（未发现 .execute() 中 f-string/格式化字符串非 ? 占位）。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
