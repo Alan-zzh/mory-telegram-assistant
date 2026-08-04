@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import random
 from typing import Dict, List, Optional, Tuple
 
@@ -159,9 +160,13 @@ def _resolve_pool_name(scene: str, mode: str = "", period: str = "") -> str:
 
 
 def _stable_seed(*parts) -> int:
-    """确定性种子，用于同一天的 CTA 选择保持一致。"""
+    """确定性种子，用于同一天的 CTA 选择保持一致。
+
+    用 md5 而非内置 hash()，消除跨进程 PYTHONHASHSEED 漂移，
+    保证同参数在任何进程/重启后种子一致（与 modules/scheduled_broadcast.py 模式一致）。
+    """
     h = "|".join(str(p) for p in parts)
-    return hash(h) & 0xFFFFFFFF
+    return int(hashlib.md5(h.encode("utf-8")).hexdigest()[:8], 16)
 
 
 def _choose_target(
@@ -408,3 +413,17 @@ def build_broadcast_image_cta(
     )
     from core.broadcast_image_card import strip_visual_emoji
     return strip_visual_emoji(cta.get("image_label", ""))
+
+
+def is_broadcast_image_enabled(config: dict, section: dict) -> bool:
+    """图片卡总闸与分类型分闸的统一判断（全局总闸 AND 类型分闸）。
+
+    section 为各播报类型的配置 dict（需含 image_card_enabled 字段），
+    例如 MYSTIC_BROADCAST_CONFIG / GREETING_CONFIG / NEWS_BROADCAST_CONFIG
+    / 定点播报单条配置；全局总闸关闭时任何类型都不出图。
+    """
+    cfg = config or {}
+    if not bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False)):
+        return False
+    section = section or {}
+    return bool(section.get("image_card_enabled", False))

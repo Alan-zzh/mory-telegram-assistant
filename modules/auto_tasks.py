@@ -36,6 +36,7 @@ import threading
 import html
 from typing import Any, Dict
 from datetime import datetime, timedelta, timezone
+from core.broadcast_cta import is_broadcast_image_enabled
 from core.broadcast_formatter import build_greeting_html, build_rich_greeting_html, build_rich_news_html
 from core.broadcast_image_card import build_broadcast_image_card
 from core.broadcast_image_payload import build_news_image_payload
@@ -1255,11 +1256,10 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
                 # 使用 v1.0 富文本新闻排版（自动 HTML 转义 + emoji 点缀 + 观察行 blockquote）
                 rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
 
-                # [v5.38.15] 新闻播报也支持图片卡（全局总闸 + NEWS_BROADCAST_CONFIG.image_card_enabled）
+                # [v5.38.15] 新闻播报也支持图片卡（全局总闸 + NEWS_BROADCAST_CONFIG.image_card_enabled，统一 helper）
                 cfg = rm.config or {}
-                global_image_enabled = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
                 news_cfg = cfg.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
-                news_image_enabled = global_image_enabled and bool(news_cfg.get("image_card_enabled", False))
+                news_image_enabled = is_broadcast_image_enabled(cfg, news_cfg)
                 image_path = ""
                 if news_image_enabled:
                     try:
@@ -1268,7 +1268,6 @@ def _execute_news_task(rm, task_name: str, time_desc: str):
                         image_path = build_broadcast_image_card(
                             image_payload,
                             cache_key=f"news_{time_desc}_{today}",
-                            cta_pool="news",
                             config=cfg,
                             min_height=1100,
                         ) or ""

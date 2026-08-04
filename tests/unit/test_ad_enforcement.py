@@ -17,6 +17,10 @@ class _FakeMessage:
         self.text = "看我简介"
 
 
+class _Member:
+    status = "member"
+
+
 class _FakeBot:
     def __init__(self):
         self.deleted = []
@@ -25,6 +29,10 @@ class _FakeBot:
         self.ban_calls = []
         self.kick_calls = []
         self._me = type("Me", (), {"id": 7})()
+
+    # 模拟真实 bot：get_chat_member 查询成功且为普通成员（非管理）
+    def get_chat_member(self, chat_id, uid):
+        return _Member()
 
     def delete_message(self, chat_id, msg_id):
         self.deleted.append((chat_id, msg_id))
@@ -432,3 +440,231 @@ def test_enforce_ad_user_skips_admin_and_creator_entirely():
     assert not any(call[0] == 99 for call in bot.sent)
     assert bot.ban_calls == []
     assert bot.kick_calls == []
+
+
+# ──【v5.38.22 阶段3】任务14/15/16/17 新增单测────────────────────
+
+
+def test_enforce_ad_user_skips_config_admin_before_network_query():
+    """任务14：ADMIN_IDS 命中 → 零网络前置豁免：不删消息/不禁言/不写黑名单。
+
+    使用无 get_chat_member 方法的 _FakeBot：若配置豁免未前置，会 AttributeError 失败。
+    """
+    from modules.ad_enforcement import enforce_ad_user
+
+    bot = _FakeBot()
+    db = _FakeDB()
+    result = enforce_ad_user(
+        bot=bot,
+        db=db,
+        config={"ENABLE_MESSAGE_DELETION": True, "ADMIN_IDS": [42], "ADMIN_ID": 99},
+        chat_id=-1001,
+        uid=42,
+        uname="管理员",
+        reason="资料广告检测",
+        current_msg_id=66,
+        current_message_is_ad=True,
+        notify_admin=True,
+    )
+
+    assert result["code"] == 200
+    assert result["msg"] == "skipped_admin"
+    assert result["data"]["skipped_reason"] == "admin_or_creator"
+    assert bot.deleted == []
+    assert bot.restricted == []
+    assert db.blacklist == []
+    assert db.ad_marked == []
+    assert db.marked == []
+    assert not any(call[0] == 99 for call in bot.sent)
+
+
+def test_enforce_ad_user_skips_config_admin_id_single_value():
+    """任务14：ADMIN_ID 单值命中同样豁免（_admin_ids 合并 ADMIN_IDS/ADMIN_ID）。"""
+    from modules.ad_enforcement import enforce_ad_user
+
+    bot = _FakeBot()
+    db = _FakeDB()
+    result = enforce_ad_user(
+        bot=bot,
+        db=db,
+        config={"ADMIN_ID": 42},
+        chat_id=-1001,
+        uid=42,
+        reason="资料广告检测",
+        current_msg_id=66,
+        current_message_is_ad=True,
+    )
+
+    assert result["data"]["skipped_reason"] == "admin_or_creator"
+    assert bot.deleted == []
+    assert bot.restricted == []
+    assert db.blacklist == []
+    assert db.ad_marked == []
+    assert db.marked == []
+
+
+def test_enforce_ad_user_skips_irreversible_when_admin_query_fails(monkeypatch):
+    """任务15：get_chat_member 抛异常 → 保留证据+通知人工复核，跳过不可逆惩罚。"""
+    from modules.ad_enforcement import enforce_ad_user
+
+    bot = _FakeBot()
+    db = _FakeDB()
+
+    def _query_failed(chat_id, uid):
+        raise Exception("network down")
+
+    monkeypatch.setattr(bot, "get_chat_member", _query_failed)
+
+    result = enforce_ad_user(
+        bot=bot,
+        db=db,
+        config={"ENABLE_MESSAGE_DELETION": True, "ADMIN_ID": 99},
+        chat_id=-1001,
+        uid=42,
+        uname="可疑号",
+        reason="广告检测",
+        current_msg_id=66,
+        current_message_is_ad=True,
+        notify_admin=True,
+    )
+
+    assert result["code"] == 200
+    assert result["msg"] == "skipped_admin"
+    assert result["data"]["skipped_reason"] == "admin_query_failed"
+    # 证据持久化动作已执行（审计真值写入 db），返回结构同豁免分支（evidence_persisted=False）
+    assert db.ad_marked == [(-1001, 66)]
+    # 不可逆惩罚全部跳过
+    assert bot.deleted == []
+    assert bot.restricted == []
+    assert db.blacklist == []
+    assert db.marked == []
+    # 通知管理员人工复核
+    assert any(call[0] == 99 for call in bot.sent)
+    assert bot.ban_calls == []
+    assert bot.kick_calls == []
+
+
+class _PendingDB:
+    """启动追溯测试：内存 sqlite，模拟 message_snapshots 表。"""
+
+    def __init__(self):
+        import sqlite3
+
+        self.conn = sqlite3.connect(":memory:", check_same_thread=False)
+        self.conn.executescript(
+            """
+            CREATE TABLE message_snapshots (
+                chat_id INTEGER, msg_id INTEGER, user_id INTEGER, text TEXT, ts INTEGER,
+                is_ad INTEGER DEFAULT 0, deleted INTEGER DEFAULT 0,
+                PRIMARY KEY(chat_id, msg_id)
+            );
+            """
+        )
+        self.conn.commit()
+
+    def mark_message_ad(self, chat_id, msg_id):
+        cur = self.conn.execute(
+            "UPDATE message_snapshots SET is_ad=1 WHERE chat_id=? AND msg_id=?", (chat_id, msg_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def mark_message_deleted(self, chat_id, msg_id):
+        cur = self.conn.execute(
+            "UPDATE message_snapshots SET deleted=1 WHERE chat_id=? AND msg_id=?", (chat_id, msg_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def get_user_ad_messages(self, uid, chat_id=None, limit=2000):
+        return []
+
+    def blacklist_add(self, uid, reason):
+        pass
+
+
+class _PendingBot:
+    """启动追溯测试 bot：记录删除/禁言/报告发送。"""
+
+    def __init__(self):
+        self.deleted = []
+        self.restricted = []
+        self.sent = []
+
+    def delete_message(self, chat_id, msg_id):
+        self.deleted.append((chat_id, msg_id))
+        return True
+
+    def restrict_chat_member(self, chat_id, uid, **kwargs):
+        self.restricted.append((chat_id, uid))
+        return True
+
+    def send_message(self, chat_id, text, **kwargs):
+        self.sent.append((chat_id, text))
+
+
+def test_startup_traceback_skipped_admin_not_counted_as_failed():
+    """任务16：启动追溯命中配置管理员 → 不计 total_failed，报告展示跳过计数。"""
+    from datetime import datetime, timezone
+
+    from modules.ad_detector import AdDetector
+
+    db = _PendingDB()
+    detector = AdDetector(config={}, db=db)
+    detector.suspicious_users["42"] = {
+        "score": 9,
+        "first_seen": datetime.now(timezone.utc),
+        "messages": [
+            {"chat_id": -1001, "msg_id": 10, "score": 3, "direct_message_is_ad": True},
+        ],
+    }
+    bot = _PendingBot()
+
+    detector.process_pending_bans(bot, {"ADMIN_ID": 99, "ADMIN_IDS": [42]})
+
+    # 配置管理员豁免：未被禁言、不计入禁言失败
+    assert bot.restricted == []
+    report_text = next(text for cid, text in bot.sent if cid == 99)
+    assert "禁言失败：0人" in report_text
+    assert "跳过管理员/查询失败：1人" in report_text
+    # 视为正常跳过（非失败），追踪被清理而非保留重试
+    assert "42" not in detector.suspicious_users
+
+
+def test_admin_join_skips_profile_ad_detection(monkeypatch):
+    """任务17：管理员入群 → 检测前置豁免，detect_profile_ad_signal 不被调用。"""
+    from types import SimpleNamespace
+
+    from core import message_dispatcher
+    from core.handlers import member_handlers
+    from modules import ad_profile_signals, anti_raid, emoji_mask_detector, federation, spam_watch
+
+    bot = _FakeBot()
+    user = SimpleNamespace(id=42, first_name="管理员", last_name="")
+    message = SimpleNamespace(
+        chat=SimpleNamespace(id=-1001),
+        new_chat_members=[user],
+        from_user=user,
+    )
+    profile_calls = []
+
+    monkeypatch.setattr(anti_raid, "check_raid", lambda *args, **kwargs: False)
+    monkeypatch.setattr(spam_watch, "check_user_spam", lambda *args, **kwargs: False)
+    monkeypatch.setattr(federation, "execute_fban_on_join", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        emoji_mask_detector, "check_emoji_mask_in_username", lambda *args, **kwargs: (False, "")
+    )
+    # 管理员入群：member_handlers 检测前豁免返回 True
+    monkeypatch.setattr(member_handlers, "_is_member_ad_exempt", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        ad_profile_signals,
+        "detect_profile_ad_signal",
+        lambda *args, **kwargs: profile_calls.append(args) or {"is_ad": True, "score": 3, "reason": "广告"},
+    )
+
+    message_dispatcher._handle_new_chat_members(bot, message, {}, object(), None)
+
+    # 豁免生效：资料检测未被调用，也未触发任何处置
+    assert profile_calls == []
+    assert bot.deleted == []
+    assert bot.restricted == []

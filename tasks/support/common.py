@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 
+from core.broadcast_cta import is_broadcast_image_enabled
 from core.broadcast_formatter import (
     BROADCAST_SENDER_HANDLE,
     _parse_news_copy,
@@ -572,9 +573,8 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
 
                 # [v5.38.15] 优先尝试图片卡路径（新闻属于无入口资讯，图片卡不附加真实按钮）
                 cfg = rm.config or {}
-                global_image_enabled = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
                 news_cfg = cfg.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
-                news_image_enabled = global_image_enabled and bool(news_cfg.get("image_card_enabled", False))
+                news_image_enabled = is_broadcast_image_enabled(cfg, news_cfg)
                 if news_image_enabled:
                     try:
                         image_payload = build_news_image_payload(news, time_desc=time_desc)
@@ -582,7 +582,6 @@ def execute_news_task(rm: ResourceManager, task_name: str, time_desc: str):
                         image_path = build_broadcast_image_card(
                             image_payload,
                             cache_key=cache_key,
-                            cta_pool="news",
                             min_height=1100,
                         )
                         if image_path and os.path.isfile(image_path):

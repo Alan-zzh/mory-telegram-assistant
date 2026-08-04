@@ -927,6 +927,9 @@ class AdDetector:
         """
         if not msg or len(msg) < 2:
             return 0
+        # 【v5.38.22】性能短路：无中文字符（纯英文/数字/URL）直接跳过 pypinyin 转换
+        if re.search(r"[\u4e00-\u9fa5]", msg) is None:
+            return 0
         try:
             from core.pinyin_util import text_to_pinyin_silent
             pinyin_text = text_to_pinyin_silent(msg).lower()
@@ -1648,6 +1651,7 @@ class AdDetector:
         total_deleted = 0
         total_banned = 0
         total_failed = 0
+        skipped_count = 0
         processed_users = []
 
         for user_key, track in pending_bans:
@@ -1683,16 +1687,22 @@ class AdDetector:
                         notify_admin=False,
                     )
                     enforcement_data = enforcement.get("data", {})
-                    account_ok = bool(
-                        enforcement_data.get("muted") and enforcement_data.get("blacklisted")
-                    )
-                    if not account_ok:
-                        total_failed += 1
-                        logger.warning(
-                            f"[AD] 启动追溯账号处置未闭合: uid={uid} chat_id={chat_id} "
-                            f"muted={enforcement_data.get('muted')} "
-                            f"blacklisted={enforcement_data.get('blacklisted')}"
+                    skipped_reason = enforcement_data.get("skipped_reason")
+                    if skipped_reason in ("admin_or_creator", "admin_query_failed"):
+                        # 【v5.38.22】管理员豁免/群管查询失败降级：不计失败、不记"处置未闭合"警告
+                        skipped_count += 1
+                        account_ok = False
+                    else:
+                        account_ok = bool(
+                            enforcement_data.get("muted") and enforcement_data.get("blacklisted")
                         )
+                        if not account_ok:
+                            total_failed += 1
+                            logger.warning(
+                                f"[AD] 启动追溯账号处置未闭合: uid={uid} chat_id={chat_id} "
+                                f"muted={enforcement_data.get('muted')} "
+                                f"blacklisted={enforcement_data.get('blacklisted')}"
+                            )
                     deleted_now = int(enforcement_data.get("deleted_count", 0) or 0)
                     user_info["deleted"] += deleted_now
                     total_deleted += deleted_now
@@ -1730,6 +1740,7 @@ class AdDetector:
                     f"🗑 删除消息：{total_deleted}条",
                     f"🔇 成功永久禁言：{total_banned}人",
                     f"⚠️ 禁言失败：{total_failed}人",
+                    f"🛡 跳过管理员/查询失败：{skipped_count}人",
                     f"━━━━━━━━━━━━━━━",
                 ]
                 

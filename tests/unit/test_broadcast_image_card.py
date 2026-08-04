@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -336,3 +338,113 @@ def test_deploy_vps_filters_oversize_and_runtime_cache_paths(monkeypatch, tmp_pa
     assert "assets/huge.png" not in rels
     # runtime/cache 路径片段被过滤
     assert "assets/runtime/cache/stale.png" not in rels
+
+
+def test_is_broadcast_image_enabled_switch_matrix():
+    """图片卡开关矩阵：全局关 / 类型关 / 双开 / 空配置。"""
+    from core.broadcast_cta import is_broadcast_image_enabled
+
+    section = {"image_card_enabled": True}
+    # 全局总闸关闭 → 任何类型都不出图
+    assert not is_broadcast_image_enabled({"BROADCAST_IMAGE_CARD_ENABLED": False}, section)
+    assert not is_broadcast_image_enabled({}, section)
+    assert not is_broadcast_image_enabled(None, section)
+    # 全局开 + 类型关 → 不出图
+    assert not is_broadcast_image_enabled({"BROADCAST_IMAGE_CARD_ENABLED": True}, {"image_card_enabled": False})
+    assert not is_broadcast_image_enabled({"BROADCAST_IMAGE_CARD_ENABLED": True}, {})
+    assert not is_broadcast_image_enabled({"BROADCAST_IMAGE_CARD_ENABLED": True}, None)
+    # 双开 → 出图
+    assert is_broadcast_image_enabled({"BROADCAST_IMAGE_CARD_ENABLED": True}, section)
+
+
+# ---------------------------------------------------------------------------
+# build_broadcast_image_card 缓存命中短路 + 原子写入
+# ---------------------------------------------------------------------------
+
+def _broadcast_cache_dir() -> str:
+    """计算 build_broadcast_image_card 实际使用的缓存目录（runtime/cache/broadcast）。"""
+    from core import broadcast_image_card
+
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(broadcast_image_card.__file__))),
+        "runtime", "cache", "broadcast",
+    )
+
+
+def _cleanup_card_files(cache_key: str) -> None:
+    """清理测试生成的缓存文件（含可能的 .tmp 残留），避免污染真实缓存。"""
+    safe_key = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(cache_key))[:80]
+    for suffix in (".png", ".png.tmp"):
+        p = os.path.join(_broadcast_cache_dir(), f"{safe_key}{suffix}")
+        if os.path.isfile(p):
+            os.remove(p)
+
+
+def test_build_card_cache_reuse_same_day():
+    """同 cache_key 二次调用应命中缓存短路：mtime 保持不变（同日幂等，不重绘）。"""
+    from core.broadcast_image_card import build_broadcast_image_card
+
+    payload = {
+        "title": "缓存复用测试",
+        "kicker": "smoke",
+        "blocks": [{"heading": "内容", "lines": [("标签A", "值1")]}],
+    }
+    key = f"_test_cache_reuse_{os.getpid()}"
+    _cleanup_card_files(key)
+    out_path = None
+    try:
+        p1 = build_broadcast_image_card(payload, cache_key=key, min_height=1000, cta_text="")
+        assert p1 and os.path.isfile(p1)
+        out_path = p1
+        # 把 mtime 拨到 1 小时前（仍在 24h 窗口内）：若第二次命中短路则文件不会被重写
+        old = time.time() - 3600
+        os.utime(p1, (old, old))
+        mtime_before = os.path.getmtime(p1)
+
+        p2 = build_broadcast_image_card(payload, cache_key=key, min_height=1000, cta_text="")
+        assert p2 == p1
+        assert os.path.getmtime(p1) == mtime_before, "缓存未命中：二次调用重写了文件"
+    finally:
+        _cleanup_card_files(key)
+        assert out_path is None or not os.path.isfile(out_path), "测试残留未清理干净"
+
+
+def test_build_card_atomic_replace():
+    """生成完成后目录中不应残留 .tmp 临时文件（原子替换成功）。"""
+    from core.broadcast_image_card import build_broadcast_image_card
+
+    payload = {
+        "title": "原子写入测试",
+        "kicker": "smoke",
+        "blocks": [{"heading": "内容", "lines": [("标签B", "值2")]}],
+    }
+    key = f"_test_atomic_replace_{os.getpid()}"
+    _cleanup_card_files(key)
+    out_path = None
+    try:
+        p = build_broadcast_image_card(payload, cache_key=key, min_height=1000, cta_text="")
+        assert p and os.path.isfile(p)
+        out_path = p
+        # 目录中不应有该 key 对应的 .tmp 残留
+        assert not os.path.isfile(p + ".tmp"), "存在 .tmp 残留，原子替换未生效"
+    finally:
+        _cleanup_card_files(key)
+
+
+# ---------------------------------------------------------------------------
+# _stable_seed 确定性种子（md5 替代内置 hash，消除跨进程漂移）
+# ---------------------------------------------------------------------------
+
+def test_stable_seed_deterministic():
+    """同参数两次调用 seed 相等；不同参数大概率不同（只断言不等，不断言具体值）。"""
+    from core.broadcast_cta import _stable_seed
+
+    s1 = _stable_seed("mystic", "morning", "almanac")
+    s2 = _stable_seed("mystic", "morning", "almanac")
+    assert s1 == s2, "同参数两次调用 seed 不一致，确定性被破坏"
+    # 不同参数 md5 碰撞概率可忽略，直接断言不等
+    s3 = _stable_seed("mystic", "morning", "iching")
+    assert s3 != s1
+    # 返回 0..2^32 区间内的正整数
+    assert 0 <= s1 < 0x100000000
+    assert 0 <= s3 < 0x100000000

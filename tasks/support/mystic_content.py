@@ -35,112 +35,6 @@ _FORBIDDEN_VISIBLE_MARKERS = (
     "@moryfansbot",
 )
 
-_CTA_URLS = {
-    "contact": "https://t.me/Moryfansbot",
-    "preview": "https://t.me/moryselect",
-    "subscribe": "https://t.me/MorychannelBot",
-}
-
-# 玄学播报 CTA 文案池（按 mode 与 target 细分，避免歧义、避免“原版详情”）
-_CTA_LABEL_POOLS = {
-    "almanac": {
-        "contact": [
-            "🧭 问 Mory 专属风水",
-            "🧭 想算个人方位？找 Mory",
-            "🧭 个人择日咨询",
-        ],
-        "preview": [
-            "🎁 看预览与福利",
-            "🎁 先看一眼群内福利",
-            "🎁 预览入口",
-        ],
-        "subscribe": [
-            "🛒 自助订阅",
-            "🛒 开通每日推送",
-            "🛒 查看当前选项",
-        ],
-    },
-    "tarot": {
-        "contact": [
-            "🔮 找 Mory 单独抽牌",
-            "🔮 想抽个人牌阵？找 Mory",
-            "🔮 个人塔罗咨询",
-        ],
-        "preview": [
-            "🎁 看预览与福利",
-            "🎁 先看一眼群内福利",
-            "🎁 预览入口",
-        ],
-        "subscribe": [
-            "🛒 自助订阅",
-            "🛒 开通每日推送",
-            "🛒 查看当前选项",
-        ],
-    },
-    "iching": {
-        "contact": [
-            "☯️ 找 Mory 问一卦",
-            "☯️ 想起个人卦象？找 Mory",
-            "☯️ 个人易经咨询",
-        ],
-        "preview": [
-            "🎁 看预览与福利",
-            "🎁 先看一眼群内福利",
-            "🎁 预览入口",
-        ],
-        "subscribe": [
-            "🛒 自助订阅",
-            "🛒 开通每日推送",
-            "🛒 查看当前选项",
-        ],
-    },
-}
-
-_CTA_CLOSING_POOLS = {
-    "almanac": {
-        "contact": [
-            "想看个人方位或择日，可以先整理出生时间、所在城市和具体问题，再找 Mory 单独聊。",
-            "空间风水、择日办事这类具体问题，适合把信息准备齐后找 Mory 单独看。",
-        ],
-        "preview": [
-            "想先看看内容和群内福利，下面有预览入口，合不合适看完再说。",
-            "不确定要不要订，可以先去预览里看看实际内容和氛围。",
-        ],
-        "subscribe": [
-            "已经了解过、想继续的话，下面可以查看当前选项并自助订阅。",
-            "看完预览觉得合适的话，可以直接从这里查看可选项。",
-        ],
-    },
-    "tarot": {
-        "contact": [
-            "想看自己的专属牌阵，先想好一个具体问题，再找 Mory 单独抽牌。",
-            "个人塔罗更适合带着具体问题来抽，把问题想清楚后找 Mory 单独聊。",
-        ],
-        "preview": [
-            "想先看看内容和群内福利，下面有预览入口，合不合适看完再说。",
-            "不确定要不要订，可以先去预览里看看实际内容和氛围。",
-        ],
-        "subscribe": [
-            "已经了解过、想继续的话，下面可以查看当前选项并自助订阅。",
-            "看完预览觉得合适的话，可以直接从这里查看可选项。",
-        ],
-    },
-    "iching": {
-        "contact": [
-            "想问自己的具体主题，可以先把问题压成一句话，再找 Mory 单独起卦。",
-            "易经问事越具体越准，先把问题整理成一句话，再找 Mory 单独起卦。",
-        ],
-        "preview": [
-            "想先看看内容和群内福利，下面有预览入口，合不合适看完再说。",
-            "不确定要不要订，可以先去预览里看看实际内容和氛围。",
-        ],
-        "subscribe": [
-            "已经了解过、想继续的话，下面可以查看当前选项并自助订阅。",
-            "看完预览觉得合适的话，可以直接从这里查看可选项。",
-        ],
-    },
-}
-
 _HOUR_NAMES = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
 _HOUR_STARTS = [23, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21]
 
@@ -605,42 +499,16 @@ def _build_iching(now: datetime, rng: random.Random) -> dict[str, Any]:
     }
 
 
-def _build_cta(
-    config: dict[str, Any],
-    date_key: str,
-    period: str,
-    mode: str,
-) -> dict[str, str] | None:
-    cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
-    if not bool(cfg.get("cta_enabled", False)):
-        return None
-    targets = ["contact", "preview", "subscribe"]
-    plan_rng = _stable_rng(date_key, "daily-cta-plan", "rotation")
-    plan_rng.shuffle(targets)
-    index = {"morning": 0, "afternoon": 1, "evening": 2}.get(period, 0)
-    target = targets[index]
-
-    label_pool = _CTA_LABEL_POOLS.get(mode, _CTA_LABEL_POOLS["almanac"]).get(target, [])
-    closing_pool = _CTA_CLOSING_POOLS.get(mode, _CTA_CLOSING_POOLS["almanac"]).get(target, [])
-    choice_rng = _stable_rng(date_key, f"cta-{mode}-{period}", target)
-    label = choice_rng.choice(label_pool) if label_pool else "点击头像 · 了解更多"
-    closing = choice_rng.choice(closing_pool) if closing_pool else ""
-    style = "success" if target == "subscribe" else "primary"
-    return {
-        "target": target,
-        "label": label,
-        "url": _CTA_URLS[target],
-        "style": style,
-        "closing": closing,
-    }
-
-
 def build_mystic_broadcast(
     config: dict[str, Any],
     period: str,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """生成一张可直接交给富文本排版器的栏目 payload。"""
+    """生成一张可直接交给富文本排版器的栏目 payload。
+
+    CTA 由统一组件 core.broadcast_cta.get_broadcast_cta 在发送层生成并回填
+    （见 tasks/broadcast/mystic_broadcast_task.py），此处不再维护第二套 CTA。
+    """
     current = _normalize_now(now)
     date_key = current.strftime("%Y-%m-%d")
     mode = resolve_mystic_mode(config, period, current)
@@ -654,7 +522,6 @@ def build_mystic_broadcast(
     payload.update({
         "period": period,
         "date": date_key,
-        "cta": _build_cta(config, date_key, period, mode),
     })
     return payload
 
@@ -744,9 +611,12 @@ def is_usable_mystic_broadcast(payload: object) -> bool:
             return False
     cta = payload.get("cta")
     if cta is not None:
-        if not isinstance(cta, dict) or cta.get("target") not in _CTA_URLS:
+        # CTA 由统一组件生成：target 合法且 label 非空即可（URL 由统一池保证）
+        if not isinstance(cta, dict) or cta.get("target") not in (
+            "none", "preview", "subscribe", "contact",
+        ):
             return False
-        if cta.get("url") != _CTA_URLS[cta["target"]] or not cta.get("label"):
+        if cta.get("label") is None:
             return False
     visible = " ".join([
         str(payload.get("title", "")),

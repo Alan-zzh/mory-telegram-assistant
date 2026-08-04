@@ -9,7 +9,7 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
-from core.broadcast_cta import build_cta_markup, get_broadcast_cta
+from core.broadcast_cta import build_cta_markup, get_broadcast_cta, is_broadcast_image_enabled
 from core.broadcast_formatter import build_rich_greeting_html, build_rich_greeting_card_message
 from core.broadcast_image_card import build_broadcast_image_card
 from core.broadcast_image_payload import build_greeting_image_payload
@@ -107,9 +107,8 @@ class GreetingTask(BaseTask):
                 rich_message_html = build_rich_greeting_card_message(period, msg, suffix.strip(), closing=closing)
 
                 # [v5.38.15] 按需生成问候图片卡
-                global_image_enabled = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
                 greeting_cfg = cfg.get("GREETING_CONFIG", {}) if isinstance(cfg, dict) else {}
-                greeting_image_enabled = global_image_enabled and bool(greeting_cfg.get("image_card_enabled", False))
+                greeting_image_enabled = is_broadcast_image_enabled(cfg, greeting_cfg)
                 image_path = ""
                 if greeting_image_enabled:
                     try:
@@ -120,7 +119,6 @@ class GreetingTask(BaseTask):
                         image_path = build_broadcast_image_card(
                             image_payload,
                             cache_key=cache_key,
-                            cta_pool="greeting",
                             config=cfg,
                             min_height=900,
                             cta_text=cta.get("image_label", ""),

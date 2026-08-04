@@ -22,6 +22,7 @@ force_*.py
 verify_*.py
 !scripts/verify_db_methods.py
 check_*.py
+!scripts/check_config_sync.py
 !tasks/maintenance/check_db_migration_task.py
 !tasks/maintenance/check_expired_redpackets_task.py
 fix_*.py

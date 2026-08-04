@@ -17,8 +17,8 @@ from __future__ import annotations
 import functools
 import logging
 import os
-import random
 import re
+import time
 from typing import List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -102,8 +102,8 @@ FONT_KAI_POOL = [FONT_KAI] + FONT_SONG_POOL
 DEFAULT_WIDTH = 800
 DEFAULT_MARGIN = 56
 DEFAULT_RADIUS = 16
-DEFAULT_CTA_RADIUS = 24
-DEFAULT_TAG_RADIUS = 16
+DEFAULT_CTA_RADIUS = 18
+DEFAULT_TAG_RADIUS = 8
 
 
 class FontLoadError(RuntimeError):
@@ -984,52 +984,9 @@ def draw_card(
             img.close()
 
 
-# ── CTA 文案池 ──
-MYSTIC_CTA_VARIANTS = [
-    "问 Mory 专属风水 · 点击头像",
-    "找 Mory 单独抽牌 · 点击头像",
-    "找 Mory 问一卦 · 点击头像",
-    "想看个人专属运势 · 点击头像",
-    "每日推送已更新 · 点击头像订阅",
-    "会员群今日已更新 · 点击头像加入",
-    "需要专属服务 · 点击头像开始自助",
-    "点击头像 · 了解更多",
-]
-
-NEWS_CTA_VARIANTS = [
-    "Mory 每日播报",
-    "每日资讯 · 与你有关",
-]
-
-GREETING_CTA_VARIANTS = [
-    "看看预览",
-]
-
-SCHEDULED_CTA_VARIANTS = [
-    "看看预览",
-    "点击头像 · 了解更多",
-    "需要专属服务 · 点击头像",
-]
-
-
-def get_random_cta(pool_name: str = "mystic", rng: random.Random = None) -> str:
-    """从指定 CTA 池中随机抽取文案。"""
-    pools = {
-        "mystic": MYSTIC_CTA_VARIANTS,
-        "news": NEWS_CTA_VARIANTS,
-        "greeting": GREETING_CTA_VARIANTS,
-        "scheduled": SCHEDULED_CTA_VARIANTS,
-    }
-    pool = pools.get(pool_name, MYSTIC_CTA_VARIANTS)
-    if rng is None:
-        rng = random.Random()
-    return rng.choice(pool)
-
-
 def build_broadcast_image_card(
     payload: dict,
     cache_key: str,
-    cta_pool: str = "mystic",
     config: dict = None,
     min_height: int = 1000,
     cta_text: str = "",
@@ -1038,6 +995,10 @@ def build_broadcast_image_card(
 
     cache_key 用于构造文件名，建议包含类型与日期，避免冲突。
     cta_text 由调用方传入（与真实按钮一致）；为空时图片卡不绘制按钮，避免无入口场景出现假按钮。
+
+    缓存策略：cache_key 含日期时同日幂等。文件已存在且 mtime 距今 <24h 时
+    直接复用（省去重复绘制）；否则重新绘制，先写 .tmp 再 os.replace 原子替换，
+    避免并发绘制时读到半张图。
     """
     try:
         safe_key = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(cache_key))[:80]
@@ -1049,7 +1010,19 @@ def build_broadcast_image_card(
         )
         os.makedirs(cache_dir, exist_ok=True)
         out_path = os.path.join(cache_dir, f"{safe_key}.png")
-        _, info = draw_card(payload, out=out_path, cta=final_cta, min_height=min_height)
+
+        # 缓存命中短路：cache_key 含日期时同日幂等，文件存在且 mtime 距今 <24h 直接复用
+        if os.path.isfile(out_path):
+            try:
+                if time.time() - os.path.getmtime(out_path) < 24 * 3600:
+                    return out_path
+            except OSError:
+                pass  # 拿不到 mtime 时按未命中处理，走重新生成
+
+        # 先写 .tmp 再原子替换，避免并发绘制时读到半张图（draw_card 内部逻辑不动）
+        tmp_path = out_path + ".tmp"
+        _, info = draw_card(payload, out=tmp_path, cta=final_cta, min_height=min_height)
+        os.replace(tmp_path, out_path)
         logger = None
         try:
             from core.logging_util import get_logger

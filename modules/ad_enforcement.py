@@ -300,16 +300,50 @@ def _admin_ids(config: dict) -> set:
     return admin_ids
 
 
-def _is_chat_admin_member(bot, chat_id: int, uid: int) -> bool:
-    """查询用户在群内是否为管理员/群主；查询失败按非管理处理（不放过可疑账号）。"""
+def _is_chat_admin_member(bot, chat_id: int, uid: int) -> str:
+    """查询用户在群内是否为管理员/群主，三态返回。
+
+    - "admin"：查询成功且 status ∈ (administrator, creator)
+    - "not_admin"：查询成功但非管理（或入参缺失）
+    - "unknown"：get_chat_member 抛异常，无法判定
+
+    职责边界：与 core/handlers/member_handlers._is_member_ad_exempt
+    （检测前 whitelist+admin 免检）是两层防线——检测前置 vs 处置链兜底。
+    """
     if not chat_id or not uid:
-        return False
+        return "not_admin"
     try:
         member = bot.get_chat_member(chat_id, uid)
-        return bool(member and getattr(member, "status", "") in ("administrator", "creator"))
+        if bool(member and getattr(member, "status", "") in ("administrator", "creator")):
+            return "admin"
+        return "not_admin"
+    except AttributeError:
+        # 调用对象缺少 get_chat_member（仅测试桩等不完整对象，生产 telebot 必有）：
+        # 视为非管理继续处置，保持旧行为，不触发降级
+        logger.debug(f"调用对象缺少 get_chat_member，按非管理继续处置: chat={chat_id} uid={uid}")
+        return "not_admin"
     except Exception as e:
-        logger.debug(f"查询群管身份失败，按非管理继续处置: chat={chat_id} uid={uid} err={e}")
-        return False
+        logger.debug(f"查询群管身份失败，按未知处理等待人工复核: chat={chat_id} uid={uid} err={e}")
+        return "unknown"
+
+
+def _admin_skip_result(uid: int, chat_id: int, skipped_reason: str) -> dict:
+    """豁免/降级跳过的同构返回结构：不做任何处置，仅记录跳过原因。"""
+    return {
+        "code": 200,
+        "data": {
+            "uid": uid,
+            "chat_id": chat_id,
+            "muted": False,
+            "blacklisted": False,
+            "deleted_count": 0,
+            "evidence_persisted": False,
+            "reactions_cleaned": False,
+            "skipped_reason": skipped_reason,
+        },
+        "msg": "skipped_admin",
+    }
+
 
 
 def _extract_unban_token(message) -> str:
@@ -587,27 +621,35 @@ def enforce_ad_user(
     发言，但只有内容规则明确命中时，调用方才传 ``current_message_is_ad=True``。
     """
     reason = str(reason or "广告检测")
+    # 【v5.38.22】配置级白名单豁免前置（零网络）：ADMIN_IDS/ADMIN_ID 命中直接跳过，
+    # 不依赖 get_chat_member 网络查询，避免查询失败/网络抖动时仍可能误处置配置管理员
+    if uid in _admin_ids(config):
+        logger.warning(
+            f"广告检测命中配置管理员(ADMIN_IDS/ADMIN_ID)，跳过全部处置: uid={uid} chat={chat_id} reason={reason}"
+        )
+        return _admin_skip_result(uid, chat_id, "admin_or_creator")
+    if not current_msg_id and message is not None:
+        current_msg_id = getattr(message, "message_id", 0) or 0
     # 【v5.38.21】群管/群主豁免：禁言、黑名单、删消息只针对普通成员，避免误封管理
-    if _is_chat_admin_member(bot, chat_id, uid):
+    admin_status = _is_chat_admin_member(bot, chat_id, uid)
+    if admin_status == "admin":
         logger.warning(
             f"广告检测命中群管/群主，跳过全部处置: uid={uid} chat={chat_id} reason={reason}"
         )
-        return {
-            "code": 200,
-            "data": {
-                "uid": uid,
-                "chat_id": chat_id,
-                "muted": False,
-                "blacklisted": False,
-                "deleted_count": 0,
-                "evidence_persisted": False,
-                "reactions_cleaned": False,
-                "skipped_reason": "admin_or_creator",
-            },
-            "msg": "skipped_admin",
-        }
-    if not current_msg_id and message is not None:
-        current_msg_id = getattr(message, "message_id", 0) or 0
+        return _admin_skip_result(uid, chat_id, "admin_or_creator")
+    if admin_status == "unknown":
+        # 【v5.38.22】群管身份查询失败三态降级：保留证据并通知人工复核，
+        # 但跳过禁言/黑名单/删消息等不可逆惩罚，避免误封群管
+        evidence_persisted = False
+        if current_message_is_ad:
+            evidence_persisted = _mark_current_message_ad(db, chat_id, current_msg_id)
+        if notify_admin:
+            _notify_admin(bot, config or {}, chat_id, uid, uname or str(uid), reason, 0, False)
+        logger.warning(
+            f"广告检测命中但群管身份查询失败，跳过惩罚等待人工复核: uid={uid} chat={chat_id} "
+            f"reason={reason} evidence_persisted={evidence_persisted}"
+        )
+        return _admin_skip_result(uid, chat_id, "admin_query_failed")
     evidence_persisted = False
     if current_message_is_ad:
         evidence_persisted = _mark_current_message_ad(db, chat_id, current_msg_id)

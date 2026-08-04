@@ -113,29 +113,29 @@ def test_iching_has_all_patterns_and_moving_line_produces_changed_hexagram():
     assert "本卦看" in payload["insight"]
 
 
-def test_cta_is_exactly_one_daily_rotation_and_can_be_disabled():
-    from tasks.broadcast.mystic_broadcast_task import build_mystic_cta_markup
+def test_cta_uses_unified_pool_and_can_be_disabled():
+    """CTA 由统一组件生成：target 合法、label/image_label 强绑定、单按钮、可关闭。"""
+    from core.broadcast_image_card import strip_visual_emoji
+    from tasks.broadcast.mystic_broadcast_task import build_mystic_cta, build_mystic_cta_markup
     from tasks.support.mystic_content import build_mystic_broadcast
 
     now = datetime(2026, 7, 27, 9, 5, tzinfo=_CST)
-    payloads = [
-        build_mystic_broadcast(_config(), period, now)
-        for period in ("morning", "afternoon", "evening")
-    ]
-    assert {payload["cta"]["target"] for payload in payloads} == {
-        "contact",
-        "preview",
-        "subscribe",
-    }
     expected_urls = {
         "contact": "https://t.me/Moryfansbot",
         "preview": "https://t.me/moryselect",
         "subscribe": "https://t.me/MorychannelBot",
     }
-    for payload in payloads:
-        cta = payload["cta"]
+    for period in ("morning", "afternoon", "evening"):
+        payload = build_mystic_broadcast(_config(), period, now)
+        # 旧第二套 CTA 已收敛：payload 不再自带 cta，由发送层统一生成并回填
+        assert payload.get("cta") is None
+        cta = build_mystic_cta(payload, config=_config())
+        assert cta["target"] in expected_urls
+        assert cta["label"]
         assert cta["url"] == expected_urls[cta["target"]]
-        markup = build_mystic_cta_markup(payload)
+        # 强绑定：图片卡文案必须由按钮文案 strip emoji 派生
+        assert cta["image_label"] == strip_visual_emoji(cta["label"])
+        markup = build_mystic_cta_markup(payload, config=_config())
         assert len(markup.keyboard) == 1
         assert len(markup.keyboard[0]) == 1
         button = markup.keyboard[0][0]
@@ -145,8 +145,9 @@ def test_cta_is_exactly_one_daily_rotation_and_can_be_disabled():
     no_cta = build_mystic_broadcast(
         _config(cta_enabled=False), "morning", now
     )
-    assert no_cta["cta"] is None
-    assert build_mystic_cta_markup(no_cta) is None
+    cta_off = build_mystic_cta(no_cta, config=_config(cta_enabled=False))
+    assert not cta_off.get("label")
+    assert build_mystic_cta_markup(no_cta, config=_config(cta_enabled=False)) is None
 
 
 def test_renderers_have_structured_layout_sender_and_matching_cta_copy():
@@ -161,6 +162,9 @@ def test_renderers_have_structured_layout_sender_and_matching_cta_copy():
         "afternoon",
         datetime(2026, 7, 27, 13, 5, tzinfo=_CST),
     )
+    # 与发送层一致：统一 CTA 生成后回填 payload，正文 closing 与按钮同源
+    from tasks.broadcast.mystic_broadcast_task import build_mystic_cta
+    payload["cta"] = build_mystic_cta(payload, config=_config())
     html = build_mystic_html(payload)
     rich = build_rich_mystic_card_message(payload)
     for text in (html, rich):

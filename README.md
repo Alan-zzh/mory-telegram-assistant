@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.20**：全播报类型统一接入 PIL 图片卡（黄历/塔罗/易经/问候/定点播报 5 类），右下角 `Mory / 沫沫的沫` 印章，底部 CTA 视觉与真实 Inline Keyboard 按钮一致，失败自动回退 Rich Message/HTML；Dashboard `/settings/broadcast-style` 全局样式面板；v5.38.20 修复配置脏状态致风水/塔罗/易经播报停摆 5 天（`MYSTIC_BROADCAST_CONFIG.enabled` 误关已恢复，`NEWS_BROADCAST_CONFIG` 残留已清理对齐 v5.37.0 新闻下线产品方向）。
+当前版本 **v5.38.22**：全播报类型统一接入 PIL 图片卡（黄历/塔罗/易经/问候/定点播报 5 类），右下角 `Mory / 沫沫的沫` 印章，底部 CTA 视觉与真实 Inline Keyboard 按钮一致（统一 CTA 单一真相源），失败自动回退 Rich Message/HTML；Dashboard `/settings/broadcast-style` 全局样式面板；v5.38.22 完成四项整改收尾（CTA 收敛/广告豁免加固/质量安全/文档治理）。
 
 ## 快速开始
 

@@ -24,7 +24,7 @@ import os
 import random
 from datetime import datetime, timezone, timedelta
 from telebot import types
-from core.broadcast_cta import build_cta_markup, get_broadcast_cta
+from core.broadcast_cta import build_cta_markup, get_broadcast_cta, is_broadcast_image_enabled
 from core.broadcast_formatter import (
     build_broadcast_html,
     build_rich_broadcast_html,
@@ -502,18 +502,15 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                     bc, user_profile=user_profile, config=config, cta=cta
                 )
 
-                # [v5.38.15] 图片卡优先（仅 text 类型，且全局/单条均开启）
-                global_image_enabled = bool(config.get("BROADCAST_IMAGE_CARD_ENABLED", False))
-                item_image_enabled = bool(bc.get("image_card_enabled", False))
+                # [v5.38.15] 图片卡优先（仅 text 类型，且全局/单条均开启，统一 helper）
                 image_sent = False
-                if global_image_enabled and item_image_enabled:
+                if is_broadcast_image_enabled(config, bc):
                     try:
                         image_payload = build_scheduled_image_payload(bc, user_profile=user_profile)
                         today = datetime.now(_CST).strftime("%Y%m%d")
                         image_path = build_broadcast_image_card(
                             image_payload,
                             cache_key=f"scheduled_{broadcast_id}_{today}",
-                            cta_pool="scheduled",
                             min_height=1000,
                             cta_text=cta.get("image_label", ""),
                         )

@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """Dashboard配置管理API"""
+import logging
+
 from flask import Blueprint, request, jsonify
 from dashboard.helpers import (
     login_required, admin_required, read_config, write_config,
     _DashboardFakeMessage, _DashboardReplyProxy
 )
 from modules.natural_cmd import handle_natural_admin, ALL_CONFIGS
+
+logger = logging.getLogger(__name__)
 
 config_bp = Blueprint('config', __name__, url_prefix='/api')
 
@@ -26,6 +30,17 @@ ALLOWED_CONFIG_FIELDS = {
     "SPECIAL_AUTO_REPLIES", "PUZZLE_WORD", "SLANG_DICT", "AD_RULES",
     "CHECKIN_CONFIG", "ENABLE_MESSAGE_DELETION",
     "FAQ_TRACKING_ENABLED", "FAQ_AUTO_REPLY_ENABLED", "FAQ_DISTILL_INTERVAL", "FAQ_MIN_FREQUENCY",
+    # [阶段4 步骤20] 播报相关 + 高频业务键（三处同步补齐，均有 Dashboard UI 修改需求）
+    "MYSTIC_BROADCAST_CONFIG",  # 玄学播报（黄历/塔罗/易经）开关与时段，播报设置页可改
+    "GREETING_CONFIG",  # 早安/晚安问候播报配置
+    "SCHEDULED_BROADCASTS",  # 定时播报列表，UI 编辑播报条目
+    "NEWS_BROADCAST_CONFIG",  # 新闻播报配置
+    "BROADCAST_AUTO_DELETE",  # 播报消息自动删除（孤儿/问候链清理）
+    "PROACTIVE_ENGAGE_CONFIG",  # 主动互动触发配置
+    "RELAY_MODE_ENABLED",  # 中继模式开关
+    "ORPHAN_CLEANUP_ENABLED",  # 孤儿消息清理开关
+    "LANGUAGE",  # 语言设置
+    "ANTI_CHANNEL_DEFAULT",  # 防频道转发默认值
     # [Puzan-OS v5.32] 广告检测 AI 升级开关
     "AD_MARKETING_DETECTION_ENABLED", "AD_AI_REVIEW_ENABLED",
     "AD_AI_AUTO_REPLY_ENABLED", "AD_AVATAR_AI_REVIEW_ENABLED",
@@ -396,8 +411,8 @@ def api_scene_triggers_config():
         if k in data:
             try:
                 cfg[cfg_key] = caster(data[k])
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as e:
+                logger.debug(f"场景触发数字字段转换失败，保持原值: key={cfg_key} err={e}")
 
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "场景触发配置已更新（5-8秒内生效）"})

@@ -884,6 +884,13 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
 
         # 步骤2.5：资料层广告检测（名字 + BIO + Premium emoji状态）
         try:
+            # 【v5.38.22】检测前置豁免：白名单/群管理员在资料检测前直接跳过（零处置）
+            from core.handlers.member_handlers import _is_member_ad_exempt
+            if _is_member_ad_exempt(bot, config, chat_id, user_id):
+                logger.info(
+                    f"👥 [入群资料检测] 豁免白名单/群管理员，跳过检测: uid={user_id} display={user_display}"
+                )
+                continue
             user_bio = ""
             try:
                 chat_info = bot.get_chat(user_id)

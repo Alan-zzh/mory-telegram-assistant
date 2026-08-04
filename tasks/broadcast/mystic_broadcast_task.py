@@ -6,9 +6,9 @@ import os
 import random
 from typing import Any, Dict, List
 
-from core.broadcast_cta import build_cta_markup, get_broadcast_cta
+from core.broadcast_cta import build_cta_markup, get_broadcast_cta, is_broadcast_image_enabled
 from core.broadcast_formatter import build_mystic_html, build_rich_mystic_card_message
-from core.broadcast_image_card import build_broadcast_image_card
+from core.broadcast_image_card import build_broadcast_image_card, strip_visual_emoji
 from core.broadcast_image_payload import build_mystic_image_payload
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
@@ -51,7 +51,8 @@ def build_mystic_cta(payload: dict, config: dict = None):
     if not cta.get("label") and isinstance(legacy_cta, dict):
         cta["target"] = legacy_cta.get("target", "none")
         cta["label"] = legacy_cta.get("label", "")
-        cta["image_label"] = legacy_cta.get("label", "")
+        # 图片卡文案必须由按钮文案 strip emoji 派生，保持强绑定
+        cta["image_label"] = strip_visual_emoji(legacy_cta.get("label", ""))
         cta["url"] = legacy_cta.get("url", "")
         cta["style"] = legacy_cta.get("style", "default")
         cta["closing"] = legacy_cta.get("closing", "")
@@ -75,7 +76,6 @@ def _build_mystic_image_card(payload: dict, config: dict = None, cta: dict = Non
         out_path = build_broadcast_image_card(
             image_payload,
             cache_key=f"mystic_{payload.get('mode', 'almanac')}_{payload.get('date', 'unknown')}",
-            cta_pool="mystic",
             config=config,
             cta_text=cta_text,
         )
@@ -107,19 +107,18 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
                 record_abort(task_name, "玄学播报内容未通过门禁")
                 raise TaskAbort("玄学播报内容未通过门禁", expected=True)
 
-            rich_message = build_rich_mystic_card_message(payload)
-            html_message = build_mystic_html(payload)
             cfg = rm.config or {}
             cta = build_mystic_cta(payload, config=cfg)
+            # 统一 CTA 回填 payload：HTML/Rich 正文 closing 与按钮/图片卡同源
+            payload["cta"] = cta
+            rich_message = build_rich_mystic_card_message(payload)
+            html_message = build_mystic_html(payload)
             reply_markup = build_cta_markup(cta, config=cfg)
             rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
             format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
             mystic_cfg = cfg.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
-            # [v5.38.21] 与其余播报类型一致：全局总闸 AND 玄学分闸
-            global_image_enabled = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
-            image_card_enabled = global_image_enabled and bool(
-                mystic_cfg.get("image_card_enabled", False)
-            )
+            # [v5.38.21] 与其余播报类型一致：全局总闸 AND 玄学分闸（统一 helper）
+            image_card_enabled = is_broadcast_image_enabled(cfg, mystic_cfg)
             sent = None
 
             # [v5.38.15] 优先发送图片卡，失败回退 Rich Message / HTML
