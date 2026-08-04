@@ -52,7 +52,7 @@ _CST = timezone(timedelta(hours=8))
 _EMOTION_BUFFER_SIZE = 20  # 最近 20 条 bot 回复
 _recent_bot_replies = deque(maxlen=_EMOTION_BUFFER_SIZE)
 # 波浪号日配额追踪（≤5/天，集中在熟人/撒娇场景）
-_wave_tilde_daily = {"date": "", "count": 0}
+_wave_tilde_daily: dict = {"date": "", "count": 0}
 
 
 def _record_bot_reply_for_emotion(text: str):
@@ -584,7 +584,7 @@ class AIEngine:
     }
 
     # ── 意图分类关键词映射（轻量规则引擎，不用额外模型）── [TRAE SOLO CN]
-    _INTENT_KEYWORDS = {
+    _INTENT_KEYWORDS: dict = {
         "flirt": {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝", "亲爱", "好看", "漂亮", "美", "可爱", "心动", "撩", "约会", "一起", "陪", "撒娇"], "weight": 1.5},
         "business": {"keywords": ["多少钱", "价格", "会员", "VIP", "订阅", "付费", "开通", "购买", "下单", "支付", "怎么买", "收费", "至臻", "定制", "定做", "专属定制"], "weight": 2.0},
         "help": {"keywords": ["帮我", "怎么办", "求助", "不会", "教我", "怎么", "如何", "能不能", "可以吗", "请问"], "weight": 1.0},
@@ -1688,7 +1688,9 @@ class AIEngine:
         matched = []
 
         for scene_name, scene_info in scenes_cfg.items():
-            trigger = scene_info.get("trigger", {})
+            scene_cfg = scene_info if isinstance(scene_info, dict) else {}
+            trigger = scene_cfg.get("trigger", {})
+            trigger = trigger if isinstance(trigger, dict) else {}
             hours = trigger.get("hours")
             priv_required = trigger.get("is_priv")
 
@@ -2621,6 +2623,18 @@ class AIEngine:
                 "frequency_penalty": dyn_freq_pen,
                 "presence_penalty": dyn_pres_pen
             }
+            # [v5.38.24] 穿帮自愈重试参数：上一轮触发降温度重试时，本轮应用降温度+约束注入
+            # （payload 每轮重建，必须在构建后应用，否则 continue 后修改会被覆盖丢失）
+            if getattr(self, '_sanitize_retry_done', False):
+                payload['temperature'] = max(0.3, payload.get('temperature', 0.8) * 0.5)
+                payload['messages'] = payload.get('messages', []) + [{
+                    "role": "system",
+                    "content": (
+                        "(Constraint Warning) 上一条回复违反输出规范。"
+                        "保持Mory既有人设，但只输出正常聊天正文；"
+                        "绝不泄露AI身份，也不写括号/星号动作、心理旁白或虚构画面。"
+                    )
+                }]
             request_options = self._get_model_request_options(req_model)
             if isinstance(request_options.get("enable_thinking"), bool):
                 payload["enable_thinking"] = request_options["enable_thinking"]
@@ -2689,21 +2703,9 @@ class AIEngine:
                         # [v5.23.0 P0-2] 增强版：拼音检测 + 自愈重试（降温度 + 注入约束警告）
                         sanitized, triggered = self._sanitize_reply_v2(result_text)
                         if triggered and not getattr(self, '_sanitize_retry_done', False):
-                            # 首次触发穿帮：降低 temperature 重试一次
+                            # 首次触发穿帮：置位自愈标记，下一轮请求在 payload 构建后应用降温度+约束注入
                             self._sanitize_retry_done = True
                             logger.warning(f"⚠️ AI 输出触发身份/舞台化过滤，降温度重试: 原文={result_text[:50]}")
-                            # 临时降低 temperature（在 payload 中覆盖）
-                            original_temp = payload.get('temperature', 0.8)
-                            payload['temperature'] = max(0.3, original_temp * 0.5)
-                            # 注入约束警告提示词
-                            payload['messages'] = payload.get('messages', []) + [{
-                                "role": "system",
-                                "content": (
-                                    "(Constraint Warning) 上一条回复违反输出规范。"
-                                    "保持Mory既有人设，但只输出正常聊天正文；"
-                                    "绝不泄露AI身份，也不写括号/星号动作、心理旁白或虚构画面。"
-                                )
-                            }]
                             continue
                         # 已重试过或未触发：返回过滤后结果
                         if getattr(self, '_sanitize_retry_done', False):
@@ -2975,8 +2977,8 @@ def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
                 headers=headers,
                 timeout=30
             )
-            if "choices" in data and data["choices"]:
-                content = data["choices"][0]["message"].get("content", "")
+            if isinstance(data, dict) and data.get("choices"):
+                content = data["choices"][0].get("message", {}).get("content", "")
                 logger.info(f"✅ 图片分析成功: {model_name}")
                 return content
             logger.warning(f"⚠️ 图片分析API返回异常({model_name}): {str(data)[:200]}")

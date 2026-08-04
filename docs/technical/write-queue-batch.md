@@ -1,11 +1,13 @@
 # WriteQueue 批量化与死锁检测详解
 
-> **被 [AGENTS.md](../../AGENTS.md) 索引引用 · 适用版本：v5.23.0+ / v5.31.2 审计整改**
+> 本文档为独立技术说明，未被 AGENTS.md 直接索引 · 适用版本：v5.23.0+ / v5.31.2 审计整改
 > **最后更新**：2026-07-06
 
 ## 概述
 
 `core/write_queue.py` 是 SQLite 单线程写入队列，所有写操作投递到内存队列由后台 Worker 串行执行，彻底消除 `database is locked`。本文档详述 v5.31.2 审计整改的两项关键修复：**executemany 批量化**（10x 性能修复）和 **Worker 死锁检测**（防自死锁）。
+
+> **【历史演进说明】** 本文档描述的批量化/死锁检测实现属于 **v5.23.0–v5.31.2 时期**。v5.32.0 起 `core/write_queue.py` 已降级为空壳兼容层（WAL + busy_timeout=30s + synchronous=NORMAL 已足够，WriteQueueConnectionProxy 移除），`enqueue / enqueue_batch / enqueue_and_wait` 均抛 `RuntimeError` 提示直接使用 `db.conn.execute()/executemany()`；文中 `_WriteTask` / `_execute_task` / `_worker_thread_id` / `is_executemany` / `_FakeCursorForBatch` 均已不存在，调用方 `core/db_connection_proxy.py` 已于 **v5.38.10 删除**。下文代码示例仅为历史实现还原，不适用于现行代码。
 
 ## 适用场景
 
@@ -18,7 +20,7 @@
 
 ### 问题
 
-`core/db_connection_proxy.py:executemany` 之前逐条入队：
+历史版本 `core/write_queue.py` 的 executemany 代理（原 `core/db_connection_proxy.py` 文件已于 v5.38.10 删除）之前逐条入队：
 
 ```python
 # 旧实现（性能损失 10x+）
@@ -123,6 +125,6 @@ def enqueue_and_wait(self, conn, sql, params=(), ...):
 
 ## 相关文件
 
-- `core/write_queue.py` — 主实现
-- `core/db_connection_proxy.py` — 调用方（`executemany` 代理）
-- `tests/unit/test_audit_fixes.py` — 单元测试
+- `core/write_queue.py` — 现行实现为 v5.32.0 降级后的空壳兼容层：`start()/stop()` no-op、`get_stats()` 返回零值（监控代码依赖）、`enqueue/enqueue_batch/enqueue_and_wait` 抛 `RuntimeError` 提示直接用 `db.conn.execute()/executemany()`
+- `core/db_connection_proxy.py` — 已删除（v5.38.10）；历史调用方（`executemany` 代理）
+- `tests/unit/test_audit_fixes.py` — 单元测试（历史批量化测试）

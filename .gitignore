@@ -100,3 +100,6 @@ Thumbs.db
 
 # ── runtime 浏览器扫描临时产物（probe/crawl/screenshot，不提交）────────────
 runtime/browser-scan/
+
+# ── AI 审查/分析产物（better-harness 等，不提交）────────────────────
+.qoder/

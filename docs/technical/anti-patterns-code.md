@@ -100,7 +100,7 @@ except AttributeError:
 
 - 三个地方必须同时改：
   1. `config.json.example`（示例文件）
-  2. `core/config.py` 或加载逻辑（默认值）
+  2. `core/settings.py` 或加载逻辑（默认值）
   3. Dashboard 设置面板（如适用）
 - **不能**只改代码不更新 example，否则部署时 VPS 端会缺键
 

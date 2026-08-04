@@ -66,8 +66,8 @@ jobs:
           # 使用 mypy.ini 配置，检查核心模块
           # 宽松模式，忽略缺失导入，不跟随导入
           # core/cache_manager.py 已移除，由 core/database.py 接替；
-          # core/ai_engine.py 仍有 10 项类型标注债务，待清理后纳入。
-          mypy core/settings.py core/database.py core/user_lifecycle.py --follow-imports=silent
+          # core/ai_engine.py 的 10 项类型标注债务已于 v5.38.24 清理并纳入。
+          mypy core/settings.py core/database.py core/ai_engine.py core/user_lifecycle.py --follow-imports=silent
       
       # 步骤 6：单元测试 + 覆盖率
       - name: 单元测试 + 覆盖率

@@ -95,7 +95,7 @@
 ### 56. sanitize 降温度自愈重试参数被循环内重建覆盖，实际退化为原样重试（v5.38.23 新增）
 - 问题：ai_engine.ask() 触发穿帮后"降温度重试一次"的机制（v5.23.0 P0-2）实际不生效：monkeypatch 断言第二次请求 payload.temperature 应为首次一半时，实测仍为原值；注入的约束 system 消息同样丢失。
 - 根因：payload（含 temperature/messages）在 while 循环体顶部每轮重建（约 2614-2622 行），穿帮分支（约 2695-2704 行）对 payload 的修改在 continue 后进入下一轮被重建覆盖；标记 _sanitize_retry_done 只控制"是否再试一次"，重试参数从未真正改变。
-- 解法：本次仅修复状态残留（全败兜底路径清理 _sanitize_retry_done，v5.38.23）；自愈参数失效属既有缺陷，待后续将"降温度+约束注入"下沉到循环内构建点之后（或改为构建时读取临时覆盖值）再修。
+- 解法：v5.38.23 先修复状态残留（全败兜底与 402/403 池耗尽早退路径清理 _sanitize_retry_done）；v5.38.24 彻底修复参数失效——把"降温度 + 约束注入"从穿帮触发点移至 while 循环内 payload 构建完成后应用（读取 _sanitize_retry_done 标记），触发点只置位标记并 continue；回归测试断言重试请求实际降温度（base*0.5）且 messages 含约束警告，两次 ask 序列均验证。
 - 预防：任何"修改请求参数后 continue 重试"的逻辑，必须先确认参数构建点与修改点在同一作用域层级；写测试断言重试请求的实际载荷（payload 内容），不能只断言"发生了重试"。
 
 ### 57. .venv 是 Python 3.14 空壳导致依赖装不上、pytest 缺失（v5.38.23 新增）
@@ -103,3 +103,9 @@
 - 根因：.venv 由 Python 3.14 创建（版本过新，gevent 等依赖尚无 3.14 wheel），且项目依赖真相源是 requirements.txt（50 行）而非 pyproject.toml（仅 [tool.interrogate]）。
 - 解法：删除空壳 .venv，用 Python 3.12.10 重建（python -m venv .venv），再 uv pip install --python .venv/Scripts/python.exe -r requirements.txt；AGENTS.md 验证门禁补充测试命令与环境要求。
 - 预防：本地环境统一 Python 3.12（与 CI 一致）；venv 重建后用 .venv/Scripts/python.exe -m pytest tests/unit/ -q 冒烟验证；不要在 pyproject.toml 缺 [project] 时依赖 uv sync。
+
+### 58. 线程日志上下文泄漏风险评估结论（v5.38.24 记录）
+- 问题：message_dispatcher 消息入口 set_logging_context 后各分支手动 clear_logging_context（36 处），独立审查提示异常路径可能残留上下文污染下一条消息日志。
+- 根因：thread-local 上下文只在消息线程内有效；telebot 默认每条更新独立线程（线程退出即销毁 thread-local），项目仅有的 ThreadPoolExecutor（append_pool，max_workers=2）不处理消息分发。
+- 解法：评估结论为低风险不重构——telebot 每消息独立线程模型下残留上下文随线程销毁，无线程池复用污染路径；消息分发函数已有 36 处显式清理覆盖正常路径。如需未来改为线程池分发，需同步引入 try/finally 清理。
+- 预防：若引入线程池处理消息，必须先加异常安全清理（try/finally clear_logging_context）再上线；新增异步/池化路径时审查 thread-local 生命周期。

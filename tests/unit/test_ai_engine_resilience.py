@@ -516,12 +516,23 @@ def test_cached_reply_also_passes_stage_direction_filter(monkeypatch):
 
 
 def test_sanitize_retry_flag_is_cleared_after_total_failure(caplog, monkeypatch):
-    """穿帮自愈重试置位后若全败，兜底路径必须清理标记，下次调用仍保留自愈能力。"""
+    """穿帮自愈重试置位后若全败，兜底路径必须清理标记，下次调用仍保留自愈能力；
+    且自愈重试的 payload 必须真正应用降温度与约束注入（不被重建覆盖）。"""
     engine = _engine(monkeypatch)
     calls = []
 
+    def record_call(json):
+        messages = json.get("messages", [])
+        calls.append({
+            "temperature": json.get("temperature"),
+            "has_constraint": any(
+                isinstance(m, dict) and m.get("content", "").startswith("(Constraint Warning)")
+                for m in messages
+            ),
+        })
+
     def fake_post(_url, json, headers, timeout):
-        calls.append(json.get("temperature"))
+        record_call(json)
         # 第一次响应触发穿帮过滤（降温度重试），之后全部超时
         if len(calls) == 1:
             return _FakeResponse(200, {"choices": [{"message": {"content": "我不能帮你处理这个。"}}]})
@@ -531,13 +542,17 @@ def test_sanitize_retry_flag_is_cleared_after_total_failure(caplog, monkeypatch)
 
     first = engine.ask("第一次触发穿帮后全败", mode="normal", retry=1, is_priv=True)
 
+    base_temp = calls[0]["temperature"]
     assert first == ""
     assert not hasattr(engine, "_sanitize_retry_done")  # 全败兜底后标记必须已清理
+    # 自愈重试的第二次调用必须真正降温度并注入约束警告
+    assert calls[1]["temperature"] == pytest.approx(max(0.3, base_temp * 0.5))
+    assert calls[1]["has_constraint"] is True
 
     calls.clear()
 
     def fake_post_second(_url, json, headers, timeout):
-        calls.append(json.get("temperature"))
+        record_call(json)
         if len(calls) == 1:
             return _FakeResponse(200, {"choices": [{"message": {"content": "我不能帮你处理这个。"}}]})
         return _FakeResponse(200, {"choices": [{"message": {"content": "好，那就不提这个了。"}}]})
@@ -551,6 +566,11 @@ def test_sanitize_retry_flag_is_cleared_after_total_failure(caplog, monkeypatch)
     assert second == "好，那就不提这个了。"
     # 若标记残留，第二次 ask 会跳过自愈重试分支，不会出现降温度日志
     assert any("降温度重试" in record.getMessage() for record in caplog.records)
+    # 标记已清理：第二次 ask 的首次调用不降温度、无约束注入；重试调用才应用
+    assert calls[0]["temperature"] == pytest.approx(base_temp)
+    assert calls[0]["has_constraint"] is False
+    assert calls[1]["temperature"] == pytest.approx(max(0.3, base_temp * 0.5))
+    assert calls[1]["has_constraint"] is True
 
 
 def test_sanitize_retry_flag_cleared_on_quota_exhaustion_early_exit(monkeypatch):
@@ -571,6 +591,20 @@ def test_sanitize_retry_flag_cleared_on_quota_exhaustion_early_exit(monkeypatch)
 
     assert result == ""
     assert not hasattr(engine, "_sanitize_retry_done")  # 池耗尽早退后标记必须已清理
+
+
+def test_get_pool_info_returns_all_pools(monkeypatch):
+    """get_pool_info 应返回全部模型池状态且字段完整（回归：此前 pool 未定义会 NameError）。"""
+    engine = _engine(monkeypatch)
+
+    info = engine.get_pool_info()
+
+    for pool_name in engine.POOL_NAMES:
+        assert pool_name in info, f"缺少池 {pool_name}"
+        row = info[pool_name]
+        assert {"total", "current", "index", "blacklisted_count", "blacklisted"} <= set(row)
+    for tier_name in ("llm_light", "llm_standard", "llm_premium"):
+        assert {"slow_count", "slow"} <= set(info[tier_name])
 
 
 def test_failure_chain_log_carries_request_id(caplog, monkeypatch):

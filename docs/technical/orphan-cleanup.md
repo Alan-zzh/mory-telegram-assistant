@@ -1,13 +1,13 @@
 # 孤儿消息清理机制详解
 
-> **被 [AGENTS.md](../../AGENTS.md) 索引引用 · 适用版本：v5.12.0+**
+> 本文档为独立技术说明，未被 AGENTS.md 直接索引 · 适用版本：v5.12.0+ / v5.38.x 现行机制
 > **最后更新**：2026-06-02（v5.12.1 .agents→AGENTS.md）
 
 ## 概述
 
 Mory 小助理作为群管理 Bot，会主动发送大量"播报型"消息（早安/午安/晚安问候、用户升级祝贺、新闻播报等）。这类消息**没有用户会回复**（不是问题、不是命令），如果不主动清理，群消息历史会很快被这类"孤儿消息"占满。
 
-本文档详述 v5.12.0 实现的**孤儿消息自动清理**完整方案。
+本文档详述 v5.12.0 实现的**孤儿消息自动清理**完整方案。**现行机制（v5.38.x）**：定时兜底任务已迁移至 `tasks/maintenance/burn_orphan_task.py`（`BurnOrphanTask`，每 6 小时，由 `task_scheduler.py` 自动发现注册），受独立开关 `ORPHAN_CLEANUP_ENABLED` 控制；`modules/auto_tasks.py` 中的 `_job_burn_orphan` 为 legacy 保留实现。
 
 ## 适用场景
 
@@ -22,7 +22,7 @@ Mory 小助理作为群管理 Bot，会主动发送大量"播报型"消息（早
 | 层级 | 触发时机 | 实现 | 适用场景 |
 |------|---------|------|---------|
 | **第一层** | 实时（30秒后） | `threading.Timer` 调度单条删除 | 升级播报"恭喜X升级到Lv2" |
-| **第二层** | 定时（每10分钟） | APScheduler `_job_burn_orphan` 任务 | 所有 24h 超时孤儿兜底 |
+| **第二层** | 定时（每6小时） | `tasks/maintenance/burn_orphan_task.py`（`BurnOrphanTask`，task_scheduler 自动注册；`_job_burn_orphan` 为 legacy） | 所有 30 分钟超时孤儿兜底 |
 | **第三层** | 发新消息时 | 链式互删（发午安自动删早安） | 早安/午安/晚安链式清理 |
 
 ### 二、数据库表设计
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS orphan_cleanup_log (
 CREATE INDEX IF NOT EXISTS idx_orphan_cleanup_log_run_at ON orphan_cleanup_log(run_at);
 ```
 
-**用途**：每次 `_job_burn_orphan` 执行都写入一条记录，**让清理结果可观测**（v5.12.0 核心目标：解决"以为清理在跑实际从未生效"的问题）。
+**用途**：每次 `burn_orphan` 定时任务执行都写入一条记录，**让清理结果可观测**（v5.12.0 核心目标：解决"以为清理在跑实际从未生效"的问题）。
 
 ### 三、关键代码位置
 
@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_orphan_cleanup_log_run_at ON orphan_cleanup_log(r
 | 配置读取 | [core/helpers.py](../../core/helpers.py) | `get_broadcast_auto_delete_config()` / `safe_delete_broadcast()` / `can_delete_message()` |
 | 数据库 | [core/database.py](../../core/database.py) | 表创建 SQL + `_REPO_METHOD_MAP` 委托 |
 | Repo 方法 | [core/db_repos/tracking_repo.py](../../core/db_repos/tracking_repo.py) | `track_broadcast / get_last_broadcast / delete_broadcast / cleanup_old_broadcasts / log_orphan_cleanup / get_last_orphan_cleanup / get_orphan_cleanup_history / get_orphan_stats` |
-| 定时清理 | [modules/auto_tasks.py](../../modules/auto_tasks.py) | `_send_greeting()` 链式互删 + `_job_burn_orphan()` 定时清理 |
+| 定时清理 | [tasks/maintenance/burn_orphan_task.py](../../tasks/maintenance/burn_orphan_task.py) | `BurnOrphanTask`（每6小时，`ORPHAN_CLEANUP_ENABLED` 开关）；[modules/auto_tasks.py](../../modules/auto_tasks.py) `_job_burn_orphan()` 为 legacy 保留 |
 | 实时清理 | [modules/points_enhanced.py](../../modules/points_enhanced.py) | `check_level_up()` 30S 删除 |
 | API 端点 | [dashboard/api/orphan_api.py](../../dashboard/api/orphan_api.py) | `/api/orphan/stats` / `/api/orphan/cleanup-history` / `/api/orphan/force-clean` |
 | 验证脚本 | [scripts/verify_orphan_cleanup.py](../../scripts/verify_orphan_cleanup.py) | 端到端验证 |
@@ -74,18 +74,19 @@ CREATE INDEX IF NOT EXISTS idx_orphan_cleanup_log_run_at ON orphan_cleanup_log(r
 
 ```json
 {
+  "ORPHAN_CLEANUP_ENABLED": true,     // 孤儿清理独立开关（v5.12.4 起，默认 true，不再依赖 ENABLE_MESSAGE_DELETION）
   "BROADCAST_AUTO_DELETE": {
     "orphan_seconds": 30,             // 孤儿消息多少秒后删除（0=不删）
     "greeting_chain_delete": true     // 早安/午安/晚安是否发新删旧
   },
-  "ENABLE_MESSAGE_DELETION": true     // 全局消息删除开关（false 时清理任务改告警）
+  "ENABLE_MESSAGE_DELETION": true     // 全局消息删除开关（与孤儿清理解耦）
 }
 ```
 
-**开关联动**：
-- `ENABLE_MESSAGE_DELETION=true` + `orphan_seconds>0` → 真删除
-- `ENABLE_MESSAGE_DELETION=true` + `orphan_seconds=0` → 禁用孤儿清理
-- `ENABLE_MESSAGE_DELETION=false` → 不删消息，但**每 24h 私聊管理员告警孤儿堆积数**
+**开关联动**（v5.12.4 起孤儿清理独立于全局删除开关）：
+- `ORPHAN_CLEANUP_ENABLED=true` → 真删除（超时 30 分钟孤儿）
+- `ORPHAN_CLEANUP_ENABLED=false` → 不删消息、保留追踪记录，但**每 24h 私聊管理员告警孤儿堆积数**（`_handle_orphan_disabled_alert`）
+- `ENABLE_MESSAGE_DELETION` 为全局消息删除开关，与孤儿清理解耦
 
 ### 五、调用链
 
@@ -132,20 +133,20 @@ db.track_broadcast(chat_id, "greeting", new_msg_id)  // 追踪
 #### 5.3 24h 超时孤儿清理（兜底）
 
 ```
-scheduler 每 10 分钟触发 _job_burn_orphan
+task_scheduler 每 6 小时触发 BurnOrphanTask（task_id=burn_orphan）
   ↓
-db.get_orphan_messages(86400)  // 查 24h 超时
+db.get_orphan_messages()  // 查 30 分钟超时（v5.12.4 窗口由 86400 缩至 1800）
   ↓
-can_delete_message(config) 检查
+can_orphan_cleanup(config) 检查（ORPHAN_CLEANUP_ENABLED，默认 true）
   ↓ (true)
 bot.delete_message(...)  // 逐条删除
   ↓
-db.delete_tracked(...)
+db.delete_bot_message_records(...) / db.delete_tracked(...)
   ↓
 db.log_orphan_cleanup(found, deleted, skipped, ...)  // 写日志
-  ↓ (false 即 ENABLE_MESSAGE_DELETION 关闭)
-db.log_orphan_cleanup(orphan_count, 0, 0, "disabled", "scheduled")
-+ 24h 一次管理员私聊告警
+  ↓ (false 即 ORPHAN_CLEANUP_ENABLED 关闭)
+db.log_orphan_cleanup(orphan_count, 0, 0, "ORPHAN_CLEANUP_ENABLED=False", "scheduled")
++ 24h 一次管理员私聊告警（_handle_orphan_disabled_alert）
 ```
 
 ### 六、API 端点
@@ -218,3 +219,4 @@ curl -u admin:password http://localhost:6616/api/orphan/stats
 ## 更新历史
 
 - 2026-06-02 (v5.12.0) — 首次创建，记录孤儿消息自动清理完整方案
+- 2026-08-05 (v5.38.x) — 修正机制描述：定时兜底迁移至 `tasks/maintenance/burn_orphan_task.py`（每 6 小时），独立开关 `ORPHAN_CLEANUP_ENABLED`；`_job_burn_orphan` / `modules/auto_tasks.py` 标注为 legacy
