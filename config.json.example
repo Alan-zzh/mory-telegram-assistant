@@ -84,52 +84,103 @@
       "name": "助理唤醒",
       "topic": "助理唤醒",
       "enabled": true,
-      "keywords": ["小助理出来", "助理出来", "小助理在吗", "助理在吗"],
+      "keywords": [
+        "小助理出来",
+        "助理出来",
+        "小助理在吗",
+        "助理在吗"
+      ],
       "ai_polish": true,
       "ai_mode": "normal",
       "conversion_target": "none",
       "polish_prompt": "先说明你在，再回应当前问题；不要主动带预览、下单、订阅或人工联系入口。",
       "required_terms": [],
-      "forbidden_terms": ["亲", "客服", "限时", "优惠"],
+      "forbidden_terms": [
+        "亲",
+        "客服",
+        "限时",
+        "优惠"
+      ],
       "base_reply": "在。怎么啦，直接说你想聊什么。"
     },
     {
       "name": "价格咨询",
       "topic": "价格",
       "enabled": true,
-      "keywords": ["价钱", "价格", "多少钱", "怎么收费", "费用", "报价"],
+      "keywords": [
+        "价钱",
+        "价格",
+        "多少钱",
+        "怎么收费",
+        "费用",
+        "报价"
+      ],
       "ai_polish": true,
       "ai_mode": "normal",
       "conversion_target": "preview",
       "polish_prompt": "价格和档位只以预览实际展示为准；只保留 @moryselect，不承诺价格、权益、库存或福利。",
-      "required_terms": ["@moryselect"],
-      "forbidden_terms": ["@MorychannelBot", "@Moryfansbot", "保证", "限时"],
+      "required_terms": [
+        "@moryselect"
+      ],
+      "forbidden_terms": [
+        "@MorychannelBot",
+        "@Moryfansbot",
+        "保证",
+        "限时"
+      ],
       "base_reply": "价格和档位以 @moryselect 的预览为准，你先看一眼再判断。"
     },
     {
       "name": "福利咨询",
       "topic": "福利",
       "enabled": true,
-      "keywords": ["福利", "有什么福利", "更多福利", "权益"],
+      "keywords": [
+        "福利",
+        "有什么福利",
+        "更多福利",
+        "权益"
+      ],
       "ai_polish": true,
       "ai_mode": "normal",
       "conversion_target": "preview",
       "polish_prompt": "当前可用福利和内容只以预览实际展示为准；只保留 @moryselect，不编造优惠、库存或额外权益。",
-      "required_terms": ["@moryselect"],
-      "forbidden_terms": ["@MorychannelBot", "@Moryfansbot", "保证", "限时"],
+      "required_terms": [
+        "@moryselect"
+      ],
+      "forbidden_terms": [
+        "@MorychannelBot",
+        "@Moryfansbot",
+        "保证",
+        "限时"
+      ],
       "base_reply": "当前可用内容和福利以 @moryselect 的预览为准，你先看一眼再判断。"
     },
     {
       "name": "内容咨询",
       "topic": "内容",
       "enabled": true,
-      "keywords": ["有什么内容", "能看什么", "内容介绍", "完整版", "全套", "未删减"],
+      "keywords": [
+        "有什么内容",
+        "能看什么",
+        "内容介绍",
+        "完整版",
+        "全套",
+        "未删减"
+      ],
       "ai_polish": true,
       "ai_mode": "normal",
       "conversion_target": "preview",
       "polish_prompt": "内容只以预览实际展示为准；只保留 @moryselect，不编造规格、数量、独家或福利。",
-      "required_terms": ["@moryselect"],
-      "forbidden_terms": ["@MorychannelBot", "@Moryfansbot", "4K", "独家", "限时"],
+      "required_terms": [
+        "@moryselect"
+      ],
+      "forbidden_terms": [
+        "@MorychannelBot",
+        "@Moryfansbot",
+        "4K",
+        "独家",
+        "限时"
+      ],
       "base_reply": "想先了解内容的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
     }
   ],
@@ -145,15 +196,48 @@
   "VOICE_POOL": [],
   "MODEL_POOLS": {
     "llm": [
-      {"name": "qwen3.6-27b", "expire": "2026-07-23", "desc": "通义千问3.6 27B"},
-      {"name": "qwen3.7-max-2026-05-17", "expire": "2026-08-24", "desc": "通义千问3.7 Max (2026-05-17)", "enable_thinking": true},
-      {"name": "qwen3.7-max-preview", "expire": "2026-08-24", "desc": "通义千问3.7 Max Preview", "enable_thinking": true},
-      {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01", "desc": "通义千问3.7 Plus (2026-05-26)", "enable_thinking": false},
-      {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08", "desc": "通义千问3.7 Max (2026-06-08)", "enable_thinking": false},
-      {"name": "kimi-k2.7-code", "expire": "2026-09-14", "desc": "Kimi K2.7 Code", "enable_thinking": false}
+      {
+        "name": "qwen3.6-27b",
+        "expire": "2026-07-23",
+        "desc": "通义千问3.6 27B"
+      },
+      {
+        "name": "qwen3.7-max-2026-05-17",
+        "expire": "2026-08-24",
+        "desc": "通义千问3.7 Max (2026-05-17)",
+        "enable_thinking": true
+      },
+      {
+        "name": "qwen3.7-max-preview",
+        "expire": "2026-08-24",
+        "desc": "通义千问3.7 Max Preview",
+        "enable_thinking": true
+      },
+      {
+        "name": "qwen3.7-plus-2026-05-26",
+        "expire": "2026-09-01",
+        "desc": "通义千问3.7 Plus (2026-05-26)",
+        "enable_thinking": false
+      },
+      {
+        "name": "qwen3.7-max-2026-06-08",
+        "expire": "2026-09-08",
+        "desc": "通义千问3.7 Max (2026-06-08)",
+        "enable_thinking": false
+      },
+      {
+        "name": "kimi-k2.7-code",
+        "expire": "2026-09-14",
+        "desc": "Kimi K2.7 Code",
+        "enable_thinking": false
+      }
     ],
     "vision": [
-      {"name": "qwen3.5-ocr", "expire": "2026-09-14", "desc": "通义千问3.5 OCR"}
+      {
+        "name": "qwen3.5-ocr",
+        "expire": "2026-09-14",
+        "desc": "通义千问3.5 OCR"
+      }
     ],
     "omni": [],
     "voice_tts": [],
@@ -195,18 +279,38 @@
   "BOT_ROUTING_DEFAULT_POLICY": "allow",
   "MODEL_COSTS": {
     "llm": {
-      "qwen3.6-27b": {"cost_level": "medium"},
-      "qwen3.7-max-2026-05-17": {"cost_level": "high", "input_price": 2.5e-06, "output_price": 1e-05},
-      "qwen3.7-max-2026-06-08": {"cost_level": "high", "input_price": 2.5e-06, "output_price": 1e-05},
-      "qwen3.7-max-preview": {"cost_level": "high", "input_price": 2.5e-06, "output_price": 1e-05},
-      "qwen3.7-plus-2026-05-26": {"cost_level": "medium"},
-      "kimi-k2.7-code": {"cost_level": "high"}
+      "qwen3.6-27b": {
+        "cost_level": "medium"
+      },
+      "qwen3.7-max-2026-05-17": {
+        "cost_level": "high",
+        "input_price": 2.5e-06,
+        "output_price": 1e-05
+      },
+      "qwen3.7-max-2026-06-08": {
+        "cost_level": "high",
+        "input_price": 2.5e-06,
+        "output_price": 1e-05
+      },
+      "qwen3.7-max-preview": {
+        "cost_level": "high",
+        "input_price": 2.5e-06,
+        "output_price": 1e-05
+      },
+      "qwen3.7-plus-2026-05-26": {
+        "cost_level": "medium"
+      },
+      "kimi-k2.7-code": {
+        "cost_level": "high"
+      }
     },
     "llm_light": {},
     "llm_standard": {},
     "llm_premium": {},
     "vision": {
-      "qwen3.5-ocr": {"cost_level": "medium"}
+      "qwen3.5-ocr": {
+        "cost_level": "medium"
+      }
     },
     "omni": {},
     "voice_tts": {},
@@ -626,8 +730,42 @@
   "STYLE_APPEND": "",
   "ADDED_KNOWLEDGE": "",
   "BASE_PERSONA": "你是 Mory 小助理。所有对话类型都走同一人设：温情是底色，轻微绿茶感只表现为会接话和柔软反差，俏皮只表现为轻松机灵，轻微纯欲感只来自干净、含蓄、柔和的措辞。不同场景只调整四种气质的权重，不改变身份、事实、边界或 conversion target。先直接承接用户正在说的事，再自然推进对话；只输出一条可直接发送的聊天正文。不声明自己是真人，也不把自己包装成真人；不写动作、场景、音效、镜头或内心旁白，不虚构生活、商品、价格、权益、库存、优惠或他人经历。正常怀疑、追问和重复确认一律友好回答，不讽刺、不挖苦、不责怪、不命令、不赶客；不使用虚假稀缺、社会证明、比较施压或负罪感。",
-  "PERSONA_FRAGMENTS": {"mood_expressions": ["温情托底，先让用户感觉被认真听见", "轻微绿茶感只表现为柔软、会接话，不阴阳怪气", "俏皮只轻点一下，不抢走问题本身", "轻微纯欲感只来自干净、含蓄、柔和的措辞"], "reaction_styles": ["先直接回应，再自然补一句", "先温柔接住顾虑，再说明已知范围", "咨询场景清楚回答，不吊胃口", "不知道就坦白不确定，不脑补细节"]},
-  "FEW_SHOT_EXAMPLES": [{"user": "你好", "mory": "你好呀，今天想聊点什么？"}, {"user": "在吗", "mory": "在呀，怎么啦？"}, {"user": "想你了", "mory": "这句话还挺会哄人的呀。"}, {"user": "多少钱", "mory": "想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"}, {"user": "真的假的", "mory": "你会再确认很正常呀，我只按确认过的信息说。"}],
+  "PERSONA_FRAGMENTS": {
+    "mood_expressions": [
+      "温情托底，先让用户感觉被认真听见",
+      "轻微绿茶感只表现为柔软、会接话，不阴阳怪气",
+      "俏皮只轻点一下，不抢走问题本身",
+      "轻微纯欲感只来自干净、含蓄、柔和的措辞"
+    ],
+    "reaction_styles": [
+      "先直接回应，再自然补一句",
+      "先温柔接住顾虑，再说明已知范围",
+      "咨询场景清楚回答，不吊胃口",
+      "不知道就坦白不确定，不脑补细节"
+    ]
+  },
+  "FEW_SHOT_EXAMPLES": [
+    {
+      "user": "你好",
+      "mory": "你好呀，今天想聊点什么？"
+    },
+    {
+      "user": "在吗",
+      "mory": "在呀，怎么啦？"
+    },
+    {
+      "user": "想你了",
+      "mory": "这句话还挺会哄人的呀。"
+    },
+    {
+      "user": "多少钱",
+      "mory": "想先了解的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
+    },
+    {
+      "user": "真的假的",
+      "mory": "你会再确认很正常呀，我只按确认过的信息说。"
+    }
+  ],
   "REPLY_CONTRACT_VERSION": "1.0.0",
   "DIALOGUE_TONE_CONTRACTS": {
     "shared": "【全类型语气合同 v1.0.0】每一轮都以温情为底色；轻微绿茶感只化成柔软反差和会接话，俏皮只化成轻松机灵，纯欲感只化成干净、含蓄、柔和的措辞。这些气质只改变表达温度，不改变事实、边界、身份或 conversion target；正文不直接说这些标签。",
@@ -638,7 +776,14 @@
     "emotional": "【本轮语气：情绪倾诉】温情和倾听最强；绿茶感只化成柔软会听，纯欲感只化成干净轻柔的表达，俏皮降到最低，不把脆弱情绪变成暧昧或成交机会。",
     "convert": "【本轮语气：了解与成交】温柔清楚地回答顾虑，俏皮只轻点一下；绿茶感只化成柔软反差，纯欲感只化成含蓄措辞，不催迫、不操控，严格服从唯一 CTA 目标。"
   },
-  "REPLY_EVOLUTION_CONFIG": {"enabled": true, "human_approval_required": true, "auto_apply": false, "approved_style_samples": true, "max_prompt_samples": 3, "raw_event_text": false},
+  "REPLY_EVOLUTION_CONFIG": {
+    "enabled": true,
+    "human_approval_required": true,
+    "auto_apply": false,
+    "approved_style_samples": true,
+    "max_prompt_samples": 3,
+    "raw_event_text": false
+  },
   "BROADCAST_AUTO_DELETE": {
     "orphan_seconds": 30,
     "greeting_chain_delete": true
@@ -738,7 +883,11 @@
   },
   "MANAGED_GROUPS_CONFIG": {
     "enabled": false,
-    "notify_expire_days": [30, 7, 1],
+    "notify_expire_days": [
+      30,
+      7,
+      1
+    ],
     "trial_days": 7
   },
   "CONTENT_AUDIT_CONFIG": {
@@ -755,13 +904,23 @@
   "NEW_MEMBER_ANALYTICS": {
     "enabled": false,
     "track_invite_source": true,
-    "retention_days": [1, 3, 7, 14, 30],
+    "retention_days": [
+      1,
+      3,
+      7,
+      14,
+      30
+    ],
     "quality_threshold": 60,
     "daily_report": false
   },
   "MEMBERSHIP_CONFIG": {
     "enabled": false,
-    "notify_expire_days": [7, 3, 1],
+    "notify_expire_days": [
+      7,
+      3,
+      1
+    ],
     "auto_extend": false,
     "daily_bonus_points": {
       "basic": 10,
@@ -810,7 +969,16 @@
   },
   "CRYPTO_DETECTOR_CONFIG": {
     "enabled": false,
-    "keywords": ["BTC", "ETH", "USDT", "加密货币", "区块链", "虚拟币", "炒币", "挖矿"]
+    "keywords": [
+      "BTC",
+      "ETH",
+      "USDT",
+      "加密货币",
+      "区块链",
+      "虚拟币",
+      "炒币",
+      "挖矿"
+    ]
   },
   "GROUP_SAFETY_CENTER_CONFIG": {
     "enabled": false
@@ -824,19 +992,71 @@
   "ENTERTAINMENT_GAMES_CONFIG": {
     "enabled": false,
     "games": {
-      "basketball": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "slot_machine": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "poker": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "football": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "darts": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "bowling": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "niuniu": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "dice_quick": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "horse_racing": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "baccarat": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "blackjack": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "single_dice": {"enabled": false, "bet_min": 1, "bet_max": 100},
-      "emoji_race": {"enabled": false, "bet_min": 1, "bet_max": 100}
+      "basketball": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "slot_machine": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "poker": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "football": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "darts": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "bowling": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "niuniu": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "dice_quick": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "horse_racing": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "baccarat": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "blackjack": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "single_dice": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      },
+      "emoji_race": {
+        "enabled": false,
+        "bet_min": 1,
+        "bet_max": 100
+      }
     }
   },
   "AUTO_RULES_CONFIG": {
@@ -849,7 +1069,14 @@
   },
   "USER_MARKING_CONFIG": {
     "enabled": false,
-    "mark_types": ["广告", "骚扰", "优质", "VIP", "黑名单", "白名单"]
+    "mark_types": [
+      "广告",
+      "骚扰",
+      "优质",
+      "VIP",
+      "黑名单",
+      "白名单"
+    ]
   },
   "GROUP_TODO_CONFIG": {
     "enabled": false
@@ -865,7 +1092,10 @@
   },
   "GROUP_REPORT_CONFIG": {
     "enabled": false,
-    "trigger_keywords": ["举报", "report"],
+    "trigger_keywords": [
+      "举报",
+      "report"
+    ],
     "delete_trigger_message": false,
     "report_format_hint": "请使用 /举报 @用户名 理由 格式",
     "success_message": "✅ 举报已提交，管理员将尽快处理",
@@ -879,12 +1109,19 @@
     "command": "获取词云",
     "auto_delete_seconds": 30,
     "background_color": "#ffffff",
-    "word_colors": ["#333333", "#666666", "#999999"],
+    "word_colors": [
+      "#333333",
+      "#666666",
+      "#999999"
+    ],
     "hourly_limit": 1
   },
   "LANGUAGE_WHITELIST_CONFIG": {
     "enabled": false,
-    "whitelist": ["zh", "en"],
+    "whitelist": [
+      "zh",
+      "en"
+    ],
     "delete_message": true,
     "delete_hint": "⚠️ 本群只允许使用中文和英文"
   },

@@ -35,27 +35,26 @@ _PERIOD_LABELS = {
 
 
 def build_mystic_cta(payload: dict, config: dict = None):
-    """生成玄学播报统一 CTA（图片文案 + 真实按钮一致）。"""
+    """生成玄学播报统一 CTA（图片文案 + 真实按钮一致）。
+
+    入口/文案/轮转全部交给统一 CTA 组件，旧 payload["cta"] 仅在统一池
+    未返回有效文案时作为兜底文案来源，不再覆盖 target 轮转计划。
+    """
     legacy_cta = payload.get("cta") or {}
-    target = legacy_cta.get("target") if isinstance(legacy_cta, dict) else None
     cta = get_broadcast_cta(
         scene="mystic",
         period=payload.get("period", ""),
         mode=payload.get("mode", "almanac"),
         config=config,
     )
-    # 如果旧 payload 已经指定了 target，保持 target 不变以维持轮转计划
-    if target and isinstance(legacy_cta, dict):
-        cta["target"] = target
-        cta["url"] = legacy_cta.get("url", cta.get("url", ""))
-        cta["style"] = legacy_cta.get("style", cta.get("style", "default"))
-        # 新池未命中时（如配置未传），回退使用旧 payload 的文案，避免按钮丢失
-        if not cta.get("label"):
-            cta["label"] = legacy_cta.get("label", "")
-        if not cta.get("image_label"):
-            cta["image_label"] = legacy_cta.get("image_label", "")
-        if not cta.get("closing"):
-            cta["closing"] = legacy_cta.get("closing", "")
+    # 统一池按配置（cta_enabled=false 等）返回空时，沿用旧 payload 的守约兜底
+    if not cta.get("label") and isinstance(legacy_cta, dict):
+        cta["target"] = legacy_cta.get("target", "none")
+        cta["label"] = legacy_cta.get("label", "")
+        cta["image_label"] = legacy_cta.get("label", "")
+        cta["url"] = legacy_cta.get("url", "")
+        cta["style"] = legacy_cta.get("style", "default")
+        cta["closing"] = legacy_cta.get("closing", "")
     return cta
 
 
@@ -101,12 +100,12 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
             gid = int(rm.config.get("GROUP_ID", 0) or 0)
             if not gid:
                 record_abort(task_name, "GROUP_ID为0")
-                raise TaskAbort("GROUP_ID为0")
+                raise TaskAbort("GROUP_ID为0", expected=True)
 
             payload = build_mystic_broadcast(rm.config, period)
             if not is_usable_mystic_broadcast(payload):
                 record_abort(task_name, "玄学播报内容未通过门禁")
-                raise TaskAbort("玄学播报内容未通过门禁")
+                raise TaskAbort("玄学播报内容未通过门禁", expected=True)
 
             rich_message = build_rich_mystic_card_message(payload)
             html_message = build_mystic_html(payload)
@@ -116,7 +115,11 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
             rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
             format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
             mystic_cfg = cfg.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
-            image_card_enabled = bool(mystic_cfg.get("image_card_enabled", False))
+            # [v5.38.21] 与其余播报类型一致：全局总闸 AND 玄学分闸
+            global_image_enabled = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
+            image_card_enabled = global_image_enabled and bool(
+                mystic_cfg.get("image_card_enabled", False)
+            )
             sent = None
 
             # [v5.38.15] 优先发送图片卡，失败回退 Rich Message / HTML

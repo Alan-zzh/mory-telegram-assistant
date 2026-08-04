@@ -2,19 +2,19 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-04。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-05。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
 
-## 模块状态表（2026-08-04 更新）
+## 模块状态表（2026-08-05 更新）
 | 模块 | 状态 | 入口文件 | 备注 |
 |------|------|----------|------|
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；合同模式屏蔽旧毒舌/敷衍桶，FAQ/缓存/模型结果统一走动作旁白和敌意发送前门禁。普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类、46 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/*` | L0–L4 五层；入群四信号（显示名/username/Bio/头像 + Premium）任一高置信命中即统一处置，验证码解限后补审延迟 Bio/头像；头像只采纳明确暴露、广告文字/二维码或批量相似证据，弱视觉统计不定罪；消息层覆盖 QQ 数字群号、露出邀约 q裙色情招揽及彩票代称+货量+庄家交易三要素；外部 SPB 单探针熔断失败降级；追溯只删当前窗口内显式广告证据 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/*` | L0–L4 五层；入群四信号（显示名/username/Bio/头像 + Premium）任一高置信命中即统一处置，验证码解限后补审延迟 Bio/头像；头像只采纳明确暴露、广告文字/二维码或批量相似证据，弱视觉统计不定罪；消息层覆盖 QQ 数字群号、露出邀约 q裙色情招揽及彩票代称+货量+庄家交易三要素；外部 SPB 单探针熔断失败降级；追溯只删当前窗口内显式广告证据；v5.38.21 起 `enforce_ad_user` 统一处置链群内管理员/群主豁免（不禁言/不黑名单/不删消息/不清反应） |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
@@ -31,18 +31,19 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
 | Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py`、`core/broadcast_image_card.py`、`core/broadcast_image_payload.py`、`core/broadcast_cta.py` | v5.38.16：黄历/塔罗/易经公共 helper 去重 170 行；CTA label↔image_label 强绑定 + 清理全部 24 条 mystic contact/preview/subscribe img_label 遗留“· 点击头像”后缀；新增 greeting/scheduled × afternoon/night 四套时段 CTA 池；font() LRU(128)；11 处 PIL Image.close()；单 block 异常隔离占位；失败自动回退 Rich/HTML；字体兜底 Windows→Linux→仓库；README 新增图片卡章节；20 smoke 单测 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段；早晚正文无按钮，午后/睡前如带入口只到预览；AI 失败回退可信底稿；v5.38.16 CTA 支持 afternoon/night 精确池 |
+| 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 早 09:05 风水黄历(almanac)/午 13:05 塔罗(tarot)/晚 20:35 易经(iching)；v5.37.0 替换原新闻播报；v5.38.20 修复 MYSTIC.enabled 配置脏状态(07-30 起误关致停摆 5 天已恢复)；NewsTask 代码已删，NEWS_BROADCAST_CONFIG.enabled 残留已清理为 false |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token |
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录 |
 
 ## 当前版本
-v5.38.20（2026-08-04）· 本地验证通过，待可信 Git 提交后增量部署
+v5.38.21（2026-08-05）· 本地验证通过，待可信 Git 提交后增量部署
 
-生产状态：**v5.38.20 本地验证通过，待可信 Git 提交后增量部署**。本地验收：py_compile 5 改动文件 EXIT 0、全仓 pytest 861 passed/26 skipped、DB 方法注册 199/199 0 缺失 0 孤儿、scripts/doc_consistency.py 待验证。上一版 v5.38.17~v5.38.19 本地验证通过未部署（与本次合并增量部署），v5.38.15.1 已完成 VPS 增量部署并验收通过。
+生产状态：**v5.38.21 本地验证通过，待可信 Git 提交后增量部署**。本地验收：py_compile 通过、test_ad_enforcement + cleanup 12/12 passed、test_task_exception_truth 7/7 passed、scripts/doc_consistency.py 待验证。上一版 v5.38.17~v5.38.20 本地验证通过未部署（与本次合并增量部署），v5.38.15.1 已完成 VPS 增量部署并验收通过。
 
 ## 最近 3 条大事
-1. 2026-08-04 v5.38.20 Graph Mode 第四轮 4 维度补扫残余漏洞闭环（4 维度残余：PII 泄露/裸 except/三处同步 ALLOWED_CONFIG_FIELDS 差集/SQL 注入 0 命中），落地 5 P0+9 P1+2 P2 最小加固：① P0 faq_api 11 端点 f"失败：{e}" HTTP 明文响应全换固定文案 + logger.exception；health_api 6 处 score.detail / audit 缺失键样本明文外泄全治（integrity: {r}、f"检查失败: {e}"×4、missing[:5] 样本外泄）；② P1 裸 except 残余清场：weekly/monthly 2 处周报月报群人数回退裸 except 清掉 + health_api 7 处 except 无绑定无日志补 as e + logger.debug；③ P2 三处同步第三处 BROADCAST_IMAGE_CARD_ENABLED、BROADCAST_THEME_ENABLED 加入 ALLOWED_CONFIG_FIELDS 白名单（播报图片卡 v5.38.16 配置键三处同步闭环）；SQL 注入维度全仓 0 项命中（未发现 .execute() 中 f-string/格式化字符串非 ? 占位）。
-2. 2026-08-04 v5.38.19 Graph Mode 第三轮 5 维度细粒度扫描：3 处 P1 安全加固 + 4 smoke：bot_initializer/config_repo 动态/系统状态日志明文脱敏 <类型(长度)> 占位 + daily_report 回退裸 except 留痕 + test_log_sanitization_and_trace_smoke.py 4 项源码级静态 smoke。
-3. 2026-08-04 v5.38.18 Graph Mode 第二轮 8 维度深度扫描 19 处最小加固 + 2 smoke：P0 /api/metrics PII 泄露修复 + P1 ai_engine 9 处裸 except 留痕 + ALLOWED_CONFIG_FIELDS 补 AI_REQUEST_TIMEOUT/AI_MAX_ATTEMPTS + test_deploy_utils 2 smoke + P2 dashboard 7 处降级 except 留痕。
+1. 2026-08-05 v5.38.21 广告处置群管豁免（热修）：`enforce_ad_user` 统一处置链顶部新增 `_is_chat_admin_member`（`bot.get_chat_member` 查 status ∈ administrator/creator），群内管理/群主直接返回 `skipped_reason=admin_or_creator`，不做永久禁言、双黑名单、删消息、清反应；查询失败按非管理继续处置不放过可疑号。覆盖 message_dispatcher / member_handlers / security_handlers / ad_detector 启动追溯 / group_mgr / auto_tasks / startup_member_scan_task 全部调用链（此前仅入群检测处豁免）。生产实例：群管 1193526296 因资料命中 t.me/morychat 被误封禁言+黑名单+删消息。新增单测断言管理不删消息/不禁言/不写黑名单。
+2. 2026-08-04 v5.38.20 Graph Mode 第四轮 4 维度补扫残余漏洞闭环（4 维度残余：PII 泄露/裸 except/三处同步 ALLOWED_CONFIG_FIELDS 差集/SQL 注入 0 命中），落地 5 P0+9 P1+2 P2 最小加固：① P0 faq_api 11 端点 f"失败：{e}" HTTP 明文响应全换固定文案 + logger.exception；health_api 6 处 score.detail / audit 缺失键样本明文外泄全治（integrity: {r}、f"检查失败: {e}"×4、missing[:5] 样本外泄）；② P1 裸 except 残余清场：weekly/monthly 2 处周报月报群人数回退裸 except 清掉 + health_api 7 处 except 无绑定无日志补 as e + logger.debug；③ P2 三处同步第三处 BROADCAST_IMAGE_CARD_ENABLED、BROADCAST_THEME_ENABLED 加入 ALLOWED_CONFIG_FIELDS 白名单（播报图片卡 v5.38.16 配置键三处同步闭环）；SQL 注入维度全仓 0 项命中（未发现 .execute() 中 f-string/格式化字符串非 ? 占位）。
+3. 2026-08-04 v5.38.19 Graph Mode 第三轮 5 维度细粒度扫描：3 处 P1 安全加固 + 4 smoke：bot_initializer/config_repo 动态/系统状态日志明文脱敏 <类型(长度)> 占位 + daily_report 回退裸 except 留痕 + test_log_sanitization_and_trace_smoke.py 4 项源码级静态 smoke。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

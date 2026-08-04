@@ -112,8 +112,8 @@ _CTA_POOLS: Dict[str, Dict[str, List[Tuple[str, str, str]]]] = {
     "scheduled": {
         TARGET_PREVIEW: [
             ("👀 看看预览", "看看预览", "路过也可以先看看预览，合不合适看完再说。"),
-            ("👀 点击头像 · 了解更多", "点击头像 · 了解更多", "想了解更多可以点头像进去看看。"),
-            ("👀 需要专属服务 · 点击头像", "需要专属服务 · 点击头像", "有专属需求的话，可以点头像开始自助。"),
+            ("👀 先去看看内容", "先去看看内容", "想先了解内容的话，下面有入口。"),
+            ("👀 了解一下", "了解一下", "想多了解一点的话，可以点进去看看。"),
         ],
     },
     "scheduled_afternoon": {
@@ -179,6 +179,9 @@ def _choose_target(
         return TARGET_NONE
     if scene == "greeting" and period not in ("afternoon", "night"):
         return TARGET_NONE
+    # 定点低频播报只会先到预览，不直接给订阅/私聊入口
+    if scene == "scheduled":
+        return TARGET_PREVIEW
 
     # 玄学栏目根据 cta_enabled 决定；未开启则不展示
     if scene == "mystic":

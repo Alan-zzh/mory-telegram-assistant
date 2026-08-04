@@ -392,3 +392,43 @@ def test_handle_unban_command_refuses_ambiguous_display_name():
     assert handle_unban_command(bot, message, {"ADMIN_ID": 99, "GROUP_ID": -1001}, db) is True
     assert bot.restricted == []
     assert any("8383136504" in reply and "5852515255" in reply for reply in bot.replies)
+
+
+class _AdminMember:
+    status = "administrator"
+
+
+class _AdminBot(_FakeBot):
+    def get_chat_member(self, chat_id, uid):
+        return _AdminMember()
+
+
+def test_enforce_ad_user_skips_admin_and_creator_entirely():
+    from modules.ad_enforcement import enforce_ad_user
+
+    bot = _AdminBot()
+    db = _FakeDB()
+
+    result = enforce_ad_user(
+        bot=bot,
+        db=db,
+        config={"ENABLE_MESSAGE_DELETION": True, "ADMIN_ID": 99},
+        chat_id=-1001,
+        uid=42,
+        uname="管理",
+        reason="资料广告检测",
+        current_msg_id=66,
+        current_message_is_ad=True,
+        notify_admin=True,
+    )
+
+    assert result["code"] == 200
+    assert result["data"]["skipped_reason"] == "admin_or_creator"
+    assert bot.deleted == []
+    assert bot.restricted == []
+    assert db.blacklist == []
+    assert db.ad_marked == []
+    assert db.marked == []
+    assert not any(call[0] == 99 for call in bot.sent)
+    assert bot.ban_calls == []
+    assert bot.kick_calls == []

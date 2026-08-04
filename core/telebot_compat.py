@@ -14,6 +14,7 @@ Telegram Bot API 新增字段（如 emoji_status_custom_emoji_id）在解析时�
 
 import json
 import logging
+import os
 import time
 import traceback
 
@@ -427,8 +428,28 @@ def send_message_compat(bot, chat_id, text, **kwargs):
     return _make_raw_request(bot, "sendMessage", params)
 
 
+def _normalize_photo_input(photo):
+    """把本地照片路径字符串转成 InputFile，避免被 SDK 当作 file_id/URL 而 400。
+
+    - 指向存在的本地文件的 str → InputFile 二进制流（图片卡等本地生成图）
+    - file_id / URL / 文件对象 / BytesIO → 原样返回
+    """
+    if isinstance(photo, str):
+        if os.path.isfile(photo):
+            try:
+                from telebot.types import InputFile
+
+                return InputFile(photo)
+            except Exception:
+                with open(photo, "rb") as f:
+                    return f.read()
+        return photo
+    return photo
+
+
 def send_photo_compat(bot, chat_id, photo, **kwargs):
-    """兼容 send_photo 新参数。"""
+    """兼容 send_photo 新参数；本地文件路径自动转 InputFile。"""
+    photo = _normalize_photo_input(photo)
     unsupported_keys = (
         "show_caption_above_media",
         "allow_paid_broadcast",
@@ -439,7 +460,8 @@ def send_photo_compat(bot, chat_id, photo, **kwargs):
     if not any(value is not None for value in extra.values()):
         return bot.send_photo(chat_id, photo, **kwargs)
 
-    # 当前项目的定点图片播报 content 约定为 file_id 或 URL；文件对象仍交给 SDK 原生发送。
+    # 内容为本地文件或 file-like 时，SDK 原生发送无法携带 unsupported 新参数，
+    # 退回到 raw request；InputFile/BytesIO 仍交给 SDK 原生处理（可上传）。
     if not isinstance(photo, str):
         return bot.send_photo(chat_id, photo, **kwargs)
 

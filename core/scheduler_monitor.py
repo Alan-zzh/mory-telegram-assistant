@@ -455,7 +455,34 @@ def check_critical_jobs_health(scheduler=None, config=None, db=None):
     alerts = []
     all_ok = True
 
-    for job_id, spec in _CRITICAL_JOBS.items():
+    # 广播任务监控项动态生成：SCHEDULED_BROADCASTS 的 id 随管理员配置变化，
+    # 硬编码 _CRITICAL_JOBS 里的 broadcast_* 会与生产 id 错位造成监控盲区。
+    # job_id = "broadcast_" + bc_id（见 auto_tasks._register_scheduled_broadcasts）
+    jobs = dict(_CRITICAL_JOBS)
+    if isinstance(config, dict):
+        broadcast_list = config.get("SCHEDULED_BROADCASTS", []) or []
+        if isinstance(broadcast_list, list):
+            for bc in broadcast_list:
+                if not isinstance(bc, dict):
+                    continue
+                bc_id = str(bc.get("id", "") or "").strip()
+                if not bc_id or not bool(bc.get("enabled", True)):
+                    continue
+                try:
+                    b_hour = int(bc.get("hour", 0) or 0)
+                    b_min = int(bc.get("minute", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                job_broadcast_id = f"broadcast_{bc_id}"
+                # 截止时间 = 播报时间 + 1 小时宽限
+                dl_hour = (b_hour + 1) % 24
+                jobs[job_broadcast_id] = {
+                    "deadline_hour": dl_hour,
+                    "deadline_minute": b_min,
+                    "desc": f"定点播报({bc_id} {b_hour:02d}:{b_min:02d})",
+                }
+
+    for job_id, spec in jobs.items():
         if job_id in _alerted_jobs:
             continue
         # 【WARN-1 修复】跳过被 config 禁用的功能对应任务，避免对主动关闭的功能误告警

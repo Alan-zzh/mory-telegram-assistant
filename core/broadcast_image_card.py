@@ -389,17 +389,25 @@ def _draw_cta_button(
         if shadow is not None:
             shadow.close()
 
-    # 渐变按钮底色（上亮下深）
+    # 渐变按钮底色（上亮下深）：渐变层 + 圆角 mask，避免四角镂空
+    gradient = Image.new("RGBA", (btn_w, btn_h), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(gradient)
     for dy in range(btn_h):
         ratio = dy / btn_h
         color = _interpolate_color(GREEN_LIGHT, GREEN_DARK, ratio)
-        draw.line(
-            [(btn_x + DEFAULT_CTA_RADIUS, btn_y + dy),
-             (btn_x + btn_w - DEFAULT_CTA_RADIUS, btn_y + dy)],
-            fill=color,
-            width=1,
+        gd.line([(0, dy), (btn_w, dy)], fill=color, width=1)
+    mask = Image.new("L", (btn_w, btn_h), 0)
+    try:
+        md = ImageDraw.Draw(mask)
+        md.rounded_rectangle(
+            [(0, 0), (btn_w, btn_h)],
+            radius=DEFAULT_CTA_RADIUS,
+            fill=255,
         )
-    # 圆角部分用实心矩形近似（PIL rounded_rectangle 会覆盖）
+        img.paste(gradient, (btn_x, btn_y), mask)
+    finally:
+        mask.close()
+        gradient.close()
     draw.rounded_rectangle(
         [(btn_x, btn_y), (btn_x + btn_w, btn_y + btn_h)],
         radius=DEFAULT_CTA_RADIUS,
@@ -509,6 +517,12 @@ def draw_block_two_column(
     f_section = font(24, "kai")
     f_body = font(22, "hei")
 
+    heading = str(block.get("heading", "") or "")
+    if heading:
+        draw.rounded_rectangle([(x + margin, y + 6), (x + margin + 5, y + 30)], radius=2, fill=GREEN)
+        draw.text((x + margin + 14, y), heading, font=f_section, fill=GREEN_DARK)
+        y += 40
+
     lines = block.get("lines", []) or []
     left_items, right_items = [], []
     left_label, right_label = "宜", "忌"
@@ -565,6 +579,11 @@ def draw_block_key_value(
     """绘制键值对区块（日值参考 / 节气提醒），返回新的 y。"""
     f_small = font(16, "hei")
     f_label = font(16, "hei")
+    heading = str(block.get("heading", "") or "")
+    if heading:
+        draw.rounded_rectangle([(margin, y + 6), (margin + 5, y + 30)], radius=2, fill=GREEN)
+        draw.text((margin + 14, y), heading, font=font(24, "kai"), fill=GREEN_DARK)
+        y += 40
     for label, value in block.get("lines", []) or []:
         # 左侧小色块标签
         lw, lh = ts(draw, str(label), f_label)
@@ -1018,15 +1037,11 @@ def build_broadcast_image_card(
     """通用图片卡生成入口，返回本地 PNG 路径；失败返回 None。
 
     cache_key 用于构造文件名，建议包含类型与日期，避免冲突。
-    cta_text 如果传入则直接使用（保证与真实按钮一致），否则从 cta_pool 随机抽取。
+    cta_text 由调用方传入（与真实按钮一致）；为空时图片卡不绘制按钮，避免无入口场景出现假按钮。
     """
     try:
         safe_key = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(cache_key))[:80]
-        if cta_text:
-            final_cta = cta_text
-        else:
-            rng = random.Random(hash(f"{safe_key}|{payload.get('title', '')}"))
-            final_cta = get_random_cta(cta_pool, rng=rng)
+        final_cta = cta_text or ""
 
         cache_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

@@ -4229,6 +4229,13 @@ def _job_scheduled_broadcast(rm, chat_id, broadcast_id):
                 )
             except Exception as e:
                 logger.warning(f"📢 定点播报 {broadcast_id} 发送到群 {gid} 失败: {e}")
+                # [v5.38.21] 发送终态失败后当天安排一次延迟重试（5 分钟后），
+                # 避免瞬时网络/Telegram 抖动导致当天播报永久缺失。
+                _retry_task(
+                    rm,
+                    lambda rm_inner: _job_scheduled_broadcast(rm_inner, gid, broadcast_id),
+                    f"scheduled_broadcast_{broadcast_id}_{gid}",
+                )
     except Exception as e:
         logger.error(f"📢 定点播报执行失败 {broadcast_id}: {e}")
 

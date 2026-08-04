@@ -80,7 +80,7 @@ class GreetingTask(BaseTask):
                 group_ids = get_all_group_ids(self.rm.config)
                 if not group_ids:
                     logger.warning(f"🌅 {period} 问候无管理群，跳过")
-                    raise TaskAbort("无管理群")
+                    raise TaskAbort("无管理群", expected=True)
 
                 seed = random.randint(100000, 999999)
                 msg = self.rm.ai.ask(

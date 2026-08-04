@@ -300,6 +300,18 @@ def _admin_ids(config: dict) -> set:
     return admin_ids
 
 
+def _is_chat_admin_member(bot, chat_id: int, uid: int) -> bool:
+    """查询用户在群内是否为管理员/群主；查询失败按非管理处理（不放过可疑账号）。"""
+    if not chat_id or not uid:
+        return False
+    try:
+        member = bot.get_chat_member(chat_id, uid)
+        return bool(member and getattr(member, "status", "") in ("administrator", "creator"))
+    except Exception as e:
+        logger.debug(f"查询群管身份失败，按非管理继续处置: chat={chat_id} uid={uid} err={e}")
+        return False
+
+
 def _extract_unban_token(message) -> str:
     text = (getattr(message, "text", "") or "").strip()
     parts = text.split()
@@ -575,6 +587,25 @@ def enforce_ad_user(
     发言，但只有内容规则明确命中时，调用方才传 ``current_message_is_ad=True``。
     """
     reason = str(reason or "广告检测")
+    # 【v5.38.21】群管/群主豁免：禁言、黑名单、删消息只针对普通成员，避免误封管理
+    if _is_chat_admin_member(bot, chat_id, uid):
+        logger.warning(
+            f"广告检测命中群管/群主，跳过全部处置: uid={uid} chat={chat_id} reason={reason}"
+        )
+        return {
+            "code": 200,
+            "data": {
+                "uid": uid,
+                "chat_id": chat_id,
+                "muted": False,
+                "blacklisted": False,
+                "deleted_count": 0,
+                "evidence_persisted": False,
+                "reactions_cleaned": False,
+                "skipped_reason": "admin_or_creator",
+            },
+            "msg": "skipped_admin",
+        }
     if not current_msg_id and message is not None:
         current_msg_id = getattr(message, "message_id", 0) or 0
     evidence_persisted = False
