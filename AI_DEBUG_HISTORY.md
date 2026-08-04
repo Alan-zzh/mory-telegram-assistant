@@ -91,3 +91,15 @@
 - 根因：豁免判断全部押在单次网络调用上，没有"配置级先行 + 网络失败降级"的两层设计；失败语义被设计成"按非管理继续处置（不放过可疑号）"，把"无法判定"等同于"确认非管理"。
 - 解法：v5.38.22 两层加固：① enforce_ad_user 顶部先查 _admin_ids(config) 配置白名单（零网络），命中即豁免；② _is_chat_admin_member 改三态返回（admin/not_admin/unknown），unknown（网络异常）走降级链：保留证据持久化 + 通知管理员人工复核，跳过四个不可逆惩罚，返回 skipped_reason=admin_query_failed；③ 启动追溯对 admin_or_creator/admin_query_failed 不再计为"禁言失败"，报告单独统计"跳过管理员/查询失败"。
 - 预防：① 任何"判定用户身份后执行不可逆动作"的链路，必须"本地配置先于网络查询、网络失败只能降级不能默认有罪"；② 三态语义（是/否/无法判定）是豁免类逻辑的标准形态，禁止用布尔 False 同时表达"非管理"和"查询失败"；③ 豁免/跳过必须回传结构化 skipped_reason 供上游统计，避免把"跳过"误报为"失败"。
+
+### 56. sanitize 降温度自愈重试参数被循环内重建覆盖，实际退化为原样重试（v5.38.23 新增）
+- 问题：ai_engine.ask() 触发穿帮后"降温度重试一次"的机制（v5.23.0 P0-2）实际不生效：monkeypatch 断言第二次请求 payload.temperature 应为首次一半时，实测仍为原值；注入的约束 system 消息同样丢失。
+- 根因：payload（含 temperature/messages）在 while 循环体顶部每轮重建（约 2614-2622 行），穿帮分支（约 2695-2704 行）对 payload 的修改在 continue 后进入下一轮被重建覆盖；标记 _sanitize_retry_done 只控制"是否再试一次"，重试参数从未真正改变。
+- 解法：本次仅修复状态残留（全败兜底路径清理 _sanitize_retry_done，v5.38.23）；自愈参数失效属既有缺陷，待后续将"降温度+约束注入"下沉到循环内构建点之后（或改为构建时读取临时覆盖值）再修。
+- 预防：任何"修改请求参数后 continue 重试"的逻辑，必须先确认参数构建点与修改点在同一作用域层级；写测试断言重试请求的实际载荷（payload 内容），不能只断言"发生了重试"。
+
+### 57. .venv 是 Python 3.14 空壳导致依赖装不上、pytest 缺失（v5.38.23 新增）
+- 问题：本地 .venv 存在但完全为空（无 pip、无任何包），uv sync 静默跳过（pyproject.toml 无 [project] 段，uv 默认 requires-python>=3.14 且无依赖定义）；uv pip install 在 gevent==24.11.1 编译时失败（PyInt_AsLong 等 C API 在 3.14 被移除），pytest 始终不可用。
+- 根因：.venv 由 Python 3.14 创建（版本过新，gevent 等依赖尚无 3.14 wheel），且项目依赖真相源是 requirements.txt（50 行）而非 pyproject.toml（仅 [tool.interrogate]）。
+- 解法：删除空壳 .venv，用 Python 3.12.10 重建（python -m venv .venv），再 uv pip install --python .venv/Scripts/python.exe -r requirements.txt；AGENTS.md 验证门禁补充测试命令与环境要求。
+- 预防：本地环境统一 Python 3.12（与 CI 一致）；venv 重建后用 .venv/Scripts/python.exe -m pytest tests/unit/ -q 冒烟验证；不要在 pyproject.toml 缺 [project] 时依赖 uv sync。

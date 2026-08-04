@@ -513,3 +513,81 @@ def test_cached_reply_also_passes_stage_direction_filter(monkeypatch):
     result = engine.ask("在吗", mode="normal", retry=1, is_priv=True)
 
     assert result == "在呀，怎么啦？"
+
+
+def test_sanitize_retry_flag_is_cleared_after_total_failure(caplog, monkeypatch):
+    """穿帮自愈重试置位后若全败，兜底路径必须清理标记，下次调用仍保留自愈能力。"""
+    engine = _engine(monkeypatch)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json.get("temperature"))
+        # 第一次响应触发穿帮过滤（降温度重试），之后全部超时
+        if len(calls) == 1:
+            return _FakeResponse(200, {"choices": [{"message": {"content": "我不能帮你处理这个。"}}]})
+        raise ai_engine.requests.exceptions.Timeout()
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    first = engine.ask("第一次触发穿帮后全败", mode="normal", retry=1, is_priv=True)
+
+    assert first == ""
+    assert not hasattr(engine, "_sanitize_retry_done")  # 全败兜底后标记必须已清理
+
+    calls.clear()
+
+    def fake_post_second(_url, json, headers, timeout):
+        calls.append(json.get("temperature"))
+        if len(calls) == 1:
+            return _FakeResponse(200, {"choices": [{"message": {"content": "我不能帮你处理这个。"}}]})
+        return _FakeResponse(200, {"choices": [{"message": {"content": "好，那就不提这个了。"}}]})
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post_second)
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="ai_engine"):
+        second = engine.ask("第二次仍应触发自愈", mode="normal", retry=1, is_priv=True)
+
+    assert second == "好，那就不提这个了。"
+    # 若标记残留，第二次 ask 会跳过自愈重试分支，不会出现降温度日志
+    assert any("降温度重试" in record.getMessage() for record in caplog.records)
+
+
+def test_sanitize_retry_flag_cleared_on_quota_exhaustion_early_exit(monkeypatch):
+    """穿帮置位后模型池因 402/403 拉黑耗尽提前兜底，标记同样必须清理。"""
+    engine = _engine(monkeypatch)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json.get("temperature"))
+        # 第一次响应触发穿帮过滤（置位降温度重试），之后模型返回 402 被拉黑耗尽
+        if len(calls) == 1:
+            return _FakeResponse(200, {"choices": [{"message": {"content": "我不能帮你处理这个。"}}]})
+        return _FakeResponse(402, {})
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    result = engine.ask("穿帮后额度耗尽", mode="normal", retry=1, is_priv=True)
+
+    assert result == ""
+    assert not hasattr(engine, "_sanitize_retry_done")  # 池耗尽早退后标记必须已清理
+
+
+def test_failure_chain_log_carries_request_id(caplog, monkeypatch):
+    """失败链日志应携带线程上下文中的 request_id 关联键，便于跨进程串联诊断。"""
+    from core.logging_util import clear_logging_context, set_logging_context
+
+    engine = _engine(monkeypatch)
+
+    def fake_post(_url, json, headers, timeout):
+        raise ai_engine.requests.exceptions.Timeout()
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+    set_logging_context(request_id="req-fix-test-0001")
+    try:
+        with caplog.at_level("WARNING", logger="ai_engine"):
+            engine.ask("日志关联测试", mode="normal", retry=1, is_priv=True)
+    finally:
+        clear_logging_context()
+
+    assert any("req-fix-test-0001" in record.getMessage() for record in caplog.records)

@@ -13,7 +13,7 @@ core/message_dispatcher.py  ·  消息分发器
   → P9 画像标签 → P10 AI回复
 """
 
-import os, time, random, traceback, threading
+import os, time, random, traceback, threading, uuid
 from datetime import datetime, timezone, timedelta
 from threading import Lock
 from dataclasses import dataclass, field
@@ -523,8 +523,9 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     except Exception as e:
         logger.debug(f"设置用户语言失败: {e}")
 
-    # 设置日志上下文
-    set_logging_context(uid=uid, chat_id=chat_id, msg_id=m.message_id, uname=uname)
+    # 设置日志上下文（request_id 贯穿同一次请求的失败链，便于跨线程/跨进程串联诊断）
+    request_id = uuid.uuid4().hex[:12]
+    set_logging_context(uid=uid, chat_id=chat_id, msg_id=m.message_id, uname=uname, request_id=request_id)
 
     # [v5.24.0 阶段3-C] 多 Bot 路由检查：群组消息按 bot_group_routing 表决定是否响应
     # 默认关闭（BOT_ROUTING_ENABLED=False 时 should_handle 直接返回 True，向后兼容）

@@ -45,6 +45,7 @@
 - 任何新代码改动，合并前至少两条证据（文件路径+diff 摘要 / 命令输出 / 测试结果，三者至少其二）。
 - 涉及数据库：改 schema 必须同步 Alembic migration，部署后验证表结构。
 - 新增 Repo 方法：必须同步 `core/database.py` 的 `_REPO_METHOD_MAP` / `_REPO_ATTR_MAP`；部署前跑 `python scripts/verify_db_methods.py`，输出"✅ DB 方法注册验证通过"才可上线。
+- 单元测试命令：`python -m pytest tests/unit/ -q`；本地推荐用 `.venv`（Python 3.12，与 CI 一致；先 `uv pip install --python .venv/Scripts/python.exe -r requirements.txt` 安装依赖，pytest 随依赖一并安装；勿用 Python 3.14 建环境，gevent 等依赖不支持）。
 
 ---
 
@@ -130,3 +131,4 @@
 ### 文档数字防失真
 - 根文档中的数量（模块数、表数、路由数、任务数等）以 `project_snapshot.md` 的 `METRICS` 块为唯一基准。
 - 新增/删除模块、表、路由、任务后，必须同步更新 `METRICS` 块并运行 `python scripts/doc_consistency.py` 确认通过，否则不得合入。
+

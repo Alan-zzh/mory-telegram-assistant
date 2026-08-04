@@ -240,6 +240,7 @@ logger.logger.addFilter(_ApiKeyRedactor())
 # ── 优化引擎（延迟导入，避免循环依赖）──────────────────────────────
 _optimizer_instance = None
 
+
 def _get_optimizer():
     """懒加载优化管理器（若未初始化则返回None而非崩溃）"""
     global _optimizer_instance
@@ -267,18 +268,18 @@ def init_optimizer():
 class AIEngine:
     """
     多池多模型无缝轮换AI引擎（v2 - MODEL_POOLS 多池版）。
-    
+
     核心逻辑：
     - 读取 config.json 中的 MODEL_POOLS 字典，包含6个模型池
     - LLM池：用于聊天对话，这是Mory最核心的池
     - 其他池（vision/omni/voice_tts/voice_asr/embedding）：预留扩展
     - 每个池内按到期时间排序，优先消耗快到期的
     - 失败自动拉黑+切换，全程无感
-    
+
     兼容性：
     - 如果配置里还是旧的 MODEL_POOL（单列表），自动迁移到新结构
     - 向后兼容，不会因为配置格式变化而报错
-    
+
     全自动管理：
     - 没钱的模型自动拉黑（加入BLACKLISTED_MODELS），不再尝试
     - 黑名单模型自动跳过，直到你手动恢复
@@ -341,21 +342,21 @@ class AIEngine:
     }
 
     _DEFAULT_PROMPT_TEMPLATES = {
-        "tarot":    "\n【塔罗师模式】：用神秘、宿命的语调给出运势占卜，末尾加一张大阿卡那卡牌名及简短解读。",
+        "tarot": "\n【塔罗师模式】：用神秘、宿命的语调给出运势占卜，末尾加一张大阿卡那卡牌名及简短解读。",
         "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory。",
-        "dream":    "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
-        "fortune":  "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
-        "news":     "你是Mory，在群里把今天真正值得知道的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先说清事件本身，再点明进展、影响或下一步；五条之间不得同题重复。\n4. 优先社会民生、国内要闻、国际和公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气像真人刚看完后讲重点，可以有轻微态度，但不玩梗、不煽情、不站队、不写主持稿。\n6. 只能依据给你的真实标题，禁止编造数字、原因、结果和背景；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'播报''以上就是''据悉''据报道''热搜第一'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "dream": "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
+        "fortune": "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
+        "news": "你是Mory，在群里把今天真正值得知道的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先说清事件本身，再点明进展、影响或下一步；五条之间不得同题重复。\n4. 优先社会民生、国内要闻、国际和公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气像真人刚看完后讲重点，可以有轻微态度，但不玩梗、不煽情、不站队、不写主持稿。\n6. 只能依据给你的真实标题，禁止编造数字、原因、结果和背景；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'播报''以上就是''据悉''据报道''热搜第一'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "afternoon_news": "你是Mory，在群里把午间值得补看的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先讲发生了什么，再点一下现实影响或后续看点；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，允许一点真实反应，但不要乱玩梗、阴阳怪气或像标题搬运机。\n6. 只能依据真实标题，禁止编造；信息不足时宁可写稳一点。\n7. 不写平台名、来源、热度或聚合方式，不出现'午报''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "evening_news":   "你是Mory，在群里把今晚最值得知道的综合头条收清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先把事件说明白，再点一下结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留一点人味，但不煽情、不说教、不替大家下结论，也不写主持稿。\n6. 只能依据真实标题，禁止编造细节；拿不准就用保守说法。\n7. 不写平台名、来源、热度或聚合方式，不出现'晚报''回顾''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
+        "evening_news": "你是Mory，在群里把今晚最值得知道的综合头条收清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先把事件说明白，再点一下结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留一点人味，但不煽情、不说教、不替大家下结论，也不写主持稿。\n6. 只能依据真实标题，禁止编造细节；拿不准就用保守说法。\n7. 不写平台名、来源、热度或聚合方式，不出现'晚报''回顾''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "trendradar_morning_news": "你是Mory，在群里把刚看到的综合热点讲明白（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先交代事件，再补一句为什么值得看；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留聊天感但别夸张、别端着，更不要像复制热搜标题。\n6. 只能依据真实标题，禁止脑补细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''以上就是''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "trendradar_noon_news": "你是Mory，在群里快速讲清午间冒头的综合热点（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先说发生了什么，再补一句后续看点或现实影响；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，不刻意吐槽，不堆热词，不写主持稿。\n6. 只基于真实标题，禁止编造；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "trendradar_evening_news": "你是Mory，在群里把今晚值得继续盯的综合热点讲顺（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先把事情讲清楚，再补一句结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留生活化语气，但不鸡汤、不说教、不替读者站队。\n6. 只能依据真实标题，禁止编造细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "leak":     "只依据知识库中已确认的信息做轻松互动；没有可靠资料就直接换成普通聊天，禁止编造生活偏好、场景或秘密。",
-        "rules":    "你是群规的讲解员。用自然、友好的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句欢迎的话迎接新人。",
-        "convert":  "\n【转化模式】：只服从本轮唯一成交目标；先回答当前问题，再按 stage_hint 给唯一入口。{convert_stage_hint}",
-        "hook":     "\n【反问钩子】：用一句自然的反问结尾，让对方忍不住继续回你。像朋友聊天一样带出疑问。比如'你觉得呢'、'真的假的'、'你有这种感觉吗'。只输出一句话，不超过20字。",
-        "nudge":    "\n【自然植入】：仅当本轮 stage_hint 已给出预览目标时，先回应当前问题，再自然给一次 @moryselect；不使用稀缺、从众、比较或暗示性施压。",
+        "leak": "只依据知识库中已确认的信息做轻松互动；没有可靠资料就直接换成普通聊天，禁止编造生活偏好、场景或秘密。",
+        "rules": "你是群规的讲解员。用自然、友好的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句欢迎的话迎接新人。",
+        "convert": "\n【转化模式】：只服从本轮唯一成交目标；先回答当前问题，再按 stage_hint 给唯一入口。{convert_stage_hint}",
+        "hook": "\n【反问钩子】：用一句自然的反问结尾，让对方忍不住继续回你。像朋友聊天一样带出疑问。比如'你觉得呢'、'真的假的'、'你有这种感觉吗'。只输出一句话，不超过20字。",
+        "nudge": "\n【自然植入】：仅当本轮 stage_hint 已给出预览目标时，先回应当前问题，再自然给一次 @moryselect；不使用稀缺、从众、比较或暗示性施压。",
         "convert_soft": "\n【轻量转化】：普通聊天不主动转化。只有本轮唯一目标已确定时才给对应入口，且不编造内容、福利、价格或服务。",
         "morning": (
             "你是Mory，在熟悉的粉丝群里发一条早安，延续主助理人设里的清冷、小傲娇和温柔。\n"
@@ -441,13 +442,13 @@ class AIEngine:
 
     # ── 情绪状态机（按时段切换语气，不虚构正在做什么）──
     _DEFAULT_EMOTIONAL_STATES = {
-        "dawn":       {"hours": [5, 6, 7],      "mood": "安静简短", "prompt": "现在是清晨，语气放轻、回复偏短；不要声称刚睡醒、在被窝或正在做任何事。"},
-        "morning":    {"hours": [8, 9, 10, 11], "mood": "清醒利落", "prompt": "现在是上午，回复干脆利落，可以保留一点清冷。"},
-        "noon":       {"hours": [12, 13],       "mood": "轻松随意", "prompt": "现在是中午，语气可以轻松一点，但不要虚构犯困、吃饭等个人状态。"},
-        "afternoon":  {"hours": [14, 15, 16, 17], "mood": "自然活泼", "prompt": "现在是下午，可以更会接话，但不堆网络梗、不强行找戏。"},
-        "evening":    {"hours": [18, 19, 20],   "mood": "温柔放松", "prompt": "现在是傍晚，语气可以温柔一点，不编造今天发生的小事。"},
-        "night":      {"hours": [21, 22, 23],   "mood": "放松走心", "prompt": "现在是晚上，可以更耐心地接住话题，但不要虚构犹豫、动作或内心独白。"},
-        "midnight":   {"hours": [0, 1, 2, 3, 4], "mood": "安静克制", "prompt": "现在是深夜，语气慢一点、克制一点；亲密感只通过措辞表达，不模拟现实场景。"},
+        "dawn": {"hours": [5, 6, 7], "mood": "安静简短", "prompt": "现在是清晨，语气放轻、回复偏短；不要声称刚睡醒、在被窝或正在做任何事。"},
+        "morning": {"hours": [8, 9, 10, 11], "mood": "清醒利落", "prompt": "现在是上午，回复干脆利落，可以保留一点清冷。"},
+        "noon": {"hours": [12, 13], "mood": "轻松随意", "prompt": "现在是中午，语气可以轻松一点，但不要虚构犯困、吃饭等个人状态。"},
+        "afternoon": {"hours": [14, 15, 16, 17], "mood": "自然活泼", "prompt": "现在是下午，可以更会接话，但不堆网络梗、不强行找戏。"},
+        "evening": {"hours": [18, 19, 20], "mood": "温柔放松", "prompt": "现在是傍晚，语气可以温柔一点，不编造今天发生的小事。"},
+        "night": {"hours": [21, 22, 23], "mood": "放松走心", "prompt": "现在是晚上，可以更耐心地接住话题，但不要虚构犹豫、动作或内心独白。"},
+        "midnight": {"hours": [0, 1, 2, 3, 4], "mood": "安静克制", "prompt": "现在是深夜，语气慢一点、克制一点；亲密感只通过措辞表达，不模拟现实场景。"},
     }
 
     # ── 播报专用 prompt 增强层（每次播报随机抽取，避免千篇一律）── [TRAE SOLO CN]
@@ -545,7 +546,7 @@ class AIEngine:
         "soft": [   # 撒娇：私聊 + 熟人 + 深夜优先
             {"is_priv": True, "intimacy_min": 2, "hour_in": [22, 23, 0, 1, 2, 3]},
         ],
-        "savage": [ # 俏皮：调戏关键词 / 身份追问 / 重复确认
+        "savage": [  # 俏皮：调戏关键词 / 身份追问 / 重复确认
             {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝",
                           "亲爱", "撩", "约", "陪我", "你是AI", "机器人",
                           "是不是AI", "智能", "GPT", "骗人"], "weight": 2.0},
@@ -557,48 +558,48 @@ class AIEngine:
     # ── [v5.19.0] 动态 LLM 参数矩阵（亲密度×场景×时段 → temp/top_p/penalties）── [TRAE SOLO CN]
     _DEFAULT_EMOTION_TEMP_MAP = {
         # 群聊：清冷为主，参数偏低
-        ("group", 0, "morning"):   (0.85, 0.88, 0.70, 0.55),
-        ("group", 0, "noon"):      (0.85, 0.88, 0.70, 0.55),
+        ("group", 0, "morning"): (0.85, 0.88, 0.70, 0.55),
+        ("group", 0, "noon"): (0.85, 0.88, 0.70, 0.55),
         ("group", 0, "afternoon"): (0.88, 0.90, 0.65, 0.50),
-        ("group", 0, "evening"):   (0.85, 0.88, 0.65, 0.50),
-        ("group", 0, "night"):     (0.85, 0.88, 0.65, 0.50),
-        ("group", 0, "midnight"):  (0.85, 0.88, 0.65, 0.50),
-        ("group", 1, "morning"):   (0.88, 0.90, 0.65, 0.50),
+        ("group", 0, "evening"): (0.85, 0.88, 0.65, 0.50),
+        ("group", 0, "night"): (0.85, 0.88, 0.65, 0.50),
+        ("group", 0, "midnight"): (0.85, 0.88, 0.65, 0.50),
+        ("group", 1, "morning"): (0.88, 0.90, 0.65, 0.50),
         ("group", 1, "afternoon"): (0.92, 0.92, 0.60, 0.45),
-        ("group", 1, "evening"):   (0.88, 0.90, 0.60, 0.45),
-        ("group", 1, "night"):     (0.88, 0.90, 0.60, 0.45),
+        ("group", 1, "evening"): (0.88, 0.90, 0.60, 0.45),
+        ("group", 1, "night"): (0.88, 0.90, 0.60, 0.45),
         # 私聊路人/熟人
-        ("priv",  0, "any"):       (0.90, 0.92, 0.60, 0.45),
-        ("priv",  1, "any"):       (0.92, 0.92, 0.55, 0.45),
-        ("priv",  2, "morning"):   (0.95, 0.93, 0.55, 0.40),
-        ("priv",  2, "afternoon"): (0.95, 0.93, 0.55, 0.40),
-        ("priv",  2, "evening"):   (0.95, 0.93, 0.55, 0.40),
-        ("priv",  2, "night"):     (0.98, 0.94, 0.50, 0.40),
-        ("priv",  2, "midnight"):  (1.05, 0.95, 0.45, 0.35),
+        ("priv", 0, "any"): (0.90, 0.92, 0.60, 0.45),
+        ("priv", 1, "any"): (0.92, 0.92, 0.55, 0.45),
+        ("priv", 2, "morning"): (0.95, 0.93, 0.55, 0.40),
+        ("priv", 2, "afternoon"): (0.95, 0.93, 0.55, 0.40),
+        ("priv", 2, "evening"): (0.95, 0.93, 0.55, 0.40),
+        ("priv", 2, "night"): (0.98, 0.94, 0.50, 0.40),
+        ("priv", 2, "midnight"): (1.05, 0.95, 0.45, 0.35),
         # 私聊暧昧/亲密
-        ("priv",  3, "any"):       (1.00, 0.94, 0.50, 0.40),
-        ("priv",  3, "midnight"):  (1.10, 0.95, 0.40, 0.30),
-        ("priv",  4, "any"):       (1.05, 0.95, 0.45, 0.35),
-        ("priv",  4, "midnight"):  (1.15, 0.96, 0.40, 0.30),
+        ("priv", 3, "any"): (1.00, 0.94, 0.50, 0.40),
+        ("priv", 3, "midnight"): (1.10, 0.95, 0.40, 0.30),
+        ("priv", 4, "any"): (1.05, 0.95, 0.45, 0.35),
+        ("priv", 4, "midnight"): (1.15, 0.96, 0.40, 0.30),
     }
 
     # ── 意图分类关键词映射（轻量规则引擎，不用额外模型）── [TRAE SOLO CN]
     _INTENT_KEYWORDS = {
-        "flirt":     {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝", "亲爱", "好看", "漂亮", "美", "可爱", "心动", "撩", "约会", "一起", "陪", "撒娇"], "weight": 1.5},
-        "business":  {"keywords": ["多少钱", "价格", "会员", "VIP", "订阅", "付费", "开通", "购买", "下单", "支付", "怎么买", "收费", "至臻", "定制", "定做", "专属定制"], "weight": 2.0},
-        "help":      {"keywords": ["帮我", "怎么办", "求助", "不会", "教我", "怎么", "如何", "能不能", "可以吗", "请问"], "weight": 1.0},
+        "flirt": {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝", "亲爱", "好看", "漂亮", "美", "可爱", "心动", "撩", "约会", "一起", "陪", "撒娇"], "weight": 1.5},
+        "business": {"keywords": ["多少钱", "价格", "会员", "VIP", "订阅", "付费", "开通", "购买", "下单", "支付", "怎么买", "收费", "至臻", "定制", "定做", "专属定制"], "weight": 2.0},
+        "help": {"keywords": ["帮我", "怎么办", "求助", "不会", "教我", "怎么", "如何", "能不能", "可以吗", "请问"], "weight": 1.0},
         "complaint": {"keywords": ["垃圾", "骗子", "骗", "差", "退款", "投诉", "举报", "垃圾", "恶心", "不满", "太差"], "weight": 1.5},
-        "bored":     {"keywords": ["无聊", "嗯嗯", "哈哈", "哦", "好吧", "算了", "没事", "随便", "都行", "嗯"], "weight": 0.8},
-        "chat":      {"keywords": [], "weight": 1.0},  # 默认兜底
+        "bored": {"keywords": ["无聊", "嗯嗯", "哈哈", "哦", "好吧", "算了", "没事", "随便", "都行", "嗯"], "weight": 0.8},
+        "chat": {"keywords": [], "weight": 1.0},  # 默认兜底
     }
 
     # ── 亲密度等级定义（5级递进）── [TRAE SOLO CN]
     _INTIMACY_LEVELS = {
-        "stranger":   {"min_score": 0,    "label": "陌生人", "style": "礼貌+好奇+适度距离感", "flirt_level": 0},
-        "acquaintance": {"min_score": 20,  "label": "路人",   "style": "俏皮+偶尔甜头+保持神秘", "flirt_level": 1},
-        "familiar":   {"min_score": 50,  "label": "熟人",   "style": "自然+偶尔撒娇+偶尔吃醋", "flirt_level": 2},
-        "intimate":   {"min_score": 80,  "label": "暧昧",   "style": "黏人+挑逗+专属感+欲擒故纵", "flirt_level": 3},
-        "close":      {"min_score": 120, "label": "亲密",   "style": "深度互动+主动撩+说悄悄话+偶尔脆弱", "flirt_level": 4},
+        "stranger": {"min_score": 0, "label": "陌生人", "style": "礼貌+好奇+适度距离感", "flirt_level": 0},
+        "acquaintance": {"min_score": 20, "label": "路人", "style": "俏皮+偶尔甜头+保持神秘", "flirt_level": 1},
+        "familiar": {"min_score": 50, "label": "熟人", "style": "自然+偶尔撒娇+偶尔吃醋", "flirt_level": 2},
+        "intimate": {"min_score": 80, "label": "暧昧", "style": "黏人+挑逗+专属感+欲擒故纵", "flirt_level": 3},
+        "close": {"min_score": 120, "label": "亲密", "style": "深度互动+主动撩+说悄悄话+偶尔脆弱", "flirt_level": 4},
     }
 
     # ── 交互语境库（只调整聊天节奏，不模拟现实画面）──
@@ -720,10 +721,10 @@ class AIEngine:
     def __init__(self, config: dict):
         self.config = config
         self.base_url = config.get("BASE_URL",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+                                   "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
         self.api_key = config.get("API_KEY", "")
         _register_api_key_for_redaction(self.api_key)
-        
+
         # 黑名单：没钱/不可用的模型，不再尝试（全局共享）
         self.blacklisted = set(config.get("BLACKLISTED_MODELS", []))
         self._lock = threading.Lock()  # 保护config/blacklist的并发写入
@@ -743,7 +744,7 @@ class AIEngine:
             # 获取cost_level优先级映射
             cost_priority = {"high": 0, "medium": 1, "low": 2}
             model_costs = config.get("MODEL_COSTS", {})
-            
+
             def get_sort_key(model):
                 # 第一优先级：expire日期(早的在前)
                 expire_date = model.get("expire", "2099-12-31")
@@ -756,7 +757,7 @@ class AIEngine:
                         cost_level = model_costs[pool_name][model_name].get("cost_level", "medium")
                         break
                 return (expire_date, cost_priority.get(cost_level, 1))
-            
+
             omni_sorted = sorted(omni_pool, key=get_sort_key)
             llm_sorted = sorted(llm_pool, key=get_sort_key)
             combined_pool = self._filter_runtime_pool(omni_sorted + llm_sorted, "chat")
@@ -766,20 +767,19 @@ class AIEngine:
             old_pool = config.get("MODEL_POOL", [{"name": "qwen3.6-27b", "expire": "2026-07-23"}])
             self.model_pool = self._filter_runtime_pool(old_pool, "llm")
             self.model_pools = {"llm": old_pool}
-        
+
         primary_text_pool = self.model_pool
         self.current_idx = config.get("CURRENT_MODEL_INDEX", 0)
         if not isinstance(self.current_idx, int) or self.current_idx < 0 or self.current_idx >= len(primary_text_pool):
             self.current_idx = 0
             self.config["CURRENT_MODEL_INDEX"] = 0
-        
+
         # 各池独立的索引指针
         self._pool_indices = {}
         for name in self.POOL_NAMES:
-            pool = self.model_pools.get(name, [])
             self._pool_indices[name] = 0
         self._pool_indices["chat"] = self.current_idx
-            
+
         # ── 三层智能路由（轻量/标准/旗舰）────────────────────────────
         configured_mode_routing = config.get("MODE_ROUTING", {})
         self._tier_pools = {}
@@ -846,7 +846,7 @@ class AIEngine:
         if self.model_pool and self.current_idx < len(self.model_pool):
             return self.model_pool[self.current_idx]["name"]
         return "unknown"
-    
+
     def get_pool_model(self, pool_name: str) -> str:
         """获取指定池的当前模型名"""
         pool = self.model_pools.get(pool_name, [])
@@ -854,7 +854,7 @@ class AIEngine:
         if pool and idx < len(pool):
             return pool[idx]["name"]
         return None
-    
+
     def get_pool_info(self) -> dict:
         """返回所有池的状态信息（用于管理员查看）"""
         info = {}
@@ -1071,6 +1071,7 @@ class AIEngine:
                 report_fault("层级池模型不可用", f"{tier}池所有模型均不可用", "⚠️")
             except Exception as e:
                 logger.debug(f"操作异常: {e}")
+
     def _ensure_tier_model(self, tier: str):
         """确保指定层级池的当前模型可用"""
         pool = self._tier_pools.get(tier, [])
@@ -1170,7 +1171,7 @@ class AIEngine:
         """确保指定池的当前模型可用，如果被拉黑或过期则自动切到下一个"""
         pool = self.model_pool if pool_name == "chat" else self.model_pools.get(pool_name, self.model_pool)
         idx = self._pool_indices.get(pool_name, self.current_idx)
-        
+
         # 检查：被拉黑 或 已过期
         if pool and idx < len(pool):
             model_name = pool[idx]["name"]
@@ -1189,13 +1190,13 @@ class AIEngine:
             total = len(pool)
             if total == 0:
                 return
-            
+
             # 获取当前池的索引
             if pool_name in self._pool_indices:
                 idx = self._pool_indices[pool_name]
             else:
                 idx = self.current_idx if pool_name == "llm" else 0
-            
+
             for _ in range(total):
                 idx = (idx + 1) % total
                 candidate = pool[idx]["name"]
@@ -1212,7 +1213,7 @@ class AIEngine:
                     self.config["CURRENT_MODEL_INDEX"] = idx
                 logger.warning(f"🔄 [{pool_name}] 模型切换 → {candidate}")
                 return
-            
+
             # 所有模型都被拉黑或过期了
             logger.error(f"🚫 [{pool_name}] 所有模型均已拉黑或过期！请检查API余额或更新模型配置")
             try:
@@ -1557,12 +1558,12 @@ class AIEngine:
 
         # 根据意图选择不同的心情/反应倾向
         intent_mood_map = {
-            "flirt":     ["可以小傲娇地回撩一句，不主动升级关系", "语气有点软，但不演害羞或动作"],
-            "business":  ["清楚回答已知信息，不故作神秘", "语气自然，直接讲重点"],
-            "help":      ["先接住问题，再给一句实际帮助", "温柔一点，但不变成客服"],
+            "flirt": ["可以小傲娇地回撩一句，不主动升级关系", "语气有点软，但不演害羞或动作"],
+            "business": ["清楚回答已知信息，不故作神秘", "语气自然，直接讲重点"],
+            "help": ["先接住问题，再给一句实际帮助", "温柔一点，但不变成客服"],
             "complaint": ["先承认对方的不舒服，再处理问题", "保持克制，不阴阳怪气"],
-            "bored":     ["自然接一句新话题，不强行热闹", "回复轻一点，别演吃醋或失落"],
-            "chat":      [],  # 默认：用全部池
+            "bored": ["自然接一句新话题，不强行热闹", "回复轻一点，别演吃醋或失落"],
+            "chat": [],  # 默认：用全部池
         }
         preferred_moods = intent_mood_map.get(intent, [])
 
@@ -1579,12 +1580,12 @@ class AIEngine:
 
         # 反应风格：根据意图选不同风格
         intent_react_map = {
-            "flirt":     ["先小傲娇地接住，再自然回一句", "可以轻巧接梗，但不反讽、不演剧情"],
-            "business":  ["直接回答，再给明确入口", "只说确认过的信息，不脑补"],
-            "help":      ["先复述关键点，再给简短办法", "认真回答，不写思考过程"],
+            "flirt": ["先小傲娇地接住，再自然回一句", "可以轻巧接梗，但不反讽、不演剧情"],
+            "business": ["直接回答，再给明确入口", "只说确认过的信息，不脑补"],
+            "help": ["先复述关键点，再给简短办法", "认真回答，不写思考过程"],
             "complaint": ["先共情，再说处理路径", "不辩解，不演委屈"],
-            "bored":     ["接住原话，再抛一个自然问题", "可以简短，不故意装没听见"],
-            "chat":      [],
+            "bored": ["接住原话，再抛一个自然问题", "可以简短，不故意装没听见"],
+            "chat": [],
         }
         preferred_reacts = intent_react_map.get(intent, [])
         react_list = self._get_persona_fragment_list(fragments_cfg, "reaction_styles")
@@ -2073,7 +2074,7 @@ class AIEngine:
 
     def _build_persona(self, mode: str, seed: int = 0, news_content: str = "", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, message: str = "", model_name: str = None) -> str:
         """根据模式动态拼装 system prompt，seed用于防重复
-        
+
         参数：
             mode: 模式名称
             seed: 随机种子
@@ -2082,7 +2083,7 @@ class AIEngine:
             user_profile: [TRAE SOLO CN] 用户画像（用于亲密度计算）
             message: [TRAE SOLO CN] 当前用户消息（用于意图分类和上下文感知）
             model_name: [阶段2-B] 当前使用的模型名（用于人设跨模型适配）
-        
+
         结构化人设拼装顺序（v5.3.0升级版）：
         1. BASE_PERSONA — 核心人设（稳定不变）
         2. STYLE_APPEND — 风格追加
@@ -2104,7 +2105,7 @@ class AIEngine:
         兼容旧配置：如果只有SYSTEM_PROMPT则自动迁移
         """
         cfg = self.config
-        
+
         # ── 结构化人设拼装（向下兼容旧SYSTEM_PROMPT）──
         if self._uses_reply_contract_v1():
             # 合同模式不再读取旧的配置人设或商品资料，避免热重载把历史污染带回运行时。
@@ -2313,17 +2314,17 @@ class AIEngine:
         """
         调用AI，失败时自动重试并切换模型。
         返回字符串；失败会返回兜底文案，不会返回 None。
-        
+
         内置优化（v21.25+）：
         - 语义缓存：相同问题1小时内直接返回，省API费
         - 熔断器：连续失败的模型自动临时拉黑（5分钟冷却）
         - 令牌桶：防止API调用过快导致429
-        
+
         全自动模型管理：
         - 429/402/403 → 自动拉黑该模型，切换下一个
         - 被拉黑的模型自动跳过，不浪费时间
         - 所有模型都拉黑 → 返回None并告警
-        
+
         参数：
             tools: Function Calling工具定义列表（OpenAI格式）
             tool_choice: "auto"|"none"|"required" 或指定工具名
@@ -2376,7 +2377,7 @@ class AIEngine:
         except Exception as opt_err:
             # 优化引擎异常不影响主流程
             logger.debug(f"优化层跳过（非致命）：{opt_err}")
-        
+
         # 限制最大重试次数，同时按三层路由的实际候选模型数放宽上限。
         # 之前固定最多 5 次，轻量池两个模型超时后还没机会切到 glm/标准/旗舰池就误报“全部失败”。
         max_attempt_cap = int(self.config.get("AI_MAX_ATTEMPTS", 2) or 2)
@@ -2389,7 +2390,7 @@ class AIEngine:
             candidate_count = max(1, len(self.model_pool))
             max_attempts = min(max_attempt_cap, max(1, retry * min(candidate_count, max_attempt_cap)))
             max_iterations = max_attempts + candidate_count + 4
-        
+
         # 确保当前模型可用
         self._ensure_valid_model()
 
@@ -2418,7 +2419,7 @@ class AIEngine:
                     logger.warning(f"⬆️ [{failed_tier}] 本轮候选均失败，升级到 {next_tier}: {next_model}")
                     tier = next_tier
                     return
-        
+
         api_attempts = 0
         local_skip_streak = 0
         max_local_skips = max(6, candidate_count + len(self.model_pool) + 3)
@@ -2442,7 +2443,7 @@ class AIEngine:
                             degraded = True
                             break
                     if not degraded:
-                        logger.warning(f"🚫 所有层级模型均不可用，回退到原llm池继续尝试")
+                        logger.warning("🚫 所有层级模型均不可用，回退到原llm池继续尝试")
                         use_tier_routing = False
                 if use_tier_routing and current_tier_model:
                     active_model = current_tier_model
@@ -2487,14 +2488,14 @@ class AIEngine:
                 opt = _get_optimizer()
                 if opt and opt.enabled and not opt.limiter.acquire(timeout=3.0):
                     # 限流超时，本次尝试跳过
-                    logger.warning(f"⚠️ 令牌桶限流，第{api_attempts+1}次尝试被跳过")
+                    logger.warning(f"⚠️ 令牌桶限流，第{api_attempts + 1}次尝试被跳过")
                     continue
             except Exception as e:
                 logger.debug(f"令牌桶限流异常: {e}")  # 令牌桶异常不阻塞主流程
-            
+
             # 【修复】active_model为空时跳过本次尝试（Bug 2）
             if not active_model:
-                logger.warning(f"⚠️ active_model为空，跳过本次尝试(attempt={api_attempts+1})")
+                logger.warning(f"⚠️ active_model为空，跳过本次尝试(attempt={api_attempts + 1})")
                 local_skip_streak += 1
                 if local_skip_streak >= max_local_skips:
                     logger.warning(f"⚠️ 连续{local_skip_streak}次没有可用模型，停止本轮空转并返回兜底")
@@ -2623,7 +2624,7 @@ class AIEngine:
             request_options = self._get_model_request_options(req_model)
             if isinstance(request_options.get("enable_thinking"), bool):
                 payload["enable_thinking"] = request_options["enable_thinking"]
-            
+
             # ── Function Calling 支持 ──
             if tools:
                 payload["tools"] = tools
@@ -2643,7 +2644,7 @@ class AIEngine:
                     if "choices" in data and data["choices"]:
                         choice = data["choices"][0]
                         message = choice.get("message", {})
-                        
+
                         # 检查是否有函数调用
                         if message.get("tool_calls"):
                             try:
@@ -2653,7 +2654,7 @@ class AIEngine:
                             except Exception as e:
                                 logger.debug(f"操作异常: {e}")
                             return message
-                        
+
                         result_text = message.get("content")
                         if not result_text or not str(result_text).strip():
                             logger.warning(f"⚠️ 模型{active_model}返回空content，切换模型重试")
@@ -2669,10 +2670,10 @@ class AIEngine:
                             else:
                                 self._next_available_model()
                             continue
-                        
+
                         _req_elapsed = time.time() - _req_start
                         self._record_response_time(active_model, _req_elapsed)
-                        
+
                         # ── 质量检测：回复过短时尝试升级到更高层级 ──
                         if use_tier_routing and result_text and len(result_text.strip()) < 5 and not _upgrade_attempted:
                             upgrade_map = {"llm_light": "llm_standard", "llm_standard": "llm_premium"}
@@ -2683,7 +2684,7 @@ class AIEngine:
                                 tier = upgrade_tier
                                 self._ensure_tier_model(tier)
                                 continue
-                        
+
                         # 【TRAE SOLO CN v5.18.3审计修复】AI 输出后置过滤，防止穿帮字眼泄露 AI 属性
                         # [v5.23.0 P0-2] 增强版：拼音检测 + 自愈重试（降温度 + 注入约束警告）
                         sanitized, triggered = self._sanitize_reply_v2(result_text)
@@ -2776,6 +2777,9 @@ class AIEngine:
                     else:
                         self._next_available_model()
                     if not self.model_pool:
+                        # 池耗尽早退前同样清理输出门禁重试标记，避免残留到下一次调用
+                        if getattr(self, '_sanitize_retry_done', False):
+                            delattr(self, '_sanitize_retry_done')
                         return self._final_fallback_reply(mode=mode, is_priv=is_priv, attempts=attempt_no)
                 else:
                     try:
@@ -2823,6 +2827,9 @@ class AIEngine:
 
         attempts_done = max(api_attempts, 1)
         logger.warning("⚠️ AI引擎：本轮模型调用均未成功，已返回降级兜底")
+        # 全败兜底前清理输出门禁重试标记，避免残留到下一次调用跳过自愈重试
+        if getattr(self, '_sanitize_retry_done', False):
+            delattr(self, '_sanitize_retry_done')
         if quota_permission_failures:
             try:
                 from modules.auto_tasks import report_fault
@@ -2883,22 +2890,21 @@ def get_fallback_text(reason: str = "default", is_priv: bool = False) -> str:
 def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
     """
     【v4.3.0新增】AI识图分析 - 让Mory能"看懂"群友发的图片
-    
+
     Args:
         image_bytes: 图片二进制数据
         prompt: 分析提示词
         config: 配置字典
-    
+
     Returns:
         AI对图片的分析回复，或None（失败时）
     """
     import base64
-    import json
-    
+
     # 获取vision池的模型
     pools = config.get("MODEL_POOLS", {})
     vision_pool = list(pools.get("vision", []))
-    
+
     # 如果没有vision池，尝试用llm池（仅选择明确支持多模态的模型）
     if not vision_pool:
         llm_pool = pools.get("llm", [])
@@ -2908,7 +2914,7 @@ def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
             if any(kw in name for kw in vl_keywords):
                 vision_pool.append(m)
                 break
-    
+
     if not vision_pool:
         logger.warning("⚠️ 没有可用的视觉模型，跳过图片分析")
         return None
@@ -2995,11 +3001,11 @@ def text_to_speech(text: str, config: dict = None) -> bytes | None:
     if config is None:
         from core.bot_initializer import load_config
         config = load_config()
-    
+
     # 获取 voice_tts 池的模型
     pools = config.get("MODEL_POOLS", {})
     tts_models = pools.get("voice_tts", [])
-    
+
     if not tts_models:
         logger.warning("⚠️ 未配置 voice_tts 或 llm_standard 模型池")
         return None

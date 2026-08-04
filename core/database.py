@@ -26,9 +26,8 @@
 """
 
 import sqlite3
-import time
 from threading import RLock
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
 # 【修复v21.47】统一使用北京时间，避免时区混乱导致每日重置错误
 _CST = timezone(timedelta(hours=8))
@@ -151,6 +150,7 @@ class DB:
             # 4. 回归原生连接（v5.32.0 移除 WriteQueueConnectionProxy）
             self._real_conn = self.conn
             logger.info("✅ 数据库连接已重建")
+
     # ──────────────────────────── 异常处理辅助 ──────────────────────────
     def _log_db_error(self, operation: str, error: Exception, level: str = "warning", context: str = ""):
         """
@@ -2173,8 +2173,6 @@ class DB:
         5. 同时反向检查：_REPO_METHOD_MAP 中注册的方法是否在对应 Repo 中真实存在（防拼写错误）
         6. 任何不匹配 → RuntimeError 阻止启动
         """
-        import inspect
-
         missing = []  # Repo 中存在但 _REPO_METHOD_MAP 未注册的方法
         orphaned = []  # _REPO_METHOD_MAP 中注册但 Repo 中不存在的方法（拼写错误/已删除）
 
@@ -2219,10 +2217,10 @@ class DB:
         errors = []
         if missing:
             errors.append(f"❌ DB 启动自检失败：{len(missing)} 个 Repo 方法未在 _REPO_METHOD_MAP 注册（将导致 AttributeError + 静默吞错）:\n  " +
-                         "\n  ".join(missing))
+                          "\n  ".join(missing))
         if orphaned:
             errors.append(f"⚠️ DB 启动自检警告：{len(orphaned)} 个 _REPO_METHOD_MAP 注册项在 Repo 中不存在（拼写错误或方法已删除）:\n  " +
-                         "\n  ".join(orphaned))
+                          "\n  ".join(orphaned))
 
         if errors:
             for e in errors:
