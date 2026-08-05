@@ -36,9 +36,9 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录 |
 
 ## 当前版本
-v5.38.25（2026-08-05）· 规则治理（AGENTS 触发式更新 + 部署门禁 + 机械断言）待部署
+v5.38.25（2026-08-05）· 规则治理（AGENTS 触发式更新 + 部署门禁 + 机械断言）已增量部署 VPS
 
-生产状态：**v5.38.24 已增量部署 VPS 并验收通过**（双服务 active、health 200、生产版本 v5.38.24）。本地验收：全仓 pytest 863 passed/7 skipped、flake8 8 文件清单 0 错、mypy 4 文件通过、verify_db_methods 199/199、doc_consistency 通过。
+生产状态：**v5.38.25 已增量部署 VPS 并验收通过**（生产版本 v5.38.25、双服务 active、health 200、启动后零异常日志、心跳任务正常运行、check_deploy_ready.py 已同步）。本地验收：全仓 pytest 873 passed/7 skipped、doc_consistency 全项通过（含版本五源/行数/条目长度断言）、check_deploy_ready 部署就绪 ✅。上一版 v5.38.24 已完成 VPS 增量部署并验收通过（双服务 active、health 200）。
 
 ## 最近 3 条大事
 1. 2026-08-05 v5.38.25 规则治理：AGENTS 触发式更新+部署三选一；doc_consistency 版本/行数/条目断言；check_deploy_ready 新增；CHANGELOG 归档压缩。
