@@ -6,12 +6,12 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.38.25"
-CONFIG_VERSION = "5.38.25"
+VERSION = "v5.38.26"
+CONFIG_VERSION = "5.38.26"
 __version__ = VERSION
 
 VERSION_HISTORY = [
-    "v5.38.25: [规则治理] AGENTS 重写为触发式文档更新 + 部署门禁三选一（防忘部署/防膨胀）；doc_consistency 扩展版本五源一致/行数/条目长度断言；新增 scripts/check_deploy_ready.py 一键部署就绪；CHANGELOG 归档压缩（v5.38.15 及之前 → docs/archive）；CI 接入 check_config_sync。验收：pytest 通过、doc_consistency 全项通过、部署双服务 active + health 200。",
+    "v5.38.26: [播报体验升级+人设治理] 播报图片卡主题化与问候卡改版（含 night 档，问候任务迁入 BaseTask）；CTA 按北京日期每日确定性轮换，玄学（黄历/塔罗/易经）与定点群播报三入口（@moryselect 预览 / @Moryfansbot 私聊 / @MorychannelBot 自助下单）且每卡单入口；搭讪承接/FAQ 人设升级；风格样本按场景分组（普通聊天/问候/搭讪承接/FAQ/播报 每组 ≤3 条、总数 ≤12 条）投喂+人工审核进 Prompt、自动蒸馏默认关闭；死代码清理。验收：pytest 24 passed + 回归 873 passed/7 skipped、doc_consistency 全项通过。",
     "v5.38.24: [遗留闭环] mypy 10 项债务清零并纳入 CI；sanitize 自愈降温度+约束注入修复生效（回归断言载荷）；get_pool_info 补测试；文档治理与垃圾清理。验收：pytest 863 passed、verify_db 199/199。",
     "v5.38.23: [Harness 六项修复] CI 门禁断链修复（flake8/mypy 清单、verify_db/doc_consistency 接入 CI）；_sanitize_retry_done 三路径清理；.venv 重建 3.12；request_id 日志关联。验收：pytest 862 passed、部署通过。",
     "v5.38.22: [整改收尾] CTA 单一真相源 + 广告豁免加固 + 质量安全 + 文档治理。① 播报：删除 broadcast_image_card 旧 CTA 池与 get_random_cta、删除 cta_pool 死参数、收敛 mystic_content 第二套 CTA 系统为统一 core/broadcast_cta 单一真相源（发送层统一生成并回填 payload[cta]）、四路图片卡开关收敛 is_broadcast_image_enabled、视觉常量对齐计划（CTA 圆角 18/标签 8）、缓存存在性短路 + 原子写、_stable_seed 改 md5 确定性、拼音检测加中文字符过滤；② 广告：enforce_ad_user 配置级 _admin_ids 白名单豁免前置（零网络）、_is_chat_admin_member 三态降级（unknown 跳过不可逆惩罚 + 通知人工复核）、启动追溯跳过计数不误报禁言失败、入群检测路径 _is_member_ad_exempt 豁免拉齐；③ 质量安全：config_api 裸 except 留痕、新增 scripts/check_config_sync.py 三处同步差集断言 + 白名单补 10 个业务键、PII 复查 0 命中；④ 文档：AI_DEBUG_HISTORY 归档 362→93 行、CHANGELOG 近期超长条目压缩、新增病历 54/55。验收：全仓 pytest 850+ passed、doc_consistency 7/7、verify_db_methods 199/199、check_config_sync 退出 0。",

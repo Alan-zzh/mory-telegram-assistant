@@ -117,7 +117,7 @@ db.delete_broadcast(chat_id, "level_up")
 ```
 scheduler 触发 _job_send_morning_greeting
   ↓
-auto_tasks._send_greeting(rm, chat_id, "早安~", "greeting")
+send_greeting(rm, chat_id, "早安~", "greeting")  // tasks.support.common.send_greeting（问候链式互删现由 greeting_task 调用）
   ↓
 db.get_last_broadcast(chat_id, "greeting")  // 查上一条
   ↓

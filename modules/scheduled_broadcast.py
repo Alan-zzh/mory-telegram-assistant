@@ -32,7 +32,7 @@ from core.broadcast_formatter import (
     looks_like_html,
     normalize_text,
 )
-from core.broadcast_image_card import build_broadcast_image_card
+from core.broadcast_image_card import build_broadcast_image_card, resolve_theme_options
 from core.broadcast_image_payload import build_scheduled_image_payload
 from core.telebot_compat import send_checklist_compat, send_message_compat, send_photo_compat, send_poll_compat, send_rich_message_compat
 from core.logging_util import get_logger
@@ -513,6 +513,7 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                             cache_key=f"scheduled_{broadcast_id}_{today}",
                             min_height=1000,
                             cta_text=cta.get("image_label", ""),
+                            options=resolve_theme_options(config, bc.get("period", "")),
                         )
                         if image_path and os.path.isfile(image_path):
                             logger.info(f"[broadcast] 准备发送 {broadcast_id} 到 chat={chat_id}, type=image_card")

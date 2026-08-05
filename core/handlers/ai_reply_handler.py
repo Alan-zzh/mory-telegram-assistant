@@ -226,6 +226,27 @@ def _looks_like_question(text: str) -> bool:
     return any(marker in compact for marker in _QUESTION_MARKERS)
 
 
+def _is_reply_eligible_text(text) -> bool:
+    """主动插话质量门槛：空消息/纯表情/纯标点/长度<2 时不插话。
+
+    仅约束概率插话（REPLY_CHANCE）与 FAQ 主动承接两条旁路；
+    私聊、@点名、回复 Bot 及非 normal 模式仍强制回复，不受本门槛影响。
+    系统类内容已由前面 P 层拦截，这里只做文本可承接性判断。
+    """
+    if not text:
+        return False
+    compact = re.sub(r"\s+", "", str(text))
+    if len(compact) < 2:
+        return False
+    # 滤掉标点、emoji、颜文字等符号后仍有实质文字内容才算可承接
+    body = re.sub(
+        r"[^\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7afa-zA-Z0-9]",
+        "",
+        compact,
+    )
+    return bool(body)
+
+
 def _should_offer_handoff(
     response,
     *,
@@ -648,10 +669,17 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         or is_reply
         or mode in _non_normal_modes
         or (
-            CONFIG.get("FAQ_TRACKING_ENABLED", False)
-            and _looks_like_question(msg)
+            # [Agent F] 主动旁路（概率插话 / FAQ 承接）先过可承接性门槛：
+            # 空、纯表情、纯标点、长度<2 的消息不因概率插话；点名回复不受影响。
+            _is_reply_eligible_text(msg)
+            and (
+                (
+                    CONFIG.get("FAQ_TRACKING_ENABLED", False)
+                    and _looks_like_question(msg)
+                )
+                or random.randint(1, 100) <= CONFIG.get("REPLY_CHANCE", 10)
+            )
         )
-        or random.randint(1, 100) <= CONFIG.get("REPLY_CHANCE", 10)
     )
 
     if not should_reply:
@@ -820,8 +848,16 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             logger.debug(f"增长优化上下文构建失败 uid={uid}: {e}")
 
     # 只注入管理员审核并手动启用的风格样本；反馈/A-B 数据永远不能自动改写提示词。
+    # [Agent G] 按场景分组注入：chat 默认，问候/搭讪/FAQ 按当前意图映射。
     try:
-        evolution_hint = _build_reply_evolution_hint(db, CONFIG)
+        _scene_hint = "chat"
+        if _intent_label == "flirt":
+            _scene_hint = "engage"
+        elif _intent_label in ("consult", "faq"):
+            _scene_hint = "faq"
+        elif mode in ("treehole", "dream"):
+            _scene_hint = "greeting"
+        evolution_hint = _build_reply_evolution_hint(db, CONFIG, scene=_scene_hint)
         if evolution_hint:
             stage_hint += evolution_hint
     except Exception as e:
@@ -1141,8 +1177,12 @@ def _build_convert_hint(
     return stage_hint, notify_admin_reason
 
 
-def _build_reply_evolution_hint(db, config) -> str:
-    """将人工审核样本作为低优先级风格参考，不带原始用户文本或自动优化结果。"""
+def _build_reply_evolution_hint(db, config, scene: str = "chat") -> str:
+    """将人工审核样本作为低优先级风格参考，按场景分组注入。
+
+    每组（scene）最多 max_prompt_samples 条、总条数不超过 12；
+    注入顺序优先当前场景，再补其他场景。调用处不传 scene 时按 chat 组取。
+    """
     cfg = (config or {}).get("REPLY_EVOLUTION_CONFIG", {}) or {}
     if not (
         cfg.get("enabled", False)
@@ -1153,7 +1193,23 @@ def _build_reply_evolution_hint(db, config) -> str:
     if not hasattr(db, "get_approved_reply_style_samples"):
         return ""
     limit = max(1, min(int(cfg.get("max_prompt_samples", 3) or 3), 3))
-    samples = db.get_approved_reply_style_samples(limit)
+    total_limit = 12
+    valid_scenes = ("chat", "greeting", "engage", "faq", "broadcast")
+    scene = scene if scene in valid_scenes else "chat"
+    order = [scene] + [s for s in valid_scenes if s != scene]
+    samples: list[str] = []
+    for sc in order:
+        if len(samples) >= total_limit:
+            break
+        try:
+            group = db.get_approved_reply_style_samples(limit, scene=sc)
+        except TypeError:
+            # 兼容旧签名（如测试用 FakeDB）：不支持 scene 参数时只取一次
+            group = db.get_approved_reply_style_samples(limit)
+            samples.extend(group or [])
+            break
+        samples.extend(group or [])
+    samples = samples[:total_limit]
     if not samples:
         return ""
     numbered = "\n".join(f"- {sample}" for sample in samples)

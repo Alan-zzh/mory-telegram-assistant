@@ -413,7 +413,8 @@ const _pageTitles = {
   greeting: '问候配置', mystic: '传统文化播报', exchangerate: '汇率配置',
   visualdashboard: '可视化面板', language: '语言设置', spamaction: '广告动作',
   goodbye: '退群消息', rules: '群规配置', games: '游戏配置',
-  aimodel: 'AI模型参数', botcore: 'Bot核心配置', pricing: '定价管理', persona: '人设编辑'
+  aimodel: 'AI模型参数', botcore: 'Bot核心配置', pricing: '定价管理', persona: '人设编辑',
+  replystyle: '风格样本审核'
 };
 function switchTab(tab) {
   document.querySelectorAll('.nav-item').forEach(t => t.classList.remove('active'));
@@ -1209,6 +1210,40 @@ function renderPage() {
     case 'persona':
       content.innerHTML = `<div class="page-header"><div><h2>人设编辑</h2><p>系统提示词与知识库管理</p></div></div><div id="personaContent" class="loading">加载中...</div>`;
       loadPersonaConfig(); break;
+    case 'replystyle':
+      content.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h2>风格样本审核</h2>
+            <p>人工审核的回复风格样本：通过 + 启用后才会注入 AI 提示词</p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select class="btn btn-secondary" onchange="setStyleStatus(this.value)" style="cursor:pointer;">
+              <option value="">全部状态</option>
+              <option value="pending">待审核</option>
+              <option value="approved">已通过</option>
+              <option value="rejected">已拒绝</option>
+            </select>
+            <select class="btn btn-secondary" onchange="setStyleScene(this.value)" style="cursor:pointer;">
+              <option value="">全部场景</option>
+              <option value="chat">chat · 聊天</option>
+              <option value="greeting">greeting · 问候</option>
+              <option value="engage">engage · 搭讪</option>
+              <option value="faq">faq · FAQ</option>
+              <option value="broadcast">broadcast · 播报</option>
+            </select>
+            <button class="btn btn-secondary" onclick="loadReplyStyleSamples()">刷新</button>
+          </div>
+        </div>
+        <div class="card">
+          <table class="data-table">
+            <thead><tr><th>ID</th><th>标签</th><th>样本内容</th><th>状态</th><th>启用</th><th>创建人</th><th>操作</th></tr></thead>
+            <tbody id="styleSampleBody"><tr><td colspan="7" class="empty-state"><h3>加载中...</h3></td></tr></tbody>
+          </table>
+        </div>
+      `;
+      loadReplyStyleSamples();
+      break;
     case 'attribution':
       content.innerHTML = `
         <div class="page-header">
@@ -3202,6 +3237,7 @@ function renderApp() {
             <div class="nav-section-title">🤖 AI模型</div>
             <div class="nav-item" onclick="switchTab('aimodel')">🧠 模型参数</div>
             <div class="nav-item" onclick="switchTab('persona')">💬 人设编辑</div>
+            <div class="nav-item" onclick="switchTab('replystyle')">🍼 风格样本审核</div>
           </div>
           <div class="nav-section">
             <div class="nav-section-title">⚡ 高级</div>
@@ -3797,6 +3833,8 @@ async function loadGreetingConfig() {
       <div class="form-group"><label>午安时间</label><input type="time" id="grAfternoonTime" value="${cfg.afternoon_time || '12:35'}" class="input-field"></div>
       <div class="toggle-row"><span>晚安播报</span><label class="toggle-switch"><input type="checkbox" id="grNightEn" ${cfg.evening_enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="form-group"><label>晚安时间</label><input type="time" id="grNightTime" value="${cfg.evening_time || '23:05'}" class="input-field"></div>
+      <div class="toggle-row"><span>深夜问候</span><label class="toggle-switch"><input type="checkbox" id="grMidnightEn" ${cfg.night_enabled?'checked':''}><span class="slider"></span></label></div>
+      <div class="form-group"><label>深夜问候时间</label><input type="time" id="grMidnightTime" value="${cfg.night_time || '22:30'}" class="input-field"></div>
       <div class="toggle-row"><span>问候使用图片卡</span><label class="toggle-switch"><input type="checkbox" id="grImgCardEn" ${cfg.image_card_enabled?'checked':''}><span class="slider"></span></label></div>
       <div class="toggle-row"><span>全局图片卡总开关</span><label class="toggle-switch"><input type="checkbox" id="grGlobalImgCardEn" ${cfg.broadcast_image_card_enabled?'checked':''}><span class="slider"></span></label></div>
       <button class="btn btn-primary" onclick="saveGreetingConfig()">保存设置</button></div>`;
@@ -3804,7 +3842,7 @@ async function loadGreetingConfig() {
 }
 async function saveGreetingConfig() {
   try {
-    const res = await api('/api/settings/greeting', { method: 'POST', body: JSON.stringify({ morning_enabled: document.getElementById('grMorningEn').checked, morning_time: document.getElementById('grMorningTime').value, afternoon_enabled: document.getElementById('grAfternoonEn').checked, afternoon_time: document.getElementById('grAfternoonTime').value, evening_enabled: document.getElementById('grNightEn').checked, evening_time: document.getElementById('grNightTime').value, image_card_enabled: document.getElementById('grImgCardEn').checked, broadcast_image_card_enabled: document.getElementById('grGlobalImgCardEn').checked }) });
+    const res = await api('/api/settings/greeting', { method: 'POST', body: JSON.stringify({ morning_enabled: document.getElementById('grMorningEn').checked, morning_time: document.getElementById('grMorningTime').value, afternoon_enabled: document.getElementById('grAfternoonEn').checked, afternoon_time: document.getElementById('grAfternoonTime').value, evening_enabled: document.getElementById('grNightEn').checked, evening_time: document.getElementById('grNightTime').value, night_enabled: document.getElementById('grMidnightEn').checked, night_time: document.getElementById('grMidnightTime').value, image_card_enabled: document.getElementById('grImgCardEn').checked, broadcast_image_card_enabled: document.getElementById('grGlobalImgCardEn').checked }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadGreetingConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
 }
@@ -4080,6 +4118,73 @@ async function savePersonaConfig() {
     }) });
     if (res.ok) { showToast('✅ 人设已保存', 'success'); loadPersonaConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
+}
+
+// ============ 风格样本审核（Agent G）============
+let _styleScene = '';
+let _styleStatus = '';
+const _sceneLabels = { chat: '聊天', greeting: '问候', engage: '搭讪', faq: 'FAQ', broadcast: '播报' };
+
+async function loadReplyStyleSamples() {
+  try {
+    const qs = new URLSearchParams({ limit: '100' });
+    if (_styleScene) qs.set('scene', _styleScene);
+    if (_styleStatus) qs.set('status', _styleStatus);
+    const d = await api(`/api/quality/reply-style-samples?${qs.toString()}`);
+    const tb = document.getElementById('styleSampleBody');
+    if (!tb) return;
+    const rows = d.data || [];
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="7" class="empty-state"><h3>暂无风格样本</h3></td></tr>';
+      return;
+    }
+    tb.innerHTML = rows.map(s => `
+      <tr>
+        <td>${s.id}</td>
+        <td>${escHtml(s.label || '')}</td>
+        <td style="max-width:360px;word-break:break-all;">${escHtml(s.style_text || '')}</td>
+        <td><span class="badge ${s.status === 'approved' ? 'badge-success' : s.status === 'rejected' ? 'badge-danger' : 'badge-warning'}">${s.status}</span></td>
+        <td>${s.enabled ? '✅' : '—'}</td>
+        <td>${escHtml(s.created_by || '')}</td>
+        <td style="white-space:nowrap;">
+          ${s.status === 'pending' ? `<button class="btn btn-sm btn-success" onclick="reviewStyleSample(${s.id},'approved',true)">通过+启用</button>
+          <button class="btn btn-sm btn-secondary" onclick="reviewStyleSample(${s.id},'approved',false)">仅通过</button>
+          <button class="btn btn-sm btn-danger" onclick="reviewStyleSample(${s.id},'rejected',false)">拒绝</button>` : ''}
+          ${s.status === 'approved' ? `<button class="btn btn-sm btn-secondary" onclick="toggleStyleSample(${s.id}, ${s.enabled ? 'false' : 'true'})">${s.enabled ? '停用' : '启用'}</button>` : ''}
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) { console.error(e); }
+}
+
+async function reviewStyleSample(id, status, enabled) {
+  try {
+    await api(`/api/quality/reply-style-samples/${id}/review`, {
+      method: 'POST', body: JSON.stringify({ status, enabled })
+    });
+    showToast('✅ 审核完成', 'success');
+    loadReplyStyleSamples();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function toggleStyleSample(id, enabled) {
+  try {
+    await api(`/api/quality/reply-style-samples/${id}/enabled`, {
+      method: 'POST', body: JSON.stringify({ enabled })
+    });
+    showToast(enabled ? '✅ 已启用' : '✅ 已停用', 'success');
+    loadReplyStyleSamples();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function setStyleScene(scene) {
+  _styleScene = scene;
+  loadReplyStyleSamples();
+}
+
+function setStyleStatus(status) {
+  _styleStatus = status;
+  loadReplyStyleSamples();
 }
 
 // ============ 转化漏斗可视化（v5.26.0）============

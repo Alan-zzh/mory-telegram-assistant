@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import functools
 import logging
 import os
@@ -389,12 +390,14 @@ def _draw_cta_button(
         if shadow is not None:
             shadow.close()
 
-    # 渐变按钮底色（上亮下深）：渐变层 + 圆角 mask，避免四角镂空
+    # 渐变按钮底色（上亮下深，可被主题覆盖）：渐变层 + 圆角 mask，避免四角镂空
+    cta_top = _theme_color("cta_top", GREEN_LIGHT)
+    cta_bottom = _theme_color("cta_bottom", GREEN_DARK)
     gradient = Image.new("RGBA", (btn_w, btn_h), (0, 0, 0, 0))
     gd = ImageDraw.Draw(gradient)
     for dy in range(btn_h):
         ratio = dy / btn_h
-        color = _interpolate_color(GREEN_LIGHT, GREEN_DARK, ratio)
+        color = _interpolate_color(cta_top, cta_bottom, ratio)
         gd.line([(0, dy), (btn_w, dy)], fill=color, width=1)
     mask = Image.new("L", (btn_w, btn_h), 0)
     try:
@@ -462,8 +465,8 @@ def _draw_title_area(
         )
         draw.text((tag_x + 12, tag_y + 7), date_text, font=f_date, fill=GOLD_DARK)
 
-    # 主标题
-    draw.text((margin, y), title, font=f_title, fill=GREEN_DARK)
+    # 主标题（主题可选覆盖标题色，缺省墨绿）
+    draw.text((margin, y), title, font=f_title, fill=_theme_color("title", GREEN_DARK))
     title_w, title_h = ts(draw, title, f_title)
 
     y += title_h + 14
@@ -495,12 +498,13 @@ def _draw_section_divider(
     """绘制精致分隔线：金色短线 + 中心菱形。"""
     center = width // 2
     line_y = y + 8
+    divider_color = _theme_color("divider", GOLD)
     # 左右短线
-    draw.line([(margin + 60, line_y), (center - 16, line_y)], fill=GOLD, width=2)
-    draw.line([(center + 16, line_y), (width - margin - 60, line_y)], fill=GOLD, width=2)
+    draw.line([(margin + 60, line_y), (center - 16, line_y)], fill=divider_color, width=2)
+    draw.line([(center + 16, line_y), (width - margin - 60, line_y)], fill=divider_color, width=2)
     # 中心菱形
     diamond = [(center, line_y - 5), (center + 5, line_y), (center, line_y + 5), (center - 5, line_y)]
-    draw.polygon(diamond, fill=GOLD)
+    draw.polygon(diamond, fill=divider_color)
     return y + 24
 
 
@@ -544,9 +548,9 @@ def draw_block_two_column(
     right_h = header_h + max(len(right_items), 1) * line_h + 24
     box_h = max(left_h, right_h, min_h)
 
-    # 宜栏
+    # 宜栏（区块底色可被主题覆盖）
     draw_rounded_rect_with_shadow(img, draw, (lx, y, lx + col_w, y + box_h),
-                                  DEFAULT_RADIUS, GREEN_BG)
+                                  DEFAULT_RADIUS, _theme_color("block_bg", GREEN_BG))
     draw.text((lx + 22, y + 18), left_label, font=f_section, fill=GREEN)
     draw.line([(lx + 22, y + 50), (lx + col_w - 22, y + 50)], fill=GREEN, width=2)
     yy = y + 68
@@ -667,7 +671,7 @@ def draw_insight_card(
         img, draw,
         (margin, y, width - margin, y + i_h),
         radius=14,
-        fill=GREEN_BG,
+        fill=_theme_color("block_bg", GREEN_BG),
         shadow_color=(0, 0, 0, 18),
         shadow_offset=2,
         shadow_blur=6,
@@ -763,7 +767,7 @@ def draw_footer_lines(
         img, draw,
         (box_x, y, box_x + box_w, y + box_h),
         radius=12,
-        fill=GOLD_BG,
+        fill=_theme_color("block_bg", GOLD_BG),
         shadow_color=(0, 0, 0, 12),
         shadow_offset=1,
         shadow_blur=4,
@@ -838,6 +842,9 @@ def draw_card(
     opts = options or {}
     margin = opts.get("margin", DEFAULT_MARGIN)
 
+    # 主题为可选覆盖：注入后本次绘制内的标题/区块/分隔线/CTA 配色随之变化，缺省保持墨绿米白
+    theme_token = _THEME_CTX.set(THEMES.get(str(opts.get("theme", "") or "")))
+    background_path = opts.get("background_path")
     tmp: Optional[Image.Image] = None
     img: Optional[Image.Image] = None
     try:
@@ -851,6 +858,21 @@ def draw_card(
         blocks = payload.get("blocks", []) or []
         for block in blocks:
             y = _render_block_safe(tmp, tmp_draw, block, y, width, margin)
+
+        tarot_cards = payload.get("tarot_cards")
+        if tarot_cards:
+            try:
+                y = draw_tarot_cards(tmp, tmp_draw, tarot_cards, 0, y, width, margin)
+            except Exception as exc:
+                _logger.warning("skip tarot_cards(tmp): %s", exc)
+                y += 160
+
+        if payload.get("hexagram_lines"):
+            try:
+                y = draw_iching_hexagram(tmp, tmp_draw, payload, 0, y, width, margin)
+            except Exception as exc:
+                _logger.warning("skip hexagram(tmp): %s", exc)
+                y += 160
 
         insight = str(payload.get("insight", "") or "")
         if insight:
@@ -897,6 +919,9 @@ def draw_card(
         img = Image.new("RGB", (width, height), BG_TOP)
         draw = ImageDraw.Draw(img)
         _draw_gradient_background(img)
+        # 可选外部背景图半透明叠加（缺失/损坏时静默跳过，不影响出图）
+        if background_path:
+            _compose_background(img, background_path, width, height)
         _draw_cloud_pattern(draw, width, height)
         _draw_top_bar(draw, width)
 
@@ -912,6 +937,20 @@ def draw_card(
 
         for block in blocks:
             y = _render_block_safe(img, draw, block, y, width, margin)
+
+        if tarot_cards:
+            try:
+                y = draw_tarot_cards(img, draw, tarot_cards, 0, y, width, margin)
+            except Exception as exc:
+                _logger.warning("skip tarot_cards: %s", exc)
+                y += 160
+
+        if payload.get("hexagram_lines"):
+            try:
+                y = draw_iching_hexagram(img, draw, payload, 0, y, width, margin)
+            except Exception as exc:
+                _logger.warning("skip hexagram: %s", exc)
+                y += 160
 
         if insight:
             try:
@@ -978,6 +1017,7 @@ def draw_card(
         }
         return out, info
     finally:
+        _THEME_CTX.reset(theme_token)
         if tmp is not None:
             tmp.close()
         if img is not None:
@@ -990,11 +1030,13 @@ def build_broadcast_image_card(
     config: dict = None,
     min_height: int = 1000,
     cta_text: str = "",
+    options: dict = None,
 ) -> str | None:
     """通用图片卡生成入口，返回本地 PNG 路径；失败返回 None。
 
     cache_key 用于构造文件名，建议包含类型与日期，避免冲突。
     cta_text 由调用方传入（与真实按钮一致）；为空时图片卡不绘制按钮，避免无入口场景出现假按钮。
+    options 透传给 draw_card（如 resolve_theme_options 返回的 theme / background_path）。
 
     缓存策略：cache_key 含日期时同日幂等。文件已存在且 mtime 距今 <24h 时
     直接复用（省去重复绘制）；否则重新绘制，先写 .tmp 再 os.replace 原子替换，
@@ -1021,7 +1063,9 @@ def build_broadcast_image_card(
 
         # 先写 .tmp 再原子替换，避免并发绘制时读到半张图（draw_card 内部逻辑不动）
         tmp_path = out_path + ".tmp"
-        _, info = draw_card(payload, out=tmp_path, cta=final_cta, min_height=min_height)
+        _, info = draw_card(
+            payload, out=tmp_path, cta=final_cta, min_height=min_height, options=options or {},
+        )
         os.replace(tmp_path, out_path)
         logger = None
         try:
@@ -1039,3 +1083,280 @@ def build_broadcast_image_card(
         except Exception:
             pass
         return None
+
+
+# ── 时段主题系统（可选覆盖，缺省保持墨绿米白配色） ──
+# draw_card(options={"theme": "morning"|"afternoon"|"evening"|"night"}) 时
+# 覆盖标题色/区块底色/分隔线色/CTA 按钮渐变色；不传 theme 时全部回落到上方常量配色。
+THEMES = {
+    "morning": {
+        "label": "暖金晨光",
+        "title": (168, 116, 50),
+        "block_bg": (250, 242, 226),
+        "divider": (216, 178, 108),
+        "cta_top": (222, 184, 120),
+        "cta_bottom": (158, 116, 62),
+    },
+    "afternoon": {
+        "label": "青绿生息",
+        "title": (38, 110, 92),
+        "block_bg": (228, 242, 234),
+        "divider": (150, 190, 165),
+        "cta_top": (92, 160, 136),
+        "cta_bottom": (38, 92, 74),
+    },
+    "evening": {
+        "label": "靛蓝暮色",
+        "title": (52, 66, 118),
+        "block_bg": (232, 234, 246),
+        "divider": (150, 160, 205),
+        "cta_top": (110, 122, 190),
+        "cta_bottom": (48, 56, 108),
+    },
+    "night": {
+        "label": "深空蓝",
+        "title": (46, 70, 130),
+        "block_bg": (228, 234, 246),
+        "divider": (140, 160, 215),
+        "cta_top": (80, 105, 175),
+        "cta_bottom": (28, 44, 96),
+    },
+}
+
+# 当前绘制上下文内生效的主题（contextvar 隔离并发调用，避免互相串色）
+_THEME_CTX: contextvars.ContextVar = contextvars.ContextVar("broadcast_theme", default=None)
+
+
+def _theme_color(key: str, default: Tuple[int, int, int]) -> Tuple[int, int, int]:
+    """取当前主题配色键；未启用主题时返回默认色，保持现有墨绿米白视觉。"""
+    theme = _THEME_CTX.get()
+    if theme and key in theme:
+        return theme[key]
+    return default
+
+
+def _compose_background(
+    img: Image.Image,
+    path: str,
+    width: int,
+    height: int,
+    opacity: float = 0.65,
+) -> None:
+    """把外部背景图缩放到卡片尺寸、半透明叠加到渐变背景之上。
+
+    背景图缺失/损坏/格式异常一律 logger.warning 后跳过，绝不影响出图。
+    不做自动素材加载：只有 draw_card(options={"background_path": ...}) 显式传入才生效。
+    """
+    bg: Optional[Image.Image] = None
+    try:
+        if not path:
+            return
+        if not os.path.isfile(path):
+            _logger.warning("背景图不存在，已跳过: %s", path)
+            return
+        bg = Image.open(path)
+        bg = bg.convert("RGBA").resize((width, height), Image.LANCZOS)
+        alpha = bg.getchannel("A").point(lambda a: int(a * opacity))
+        bg.putalpha(alpha)
+        img.paste(bg, (0, 0), bg)
+    except Exception as exc:
+        _logger.warning("背景图合成失败，已跳过: %s", exc)
+    finally:
+        if bg is not None:
+            bg.close()
+
+
+def draw_tarot_cards(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    cards: List[Tuple[str, str, str, str]],
+    x: int,
+    y: int,
+    width: int,
+    margin: int,
+) -> int:
+    """绘制竖版塔罗牌面卡组，返回新的 y。
+
+    cards 每项为 (role, 牌名, 正逆位, 关键词)，最多绘制 4 张；
+    墨绿/金色系 + 投影，正逆位用红/金区分。
+    """
+    cards = [c for c in (cards or []) if c and c[1]][:4]
+    if not cards:
+        return y
+
+    f_role = font(16, "hei")
+    f_name = font(26, "kai")
+    f_pos = font(16, "hei")
+    f_key = font(15, "hei")
+
+    n = len(cards)
+    gap = 14
+    card_w = (width - 2 * margin - (n - 1) * gap) // n
+    card_h = 248
+    box_y = y + 4
+
+    for i, (role, name, position, keywords) in enumerate(cards):
+        cx = margin + i * (card_w + gap)
+        # 牌面：投影 + 圆角矩形 + 金色描边
+        draw_rounded_rect_with_shadow(
+            img, draw,
+            (cx, box_y, cx + card_w, box_y + card_h),
+            radius=DEFAULT_RADIUS,
+            fill=_theme_color("block_bg", GREEN_BG),
+            shadow_color=(0, 0, 0, 30),
+            shadow_offset=3,
+            shadow_blur=7,
+        )
+        draw.rounded_rectangle(
+            [(cx + 6, box_y + 6), (cx + card_w - 6, box_y + card_h - 6)],
+            radius=DEFAULT_RADIUS - 4,
+            fill=None,
+            outline=GOLD,
+            width=1,
+        )
+        # 顶部 role 标签
+        if role:
+            rw, rh = ts(draw, str(role), f_role)
+            tag_w = rw + 20
+            tag_h = rh + 10
+            tag_x = cx + (card_w - tag_w) // 2
+            draw.rounded_rectangle(
+                [(tag_x, box_y + 16), (tag_x + tag_w, box_y + 16 + tag_h)],
+                radius=9,
+                fill=GOLD_BG,
+            )
+            draw.text((tag_x + 10, box_y + 21), str(role), font=f_role, fill=GOLD_DARK)
+        # 牌名
+        name = str(name)
+        nw, nh = ts(draw, name, f_name)
+        draw.text(
+            (cx + (card_w - nw) // 2, box_y + 54),
+            name, font=f_name,
+            fill=_theme_color("title", GREEN_DARK),
+        )
+        # 正逆位
+        pos_text = str(position or "")
+        if pos_text:
+            pw, _ = ts(draw, pos_text, f_pos)
+            pos_color = RED if "逆" in pos_text else GOLD_DARK
+            draw.text((cx + (card_w - pw) // 2, box_y + 96), pos_text, font=f_pos, fill=pos_color)
+        # 分隔细线
+        line_y = box_y + 128
+        draw.line([(cx + 14, line_y), (cx + card_w - 14, line_y)], fill=GREEN_LINE, width=1)
+        # 关键词（换行居中）
+        kw_text = str(keywords or "")
+        max_w = card_w - 24
+        key_lines = wrap_text(draw, kw_text, f_key, max_w)
+        ky = line_y + 12
+        for ln in key_lines[:4]:
+            lw, _ = ts(draw, ln, f_key)
+            draw.text((cx + (card_w - lw) // 2, ky), ln, font=f_key, fill=INK_SOFT)
+            ky += 24
+
+    return box_y + card_h + 26
+
+
+def draw_iching_hexagram(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    payload: dict,
+    x: int,
+    y: int,
+    width: int,
+    margin: int,
+) -> int:
+    """绘制易经六爻示意装饰图，返回新的 y。
+
+    payload.hexagram_lines：6 个 1/0，自下而上（1=初爻）；阳爻实线、阴爻两段虚线。
+    payload.moving_line：1-6 动爻序号，动爻金色加粗并标注。
+    爻线为稳定 seed 生成的装饰性视觉，不要求与真实卦象一致。
+    """
+    lines = payload.get("hexagram_lines") or []
+    if not lines:
+        return y
+    moving = int(payload.get("moving_line") or 0)
+
+    f_head = font(24, "kai")
+    f_mark = font(18, "kai")
+
+    box_x, box_y = margin, y + 4
+    box_w = width - 2 * margin
+    line_len = min(box_w - 210, 320)
+    row_h = 34
+    pad_top = 48
+    box_h = pad_top + 6 * row_h + 26
+
+    draw_rounded_rect_with_shadow(
+        img, draw,
+        (box_x, box_y, box_x + box_w, box_y + box_h),
+        radius=DEFAULT_RADIUS,
+        fill=_theme_color("block_bg", GREEN_BG),
+        shadow_color=(0, 0, 0, 20),
+        shadow_offset=2,
+        shadow_blur=6,
+    )
+    draw.text((box_x + 16, box_y + 8), "六爻示意", font=f_head,
+              fill=_theme_color("title", GREEN_DARK))
+
+    center_x = width // 2
+    for i in range(6):
+        if i >= len(lines):
+            break
+        row = 5 - i
+        yy = box_y + pad_top + row * row_h + row_h // 2
+        is_moving = moving == i + 1
+        color = GOLD_DARK if is_moving else GREEN
+        thick = 16 if is_moving else 12
+        half = line_len // 2
+        if int(lines[i]) == 1:
+            draw.rounded_rectangle(
+                [(center_x - half, yy - thick // 2), (center_x + half, yy + thick // 2)],
+                radius=thick // 2,
+                fill=color,
+            )
+        else:
+            seg = int(half * 0.4)
+            draw.rounded_rectangle(
+                [(center_x - half, yy - thick // 2), (center_x - half + seg, yy + thick // 2)],
+                radius=thick // 2,
+                fill=color,
+            )
+            draw.rounded_rectangle(
+                [(center_x + half - seg, yy - thick // 2), (center_x + half, yy + thick // 2)],
+                radius=thick // 2,
+                fill=color,
+            )
+        if is_moving:
+            draw.text((center_x + half + 14, yy - 15), "动", font=f_mark, fill=GOLD_DARK)
+
+    return box_y + box_h + 26
+
+
+# ── 视觉主题接线（v5.38.26）──────────────────────────────────────────────────
+# 生产调用方（问候/玄学/定点播报）通过 resolve_theme_options 拿到主题 options：
+# - BROADCAST_THEME_ENABLED=true 时启用时段主题色；
+# - assets/broadcast/bg_{period}.png 素材存在时附带背景合成路径（素材缺失静默跳过）。
+_BROADCAST_ASSET_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets", "broadcast",
+)
+
+
+def resolve_theme_options(config: dict = None, period: str = "") -> dict:
+    """按配置与时段返回图片卡主题 options（theme 色 + 可选背景素材）。
+
+    返回空 dict 时绘制层保持默认墨绿米白；素材文件不存在时只启用主题色、不挂背景。
+    """
+    cfg = config or {}
+    if not bool(cfg.get("BROADCAST_THEME_ENABLED", True)):
+        return {}
+    period = str(period or "").lower()
+    if period not in THEMES:
+        return {}
+    opts = {"theme": period}
+    for ext in (".png", ".jpg", ".jpeg"):
+        bg = os.path.join(_BROADCAST_ASSET_DIR, f"bg_{period}{ext}")
+        if os.path.isfile(bg):
+            opts["background_path"] = bg
+            break
+    return opts

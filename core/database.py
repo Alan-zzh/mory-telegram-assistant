@@ -1415,6 +1415,7 @@ class DB:
             c.execute("CREATE INDEX IF NOT EXISTS idx_quality_scores_evaluated_at ON interaction_quality_scores(evaluated_at)")
 
             # 人工审核的风格样本：不保存原始用户事件，也绝不自动改写提示词。
+            # [Agent G] 增加 scene 分组列：chat/greeting/engage/faq/broadcast
             c.execute("""CREATE TABLE IF NOT EXISTS reply_style_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 label TEXT NOT NULL DEFAULT '',
@@ -1425,9 +1426,13 @@ class DB:
                 reviewed_by TEXT NOT NULL DEFAULT '',
                 review_note TEXT NOT NULL DEFAULT '',
                 created_at INTEGER NOT NULL,
-                reviewed_at INTEGER NOT NULL DEFAULT 0
+                reviewed_at INTEGER NOT NULL DEFAULT 0,
+                scene TEXT NOT NULL DEFAULT 'chat'
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_reply_style_samples_active ON reply_style_samples(status, enabled, reviewed_at)")
+            # [Agent G] 兼容旧库：已存在的表缺 scene 列时幂等补列（配合 0005 迁移）
+            self._safe_add_column(c, "reply_style_samples", "scene", "TEXT NOT NULL DEFAULT 'chat'")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_reply_style_samples_scene ON reply_style_samples(scene)")
 
             # ── [阶段3-E] RBAC 权限变更审批流表 ──────────────────
             # 记录每次权限变更申请的完整生命周期：申请/审批/拒绝/取消

@@ -1095,62 +1095,6 @@ def _send_and_track(rm, chat_id, text, user_msg_id=0, parse_mode=None, disable_w
         return None
 
 
-def _send_greeting(rm, chat_id, text, category: str = "greeting"):
-    """[Trae CN v5.12.0] 发送早安/午安/晚安问候，支持"发新删旧"链式互删
-
-    行为：
-    1. 读取 BROADCAST_AUTO_DELETE.greeting_chain_delete 配置
-    2. 若开启，查询本群上一条 category="greeting" 的消息 → 删除
-       - 发午安时自动删早安；发晚安时自动删午安
-    3. 发送新问候，入库 broadcast_tracking（category=greeting）
-    4. 24H TTL兜底删除（依赖 _schedule_auto_delete）
-
-    Args:
-        rm: ResourceManager 实例
-        chat_id: 群ID
-        text: 消息文本
-        category: 类别（统一用 "greeting" 实现互删，不分早/午/晚）
-
-    Returns:
-        Message对象 或 None
-    """
-    auto_cfg = get_broadcast_auto_delete_config(rm.config)
-
-    # [Trae CN] 链式互删：发新问候前先删上一条同类问候
-    if auto_cfg["greeting_chain_delete"] and hasattr(rm, "db") and rm.db is not None:
-        try:
-            last = rm.db.get_last_broadcast(chat_id, "greeting")
-            if last and last[0]:
-                last_msg_id, last_ts = last
-                # 安全删除（不抛错）
-                try:
-                    if can_delete_message(rm.config):
-                        with rm.locked('bot'):
-                            rm.bot.delete_message(chat_id, last_msg_id)
-                        logger.info(
-                            f"🗑️ 链式互删：已删除上一条问候 [{category}] msg={last_msg_id} ts={last_ts}"
-                        )
-                except Exception as del_err:
-                    logger.debug(f"链式互删失败（继续发新问候）: {del_err}")
-                # 不论成功失败，都清掉旧追踪
-                try:
-                    rm.db.delete_broadcast(chat_id, "greeting")
-                except Exception as e:
-                    logger.debug(f"删除旧问候播报追踪失败: {e}")
-        except Exception as e:
-            logger.debug(f"链式互删查询失败（继续发新问候）: {e}")
-
-    # 发送新问候
-    sent = _send_and_track(rm, chat_id, text, parse_mode="HTML")
-    if sent and hasattr(sent, 'message_id') and hasattr(rm, "db") and rm.db is not None:
-        try:
-            rm.db.track_broadcast(chat_id, "greeting", sent.message_id)
-            logger.info(f"📌 问候追踪入库：chat={chat_id} category={category} msg={sent.message_id}")
-        except Exception as e:
-            logger.debug(f"问候追踪入库失败: {e}")
-    return sent
-
-
 def _schedule_auto_delete(rm, chat_id, message_id, delay_seconds):
     """定时消息24小时无人理自动删除（使用APScheduler调度，避免线程泄漏）"""
     try:
@@ -1352,11 +1296,6 @@ def _job_mystic_evening(rm):
 
 # ── 动态随机话术池（去AI化，与ai_engine人设系统一致）── [TRAE SOLO CN]
 
-# 旧调度路径复用统一话术池，普通问候不导私聊、不附带成交 CTA。
-_MORNING_SUFFIXES = MessageTemplates.MORNING_SUFFIXES
-_AFTERNOON_SUFFIXES = MessageTemplates.AFTERNOON_SUFFIXES
-_EVENING_SUFFIXES = MessageTemplates.EVENING_SUFFIXES
-
 _WAKEUP_FALLBACKS = MessageTemplates.WAKEUP_FALLBACKS
 
 _REACTIVATE_FALLBACKS = MessageTemplates.REACTIVATE_FALLBACKS
@@ -1376,37 +1315,6 @@ _TAROT_HOOKS = MessageTemplates.TAROT_HOOKS
 
 _LEAK_PREFIXES = MessageTemplates.LEAK_PREFIXES
 _WEEKLY_INTERACTION_QUESTIONS = MessageTemplates.WEEKLY_INTERACTION_QUESTIONS
-
-
-def _get_dynamic_suffix(time_period: str) -> str:
-    """根据时段获取随机播报尾语 [TRAE SOLO CN]"""
-    if time_period == "morning":
-        return random.choice(_MORNING_SUFFIXES)
-    elif time_period == "afternoon":
-        return random.choice(_AFTERNOON_SUFFIXES)
-    elif time_period == "evening":
-        return random.choice(_EVENING_SUFFIXES)
-    return random.choice(_MORNING_SUFFIXES + _AFTERNOON_SUFFIXES + _EVENING_SUFFIXES)
-
-
-# AI主体已包含功能引导时的关键词检测 [TRAE SOLO CN]
-_SUFFIX_TRIGGER_KEYWORDS = MessageTemplates.SUFFIX_TRIGGER_KEYWORDS
-
-
-def _needs_suffix(msg: str) -> bool:
-    """判断AI生成的播报是否已包含功能引导，需要补suffix则返回True [TRAE SOLO CN]"""
-    return not any(kw in msg for kw in _SUFFIX_TRIGGER_KEYWORDS)
-
-
-_GREETING_FALLBACK_POOL = MessageTemplates.GREETING_FALLBACK_POOL
-
-
-def _get_fallback_greeting(period: str) -> str:
-    """从话术池随机选择问候语（AI 生成失败时的兜底）。"""
-    pool = _GREETING_FALLBACK_POOL.get(period, [])
-    if pool:
-        return random.choice(pool)
-    return "你好"
 
 
 def _get_all_group_ids(config) -> list:
@@ -1430,147 +1338,6 @@ def _get_all_group_ids(config) -> list:
     except Exception as e:
         logger.debug(f"获取MANAGED_GROUPS失败: {e}")
     return group_ids
-
-
-def _job_greeting_morning(rm):
-    """早安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删
-
-    【v5.31.0 修复】task_key 加日期后缀避免 task_log 残留导致永久死锁；
-    多群遍历（GROUP_ID + MANAGED_GROUPS）支持多联排
-    """
-    try:
-        if not _is_greeting_enabled(rm.config, "morning"):
-            logger.info("[Codex] 早安问候未开启，跳过")
-            return
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with TaskTransactionManager(f"greeting_morning_{today}", rm.db, resources=None, min_interval_sec=7200) as tx:
-            if not tx.claimed:
-                return
-            group_ids = _get_all_group_ids(rm.config)
-            if not group_ids:
-                _record_abort("greeting_morning", "无管理群")
-                raise _TaskAbort("无管理群")
-
-            seed = random.randint(100000, 999999)
-            msg = rm.ai.ask("早安", mode="morning", seed=seed)
-            msg = _sanitize_automatic_broadcast_text(msg)
-            if not msg:
-                # AI 生成失败，使用话术池兜底
-                msg = _get_fallback_greeting("morning")
-                logger.info("☀️ 早安使用话术池兜底")
-            msg = msg.replace("\n", " ").strip()[:250]
-            suffix = _get_dynamic_suffix("morning") if _needs_suffix(msg) else ""
-            rich = build_rich_greeting_html("morning", msg, suffix.strip())
-            sent_any = False
-            for gid in group_ids:
-                try:
-                    sent = _send_greeting(rm, gid, rich, "greeting_morning")
-                    if sent:
-                        sent_any = True
-                        logger.info(f"☀️ 早安已发送到群 {gid}：{msg}")
-                except Exception as e:
-                    logger.warning(f"☀️ 早安发送到群 {gid} 失败: {e}")
-            if not sent_any:
-                raise _TaskAbort("早安全部群发送失败")
-    except _TaskAbort as e:
-        _handle_task_abort("greeting_morning", e)
-    except Exception as e:
-        logger.error(f"早安问候失败：{e}")
-        _retry_task(rm, _job_greeting_morning, "greeting_morning")
-
-
-def _job_greeting_afternoon(rm):
-    """午安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删
-
-    【v5.31.0 修复】task_key 加日期后缀避免 task_log 残留导致永久死锁；
-    多群遍历（GROUP_ID + MANAGED_GROUPS）支持多联排
-    """
-    try:
-        if not _is_greeting_enabled(rm.config, "afternoon"):
-            logger.info("[Codex] 午安问候未开启，跳过")
-            return
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with TaskTransactionManager(f"greeting_afternoon_{today}", rm.db, resources=None, min_interval_sec=7200) as tx:
-            if not tx.claimed:
-                return
-            group_ids = _get_all_group_ids(rm.config)
-            if not group_ids:
-                _record_abort("greeting_afternoon", "无管理群")
-                raise _TaskAbort("无管理群")
-
-            seed = random.randint(100000, 999999)
-            msg = rm.ai.ask("午安", mode="afternoon", seed=seed)
-            msg = _sanitize_automatic_broadcast_text(msg)
-            if not msg:
-                # AI 生成失败，使用话术池兜底
-                msg = _get_fallback_greeting("afternoon")
-                logger.info("🍃 午安使用话术池兜底")
-            msg = msg.replace("\n", " ").strip()[:250]
-            suffix = _get_dynamic_suffix("afternoon") if _needs_suffix(msg) else ""
-            rich = build_rich_greeting_html("afternoon", msg, suffix.strip())
-            sent_any = False
-            for gid in group_ids:
-                try:
-                    sent = _send_greeting(rm, gid, rich, "greeting_afternoon")
-                    if sent:
-                        sent_any = True
-                        logger.info(f"🍃 午安已发送到群 {gid}：{msg}")
-                except Exception as e:
-                    logger.warning(f"🍃 午安发送到群 {gid} 失败: {e}")
-            if not sent_any:
-                raise _TaskAbort("午安全部群发送失败")
-    except _TaskAbort as e:
-        _handle_task_abort("greeting_afternoon", e)
-    except Exception as e:
-        logger.error(f"午安问候失败：{e}")
-        _retry_task(rm, _job_greeting_afternoon, "greeting_afternoon")
-
-
-def _job_greeting_evening(rm):
-    """晚安问候 [Codex] 时间和开关读取配置，使用 _send_greeting 支持链式互删
-
-    【v5.31.0 修复】task_key 加日期后缀避免 task_log 残留导致永久死锁；
-    多群遍历（GROUP_ID + MANAGED_GROUPS）支持多联排
-    """
-    try:
-        if not _is_greeting_enabled(rm.config, "evening"):
-            logger.info("[Codex] 晚安问候未开启，跳过")
-            return
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
-        with TaskTransactionManager(f"greeting_evening_{today}", rm.db, resources=None, min_interval_sec=7200) as tx:
-            if not tx.claimed:
-                return
-            group_ids = _get_all_group_ids(rm.config)
-            if not group_ids:
-                _record_abort("greeting_evening", "无管理群")
-                raise _TaskAbort("无管理群")
-
-            seed = random.randint(100000, 999999)
-            msg = rm.ai.ask("晚安", mode="evening", seed=seed)
-            msg = _sanitize_automatic_broadcast_text(msg)
-            if not msg:
-                # AI 生成失败，使用话术池兜底
-                msg = _get_fallback_greeting("evening")
-                logger.info("🌙 晚安使用话术池兜底")
-            msg = msg.replace("\n", " ").strip()[:250]
-            suffix = _get_dynamic_suffix("evening") if _needs_suffix(msg) else ""
-            rich = build_rich_greeting_html("evening", msg, suffix.strip())
-            sent_any = False
-            for gid in group_ids:
-                try:
-                    sent = _send_greeting(rm, gid, rich, "greeting_evening")
-                    if sent:
-                        sent_any = True
-                        logger.info(f"🌙 晚安已发送到群 {gid}：{msg}")
-                except Exception as e:
-                    logger.warning(f"🌙 晚安发送到群 {gid} 失败: {e}")
-            if not sent_any:
-                raise _TaskAbort("晚安全部群发送失败")
-    except _TaskAbort as e:
-        _handle_task_abort("greeting_evening", e)
-    except Exception as e:
-        logger.error(f"晚安问候失败：{e}")
-        _retry_task(rm, _job_greeting_evening, "greeting_evening")
 
 
 def _generate_wakeup_message(uid: int, now: datetime, rm) -> str:

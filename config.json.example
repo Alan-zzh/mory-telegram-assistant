@@ -559,6 +559,8 @@
     "afternoon_time": "12:35",
     "evening_enabled": false,
     "evening_time": "23:05",
+    "night_enabled": false,
+    "night_time": "22:30",
     "image_card_enabled": false
   },
   "NEWS_BROADCAST_CONFIG": {
@@ -571,7 +573,7 @@
   },
   "MYSTIC_BROADCAST_CONFIG": {
     "enabled": false,
-    "cta_enabled": false,
+    "cta_enabled": true,
     "private_reply_enabled": false,
     "image_card_enabled": false,
     "morning_time": "09:05",
@@ -784,6 +786,7 @@
     "max_prompt_samples": 3,
     "raw_event_text": false
   },
+  "REPLY_EVOLUTION_DISTILL_ENABLED": false,
   "BROADCAST_AUTO_DELETE": {
     "orphan_seconds": 30,
     "greeting_chain_delete": true

@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import random
 import re
-from typing import Any, Callable, Dict, List, Tuple
+import zlib
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.broadcast_image_card import GOLD_BG, GREEN, GREEN_BG, RED, RED_BG
 
@@ -111,6 +114,28 @@ def build_almanac_image_payload(mystic_payload: dict) -> dict:
     return payload
 
 
+def _parse_tarot_card_line(value: str) -> Tuple[str, str, str]:
+    """解析塔罗牌行值 "0 · 愚者 · 正位｜启程 / 自由" → (牌名, 正逆位, 关键词)。
+
+    容错纯牌名行（如 ("过去", "愚者")）：只取牌名，正逆位/关键词留空。
+    """
+    value = str(value or "")
+    head, _, tail = value.partition("｜")
+    parts = [p.strip() for p in head.split("·") if p.strip()]
+    name, position = "", ""
+    for p in parts:
+        if p.isdigit():
+            continue
+        if p in ("正位", "逆位"):
+            position = p
+        elif not name:
+            name = p
+        elif not position:
+            position = p
+    keywords = tail.strip().replace("/", " / ")
+    return name, position, keywords
+
+
 def build_tarot_image_payload(mystic_payload: dict) -> dict:
     """把塔罗 mystic payload 转成图片卡 payload。"""
     raw_blocks = mystic_payload.get("blocks", []) or []
@@ -118,7 +143,27 @@ def build_tarot_image_payload(mystic_payload: dict) -> dict:
         raw_blocks,
         lambda heading, _lines: "key_value" if "能量" in heading else "list",
     )
-    return _build_base_mystic_payload(mystic_payload, "午间 · 三张塔罗", blocks)
+    extra: Dict[str, Any] = {}
+    # 从第一个区块的牌阵行解析牌面卡 (role, 牌名, 正逆位, 关键词)，最多 4 张
+    first_lines = (raw_blocks[0].get("lines") or []) if raw_blocks else []
+    tarot_cards: List[Tuple[str, str, str, str]] = []
+    for role, value in first_lines[:4]:
+        name, position, keywords = _parse_tarot_card_line(str(value))
+        if name:
+            tarot_cards.append((str(role), name, position, keywords))
+    if tarot_cards:
+        extra["tarot_cards"] = tarot_cards
+    return _build_base_mystic_payload(mystic_payload, "午间 · 三张塔罗", blocks, extra)
+
+
+def _extract_moving_line(raw_blocks: List[dict]) -> Optional[int]:
+    """从易经 blocks 中解析动爻序号（"九三 · 第3爻变" → 3），无动爻返回 None。"""
+    for block in raw_blocks or []:
+        for label, value in block.get("lines", []) or []:
+            m = re.search(r"第\s*([1-6])\s*爻", f"{label}{value}")
+            if m:
+                return int(m.group(1))
+    return None
 
 
 def build_iching_image_payload(mystic_payload: dict) -> dict:
@@ -128,7 +173,16 @@ def build_iching_image_payload(mystic_payload: dict) -> dict:
         raw_blocks,
         lambda heading, _lines: "key_value" if "卦意" in heading else "list",
     )
-    return _build_base_mystic_payload(mystic_payload, "晚间 · 易经一卦", blocks)
+    extra: Dict[str, Any] = {}
+    # 六爻装饰图：mystic 层没有原始爻线，用稳定 seed（标题+meta）生成装饰性爻线，
+    # 保证同日内多次生成一致；不要求与真实卦象一致，由 draw 层按 moving_line 标注动爻。
+    moving_line = _extract_moving_line(raw_blocks)
+    if moving_line is not None:
+        seed_src = f"{mystic_payload.get('title', '')}|{mystic_payload.get('meta', '')}"
+        rng = random.Random(zlib.crc32(seed_src.encode("utf-8")))
+        extra["hexagram_lines"] = [rng.randint(0, 1) for _ in range(6)]
+        extra["moving_line"] = moving_line
+    return _build_base_mystic_payload(mystic_payload, "晚间 · 易经一卦", blocks, extra)
 
 
 def build_mystic_image_payload(mystic_payload: dict) -> dict:
@@ -178,8 +232,36 @@ def build_news_image_payload(news_content: str, time_desc: str = "午间") -> di
     }
 
 
+# 走心小贴士池：只写共情，不写天气/行程/动作；不鸡汤、不万能安慰、不教导，
+# 不替群友断言身体和情绪，延续 Mory 清醒温柔带小傲娇的调性（与 GREETING_STYLE_BAN 对齐）
+_GREETING_TIPS = [
+    "新的一天，按自己的节奏来就行，不用跟谁比。",
+    "忙归忙，记得吃口热乎的，别的都不急。",
+    "今天想偷懒就偷懒，又没人给你打分。",
+    "有话想说就来群里冒个泡，我在呢。",
+    "遇到卡壳的事先放一放，说不定待会儿就有思路了。",
+    "不用事事都有回应，先把自己在乎的顾好。",
+    "累了就早点休息，明天的事明天再说。",
+    "不用每天都元气满满，按自己舒服的来。",
+    "想安静就安静，想聊就聊，群里随你节奏。",
+]
+
+
+_CST = timezone(timedelta(hours=8))
+
+
+def _beijing_now() -> datetime:
+    """北京时间当前时刻。"""
+    return datetime.now(_CST)
+
+
 def build_greeting_image_payload(period: str, body: str, badge: str = "") -> dict:
-    """把问候语转成图片卡 payload。"""
+    """把问候语转成图片卡 payload。
+
+    高度说明：图片高度由调用方（greeting_task 的 build_broadcast_image_card min_height）
+    控制，本函数只负责内容；若需要内容驱动高度，请在调用处把 min_height 调低到
+    内容实际高度附近（当前生产 min_height=900 对新增的"今日一句"区块依然合适）。
+    """
     period_labels = {
         "morning": ("早安", "新的一天"),
         "afternoon": ("午安", "歇一分钟"),
@@ -188,11 +270,22 @@ def build_greeting_image_payload(period: str, body: str, badge: str = "") -> dic
     }
     title, default_badge = period_labels.get(period, ("问候", ""))
 
+    # 北京时间当日 "X月X日 周X"，真实日期不虚构
+    now = _beijing_now()
+    weekday = "一二三四五六日"[now.weekday()]
+    date_text = f"{now.month}月{now.day}日 周{weekday}"
+
+    # 走心小贴士：按北京日期做日级随机，同日稳定、跨日自然换新
+    tip = random.Random(now.strftime("%Y%m%d")).choice(_GREETING_TIPS)
+
     return {
         "title": title,
         "kicker": badge or default_badge,
         "meta": "",
-        "blocks": [],
+        "date_text": date_text,
+        "blocks": [
+            {"heading": "今日一句", "lines": [("", tip)], "style": "list"},
+        ],
         "insight": body,
     }
 

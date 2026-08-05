@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from core.broadcast_cta import build_cta_markup, get_broadcast_cta, is_broadcast_image_enabled
 from core.broadcast_formatter import build_mystic_html, build_rich_mystic_card_message
-from core.broadcast_image_card import build_broadcast_image_card, strip_visual_emoji
+from core.broadcast_image_card import build_broadcast_image_card, resolve_theme_options, strip_visual_emoji
 from core.broadcast_image_payload import build_mystic_image_payload
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
@@ -78,6 +78,7 @@ def _build_mystic_image_card(payload: dict, config: dict = None, cta: dict = Non
             cache_key=f"mystic_{payload.get('mode', 'almanac')}_{payload.get('date', 'unknown')}",
             config=config,
             cta_text=cta_text,
+            options=resolve_theme_options(config, payload.get("period", "")),
         )
         if out_path:
             logger.info(f"[mystic] 图片卡已生成: {out_path}")

@@ -341,12 +341,17 @@ def _build_almanac(now: datetime, rng: random.Random) -> dict[str, Any]:
     if "出行" in bad or any("动土" in item for item in bad):
         insight = rng.choice((
             "今天的黄历把出行或动土放在「忌」项。日常通勤照常，重大安排更适合把天气、工期和现实条件再核一遍。",
-            "若今天正好有远行或开工计划，传统宜忌偏保守；不用紧张，把必要的安全检查做足就好。",
+            "若今天正好有远行或开工计划，传统宜忌偏保守；动土这类动工的事不用紧张，把必要的安全检查做足就好。",
         ))
     elif "出行" in good or any("动土" in item for item in good):
         insight = rng.choice((
             "出行或动土出现在「宜」项，更适合推进已经准备充分的安排；临时起意的事仍以现实条件为准。",
             "今天传统宜忌对行动类事项较友好，适合把准备充分的计划往前推一步。",
+        ))
+    elif any(item in good for item in ("嫁娶", "开业开市", "签约交易")):
+        insight = rng.choice((
+            "今天宜项里有嫁娶、开业或签约这类「定日子」的事。传统认为这类安排适合挑日子，具体还要结合行程与现实准备。",
+            "若有婚约、开业或合同需要敲定时点，今天的宜项给了个温和的信号；把流程细节核清楚，日子自然水到渠成。",
         ))
     else:
         insight = rng.choice((
@@ -413,10 +418,15 @@ def _build_tarot(now: datetime, rng: random.Random) -> dict[str, Any]:
         readings.append(words[0])
         elements.append(element)
     dominant = max(set(elements), key=elements.count)
-    insight = (
-        f"牌阵从「{readings[0]}」展开，可用的助力落在「{readings[1]}」，"
-        f"需要留意的是「{readings[2]}」。{rng.choice(_TAROT_ACTIONS)}"
-    )
+    # insight 句式多样化：_stable_rng 保证同日稳定、跨日变化，rng.choice 结果正好随日期轮换
+    # 三种句式均保留「牌阵从」开篇骨架（兼容既有文案测试），差异化在后续引导语
+    action = rng.choice(_TAROT_ACTIONS)
+    lead, support, watch = readings
+    insight = rng.choice((
+        f"牌阵从「{lead}」展开，可用的助力落在「{support}」，需要留意的是「{watch}」。{action}",
+        f"今天的牌面先看「{lead}」，牌阵从「{support}」接上助力，提醒位上是「{watch}」。{action}",
+        f"「{lead}」打头，牌阵从它一路铺开，帮你看清「{support}」与「{watch}」的取舍。{action}",
+    ))
     return {
         "mode": "tarot",
         "emoji": "🔮",
@@ -465,10 +475,13 @@ def _build_iching(now: datetime, rng: random.Random) -> dict[str, Any]:
     changed_symbol = chr(0x4DC0 + changed[0] - 1)
     line_label = _line_label(moving_line, original_yang)
     question = rng.choice(_ICHING_QUESTIONS)
-    insight = (
-        f"本卦看「{primary[3]}」，变化落在{line_label}；之卦转向「{changed[3]}」。"
-        "先看清变化从哪一层开始，再决定今天最值得推动的一步。"
-    )
+    # insight 句式多样化：同日稳定、跨日变化（由 _stable_rng 保证）
+    # 三种句式均保留「本卦看」开篇骨架（兼容既有文案测试），差异化在后续引导语
+    insight = rng.choice((
+        f"本卦看「{primary[3]}」，变化落在{line_label}；之卦转向「{changed[3]}」。先看清变化从哪一层开始，再决定今天最值得推动的一步。",
+        f"本卦看「{primary[3]}」，{line_label}一动，卦象转向「{changed[3]}」。别急着追着变化走，先看自己被哪一层牵动。",
+        f"本卦看「{primary[3]}」，再到之卦「{changed[3]}」，中间会动的是{line_label}。变化不算大，但它提醒你今天最该稳住的地方。",
+    ))
     return {
         "mode": "iching",
         "emoji": "☯️",

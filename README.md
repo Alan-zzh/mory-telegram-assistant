@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.25**：项目规则治理——AGENTS.md 重写为触发式文档更新 + 部署门禁三选一（防忘部署/防文档膨胀）；`scripts/doc_consistency.py` 扩展版本五源一致/行数/条目长度机械断言；新增 `scripts/check_deploy_ready.py` 一键部署就绪检查；CHANGELOG 归档压缩（v5.38.15 及之前 → `docs/archive/`）。
+当前版本 **v5.38.26**：播报体验升级+对话人设治理——图片卡主题化与问候卡改版（含 night 档）；CTA 按北京日期每日确定性轮换、玄学（黄历/塔罗/易经）与定点群播报三入口（`@moryselect` 预览 / `@Moryfansbot` 私聊 / `@MorychannelBot` 自助下单）且每卡单入口；搭讪承接/FAQ 人设升级；风格样本按场景分组投喂（每组 ≤3、总数 ≤12）与自动蒸馏默认关闭；死代码清理。
 
 ## 快速开始
 
@@ -126,8 +126,8 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `runtime/audit-reports/`：审计报告与完工报告。
 - `config/`：systemd 服务文件。
 
-## 客观指标（2026-08-04 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 135，core 业务 `.py` = 81，`_job_` = 36，DB 表 = 173，Dashboard 路由 = 164，消息分发函数 = 9，model_router 映射 = 10。
+## 客观指标（2026-08-06 实测，`scripts/doc_consistency.py` 全过）
+modules 业务 `.py` = 135，core 业务 `.py` = 81，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 164，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）

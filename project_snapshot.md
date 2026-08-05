@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-05。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-06。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -36,20 +36,20 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录 |
 
 ## 当前版本
-v5.38.25（2026-08-05）· 规则治理（AGENTS 触发式更新 + 部署门禁 + 机械断言）已增量部署 VPS
+v5.38.26（2026-08-06）· 播报体验升级+人设治理（图片卡主题化/问候卡改版含 night 档、CTA 每日轮换+玄学三入口、搭讪/FAQ 人设升级、风格样本分组投喂+蒸馏关闭、死代码清理）
 
-生产状态：**v5.38.25 已增量部署 VPS 并验收通过**（生产版本 v5.38.25、双服务 active、health 200、启动后零异常日志、心跳任务正常运行、check_deploy_ready.py 已同步）。本地验收：全仓 pytest 873 passed/7 skipped、doc_consistency 全项通过（含版本五源/行数/条目长度断言）、check_deploy_ready 部署就绪 ✅。上一版 v5.38.24 已完成 VPS 增量部署并验收通过（双服务 active、health 200）。
+生产状态：**v5.38.25 已增量部署 VPS 并验收通过**（生产版本 v5.38.25、双服务 active、health 200、启动后零异常日志、心跳任务正常运行、check_deploy_ready.py 已同步）。v5.38.26 本地验收：播报/人设专项 pytest 24 passed + 全仓回归 873 passed/7 skipped、doc_consistency 全项通过（含版本五源/行数/条目长度断言）。
 
 ## 最近 3 条大事
-1. 2026-08-05 v5.38.25 规则治理：AGENTS 触发式更新+部署三选一；doc_consistency 版本/行数/条目断言；check_deploy_ready 新增；CHANGELOG 归档压缩。
-2. 2026-08-05 v5.38.24 遗留闭环：mypy 清零入 CI；sanitize 自愈修复；文档治理+垃圾清理。
-3. 2026-08-05 v5.38.23 Harness 六项修复：CI 门禁断链、状态残留、.venv 重建、request_id。
+1. 2026-08-06 v5.38.26：图片卡主题化+问候卡改版、CTA 每日轮换+玄学三入口。
+2. 2026-08-06 v5.38.26：搭讪/FAQ 人设升级；风格样本分组投喂+蒸馏关闭。
+3. 2026-08-06 v5.38.26：死代码清理；pytest 24+回归 873/7 全过。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=135
 core_py=81
-job_count=36
+job_count=33
 db_tables=173
 dashboard_routes=164
 dispatch_funcs=9

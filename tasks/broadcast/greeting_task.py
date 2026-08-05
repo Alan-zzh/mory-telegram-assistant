@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 
 from core.broadcast_cta import build_cta_markup, get_broadcast_cta, is_broadcast_image_enabled
 from core.broadcast_formatter import build_rich_greeting_html, build_rich_greeting_card_message
-from core.broadcast_image_card import build_broadcast_image_card
+from core.broadcast_image_card import build_broadcast_image_card, resolve_theme_options
 from core.broadcast_image_payload import build_greeting_image_payload
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
@@ -56,6 +56,22 @@ class GreetingTask(BaseTask):
                 "hour": hour,
                 "minute": minute,
                 "params": {"period": period},
+                "options": {
+                    "max_instances": 1,
+                    "coalesce": True,
+                    "misfire_grace_time": 60,
+                },
+            })
+        # 深夜问候（night）：新功能默认关闭，仅配置开启时调度
+        greeting_cfg = self.rm.config.get("GREETING_CONFIG", {}) if isinstance(self.rm.config, dict) else {}
+        if bool(greeting_cfg.get("night_enabled", False)):
+            hour, minute = get_greeting_time(self.rm.config, "night")
+            schedule_list.append({
+                "job_id": "greeting_night",
+                "trigger": "cron",
+                "hour": hour,
+                "minute": minute,
+                "params": {"period": "night"},
                 "options": {
                     "max_instances": 1,
                     "coalesce": True,
@@ -122,6 +138,7 @@ class GreetingTask(BaseTask):
                             config=cfg,
                             min_height=900,
                             cta_text=cta.get("image_label", ""),
+                            options=resolve_theme_options(cfg, period),
                         ) or ""
                         if image_path and not os.path.isfile(image_path):
                             image_path = ""

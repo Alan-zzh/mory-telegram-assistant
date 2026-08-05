@@ -35,11 +35,14 @@ def _get_greeting_config(cfg: dict) -> dict:
     raw.setdefault("afternoon_time", _normalize_hhmm(cfg.get("AFTERNOON_GREETING_HOUR", "12:35"), "12:35"))
     raw.setdefault("evening_enabled", bool(cfg.get("AUTO_GOODNIGHT", cfg.get("AUTO_GREETING", False))))
     raw.setdefault("evening_time", _normalize_hhmm(cfg.get("GOODNIGHT_HOUR", "23:05"), "23:05"))
+    raw.setdefault("night_enabled", False)  # 深夜问候：新功能默认关闭
+    raw.setdefault("night_time", _normalize_hhmm("22:30", "22:30"))
     raw.setdefault("image_card_enabled", False)
     raw["broadcast_image_card_enabled"] = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
     raw["morning_time"] = _normalize_hhmm(raw.get("morning_time"), "08:05")
     raw["afternoon_time"] = _normalize_hhmm(raw.get("afternoon_time"), "12:35")
     raw["evening_time"] = _normalize_hhmm(raw.get("evening_time"), "23:05")
+    raw["night_time"] = _normalize_hhmm(raw.get("night_time"), "22:30")
     return raw
 
 
@@ -812,6 +815,10 @@ def api_settings_greeting():
         greeting_cfg["evening_enabled"] = bool(data["evening_enabled"])
     if "evening_time" in data:
         greeting_cfg["evening_time"] = _normalize_hhmm(data["evening_time"], greeting_cfg["evening_time"])
+    if "night_enabled" in data:
+        greeting_cfg["night_enabled"] = bool(data["night_enabled"])
+    if "night_time" in data:
+        greeting_cfg["night_time"] = _normalize_hhmm(data["night_time"], greeting_cfg["night_time"])
     if "image_card_enabled" in data:
         greeting_cfg["image_card_enabled"] = bool(data["image_card_enabled"])
     if "broadcast_image_card_enabled" in data:

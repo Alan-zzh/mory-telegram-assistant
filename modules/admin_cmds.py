@@ -53,6 +53,7 @@ from core.admin_utils import get_admin_ids, is_admin_user
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from core.broadcast_formatter import build_broadcast_html, looks_like_html
 from core.logging_util import get_logger
@@ -195,6 +196,177 @@ def _handle_view_knowledge(bot, mory_bot, m, config: dict, db, ai, save_config_f
     knowledge = config.get("KNOWLEDGE", "(空)")
     bot.send_message(chat_id, f"📚 当前知识库：\n\n{knowledge}")
     logger.info("👁️ 管理员查看了知识库")
+    return True
+
+
+# ════════════════════════════════════════════════════════════════════════
+# [Agent G] 风格样本投喂（人工审核工作流，只生成 pending，不自动启用）
+# ════════════════════════════════════════════════════════════════════════
+
+_SCENE_ALIASES = {
+    "chat": "chat", "普通": "chat", "闲聊": "chat", "聊天": "chat",
+    "greeting": "greeting", "问候": "greeting", "早安": "greeting",
+    "engage": "engage", "搭讪": "engage", "承接": "engage",
+    "faq": "faq", "问答": "faq",
+    "broadcast": "broadcast", "播报": "broadcast",
+}
+
+_FEED_HELP = (
+    "📖 风格样本投喂格式：\n"
+    "1️⃣ 单条：/投喂 场景:chat 用户话术 | Mory回复\n"
+    "2️⃣ 批量：/投喂文件 场景:chat（发送 .txt 文档或直接粘贴文本）\n"
+    "批量文本约定（二选一）：\n"
+    "  A. 每两行一组：第一行用户话术，第二行 Mory回复，依次配对\n"
+    "  B. 前缀配对：user:用户话术 / mory:Mory回复 交替出现\n"
+    "场景可选：chat/greeting/engage/faq/broadcast（默认 chat），中文别名也可（普通/问候/搭讪/问答/播报）\n"
+    "所有样本都只进入待审队列，由管理员在 Dashboard 审核后才能启用。"
+)
+
+
+def _parse_feed_scene(text: str) -> tuple[str, str]:
+    """从命令文本提取 场景:xxx；返回 (scene, error)。显式场景非法时 error 非空。"""
+    m = re.search(r"场景\s*[:：]\s*([^\s|，,。]+)", text)
+    if not m:
+        return "chat", ""
+    raw = m.group(1).strip().lower()
+    scene = _SCENE_ALIASES.get(raw)
+    if scene is None:
+        return "", f"场景「{raw}」不支持，可选：chat / greeting / engage / faq / broadcast"
+    return scene, ""
+
+
+def _parse_and_feed_pairs(db, content: str, scene: str, created_by: str) -> tuple[int, int, list[str]]:
+    """解析投喂文本并批量入库。返回 (成功数, 孤儿行数, 被拒错误列表)。"""
+    from core.db_repos.reply_evolution_repo import validate_feed_sample_safety
+
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    pairs: list[tuple[str, str]] = []
+    orphan = 0
+    pending_user: tuple[int, str] | None = None
+    for i, line in enumerate(lines):
+        m_user = re.match(r"^(?:user|用户)\s*[:：]\s*(.+)$", line, re.IGNORECASE)
+        m_mory = re.match(r"^(?:mory|mory回复)\s*[:：]\s*(.+)$", line, re.IGNORECASE)
+        if m_user:
+            if pending_user is not None:
+                orphan += 1  # 前一个 user 未等到配对，成为孤儿行
+            pending_user = (i, m_user.group(1).strip())
+        elif m_mory:
+            if pending_user is not None:
+                pairs.append((pending_user[1], m_mory.group(1).strip()))
+                pending_user = None
+            else:
+                orphan += 1  # 孤儿 mory
+        else:
+            # 无前缀：按每两行一组配对
+            if pending_user is None:
+                pending_user = (i, line)
+            else:
+                pairs.append((pending_user[1], line))
+                pending_user = None
+    if pending_user is not None:
+        orphan += 1
+
+    ok_count = 0
+    error_msgs: list[str] = []
+    for user_text, mory_text in pairs:
+        vok, reason = validate_feed_sample_safety(user_text, mory_text)
+        if not vok:
+            error_msgs.append(f"「{user_text[:20]}」：{reason}")
+            continue
+        combined = f"用户：{user_text}\nMory：{mory_text}"
+        result = db.create_reply_style_sample(
+            combined,
+            label=f"投喂-{scene}",
+            created_by=created_by,
+            scene=scene,
+            user_text=user_text,
+            mory_text=mory_text,
+        )
+        if result.get("ok"):
+            ok_count += 1
+        else:
+            error_msgs.append(f"「{user_text[:20]}」：{result.get('error', '保存失败')}")
+    return ok_count, orphan, error_msgs
+
+
+def _handle_feed_style_sample(bot, mory_bot, m, config: dict, db, ai, save_config_fn, msg: str) -> bool:
+    """处理 /投喂 场景:chat 用户话术 | Mory回复 命令（单条投喂，只生成 pending）。"""
+    text = msg
+    # 文件批量命令交给 _handle_feed_style_file，避免前缀误抢
+    if text.startswith("/投喂文件") or text.startswith("投喂文件"):
+        return False
+    for prefix in ("/投喂 ", "投喂样本 ", "投喂样本", "/投喂", "投喂 "):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    if not text:
+        mory_bot.reply_and_track(m, _FEED_HELP)
+        return True
+    scene, scene_err = _parse_feed_scene(text)
+    if scene_err:
+        mory_bot.reply_and_track(m, f"⚠️ {scene_err}")
+        return True
+    body = re.sub(r"场景\s*[:：]\s*[^\s|，,。]+", "", text, count=1).strip()
+    if "|" not in body:
+        mory_bot.reply_and_track(m, "⚠️ 格式：/投喂 场景:chat 用户话术 | Mory回复（用 | 分隔两段）")
+        return True
+    user_text, mory_text = body.split("|", 1)
+    user_text = user_text.strip()
+    mory_text = mory_text.strip()
+    combined = f"用户：{user_text}\nMory：{mory_text}"
+    result = db.create_reply_style_sample(
+        combined,
+        label=f"投喂-{scene}",
+        created_by=str(m.from_user.id),
+        scene=scene,
+        user_text=user_text,
+        mory_text=mory_text,
+    )
+    if not result.get("ok"):
+        mory_bot.reply_and_track(m, f"⚠️ 投喂失败：{result.get('error', '未知原因')}")
+        return True
+    mory_bot.reply_and_track(m, f"✅ 已投喂 1 条风格样本（场景：{scene}，待人工审核）。")
+    logger.info(f"🍼 管理员投喂风格样本 scene={scene} id={result.get('id')}")
+    return True
+
+
+def _handle_feed_style_file(bot, mory_bot, m, config: dict, db, ai, save_config_fn, msg: str) -> bool:
+    """处理 /投喂文件 场景:chat：以文档或粘贴文本批量导入风格样本（只生成 pending）。"""
+    text = msg
+    for prefix in ("/投喂文件", "投喂文件"):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    scene, scene_err = _parse_feed_scene(text)
+    if scene_err:
+        mory_bot.reply_and_track(m, f"⚠️ {scene_err}")
+        return True
+    content = ""
+    if getattr(m, "document", None):
+        try:
+            file_info = bot.get_file(m.document.file_id)
+            raw = bot.download_file(file_info.file_path)
+            if not raw:
+                mory_bot.reply_and_track(m, "⚠️ 文件内容为空，请检查文件后重试。")
+                return True
+            content = raw.decode("utf-8", errors="replace")
+        except Exception as exc:
+            logger.warning(f"投喂文件下载失败: {exc}")
+            mory_bot.reply_and_track(m, "⚠️ 文件下载失败，请重试或改用粘贴文本方式。")
+            return True
+    else:
+        content = re.sub(r"^\s*场景\s*[:：]\s*[^\s|，,。]+\s*", "", text)
+    if not content.strip():
+        mory_bot.reply_and_track(m, _FEED_HELP)
+        return True
+    ok_count, orphan_count, error_msgs = _parse_and_feed_pairs(db, content, scene, str(m.from_user.id))
+    reply = f"✅ 批量投喂完成：成功 {ok_count} 条（场景：{scene}，待人工审核）"
+    if orphan_count:
+        reply += f"\n⚠️ 跳过无法配对的孤儿行 {orphan_count} 行"
+    if error_msgs:
+        reply += f"\n⛔ 安全校验拒绝 {len(error_msgs)} 条：" + "\n".join(error_msgs[:3])
+    mory_bot.reply_and_track(m, reply)
+    logger.info(f"🍼 管理员批量投喂风格样本 scene={scene} ok={ok_count} orphan={orphan_count}")
     return True
 
 
@@ -1222,6 +1394,8 @@ _ADMIN_HANDLERS = [
     (lambda msg: msg.startswith("设置人设 "), _handle_set_persona),
     (lambda msg: msg in ("查看人设", "查看设定", "看人设"), _handle_view_persona),
     (lambda msg: msg.startswith("投喂资料 "), _handle_feed_knowledge),
+    (lambda msg: msg.startswith("/投喂文件") or msg.startswith("投喂文件"), _handle_feed_style_file),
+    (lambda msg: msg.startswith("/投喂") or msg.startswith("投喂样本") or msg.startswith("投喂 "), _handle_feed_style_sample),
     (lambda msg: msg in ("查看资料", "查看知识库", "看资料", "看知识库"), _handle_view_knowledge),
     (lambda msg: msg in ("清空资料", "清空知识库", "重置资料"), _handle_clear_knowledge),
     (lambda msg: msg.startswith("设置概率 "), _handle_set_rate),

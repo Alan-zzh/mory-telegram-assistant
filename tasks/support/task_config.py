@@ -30,6 +30,7 @@ def get_greeting_time(config: dict, period: str) -> Tuple[int, int]:
         "morning": (8, 5, "morning_time", "GREETING_HOUR"),
         "afternoon": (12, 35, "afternoon_time", "AFTERNOON_GREETING_HOUR"),
         "evening": (23, 5, "evening_time", "GOODNIGHT_HOUR"),
+        "night": (22, 30, "night_time", None),  # 深夜问候：新功能默认关闭，无 legacy 键
     }
     default_hour, default_minute, time_key, legacy_hour_key = defaults.get(period, defaults["morning"])
     if time_key in cfg:
@@ -46,11 +47,16 @@ def is_greeting_enabled(config: dict, period: str) -> bool:
         "morning": "morning_enabled",
         "afternoon": "afternoon_enabled",
         "evening": "evening_enabled",
+        "night": "night_enabled",
     }
-    if key_map.get(period) in cfg:
-        return bool(cfg.get(key_map[period]))
+    key = key_map.get(period)
+    if key in cfg:
+        return bool(cfg.get(key))
     if period == "evening":
         return bool(config.get("AUTO_GOODNIGHT", config.get("AUTO_GREETING", False)))
+    if period == "night":
+        # 深夜问候是新能力，无 legacy 开关，铁律默认关闭
+        return False
     return bool(config.get("AUTO_GREETING", False))
 
 

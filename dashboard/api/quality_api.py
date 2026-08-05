@@ -12,7 +12,7 @@ from threading import RLock
 
 from flask import Blueprint, request, jsonify, session
 from dashboard.helpers import login_required, admin_required, get_db
-from core.db_repos.reply_evolution_repo import ReplyEvolutionRepo
+from core.db_repos.reply_evolution_repo import ReplyEvolutionRepo, VALID_SCENES
 from core.logging_util import get_logger
 
 logger = get_logger("quality_api")
@@ -54,8 +54,11 @@ def list_reply_style_samples():
     if error:
         return error
     status = (request.args.get("status") or "").strip().lower() or None
+    scene = (request.args.get("scene") or "").strip().lower() or None
+    if scene and scene not in VALID_SCENES:
+        return jsonify({"ok": False, "msg": f"scene 仅支持：{'/'.join(VALID_SCENES)}"}), 400
     limit = min(max(request.args.get("limit", 100, type=int), 1), 200)
-    return jsonify({"ok": True, "data": db.list_reply_style_samples(status=status, limit=limit)})
+    return jsonify({"ok": True, "data": db.list_reply_style_samples(status=status, limit=limit, scene=scene)})
 
 
 @quality_bp.route("/quality/reply-style-samples", methods=["POST"])
@@ -67,10 +70,14 @@ def create_reply_style_sample():
     if error:
         return error
     payload = request.get_json(silent=True) or {}
+    scene = (payload.get("scene") or "chat").strip().lower()
+    if scene not in VALID_SCENES:
+        return jsonify({"ok": False, "msg": f"scene 仅支持：{'/'.join(VALID_SCENES)}"}), 400
     result = db.create_reply_style_sample(
         payload.get("style_text", ""),
         label=payload.get("label", ""),
         created_by=session.get("username", "dashboard"),
+        scene=scene,
     )
     if not result.get("ok"):
         return jsonify({"ok": False, "msg": result.get("error", "创建失败")}), 400

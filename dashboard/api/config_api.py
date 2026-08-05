@@ -30,6 +30,8 @@ ALLOWED_CONFIG_FIELDS = {
     "SPECIAL_AUTO_REPLIES", "PUZZLE_WORD", "SLANG_DICT", "AD_RULES",
     "CHECKIN_CONFIG", "ENABLE_MESSAGE_DELETION",
     "FAQ_TRACKING_ENABLED", "FAQ_AUTO_REPLY_ENABLED", "FAQ_DISTILL_INTERVAL", "FAQ_MIN_FREQUENCY",
+    # [Agent G] 回复演化蒸馏总开关（默认关闭，example 已同步）
+    "REPLY_EVOLUTION_DISTILL_ENABLED",
     # [阶段4 步骤20] 播报相关 + 高频业务键（三处同步补齐，均有 Dashboard UI 修改需求）
     "MYSTIC_BROADCAST_CONFIG",  # 玄学播报（黄历/塔罗/易经）开关与时段，播报设置页可改
     "GREETING_CONFIG",  # 早安/晚安问候播报配置
