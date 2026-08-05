@@ -38,12 +38,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.26（2026-08-06）· 播报体验升级+人设治理（图片卡主题化/问候卡改版含 night 档、CTA 每日轮换+玄学三入口、搭讪/FAQ 人设升级、风格样本分组投喂+蒸馏关闭、死代码清理）
 
-生产状态：**v5.38.25 已增量部署 VPS 并验收通过**（生产版本 v5.38.25、双服务 active、health 200、启动后零异常日志、心跳任务正常运行、check_deploy_ready.py 已同步）。v5.38.26 本地验收：播报/人设专项 pytest 24 passed + 全仓回归 873 passed/7 skipped、doc_consistency 全项通过（含版本五源/行数/条目长度断言）。
+生产状态：**v5.38.26 已增量部署 VPS 并验收通过**（生产版本 v5.38.26、双服务 active、health 200、VPS 素材 assets/broadcast 4 张已上传、玄学 cta_enabled=true 与 BROADCAST_THEME_ENABLED=true 已生效、night 档默认关）。验收证据：pytest 全仓 891 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods/check_deploy_ready 四门禁通过、runtime/verify_prod.py 生产探针 PROD_VERIFY_PASS。
 
 ## 最近 3 条大事
 1. 2026-08-06 v5.38.26：图片卡主题化+问候卡改版、CTA 每日轮换+玄学三入口。
 2. 2026-08-06 v5.38.26：搭讪/FAQ 人设升级；风格样本分组投喂+蒸馏关闭。
-3. 2026-08-06 v5.38.26：死代码清理；pytest 24+回归 873/7 全过。
+3. 2026-08-06 v5.38.26：死代码清理；全仓 891/7 全过；已部署 VPS 验收通过。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
