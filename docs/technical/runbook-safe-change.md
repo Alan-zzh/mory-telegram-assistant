@@ -12,7 +12,3 @@
    - 禁止上传 `mory.db`。
 5. **不动双核心**：不碰 `mory-assistant` / `mory-dashboard` 单元与 `main.py` 入口。
 6. **指标同步**：删模块 / 表 / 路由 / 任务后，更新 `project_snapshot.md` 的 METRICS 块并跑 `doc_consistency.py`。
-
-## 本项目教训（2026-07-07）
-- `config/mory-media-*.service` 是引用不存在 `main.py --media` 参数的坏桩；删除前确认 VPS 上无进程依赖、守护脚本有 `if exists()` 守卫，再删本地 + VPS `systemctl disable` + `rm` + `daemon-reload`。
-- 休眠 media 模式代码（`DASHBOARD_MODE=media` 等）为 env 驱动分支，删 unit 不影响；重构前先 grep 确认全仓引用面。

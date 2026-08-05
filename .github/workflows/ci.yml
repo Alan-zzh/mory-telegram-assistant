@@ -103,11 +103,17 @@ jobs:
           # 新增 Repo 方法必须同步 _REPO_METHOD_MAP/_REPO_ATTR_MAP，漏注册会启动失败
           python scripts/verify_db_methods.py
 
-      # 步骤 7.6：文档一致性验证（AGENTS.md 合入门禁）
+      # 步骤 7.6：文档一致性验证（AGENTS.md 合入门禁，含版本五源/行数/条目长度断言）
       - name: 文档一致性验证（doc_consistency）
         run: |
-          # 根文档数量须与 METRICS 块一致，否则不得合入
+          # 根文档数量须与 METRICS 块一致；版本五源一致；行数与 CHANGELOG 条目长度上限
           python scripts/doc_consistency.py
+
+      # 步骤 7.7：配置三处同步断言（AGENTS.md 改配置必跑门禁）
+      - name: 配置三处同步断言（check_config_sync）
+        run: |
+          # config.json.example ↔ Dashboard ALLOWED_CONFIG_FIELDS 差集断言
+          python scripts/check_config_sync.py
       
       # 步骤 8：上传覆盖率报告（可选）
       - name: 上传覆盖率报告
