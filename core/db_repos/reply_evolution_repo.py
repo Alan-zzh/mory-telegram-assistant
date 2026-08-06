@@ -191,14 +191,14 @@ class ReplyEvolutionRepo:
                 if scene:
                     rows = self.conn.execute(
                         "SELECT id, label, style_text, status, enabled, created_by, reviewed_by, "
-                        "created_at, reviewed_at, review_note FROM reply_style_samples "
+                        "created_at, reviewed_at, review_note, scene FROM reply_style_samples "
                         "WHERE status=? AND scene=? ORDER BY id DESC LIMIT ?",
                         (status, scene, safe_limit),
                     ).fetchall()
                 else:
                     rows = self.conn.execute(
                         "SELECT id, label, style_text, status, enabled, created_by, reviewed_by, "
-                        "created_at, reviewed_at, review_note FROM reply_style_samples "
+                        "created_at, reviewed_at, review_note, scene FROM reply_style_samples "
                         "WHERE status=? ORDER BY id DESC LIMIT ?",
                         (status, safe_limit),
                     ).fetchall()
@@ -206,18 +206,18 @@ class ReplyEvolutionRepo:
                 if scene:
                     rows = self.conn.execute(
                         "SELECT id, label, style_text, status, enabled, created_by, reviewed_by, "
-                        "created_at, reviewed_at, review_note FROM reply_style_samples "
+                        "created_at, reviewed_at, review_note, scene FROM reply_style_samples "
                         "WHERE scene=? ORDER BY id DESC LIMIT ?",
                         (scene, safe_limit),
                     ).fetchall()
                 else:
                     rows = self.conn.execute(
                         "SELECT id, label, style_text, status, enabled, created_by, reviewed_by, "
-                        "created_at, reviewed_at, review_note FROM reply_style_samples "
+                        "created_at, reviewed_at, review_note, scene FROM reply_style_samples "
                         "ORDER BY id DESC LIMIT ?",
                         (safe_limit,),
                     ).fetchall()
-        fields = ("id", "label", "style_text", "status", "enabled", "created_by", "reviewed_by", "created_at", "reviewed_at", "review_note")
+        fields = ("id", "label", "style_text", "status", "enabled", "created_by", "reviewed_by", "created_at", "reviewed_at", "review_note", "scene")
         return [dict(zip(fields, row)) for row in rows]
 
     def review_reply_style_sample(

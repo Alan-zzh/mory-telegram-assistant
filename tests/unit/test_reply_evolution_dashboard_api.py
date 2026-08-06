@@ -67,5 +67,6 @@ def test_reply_style_sample_dashboard_workflow_uses_sqlite_connection(monkeypatc
         "created_at": listed.get_json()["data"][0]["created_at"],
         "reviewed_at": listed.get_json()["data"][0]["reviewed_at"],
         "review_note": "",
+        "scene": "chat",
     }]
     conn.close()
