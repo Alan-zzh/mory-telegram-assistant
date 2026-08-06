@@ -4806,6 +4806,7 @@ async function doLogin() {
   } catch (e) {
       alert('登录失败: ' + (e.message || e));
     }
+}
 </script>
 </body>
 </html>
