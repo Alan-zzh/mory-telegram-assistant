@@ -264,9 +264,12 @@ class ReplyEvolutionRepo:
         return {"ok": True, "enabled": bool(enabled)}
 
     def get_approved_reply_style_samples(self, limit: int = 3, scene: str | None = None) -> list[str]:
-        """运行时唯一读取入口：只返回审核通过且启用的安全样本。
+        """运行时唯一读取入口：只返回审核通过且启用的样本。
 
         scene=None 返回全部场景；scene='x' 只返回该场景分组。
+        安全策略：普通样本须再次通过敏感词校验；管理员显式确认放行的样本
+        （review_note 含「确认放行」或「预设直接启用」）跳过二次校验，
+        避免用户确认的真实业务词/傲娇话术被运行时过滤掉。
         """
         safe_limit = max(1, min(int(limit or 3), 3))
         scene = normalize_scene(scene)
@@ -274,20 +277,24 @@ class ReplyEvolutionRepo:
         with self.lock:
             if scene:
                 rows = self.conn.execute(
-                    "SELECT style_text FROM reply_style_samples "
+                    "SELECT style_text, review_note FROM reply_style_samples "
                     "WHERE status='approved' AND enabled=1 AND scene=? "
                     "ORDER BY reviewed_at DESC, id DESC LIMIT ?",
                     (scene, safe_limit),
                 ).fetchall()
             else:
                 rows = self.conn.execute(
-                    "SELECT style_text FROM reply_style_samples "
+                    "SELECT style_text, review_note FROM reply_style_samples "
                     "WHERE status='approved' AND enabled=1 ORDER BY reviewed_at DESC, id DESC LIMIT ?",
                     (safe_limit,),
                 ).fetchall()
         samples: list[str] = []
         for row in rows:
             text = str(row[0] or "").strip()
+            note = str(row[1] or "")
+            if "确认放行" in note or "预设直接启用" in note:
+                samples.append(text)  # 管理员显式确认，跳过二次敏感词校验
+                continue
             ok, _ = validate_reply_style_sample(text)
             if ok:
                 samples.append(text)
