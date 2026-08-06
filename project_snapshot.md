@@ -38,7 +38,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.29（2026-08-07）· 人设预设全量录入（54 组风格样本 15 方向落库、INPUT_HINTS 启用、社交解锁 2 阶、敏感话题先引导 VIP、FAQ 每周自动提醒）
 
-生产状态：**v5.38.28 已部署验收通过，v5.38.29 录入中**（54 组样本已写入 VPS 生产库 pending、INPUT_HINTS 与 PRICE_LIST 已同步 VPS config、AGENTS 规则 v5.38.29 已修订，待测试门禁后部署）。
+生产状态：**v5.38.29 已部署 VPS 并验收通过**（PROD_VERIFY_PASS：双服务 active、health 200、VPS 版本 v5.38.29；54 组风格样本 pending（chat 29/engage 23/greeting 2）、INPUT_HINTS 4 条、PRICE_LIST 社交解锁 2 阶（89.8/518.5）全部就位；FAQ 高频自动收集每日跑 + 每周一 10:00 人设优化提醒任务已创建）。验收：pytest 908 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods/check_deploy_ready 四门禁全过。
 
 ## 最近 3 条大事
 1. 2026-08-06 v5.38.28：播报视觉修复+文案随机化；已部署验收。
