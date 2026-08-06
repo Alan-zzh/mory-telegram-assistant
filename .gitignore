@@ -67,6 +67,9 @@ assets/
 runtime/cache/
 runtime/demo_*.py
 runtime/demo_*.png
+# 验收/排查过程产物（证据脚本与中间载荷，不提交）
+runtime/wait_*_evidence.py
+runtime/*_payload_b64.txt
 
 # 临时诊断/运维脚本（含硬编码VPS路径/Token/群ID，不提交）
 scripts/vps_*.py
