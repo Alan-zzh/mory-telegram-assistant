@@ -3313,6 +3313,7 @@ function toggleSidebar() {
 async function init() {
   const isAuthenticated = await checkAuth();
   if (isAuthenticated) {
+    await fetchCsrfToken();  // 登录后必须先取 CSRF token，否则所有写操作被 403 拒绝
     renderApp();
     if (_userRole === 'viewer') {
       const style = document.createElement('style');
@@ -4050,17 +4051,32 @@ async function loadPricingConfig() {
     const items = cfg.price_list || {};
     let rows = '';
     for (const [key, val] of Object.entries(items)) {
-      rows += `<tr>
-        <td><input type="text" class="input-field price-name" data-key="${key}" value="${key}" style="width:120px"></td>
-        <td><input type="number" class="input-field price-val" data-key="${key}" value="${typeof val === 'object' ? (val.price || 0) : val}" style="width:100px"></td>
-        <td><button class="btn btn-sm btn-danger" onclick="deletePriceItem('${key}')">删除</button></td>
-      </tr>`;
+      const v = (typeof val === 'object' && val !== null) ? val : {};
+      const hasMulti = ('monthly' in v) || ('quarterly' in v) || ('yearly' in v);
+      if (hasMulti) {
+        // 多档商品（如至臻精选 149.9/月 + 349.9/季）：只读展示，避免误改结构
+        const parts = [];
+        if (v.monthly) parts.push(`${v.monthly}/月`);
+        if (v.quarterly) parts.push(`${v.quarterly}/季`);
+        if (v.yearly) parts.push(`${v.yearly}/年`);
+        rows += `<tr>
+          <td>${key}</td>
+          <td>${parts.join('，')}</td>
+          <td><span class="tag">多档</span></td>
+        </tr>`;
+      } else {
+        rows += `<tr>
+          <td><input type="text" class="input-field price-name" data-key="${key}" value="${key}" style="width:120px"></td>
+          <td><input type="number" step="0.1" class="input-field price-val" data-key="${key}" value="${v.price ?? val ?? 0}" style="width:100px"></td>
+          <td><button class="btn btn-sm btn-danger" onclick="deletePriceItem('${key}')">删除</button></td>
+        </tr>`;
+      }
     }
     el.innerHTML = `<div class="card"><h3>定价管理</h3>
       <div class="table-wrapper"><table><thead><tr><th>商品名称</th><th>价格</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div style="margin-top:12px;display:flex;gap:8px;">
         <input type="text" id="newPriceName" placeholder="新商品名" class="input-field" style="width:120px">
-        <input type="number" id="newPriceVal" placeholder="价格" class="input-field" style="width:100px">
+        <input type="number" step="0.1" id="newPriceVal" placeholder="价格" class="input-field" style="width:100px">
         <button class="btn btn-sm btn-secondary" onclick="addPriceItem()">添加</button>
       </div>
       <button class="btn btn-primary" style="margin-top:12px" onclick="savePricingConfig()">保存全部</button></div>`;
@@ -4087,8 +4103,18 @@ async function savePricingConfig() {
     document.querySelectorAll('input.price-name').forEach(el => {
       const key = el.value.trim();
       const valEl = document.querySelector(`input.price-val[data-key="${el.dataset.key}"]`);
-      if (key && valEl) items[key] = parseInt(valEl.value) || 0;
+      if (key && valEl) items[key] = parseFloat(valEl.value) || 0;
     });
+    // 多档商品（monthly/quarterly/yearly）不在可编辑列表里，从原配置原样带回，避免丢失结构
+    const d0 = await api('/api/settings/pricing');
+    const orig = (d0.ok && d0.data && d0.data.price_list) ? d0.data.price_list : {};
+    for (const [k, v] of Object.entries(orig)) {
+      if (typeof v === 'object' && v !== null && ('monthly' in v || 'quarterly' in v || 'yearly' in v)) {
+        if (!(k in items)) items[k] = v;
+      } else if (typeof v === 'object' && v !== null && k in items && typeof items[k] === 'number') {
+        items[k] = { price: items[k], note: v.note || '' };  // 保留单价格商品的 note
+      }
+    }
     const res = await api('/api/settings/pricing', { method: 'POST', body: JSON.stringify({ price_list: items }) });
     if (res.ok) { showToast('✅ 定价已保存', 'success'); loadPricingConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }
   } catch (e) { showToast('❌ 保存失败: ' + e.message, 'error'); }
