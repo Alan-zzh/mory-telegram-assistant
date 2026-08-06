@@ -6,11 +6,12 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.38.27"
-CONFIG_VERSION = "5.38.27"
+VERSION = "v5.38.28"
+CONFIG_VERSION = "5.38.28"
 __version__ = VERSION
 
 VERSION_HISTORY = [
+    "v5.38.28: [播报视觉修复] 深色主题播报卡可读性根治：evening/night 改为夜色底+深色区块+近白字，消除旧浅底配浅字导致的正文/标题看不清；区块标题、宜忌栏、塔罗牌面、六爻、分隔线、边框、印章区全部随主题换材质；背景图上不再叠云纹；小字号（14/15/16px）统一上提到 ≥16px；塔罗牌名修复罗马数字/emoji 混入导致印出半截名字；傍晚问候标题由「晚安」改「暮安」（晚安留给深夜档，图片卡与 HTML 降级链同步）；问候卡「今日一句/一言」改每次发送重新随机（cache_key 带内容指纹不复用旧图），玄学点评文案独立随机源并扩池（牌面日期稳定承诺不变）；新增视觉基准 docs/technical/broadcast-card-design-philosophy.md。验收：pytest 908 passed、doc_consistency 全项通过、样卡人工复核与随机化冒烟（3 次发送 3 套图文）。",
     "v5.38.27: [播报体验二轮] 问候卡内容丰富化（新增 Mory 独白/正能量/名言「一言」区块，按北京日期稳定随机）；深色主题可读性（night/evening 浅色正文 + 背景压暗遮罩）；图片卡移除图上按钮字样（真实按钮改由 InlineKeyboard 附加）；玄学与定点播报按钮随机组合（1-2 个真实按钮：预览/私聊/自助下单按日期确定性组合，问候仅预览、新闻无入口）；vote_kick 事务暗病修复（sqlite3 autocommit 下 commit 报错）。验收：pytest 900+ passed、doc_consistency 全项通过。",
     "v5.38.26: [播报体验升级+人设治理] 播报图片卡主题化与问候卡改版（含 night 档，问候任务迁入 BaseTask）；CTA 按北京日期每日确定性轮换，玄学（黄历/塔罗/易经）与定点群播报三入口（@moryselect 预览 / @Moryfansbot 私聊 / @MorychannelBot 自助下单）且每卡单入口；搭讪承接/FAQ 人设升级；风格样本按场景分组投喂+人工审核进 Prompt、自动蒸馏默认关闭；死代码清理。验收：pytest 891 passed/7 skipped、四门禁通过、已部署 VPS。",
     "v5.38.24: [遗留闭环] mypy 10 项债务清零并纳入 CI；sanitize 自愈降温度+约束注入修复生效（回归断言载荷）；get_pool_info 补测试；文档治理与垃圾清理。验收：pytest 863 passed、verify_db 199/199。",

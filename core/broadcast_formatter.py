@@ -39,7 +39,8 @@ import re
 PERIOD_STYLES = {
     "morning":   {"emoji": "☀️", "greeting": "早"},
     "afternoon": {"emoji": "🍵", "greeting": "午安"},
-    "evening":   {"emoji": "🌆", "greeting": "晚"},
+    # 傍晚档标题与图片卡一致用"暮安"，晚安留给 night 档
+    "evening":   {"emoji": "🌆", "greeting": "暮安"},
     "night":     {"emoji": "🌙", "greeting": "晚安"},
 }
 

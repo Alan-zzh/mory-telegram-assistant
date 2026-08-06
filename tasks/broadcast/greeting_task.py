@@ -4,6 +4,7 @@ tasks/broadcast/greeting_task.py - 早/午/晚安问候任务
 负责按配置时间向管理群发送早安、午安、晚安问候，支持链式互删。
 """
 
+import hashlib
 import os
 import random
 from datetime import datetime, timedelta, timezone
@@ -131,7 +132,16 @@ class GreetingTask(BaseTask):
                         badge = str(greeting_cfg.get(f"{period}_badge", "") or "").strip()
                         image_payload = build_greeting_image_payload(period, msg, badge=badge)
                         _cst = timezone(timedelta(hours=8))
-                        cache_key = f"greeting_{period}_{datetime.now(_cst).strftime('%Y%m%d')}"
+                        # cache_key 带内容指纹：贴士/一言/正文每次发送重新随机，
+                        # 文本变了必须重绘，不能被同日缓存短路复用旧图
+                        _tips = {
+                            b["heading"]: str(b["lines"][0][1])
+                            for b in image_payload.get("blocks", [])
+                            if b.get("lines")
+                        }
+                        _fp_src = "|".join([msg, _tips.get("今日一句", ""), _tips.get("一言", "")])
+                        _fp = hashlib.md5(_fp_src.encode("utf-8")).hexdigest()[:8]
+                        cache_key = f"greeting_{period}_{datetime.now(_cst).strftime('%Y%m%d')}_{_fp}"
                         image_path = build_broadcast_image_card(
                             image_payload,
                             cache_key=cache_key,

@@ -111,7 +111,7 @@ def test_news_payload_builds_numbered_list_and_insight():
 @pytest.mark.parametrize("period,expected_title", [
     ("morning", "早安"),
     ("afternoon", "午安"),
-    ("evening", "晚安"),
+    ("evening", "暮安"),
     ("night", "晚安"),
 ])
 def test_greeting_payload_maps_period_to_title(period, expected_title):

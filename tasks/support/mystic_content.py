@@ -99,6 +99,11 @@ _TAROT_ACTIONS = (
     "今天的牌阵更重视信息核对；直觉可以听，结论要慢一点下。",
     "先写下最在意的一个问题，再看三张牌分别提醒了什么。",
     "若三张牌的信息互相拉扯，先看主牌，再用提醒牌做风险检查。",
+    "牌面只是参考坐标，真要动手前，还是先把现实条件摆清楚。",
+    "今天的节奏更适合稳步推进，不必为了赶进度把提醒项略过。",
+    "把三张牌当成一次梳理：方向、资源、盲区各归各位再行动。",
+    "提醒牌不是否定，只是把容易忽略的地方先摆在台面上。",
+    "牌阵给的是观察角度，落地与否还是看你手里的实际筹码。",
 )
 
 _TRIGRAM_LINES = {
@@ -186,6 +191,9 @@ _ICHING_QUESTIONS = (
     "这件事应当继续推进，还是先补足条件再动？",
     "当前看到的是结果，还是过程中的一次转折？",
     "哪些是可以主动调整的，哪些更适合顺势观察？",
+    "今晚最值得先放下的，是哪一个没必要的负担？",
+    "若把期待降一格，第一步会不会更好走？",
+    "现在缺的是信息，还是下决心的时机？",
 )
 
 _PRIVATE_COMMAND_MODES = {
@@ -224,6 +232,17 @@ _PRIVATE_REQUEST_MARKERS = (
 
 def _stable_rng(date_key: str, period: str, mode: str) -> random.Random:
     raw = f"{date_key}|{period}|{mode}|mory-mystic-v3".encode("utf-8")
+    seed = int.from_bytes(hashlib.sha256(raw).digest()[:8], "big")
+    return random.Random(seed)
+
+
+def _insight_rng(date_key: str, period: str, mode: str) -> random.Random:
+    """点评文案独立随机源：与牌面/卦象流完全隔离。
+
+    扩容文案池或调整句式不会影响牌面的日期稳定序列（卡面声明了
+    按日期稳定起卦）；同一天点评仍保持一致，跨日自然轮换。
+    """
+    raw = f"{date_key}|{period}|{mode}|mory-insight-v1".encode("utf-8")
     seed = int.from_bytes(hashlib.sha256(raw).digest()[:8], "big")
     return random.Random(seed)
 
@@ -321,7 +340,9 @@ def _format_next_term(lunar: Any) -> str:
     return f"{lunar.nextSolarTerm} · {month}月{day}日"
 
 
-def _build_almanac(now: datetime, rng: random.Random) -> dict[str, Any]:
+def _build_almanac(now: datetime, rng: random.Random, ins_rng: random.Random | None = None) -> dict[str, Any]:
+    # 点评优先走独立随机流；私聊路径未传时回落牌面流（行为不变）
+    ins = ins_rng if ins_rng is not None else rng
     try:
         import cnlunar
     except ImportError as exc:
@@ -339,24 +360,32 @@ def _build_almanac(now: datetime, rng: random.Random) -> dict[str, Any]:
     )
 
     if "出行" in bad or any("动土" in item for item in bad):
-        insight = rng.choice((
+        insight = ins.choice((
             "今天的黄历把出行或动土放在「忌」项。日常通勤照常，重大安排更适合把天气、工期和现实条件再核一遍。",
             "若今天正好有远行或开工计划，传统宜忌偏保守；动土这类动工的事不用紧张，把必要的安全检查做足就好。",
+            "动土和出行今天落在忌项，传统视角偏保守；真要推进，把备选方案和天气路况先确认一遍更稳。",
+            "黄历把动土、出行标了「忌」，当作一次提醒就好：流程照走，关键环节多留一点余量。",
         ))
     elif "出行" in good or any("动土" in item for item in good):
-        insight = rng.choice((
+        insight = ins.choice((
             "出行或动土出现在「宜」项，更适合推进已经准备充分的安排；临时起意的事仍以现实条件为准。",
             "今天传统宜忌对行动类事项较友好，适合把准备充分的计划往前推一步。",
+            "动土、出行都在宜项里，传统视角算友好；动工前把人员和材料核对齐，顺势推进即可。",
+            "宜项里出现出行或动土，适合把拖着的安排拿出来过一遍；真正动手前还是看现实条件。",
         ))
     elif any(item in good for item in ("嫁娶", "开业开市", "签约交易")):
-        insight = rng.choice((
+        insight = ins.choice((
             "今天宜项里有嫁娶、开业或签约这类「定日子」的事。传统认为这类安排适合挑日子，具体还要结合行程与现实准备。",
             "若有婚约、开业或合同需要敲定时点，今天的宜项给了个温和的信号；把流程细节核清楚，日子自然水到渠成。",
+            "嫁娶、开业、签约这类大事落在宜项，传统上算个好兆头；细节仍要逐项确认，别只图日子好看。",
+            "今天宜项偏向「定事」：嫁娶、开业、签约都可以往前推；关键条款和流程，还是白纸黑字最稳。",
         ))
     else:
-        insight = rng.choice((
+        insight = ins.choice((
             "今天更适合按既定节奏推进，不必为了“求吉”临时打乱成熟安排。",
             "黄历给的是传统择日视角，真正落地仍要把天气、交通、合同与个人状态一起考虑。",
+            "今天的宜忌没有特别突出的项，按原计划走就好；想微调节奏，先从最顺手的事开始。",
+            "宜忌平平的一天，传统没什么特别叮嘱；把手头的事做扎实，比挑日子更要紧。",
         ))
 
     directions = _extract_lucky_directions(lunar)
@@ -403,7 +432,9 @@ def _build_almanac(now: datetime, rng: random.Random) -> dict[str, Any]:
     }
 
 
-def _build_tarot(now: datetime, rng: random.Random) -> dict[str, Any]:
+def _build_tarot(now: datetime, rng: random.Random, ins_rng: random.Random | None = None) -> dict[str, Any]:
+    # 点评优先走独立随机流；私聊路径未传时回落牌面流（行为不变）
+    ins = ins_rng if ins_rng is not None else rng
     cards = rng.sample(list(_TAROT_CARDS), 3)
     roles = ("主牌", "助力", "提醒")
     rows = []
@@ -418,14 +449,16 @@ def _build_tarot(now: datetime, rng: random.Random) -> dict[str, Any]:
         readings.append(words[0])
         elements.append(element)
     dominant = max(set(elements), key=elements.count)
-    # insight 句式多样化：_stable_rng 保证同日稳定、跨日变化，rng.choice 结果正好随日期轮换
-    # 三种句式均保留「牌阵从」开篇骨架（兼容既有文案测试），差异化在后续引导语
-    action = rng.choice(_TAROT_ACTIONS)
+    # insight 句式多样化：_insight_rng 保证同日稳定、跨日变化；牌面抽取仍走牌面流，
+    # 扩池不会打乱抽牌的日期稳定序列。各句式均保留「牌阵从」开篇骨架（兼容既有文案测试）
+    action = ins.choice(_TAROT_ACTIONS)
     lead, support, watch = readings
-    insight = rng.choice((
+    insight = ins.choice((
         f"牌阵从「{lead}」展开，可用的助力落在「{support}」，需要留意的是「{watch}」。{action}",
         f"今天的牌面先看「{lead}」，牌阵从「{support}」接上助力，提醒位上是「{watch}」。{action}",
         f"「{lead}」打头，牌阵从它一路铺开，帮你看清「{support}」与「{watch}」的取舍。{action}",
+        f"牌阵从「{lead}」起势，「{support}」负责补位，「{watch}」负责敲警钟。{action}",
+        f"顺着牌阵从「{lead}」往下看：助力在「{support}」，要留意的是「{watch}」。{action}",
     ))
     return {
         "mode": "tarot",
@@ -464,7 +497,9 @@ def _line_label(line_no: int, yang: bool) -> str:
     return f"{numeral}{'二三四五'[line_no - 2]}"
 
 
-def _build_iching(now: datetime, rng: random.Random) -> dict[str, Any]:
+def _build_iching(now: datetime, rng: random.Random, ins_rng: random.Random | None = None) -> dict[str, Any]:
+    # 点评优先走独立随机流；私聊路径未传时回落牌面流（行为不变）
+    ins = ins_rng if ins_rng is not None else rng
     primary = rng.choice(_HEXAGRAMS)
     lines = list(_hexagram_pattern(primary))
     moving_line = rng.randint(1, 6)
@@ -474,13 +509,15 @@ def _build_iching(now: datetime, rng: random.Random) -> dict[str, Any]:
     primary_symbol = chr(0x4DC0 + primary[0] - 1)
     changed_symbol = chr(0x4DC0 + changed[0] - 1)
     line_label = _line_label(moving_line, original_yang)
-    question = rng.choice(_ICHING_QUESTIONS)
-    # insight 句式多样化：同日稳定、跨日变化（由 _stable_rng 保证）
-    # 三种句式均保留「本卦看」开篇骨架（兼容既有文案测试），差异化在后续引导语
-    insight = rng.choice((
+    question = ins.choice(_ICHING_QUESTIONS)
+    # insight 句式多样化：同日稳定、跨日变化（由 _insight_rng 保证）；
+    # 各句式均保留「本卦看」开篇骨架（兼容既有文案测试），差异化在后续引导语
+    insight = ins.choice((
         f"本卦看「{primary[3]}」，变化落在{line_label}；之卦转向「{changed[3]}」。先看清变化从哪一层开始，再决定今天最值得推动的一步。",
         f"本卦看「{primary[3]}」，{line_label}一动，卦象转向「{changed[3]}」。别急着追着变化走，先看自己被哪一层牵动。",
         f"本卦看「{primary[3]}」，再到之卦「{changed[3]}」，中间会动的是{line_label}。变化不算大，但它提醒你今天最该稳住的地方。",
+        f"本卦看「{primary[3]}」，{line_label}先动，之卦落在「{changed[3]}」。先认清哪一层在变，再谈下一步怎么走。",
+        f"本卦看「{primary[3]}」，之卦指向「{changed[3]}」，枢纽就在{line_label}。变化不急着定论，先把最在意的部分稳住。",
     ))
     return {
         "mode": "iching",
@@ -526,12 +563,14 @@ def build_mystic_broadcast(
     date_key = current.strftime("%Y-%m-%d")
     mode = resolve_mystic_mode(config, period, current)
     rng = _stable_rng(date_key, period, mode)
+    # 点评文案走独立随机流：扩池不扰动牌面的日期稳定序列
+    ins_rng = _insight_rng(date_key, period, mode)
     if mode == "almanac":
-        payload = _build_almanac(current, rng)
+        payload = _build_almanac(current, rng, ins_rng)
     elif mode == "tarot":
-        payload = _build_tarot(current, rng)
+        payload = _build_tarot(current, rng, ins_rng)
     else:
-        payload = _build_iching(current, rng)
+        payload = _build_iching(current, rng, ins_rng)
     payload.update({
         "period": period,
         "date": date_key,

@@ -209,13 +209,17 @@ def _interpolate_color(c1: Tuple[int, int, int], c2: Tuple[int, int, int], ratio
     )
 
 
-def _draw_gradient_background(img: Image.Image) -> None:
-    """绘制顶部到底部的微渐变背景。"""
+def _draw_gradient_background(
+    img: Image.Image,
+    top: Tuple[int, int, int] = BG_TOP,
+    bottom: Tuple[int, int, int] = BG_BOTTOM,
+) -> None:
+    """绘制顶部到底部的微渐变背景（深色主题传入夜色系底色）。"""
     width, height = img.size
     pixels = img.load()
     for y in range(height):
         ratio = y / height
-        color = _interpolate_color(BG_TOP, BG_BOTTOM, ratio)
+        color = _interpolate_color(top, bottom, ratio)
         for x in range(width):
             pixels[x, y] = color
 
@@ -495,16 +499,17 @@ def _draw_section_divider(
     width: int,
     margin: int,
 ) -> int:
-    """绘制精致分隔线：金色短线 + 中心菱形。"""
+    """绘制精致分隔线：金色短线 + 中心菱形（深色主题随主题提亮）。"""
     center = width // 2
     line_y = y + 8
     divider_color = _theme_color("divider", GOLD)
+    diamond_color = _theme_color("gold_accent", GOLD)
     # 左右短线
     draw.line([(margin + 60, line_y), (center - 16, line_y)], fill=divider_color, width=2)
     draw.line([(center + 16, line_y), (width - margin - 60, line_y)], fill=divider_color, width=2)
     # 中心菱形
     diamond = [(center, line_y - 5), (center + 5, line_y), (center, line_y + 5), (center - 5, line_y)]
-    draw.polygon(diamond, fill=divider_color)
+    draw.polygon(diamond, fill=diamond_color)
     return y + 24
 
 
@@ -517,14 +522,16 @@ def draw_block_two_column(
     width: int,
     margin: int,
 ) -> int:
-    """绘制宜忌类双栏卡片，返回新的 y。"""
+    """绘制宜忌类双栏卡片，返回新的 y。忌栏底色与强调色随主题切换，
+    深色主题下两栏同族深底、近白文字，不允许局部停留在浅色材质。"""
     f_section = font(24, "kai")
     f_body = font(22, "hei")
 
     heading = str(block.get("heading", "") or "")
     if heading:
-        draw.rounded_rectangle([(x + margin, y + 6), (x + margin + 5, y + 30)], radius=2, fill=GREEN)
-        draw.text((x + margin + 14, y), heading, font=f_section, fill=GREEN_DARK)
+        draw.rounded_rectangle([(x + margin, y + 6), (x + margin + 5, y + 30)], radius=2,
+                               fill=_theme_color("green_accent", GREEN))
+        draw.text((x + margin + 14, y), heading, font=f_section, fill=_theme_color("heading", GREEN_DARK))
         y += 40
 
     lines = block.get("lines", []) or []
@@ -548,25 +555,29 @@ def draw_block_two_column(
     right_h = header_h + max(len(right_items), 1) * line_h + 24
     box_h = max(left_h, right_h, min_h)
 
+    # 宜忌栏强调色：浅色主题墨绿/朱砂，深色主题提亮变体（色相不变、明度上抬）
+    yi_color = _theme_color("green_accent", GREEN)
+    ji_color = _theme_color("red_accent", RED)
+
     # 宜栏（区块底色可被主题覆盖）
     draw_rounded_rect_with_shadow(img, draw, (lx, y, lx + col_w, y + box_h),
                                   DEFAULT_RADIUS, _theme_color("block_bg", GREEN_BG))
-    draw.text((lx + 22, y + 18), left_label, font=f_section, fill=GREEN)
-    draw.line([(lx + 22, y + 50), (lx + col_w - 22, y + 50)], fill=GREEN, width=2)
+    draw.text((lx + 22, y + 18), left_label, font=f_section, fill=yi_color)
+    draw.line([(lx + 22, y + 50), (lx + col_w - 22, y + 50)], fill=yi_color, width=2)
     yy = y + 68
     for item in left_items:
-        draw.ellipse([(lx + 24, yy + 10), (lx + 34, yy + 20)], fill=GREEN)
+        draw.ellipse([(lx + 24, yy + 10), (lx + 34, yy + 20)], fill=yi_color)
         draw.text((lx + 44, yy), item, font=f_body, fill=_theme_color("text", INK))
         yy += line_h
 
-    # 忌栏
+    # 忌栏（深色主题随主题换成深朱底，避免浅色底配浅色字）
     draw_rounded_rect_with_shadow(img, draw, (rx, y, rx + col_w, y + box_h),
-                                  DEFAULT_RADIUS, RED_BG)
-    draw.text((rx + 22, y + 18), right_label, font=f_section, fill=RED)
-    draw.line([(rx + 22, y + 50), (rx + col_w - 22, y + 50)], fill=RED, width=2)
+                                  DEFAULT_RADIUS, _theme_color("block_bg_danger", RED_BG))
+    draw.text((rx + 22, y + 18), right_label, font=f_section, fill=ji_color)
+    draw.line([(rx + 22, y + 50), (rx + col_w - 22, y + 50)], fill=ji_color, width=2)
     jy = y + 68
     for item in right_items:
-        draw.ellipse([(rx + 24, jy + 10), (rx + 34, jy + 20)], fill=RED)
+        draw.ellipse([(rx + 24, jy + 10), (rx + 34, jy + 20)], fill=ji_color)
         draw.text((rx + 44, jy), item, font=f_body, fill=_theme_color("text", INK))
         jy += line_h
 
@@ -581,12 +592,13 @@ def draw_block_key_value(
     margin: int,
 ) -> int:
     """绘制键值对区块（日值参考 / 节气提醒），返回新的 y。"""
-    f_small = font(16, "hei")
-    f_label = font(16, "hei")
+    f_small = font(17, "hei")
+    f_label = font(17, "hei")
     heading = str(block.get("heading", "") or "")
     if heading:
-        draw.rounded_rectangle([(margin, y + 6), (margin + 5, y + 30)], radius=2, fill=GREEN)
-        draw.text((margin + 14, y), heading, font=font(24, "kai"), fill=GREEN_DARK)
+        draw.rounded_rectangle([(margin, y + 6), (margin + 5, y + 30)], radius=2,
+                               fill=_theme_color("green_accent", GREEN))
+        draw.text((margin + 14, y), heading, font=font(24, "kai"), fill=_theme_color("heading", GREEN_DARK))
         y += 40
     for label, value in block.get("lines", []) or []:
         # 左侧小色块标签
@@ -596,8 +608,8 @@ def draw_block_key_value(
         draw.rounded_rectangle([(margin, y), (margin + tag_w, y + tag_h)],
                                radius=6, fill=GOLD_BG)
         draw.text((margin + 8, y + 5), str(label), font=f_label, fill=GOLD_DARK)
-        draw.text((margin + tag_w + 14, y + 5), str(value), font=f_small, fill=_theme_color("text_soft", INK_SOFT))
-        y += 34
+        draw.text((margin + tag_w + 14, y + 4), str(value), font=f_small, fill=_theme_color("text_soft", INK_SOFT))
+        y += 36
     return y + 20
 
 
@@ -616,13 +628,14 @@ def draw_block_list(
     heading = str(block.get("heading", "") or "")
     if heading:
         # 左侧小竖条装饰
-        draw.rounded_rectangle([(margin, y + 6), (margin + 5, y + 30)], radius=2, fill=GREEN)
-        draw.text((margin + 14, y), heading, font=f_section, fill=GREEN_DARK)
+        draw.rounded_rectangle([(margin, y + 6), (margin + 5, y + 30)], radius=2,
+                               fill=_theme_color("green_accent", GREEN))
+        draw.text((margin + 14, y), heading, font=f_section, fill=_theme_color("heading", GREEN_DARK))
         y += 40
 
     for idx, (label, value) in enumerate(block.get("lines", []) or []):
-        # 行号/序号小圆点
-        dot_color = GOLD if idx % 2 == 0 else GREEN
+        # 行号/序号小圆点（深色主题用提亮强调色，保证弱光底上可见）
+        dot_color = _theme_color("gold_accent", GOLD) if idx % 2 == 0 else _theme_color("green_accent", GREEN)
         if str(label).isdigit() or str(label).endswith("."):
             # 新闻编号
             display_label = str(label).rstrip(".") + "."
@@ -661,11 +674,11 @@ def draw_insight_card(
         return y
     i_h = len(lines) * 32 + 52
 
-    # 渐变边框效果：先画大一点的金色底，再画浅绿内底
+    # 外圈跟随主题（深色主题用深金，避免浅金圈浮在深底上发飘）
     draw.rounded_rectangle(
         [(margin + 2, y + 2), (width - margin + 2, y + i_h + 2)],
         radius=14,
-        fill=GOLD_BG,
+        fill=_theme_color("insight_halo", GOLD_BG),
     )
     draw_rounded_rect_with_shadow(
         img, draw,
@@ -681,8 +694,9 @@ def draw_insight_card(
         ratio = dy / (i_h - 8)
         color = _interpolate_color(GOLD, GREEN_LIGHT, ratio)
         draw.line([(margin + 4, y + 4 + dy), (margin + 8, y + 4 + dy)], fill=color, width=1)
-    # 引号装饰
-    draw.text((margin + 18, y + 6), "\u201c", font=font(32, "kai"), fill=(200, 215, 205))
+    # 引号装饰（跟随主题，深底上不再用几乎看不见的浅绿）
+    draw.text((margin + 18, y + 6), "\u201c", font=font(32, "kai"),
+              fill=_theme_color("quote_mark", (200, 215, 205)))
     iy = y + 24
     for ln in lines:
         draw.text((margin + 30, iy), ln, font=f_insight, fill=_theme_color("text", INK))
@@ -700,18 +714,22 @@ def draw_tags(
     margin: int,
     cols: int = 6,
 ) -> int:
-    """绘制药丸形标签网格（如时辰吉凶），返回新的 y。"""
+    """绘制药丸形标签网格（如时辰吉凶），返回新的 y。
+
+    标签底色由调用方传入（固定浅绿/浅朱族），因此标签内文字一律用深色，
+    不跟随主题——底是浅的，字就必须是深的，深色主题也不例外。
+    """
     f_section = font(24, "kai")
-    f_tag = font(14, "hei")
+    f_tag = font(16, "hei")
 
     if not tags:
         return y
 
-    draw.text((margin, y), title, font=f_section, fill=GREEN_DARK)
+    draw.text((margin, y), title, font=f_section, fill=_theme_color("heading", GREEN_DARK))
     y += 40
 
     tag_w = (width - 2 * margin - (cols - 1) * 12) // cols
-    tag_h = 36
+    tag_h = 40
     for i, (name, value, fg, bg) in enumerate(tags):
         row = i // cols
         col = i % cols
@@ -730,10 +748,10 @@ def draw_tags(
         value_text = str(value)
         lw, _ = ts(draw, label, f_tag)
         vw, _ = ts(draw, value_text, f_tag)
-        draw.text((x + 10, yy + 8), label, font=f_tag, fill=_theme_color("text_soft", GRAY))
-        draw.text((x + tag_w - vw - 10, yy + 8), value_text, font=f_tag, fill=fg)
+        draw.text((x + 10, yy + 9), label, font=f_tag, fill=GRAY)
+        draw.text((x + tag_w - vw - 10, yy + 9), value_text, font=f_tag, fill=fg)
         # 中间小分隔
-        draw.line([(x + tag_w // 2, yy + 8), (x + tag_w // 2, yy + tag_h - 8)], fill=(220, 220, 220), width=1)
+        draw.line([(x + tag_w // 2, yy + 9), (x + tag_w // 2, yy + tag_h - 9)], fill=(220, 220, 220), width=1)
     rows = (len(tags) + cols - 1) // cols
     return y + rows * (tag_h + 10) + 22
 
@@ -747,7 +765,7 @@ def draw_footer_lines(
     margin: int,
 ) -> int:
     """绘制底部信息条（财神方位等），返回新的 y。"""
-    f_small = font(16, "hei")
+    f_small = font(17, "hei")
     if not lines:
         return y
     # 计算总宽度
@@ -760,7 +778,7 @@ def draw_footer_lines(
         total_w += w + 50
     total_w -= 50
 
-    box_h = 46
+    box_h = 48
     box_x = max(margin, (width - total_w) // 2 - 20)
     box_w = min(width - 2 * margin, total_w + 40)
     draw_rounded_rect_with_shadow(
@@ -775,7 +793,7 @@ def draw_footer_lines(
     x = box_x + 20
     for (label, value), w in zip(lines, widths):
         text = f"{label}：{value}"
-        draw.text((x, y + 12), text, font=f_small, fill=_theme_color("text_soft", INK_SOFT))
+        draw.text((x, y + 13), text, font=f_small, fill=_theme_color("text_soft", INK_SOFT))
         x += w + 50
     return y + box_h + 24
 
@@ -903,9 +921,10 @@ def draw_card(
         time_text = str(payload.get("time_text", "") or "")
         if time_text:
             try:
-                f_time = font(18, "hei")
+                f_time = font(17, "hei")
                 tw, _ = ts(tmp_draw, time_text, f_time)
-                tmp_draw.text(((width - tw) / 2, y), time_text, font=f_time, fill=GRAY)
+                tmp_draw.text(((width - tw) / 2, y), time_text, font=f_time,
+                              fill=_theme_color("text_soft", GRAY))
                 y += 32
             except Exception as exc:
                 _logger.warning("skip time_text(tmp): %s", exc)
@@ -916,10 +935,12 @@ def draw_card(
         content_bottom = y + footer_reserve
         height = max(min_height, content_bottom)
 
-        # 正式绘制
-        img = Image.new("RGB", (width, height), BG_TOP)
+        # 正式绘制（深色主题用夜色系底色，无背景素材时也能自成一体）
+        bg_top = _theme_color("bg_top", BG_TOP)
+        bg_bottom = _theme_color("bg_bottom", BG_BOTTOM)
+        img = Image.new("RGB", (width, height), bg_top)
         draw = ImageDraw.Draw(img)
-        _draw_gradient_background(img)
+        _draw_gradient_background(img, bg_top, bg_bottom)
         # 可选外部背景图半透明叠加（缺失/损坏时静默跳过，不影响出图）
         if background_path:
             _compose_background(img, background_path, width, height)
@@ -927,14 +948,18 @@ def draw_card(
             # 提升近白正文文字的对比度；浅色主题不叠加，保持原有明快视觉。
             if opts.get("theme") in ("night", "evening"):
                 _apply_dark_overlay(img, width, height)
-        _draw_cloud_pattern(draw, width, height)
+        else:
+            # 云纹只属于素底卡：启用背景图时背景自身就是纹理，再叠纹样就是噪音
+            _draw_cloud_pattern(draw, width, height)
         _draw_top_bar(draw, width)
 
-        # 外框
+        # 外框（深色主题随主题换成冷色细框，避免浅绿框压在夜底上突兀）
         draw.rounded_rectangle([(22, 22), (width - 22, height - 22)],
-                               radius=DEFAULT_RADIUS, outline=GREEN_LINE, width=2)
+                               radius=DEFAULT_RADIUS,
+                               outline=_theme_color("frame", GREEN_LINE), width=2)
         draw.rounded_rectangle([(30, 30), (width - 30, height - 30)],
-                               radius=12, outline=(215, 228, 220), width=1)
+                               radius=12,
+                               outline=_theme_color("frame_inner", (215, 228, 220)), width=1)
 
         y = 70
         y = _draw_title_area(draw, payload, width, margin, y)
@@ -981,16 +1006,17 @@ def draw_card(
 
         if time_text:
             try:
-                f_time = font(18, "hei")
+                f_time = font(17, "hei")
                 tw, _ = ts(draw, time_text, f_time)
-                draw.text(((width - tw) / 2, y), time_text, font=f_time, fill=GRAY)
+                draw.text(((width - tw) / 2, y), time_text, font=f_time,
+                          fill=_theme_color("text_soft", GRAY))
                 y += 32
             except Exception as exc:
                 _logger.warning("skip time_text: %s", exc)
 
-        # 底部分隔线
+        # 底部分隔线（深色主题随主题提亮，避免隐入夜底）
         draw.line([(margin, height - 130), (width - margin, height - 130)],
-                  fill=GREEN_LINE, width=1)
+                  fill=_theme_color("divider_soft", GREEN_LINE), width=1)
 
         # 品牌印章（使用临时画布已测量的尺寸精确定位）
         stamp_w, stamp_h = draw_brand_stamp(tmp_draw, x=0, y=0)
@@ -1086,6 +1112,10 @@ def build_broadcast_image_card(
 # ── 时段主题系统（可选覆盖，缺省保持墨绿米白配色） ──
 # draw_card(options={"theme": "morning"|"afternoon"|"evening"|"night"}) 时
 # 覆盖标题色/区块底色/分隔线色/CTA 按钮渐变色；不传 theme 时全部回落到上方常量配色。
+# 色板约定（见 docs/technical/broadcast-card-design-philosophy.md）：
+# - 浅色主题：纸底 + 墨字，区块浅底；
+# - 深色主题（evening/night）：夜色底 + 深色区块 + 近白字，
+#   绝不允许浅底配浅字；强调色（green/red/gold accent）保持色相、明度上抬。
 THEMES = {
     "morning": {
         "label": "暖金晨光",
@@ -1113,27 +1143,50 @@ THEMES = {
     },
     "evening": {
         "label": "靛蓝暮色",
-        "title": (52, 66, 118),
-        "block_bg": (232, 234, 246),
+        # 夜色底 + 深色区块 + 近白字：标题与正文都亮起来，区块沉下去
+        "bg_top": (44, 52, 88),
+        "bg_bottom": (30, 36, 64),
+        "title": (242, 238, 226),
+        "heading": (226, 228, 240),
+        "block_bg": (36, 44, 74),
+        "block_bg_danger": (66, 40, 46),
         "divider": (150, 160, 205),
+        "divider_soft": (96, 106, 148),
         "cta_top": (110, 122, 190),
         "cta_bottom": (48, 56, 108),
-        "text": (245, 243, 238),
-        "text_soft": (206, 204, 198),
+        "text": (240, 240, 234),
+        "text_soft": (208, 210, 220),
         "tag_text": (186, 190, 216),
-        "divider_soft": (196, 200, 228),
+        "gold_accent": (224, 192, 132),
+        "green_accent": (142, 192, 166),
+        "red_accent": (226, 132, 120),
+        "insight_halo": (108, 94, 60),
+        "quote_mark": (108, 122, 162),
+        "frame": (120, 132, 172),
+        "frame_inner": (86, 96, 132),
     },
     "night": {
         "label": "深空蓝",
-        "title": (46, 70, 130),
-        "block_bg": (228, 234, 246),
+        "bg_top": (26, 32, 56),
+        "bg_bottom": (14, 18, 36),
+        "title": (240, 238, 228),
+        "heading": (222, 226, 240),
+        "block_bg": (26, 33, 56),
+        "block_bg_danger": (58, 36, 42),
         "divider": (140, 160, 215),
+        "divider_soft": (80, 92, 130),
         "cta_top": (80, 105, 175),
         "cta_bottom": (28, 44, 96),
         "text": (238, 238, 232),
-        "text_soft": (200, 200, 192),
+        "text_soft": (202, 204, 214),
         "tag_text": (178, 186, 212),
-        "divider_soft": (172, 182, 212),
+        "gold_accent": (220, 188, 128),
+        "green_accent": (134, 186, 160),
+        "red_accent": (224, 128, 116),
+        "insight_halo": (100, 88, 56),
+        "quote_mark": (96, 112, 152),
+        "frame": (104, 118, 158),
+        "frame_inner": (72, 84, 120),
     },
 }
 
@@ -1185,7 +1238,7 @@ def _apply_dark_overlay(
     width: int,
     height: int,
     color: Tuple[int, int, int] = (10, 10, 15),
-    alpha: int = 70,
+    alpha: int = 85,
 ) -> None:
     """深色主题下对整幅画面叠加一层半透明深色遮罩，压暗背景、提升浅色文字对比度。
 
@@ -1219,7 +1272,7 @@ def draw_tarot_cards(
     f_role = font(16, "hei")
     f_name = font(26, "kai")
     f_pos = font(16, "hei")
-    f_key = font(15, "hei")
+    f_key = font(16, "hei")
 
     n = len(cards)
     gap = 14
@@ -1243,7 +1296,7 @@ def draw_tarot_cards(
             [(cx + 6, box_y + 6), (cx + card_w - 6, box_y + card_h - 6)],
             radius=DEFAULT_RADIUS - 4,
             fill=None,
-            outline=GOLD,
+            outline=_theme_color("gold_accent", GOLD),
             width=1,
         )
         # 顶部 role 标签
@@ -1266,15 +1319,16 @@ def draw_tarot_cards(
             name, font=f_name,
             fill=_theme_color("title", GREEN_DARK),
         )
-        # 正逆位
+        # 正逆位（逆位用提亮朱砂，深色牌面上依旧醒目）
         pos_text = str(position or "")
         if pos_text:
             pw, _ = ts(draw, pos_text, f_pos)
-            pos_color = RED if "逆" in pos_text else GOLD_DARK
+            pos_color = _theme_color("red_accent", RED) if "逆" in pos_text else _theme_color("gold_accent", GOLD_DARK)
             draw.text((cx + (card_w - pw) // 2, box_y + 96), pos_text, font=f_pos, fill=pos_color)
         # 分隔细线
         line_y = box_y + 128
-        draw.line([(cx + 14, line_y), (cx + card_w - 14, line_y)], fill=GREEN_LINE, width=1)
+        draw.line([(cx + 14, line_y), (cx + card_w - 14, line_y)],
+                  fill=_theme_color("divider_soft", GREEN_LINE), width=1)
         # 关键词（换行居中）
         kw_text = str(keywords or "")
         max_w = card_w - 24
@@ -1282,7 +1336,8 @@ def draw_tarot_cards(
         ky = line_y + 12
         for ln in key_lines[:4]:
             lw, _ = ts(draw, ln, f_key)
-            draw.text((cx + (card_w - lw) // 2, ky), ln, font=f_key, fill=INK_SOFT)
+            draw.text((cx + (card_w - lw) // 2, ky), ln, font=f_key,
+                      fill=_theme_color("text_soft", INK_SOFT))
             ky += 24
 
     return box_y + card_h + 26
@@ -1337,7 +1392,7 @@ def draw_iching_hexagram(
         row = 5 - i
         yy = box_y + pad_top + row * row_h + row_h // 2
         is_moving = moving == i + 1
-        color = GOLD_DARK if is_moving else GREEN
+        color = _theme_color("gold_accent", GOLD_DARK) if is_moving else _theme_color("green_accent", GREEN)
         thick = 16 if is_moving else 12
         half = line_len // 2
         if int(lines[i]) == 1:
@@ -1359,7 +1414,8 @@ def draw_iching_hexagram(
                 fill=color,
             )
         if is_moving:
-            draw.text((center_x + half + 14, yy - 15), "动", font=f_mark, fill=GOLD_DARK)
+            draw.text((center_x + half + 14, yy - 15), "动", font=f_mark,
+                      fill=_theme_color("gold_accent", GOLD_DARK))
 
     return box_y + box_h + 26
 

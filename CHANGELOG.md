@@ -8,6 +8,7 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-08-06 | 优化 | v5.38.28 播报视觉修复+文案随机化：深色主题夜色底+深色区块+近白字；背景图去云纹；字号≥16px；塔罗牌名半截修复；傍晚改暮安；问候文案每次发送重新随机。 | \core/broadcast_image_card.py\、\core/broadcast_image_payload.py\、\tasks/support/mystic_content.py\ 等 |
 | 2026-08-06 | 新增/优化 | v5.38.27 播报体验二轮：问候卡新增「一言」独白区块+深色主题可读性；图片卡去图上按钮改真实按钮随机组合；vote_kick 事务暗病修复。 | \core/broadcast_image_payload.py\、\core/broadcast_cta.py\、\modules/vote_kick.py\、\AGENTS.md\ 等 |
 | 2026-08-06 | 新增/优化 | v5.38.26 播报体验升级+人设治理：图片卡主题化与问候卡改版（含 night 档）、CTA 每日轮换与玄学三入口、搭讪/FAQ 人设升级、风格样本分组投喂与蒸馏、死代码清理。 | \core/broadcast_image_card.py\、\tasks/broadcast/greeting_task.py\、\modules/admin_cmds.py\、\AGENTS.md\ 等 |
 | 2026-08-05 | 修复/清理 | v5.38.24 遗留闭环：mypy 10 项清零入 CI；sanitize 自愈修复生效；get_pool_info 补测试；文档治理+垃圾清理。 | \core/ai_engine.py\、\	ests/unit/test_ai_engine_resilience.py\、\project_snapshot.md\ 等 |

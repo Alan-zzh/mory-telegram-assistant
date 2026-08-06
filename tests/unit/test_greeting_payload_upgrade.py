@@ -18,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from core.broadcast_image_payload import _GREETING_TIPS, build_greeting_image_payload
+from core.broadcast_image_payload import _GREETING_TIPS, _MORY_QUOTES, build_greeting_image_payload
 from tasks.support.message_templates import MessageTemplates
 
 # date_text 格式：X月X日 周X（X 为 1-2 位数字，周后为一二三四五六日）
@@ -50,6 +50,30 @@ def test_greeting_tips_pool_has_exactly_nine_and_no_ban_words():
     for tip in _GREETING_TIPS:
         hits = [marker for marker in banned if marker in tip]
         assert not hits, f"贴士命中禁区词 {hits}: {tip!r}"
+
+
+def _extract_tip_quote(p: dict) -> tuple:
+    tip = next(b["lines"][0][1] for b in p["blocks"] if b["heading"] == "今日一句")
+    quote = next(b["lines"][0][1] for b in p["blocks"] if b["heading"] == "一言")
+    return tip, quote
+
+
+def test_greeting_seed_stable_and_default_varies():
+    """文案随机化契约：传 seed 稳定复现；不传 seed 每次重新随机且值域合法。"""
+    # 同 seed 两次调用：贴士与一言完全一致（测试/回放可复现）
+    p1 = build_greeting_image_payload("morning", "正文", seed="2026-08-06|morning")
+    p2 = build_greeting_image_payload("morning", "正文", seed="2026-08-06|morning")
+    assert _extract_tip_quote(p1) == _extract_tip_quote(p2)
+
+    # 不传 seed：多次调用值域合法（必在池内）；抽足够多次应出现多于 1 种组合
+    combos = set()
+    for _ in range(20):
+        p = build_greeting_image_payload("morning", "正文")
+        tip, quote = _extract_tip_quote(p)
+        assert tip in _GREETING_TIPS, f"贴士不在池内: {tip!r}"
+        assert quote in _MORY_QUOTES, f"一言不在池内: {quote!r}"
+        combos.add((tip, quote))
+    assert len(combos) > 1, "默认随机失效：20 次抽取组合完全相同"
 
 
 @pytest.mark.parametrize("period", ["morning", "afternoon", "evening", "night"])

@@ -114,9 +114,13 @@ def build_almanac_image_payload(mystic_payload: dict) -> dict:
     return payload
 
 
-def _parse_tarot_card_line(value: str) -> Tuple[str, str, str]:
-    """解析塔罗牌行值 "0 · 愚者 · 正位｜启程 / 自由" → (牌名, 正逆位, 关键词)。
+_ROMAN_RE = re.compile(r"^[IVXLCDM]+$", re.IGNORECASE)
 
+
+def _parse_tarot_card_line(value: str) -> Tuple[str, str, str]:
+    """解析塔罗牌行值 "XIII · 死神 · 正位｜启程 / 自由" → (牌名, 正逆位, 关键词)。
+
+    阿拉伯序号与罗马数字都是装饰性编号，不参与牌名；
     容错纯牌名行（如 ("过去", "愚者")）：只取牌名，正逆位/关键词留空。
     """
     value = str(value or "")
@@ -124,7 +128,7 @@ def _parse_tarot_card_line(value: str) -> Tuple[str, str, str]:
     parts = [p.strip() for p in head.split("·") if p.strip()]
     name, position = "", ""
     for p in parts:
-        if p.isdigit():
+        if p.isdigit() or _ROMAN_RE.match(p):
             continue
         if p in ("正位", "逆位"):
             position = p
@@ -138,11 +142,13 @@ def _parse_tarot_card_line(value: str) -> Tuple[str, str, str]:
 
 def build_tarot_image_payload(mystic_payload: dict) -> dict:
     """把塔罗 mystic payload 转成图片卡 payload。"""
-    raw_blocks = mystic_payload.get("blocks", []) or []
-    blocks = _normalize_mystic_blocks(
-        raw_blocks,
+    # 先归一化（去 heading emoji 前缀），牌面卡解析也基于归一后的 blocks，
+    # 避免 "🎴 主牌" 里的 emoji 混进牌名，导致牌面印出 "XIII" 这类半截名字
+    raw_blocks = _normalize_mystic_blocks(
+        mystic_payload.get("blocks", []) or [],
         lambda heading, _lines: "key_value" if "能量" in heading else "list",
     )
+    blocks = raw_blocks
     extra: Dict[str, Any] = {}
     # 从第一个区块的牌阵行解析牌面卡 (role, 牌名, 正逆位, 关键词)，最多 4 张
     first_lines = (raw_blocks[0].get("lines") or []) if raw_blocks else []
@@ -277,17 +283,23 @@ def _beijing_now() -> datetime:
     return datetime.now(_CST)
 
 
-def build_greeting_image_payload(period: str, body: str, badge: str = "") -> dict:
+def build_greeting_image_payload(period: str, body: str, badge: str = "", seed: str = "") -> dict:
     """把问候语转成图片卡 payload。
+
+    走心小贴士与一言默认每次发送重新随机（seed 留空），避免每次都是同一句；
+    传入 seed 时按 seed 稳定选取（测试/回放用）。文案池本身已过人设约束，
+    怎么抽都不会违和。
 
     高度说明：图片高度由调用方（greeting_task 的 build_broadcast_image_card min_height）
     控制，本函数只负责内容；若需要内容驱动高度，请在调用处把 min_height 调低到
     内容实际高度附近（当前生产 min_height=900 对新增的"今日一句"区块依然合适）。
     """
+    # 傍晚档不叫晚安（那会提前透支深夜的问候）：用"暮安"与早安/午安同一造词法，
+    # 晚安留给 night 档；徽标也随语境改成傍晚收工的调子
     period_labels = {
         "morning": ("早安", "新的一天"),
         "afternoon": ("午安", "歇一分钟"),
-        "evening": ("晚安", "今天先到这"),
+        "evening": ("暮安", "今天慢慢收尾"),
         "night": ("晚安", "留一句话"),
     }
     title, default_badge = period_labels.get(period, ("问候", ""))
@@ -297,11 +309,16 @@ def build_greeting_image_payload(period: str, body: str, badge: str = "") -> dic
     weekday = "一二三四五六日"[now.weekday()]
     date_text = f"{now.month}月{now.day}日 周{weekday}"
 
-    # 走心小贴士：按北京日期做日级随机，同日稳定、跨日自然换新
-    tip = random.Random(now.strftime("%Y%m%d")).choice(_GREETING_TIPS)
-
-    # 一言（Mory 独白金句）：与贴士同一北京日期种子，同日稳定、跨日自然换新
-    quote = random.Random(now.strftime("%Y%m%d")).choice(_MORY_QUOTES)
+    # 走心小贴士与一言：默认每次发送重新随机；传 seed 时稳定选取（测试/回放）。
+    # 两条用不同子键抽取，避免同种子下总是固定搭配。
+    if seed:
+        tip_rng = random.Random(f"{seed}|tip")
+        quote_rng = random.Random(f"{seed}|quote")
+    else:
+        tip_rng = random.SystemRandom()
+        quote_rng = random.SystemRandom()
+    tip = tip_rng.choice(_GREETING_TIPS)
+    quote = quote_rng.choice(_MORY_QUOTES)
 
     return {
         "title": title,
