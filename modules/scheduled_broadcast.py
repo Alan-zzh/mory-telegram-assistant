@@ -24,7 +24,7 @@ import os
 import random
 from datetime import datetime, timezone, timedelta
 from telebot import types
-from core.broadcast_cta import build_cta_markup, get_broadcast_cta, is_broadcast_image_enabled
+from core.broadcast_cta import build_cta_markup_combo, get_broadcast_cta_combo, is_broadcast_image_enabled
 from core.broadcast_formatter import (
     build_broadcast_html,
     build_rich_broadcast_html,
@@ -206,20 +206,23 @@ def _parse_broadcast_time(item: dict):
     return None, None
 
 
-def _build_markup(item: dict, config: dict = None, cta: dict = None):
-    """可选的单按钮，适合下单引导或详情跳转。支持彩色按钮与 Mini App。"""
+def _build_markup(item: dict, config: dict = None, combo: dict = None):
+    """可选的单按钮，适合下单引导或详情跳转。支持彩色按钮与 Mini App。
+
+    [v5.38.27] 未配置按钮时使用统一 CTA 组合（scheduled 仅 preview 单按钮）。
+    """
     button_text = str(item.get("button_text", "") or "").strip()
     button_url = str(item.get("button_url", "") or "").strip()
 
-    # 用户未配置按钮时，使用统一 CTA 文案池（保证与图片卡一致）
+    # 用户未配置按钮时，使用统一 CTA 组合（保证与正文一致）
     if not button_text or not button_url:
-        if cta is None:
-            cta = get_broadcast_cta(
+        if combo is None:
+            combo = get_broadcast_cta_combo(
                 scene="scheduled",
                 period=str(item.get("period", "") or ""),
                 config=config,
             )
-        return build_cta_markup(cta, config=config)
+        return build_cta_markup_combo(combo, config=config)
 
     # 用户已配置按钮：兼容旧版彩色按钮参数
     if config and config.get("BUTTON_STYLE_ENABLED", False):
@@ -450,14 +453,14 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                 bc["content"] = ai_content
                 content = ai_content
 
-        # [v5.38.15] 统一 CTA：文字版 closing、图片卡文案、真实按钮保持一致
-        cta = get_broadcast_cta(
+        # [v5.38.27] 统一 CTA 组合：文字版 closing、真实按钮（scheduled 仅 preview）保持一致
+        combo = get_broadcast_cta_combo(
             scene="scheduled",
             period=str(bc.get("period", "") or ""),
             config=config,
             user_profile=user_profile,
         )
-        reply_markup = _build_markup(bc, config, cta=cta)
+        reply_markup = _build_markup(bc, config, combo=combo)
         disable_notification = bool(bc.get("silent", False))
         protect_content = bool(bc.get("protect_content", False))
         disable_preview = bool(bc.get("disable_preview", False))
@@ -496,10 +499,10 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
 
         if content_type == "text":
             try:
-                # [v5.38.15] 传入 cta，让文字版 closing 与真实按钮一致
+                # [v5.38.27] 传入 combo，让文字版 closing 与真实按钮一致
                 # 注意：用户自定义按钮时，_render_broadcast_text 内部会忽略自动 closing
                 text, parse_mode, rich_html = _render_broadcast_text(
-                    bc, user_profile=user_profile, config=config, cta=cta
+                    bc, user_profile=user_profile, config=config, cta=combo
                 )
 
                 # [v5.38.15] 图片卡优先（仅 text 类型，且全局/单条均开启，统一 helper）
@@ -512,7 +515,8 @@ def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broa
                             image_payload,
                             cache_key=f"scheduled_{broadcast_id}_{today}",
                             min_height=1000,
-                            cta_text=cta.get("image_label", ""),
+                            # [v5.38.27] 图片卡不再印按钮文字，真实按钮以 InlineKeyboard 附加
+                            cta_text="",
                             options=resolve_theme_options(config, bc.get("period", "")),
                         )
                         if image_path and os.path.isfile(image_path):

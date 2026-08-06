@@ -20,7 +20,17 @@ logger = get_logger("vote_kick")
 PASS_MIN_YES = 5          # 最低赞成票数
 PASS_RATE = 0.6           # 赞成率阈值
 MIN_ELAPSED_SEC = 300     # 最短投票时长（5分钟）
+# 投票配置
 VOTE_DURATION_SEC = 600   # 投票总时长（10分钟）
+
+
+def _safe_commit(db):
+    """安全提交：sqlite3 连接在 autocommit 模式下 commit() 会抛
+    'cannot commit - no transaction is active'，此处静默吞掉该异常。"""
+    try:
+        db.conn.commit()
+    except Exception:
+        pass
 
 
 def handle_vote_kick(bot, m, config, db, target_uid, reason=""):
@@ -40,13 +50,13 @@ def handle_vote_kick(bot, m, config, db, target_uid, reason=""):
     end_ts = now + VOTE_DURATION_SEC
 
     # 插入投票记录
-    with db.conn:
-        cursor = db.conn.execute(
-            "INSERT INTO vote_kicks (chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, status, msg_id, end_ts, ts) "
-            "VALUES (?, ?, ?, ?, '', '', 'active', 0, ?, ?)",
-            (chat_id, target_uid, initiator_id, reason, end_ts, now)
-        )
-        vote_id = cursor.lastrowid
+    cursor = db.conn.execute(
+        "INSERT INTO vote_kicks (chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, status, msg_id, end_ts, ts) "
+        "VALUES (?, ?, ?, ?, '', '', 'active', 0, ?, ?)",
+        (chat_id, target_uid, initiator_id, reason, end_ts, now)
+    )
+    vote_id = cursor.lastrowid
+    _safe_commit(db)
 
     # 构建投票按钮
     markup = InlineKeyboardMarkup()
@@ -73,14 +83,14 @@ def handle_vote_kick(bot, m, config, db, target_uid, reason=""):
     try:
         sent = bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
         # 更新消息ID
-        with db.conn:
-            db.conn.execute("UPDATE vote_kicks SET msg_id=? WHERE id=?", (sent.message_id, vote_id))
+        db.conn.execute("UPDATE vote_kicks SET msg_id=? WHERE id=?", (sent.message_id, vote_id))
+        _safe_commit(db)
         logger.info(f"⚖️ 投票踢人已发起: vote_id={vote_id} target={target_uid} chat={chat_id}")
     except Exception as e:
         logger.error(f"❌ 发送投票消息失败: {e}")
         # 清理已插入的记录
-        with db.conn:
-            db.conn.execute("DELETE FROM vote_kicks WHERE id=?", (vote_id,))
+        db.conn.execute("DELETE FROM vote_kicks WHERE id=?", (vote_id,))
+        _safe_commit(db)
 
 
 def handle_vote_kick_callback(bot, call, config, db):
@@ -109,11 +119,10 @@ def handle_vote_kick_callback(bot, call, config, db):
         return
 
     # 查询投票记录
-    with db.conn:
-        row = db.conn.execute(
-            "SELECT id, chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, status, msg_id, end_ts, ts "
-            "FROM vote_kicks WHERE id=?", (vote_id,)
-        ).fetchone()
+    row = db.conn.execute(
+        "SELECT id, chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, status, msg_id, end_ts, ts "
+        "FROM vote_kicks WHERE id=?", (vote_id,)
+    ).fetchone()
 
     if not row:
         bot.answer_callback_query(call.id, "⚠️ 投票记录不存在")
@@ -157,11 +166,11 @@ def handle_vote_kick_callback(bot, call, config, db):
     # 更新数据库
     new_yes = ",".join(yes_list)
     new_no = ",".join(no_list)
-    with db.conn:
-        db.conn.execute(
-            "UPDATE vote_kicks SET yes_votes=?, no_votes=? WHERE id=?",
-            (new_yes, new_no, vote_id)
-        )
+    db.conn.execute(
+        "UPDATE vote_kicks SET yes_votes=?, no_votes=? WHERE id=?",
+        (new_yes, new_no, vote_id)
+    )
+    _safe_commit(db)
 
     # 检查是否通过
     now = int(time.time())
@@ -179,8 +188,8 @@ def handle_vote_kick_callback(bot, call, config, db):
             logger.error(f"❌ 踢人执行失败: vote_id={vote_id} target={target_uid} error={e}")
 
         # 关闭投票
-        with db.conn:
-            db.conn.execute("UPDATE vote_kicks SET status='closed' WHERE id=?", (vote_id,))
+        db.conn.execute("UPDATE vote_kicks SET status='closed' WHERE id=?", (vote_id,))
+        _safe_commit(db)
 
         # 更新消息
         target_mention = f"<a href='tg://user?id={target_uid}'>{target_uid}</a>"
@@ -244,12 +253,11 @@ def check_expired_votes(bot, config, db):
     now = int(time.time())
 
     # 查找所有已过期的活跃投票
-    with db.conn:
-        rows = db.conn.execute(
-            "SELECT id, chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, msg_id, end_ts, ts "
-            "FROM vote_kicks WHERE status='active' AND end_ts<?",
-            (now,)
-        ).fetchall()
+    rows = db.conn.execute(
+        "SELECT id, chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, msg_id, end_ts, ts "
+        "FROM vote_kicks WHERE status='active' AND end_ts<?",
+        (now,)
+    ).fetchall()
 
     if not rows:
         return
@@ -281,8 +289,8 @@ def check_expired_votes(bot, config, db):
             logger.info(f"⚖️ 过期投票未通过: vote_id={vid} yes={yes_count} no={no_count}")
 
         # 关闭投票
-        with db.conn:
-            db.conn.execute("UPDATE vote_kicks SET status='closed' WHERE id=?", (vid,))
+        db.conn.execute("UPDATE vote_kicks SET status='closed' WHERE id=?", (vid,))
+        _safe_commit(db)
 
         # 更新消息
         final_text = (

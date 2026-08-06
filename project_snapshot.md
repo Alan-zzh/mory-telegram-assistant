@@ -36,14 +36,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录 |
 
 ## 当前版本
-v5.38.26（2026-08-06）· 播报体验升级+人设治理（图片卡主题化/问候卡改版含 night 档、CTA 每日轮换+玄学三入口、搭讪/FAQ 人设升级、风格样本分组投喂+蒸馏关闭、死代码清理）
+v5.38.27（2026-08-06）· 播报体验二轮（问候卡"一言"内容丰富化+深色主题可读性、图片卡去图上按钮改真实 InlineKeyboard 随机组合、vote_kick 事务暗病修复）
 
-生产状态：**v5.38.26 已增量部署 VPS 并验收通过**（生产版本 v5.38.26、双服务 active、health 200、VPS 素材 assets/broadcast 4 张已上传、玄学 cta_enabled=true 与 BROADCAST_THEME_ENABLED=true 已生效、night 档默认关）。验收证据：pytest 全仓 891 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods/check_deploy_ready 四门禁通过、runtime/verify_prod.py 生产探针 PROD_VERIFY_PASS。
+生产状态：**v5.38.26 已部署验收通过，v5.38.27 本地验收中**（v5.38.26：双服务 active、health 200、VPS 版本一致、素材就位；v5.38.27：pytest 全仓 900+ passed、四门禁通过，待部署）。
 
 ## 最近 3 条大事
-1. 2026-08-06 v5.38.26：图片卡主题化+问候卡改版、CTA 每日轮换+玄学三入口。
-2. 2026-08-06 v5.38.26：搭讪/FAQ 人设升级；风格样本分组投喂+蒸馏关闭。
-3. 2026-08-06 v5.38.26：死代码清理；全仓 891/7 全过；已部署 VPS 验收通过。
+1. 2026-08-06 v5.38.27：问候卡"一言"丰富化+深色主题可读性；真实按钮随机组合。
+2. 2026-08-06 v5.38.26：图片卡主题化+CTA 每日轮换+玄学三入口；已部署验收。
+3. 2026-08-06 v5.38.26：搭讪/FAQ 人设升级；风格样本分组投喂+蒸馏关闭。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

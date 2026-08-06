@@ -137,7 +137,8 @@ class GreetingTask(BaseTask):
                             cache_key=cache_key,
                             config=cfg,
                             min_height=900,
-                            cta_text=cta.get("image_label", ""),
+                            # [v5.38.27] 图片卡不再印按钮文字，真实按钮以 InlineKeyboard 附加
+                            cta_text="",
                             options=resolve_theme_options(cfg, period),
                         ) or ""
                         if image_path and not os.path.isfile(image_path):

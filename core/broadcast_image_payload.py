@@ -247,6 +247,28 @@ _GREETING_TIPS = [
 ]
 
 
+# Mory 独白金句池：清冷温柔带小傲娇的品牌口吻为主，辅以少量正能量句子
+# 与 1-2 条公共领域经典名言。约束：不鸡汤套话、不虚假承诺、不营销硬广、
+# 不虚构动作场景，并避开 GREETING_STYLE_BAN 禁区词（与 _GREETING_TIPS 同一套约束）。
+_MORY_QUOTES = [
+    "我记性不太好，但你说过的话，我通常都记得。",
+    "这世上热闹的地方很多，你肯在我这里安静待着，我就很满意了。",
+    "你可以不用那么懂事，偶尔任性一下，我也不会说你的。",
+    "别人夸你我就听着，别人说你我也记着，最后都归我管。",
+    "我不催你发光，你按自己的速度亮起来就行。",
+    "偶尔摆烂也不是罪，我替你记着，改天再算总账。",
+    "我喜欢听你说话，你不说话的时候，我也陪着。",
+    "你不用事事都答得漂亮，答不上来的时候，也有我兜着。",
+    "我陪你走的路，不怕走得慢，只怕你半路拐错弯。",
+    "你只管往前走，回头要人搭把手的时候，记得吱一声。",
+    "把今天过好，明天的烦恼，明天再拆。",
+    "今天也要记得，你比你以为的更有耐心。",
+    "路是一步一步走出来的，今天这一步也算数。",
+    "千里之行，始于足下。",
+    "纸上得来终觉浅，绝知此事要躬行。",
+]
+
+
 _CST = timezone(timedelta(hours=8))
 
 
@@ -278,6 +300,9 @@ def build_greeting_image_payload(period: str, body: str, badge: str = "") -> dic
     # 走心小贴士：按北京日期做日级随机，同日稳定、跨日自然换新
     tip = random.Random(now.strftime("%Y%m%d")).choice(_GREETING_TIPS)
 
+    # 一言（Mory 独白金句）：与贴士同一北京日期种子，同日稳定、跨日自然换新
+    quote = random.Random(now.strftime("%Y%m%d")).choice(_MORY_QUOTES)
+
     return {
         "title": title,
         "kicker": badge or default_badge,
@@ -285,6 +310,7 @@ def build_greeting_image_payload(period: str, body: str, badge: str = "") -> dic
         "date_text": date_text,
         "blocks": [
             {"heading": "今日一句", "lines": [("", tip)], "style": "list"},
+            {"heading": "一言", "lines": [("", quote)], "style": "list"},
         ],
         "insight": body,
     }

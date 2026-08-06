@@ -6,7 +6,7 @@ import os
 import random
 from typing import Any, Dict, List
 
-from core.broadcast_cta import build_cta_markup, get_broadcast_cta, is_broadcast_image_enabled
+from core.broadcast_cta import build_cta_markup_combo, get_broadcast_cta_combo, is_broadcast_image_enabled
 from core.broadcast_formatter import build_mystic_html, build_rich_mystic_card_message
 from core.broadcast_image_card import build_broadcast_image_card, resolve_theme_options, strip_visual_emoji
 from core.broadcast_image_payload import build_mystic_image_payload
@@ -35,49 +35,54 @@ _PERIOD_LABELS = {
 
 
 def build_mystic_cta(payload: dict, config: dict = None):
-    """生成玄学播报统一 CTA（图片文案 + 真实按钮一致）。
+    """生成玄学播报组合 CTA（真实按钮 1-2 个；图片卡不再印按钮文字）。
 
-    入口/文案/轮转全部交给统一 CTA 组件，旧 payload["cta"] 仅在统一池
-    未返回有效文案时作为兜底文案来源，不再覆盖 target 轮转计划。
+    组合模式由统一组件 get_broadcast_cta_combo 按北京日期确定性随机
+    （preview/contact/subscribe 单按钮，或 preview+contact/subscribe 双按钮）；
+    旧 payload["cta"] 仅在统一池未返回有效按钮时作为守约兜底。
     """
     legacy_cta = payload.get("cta") or {}
-    cta = get_broadcast_cta(
+    combo = get_broadcast_cta_combo(
         scene="mystic",
         period=payload.get("period", ""),
         mode=payload.get("mode", "almanac"),
         config=config,
     )
-    # 统一池按配置（cta_enabled=false 等）返回空时，沿用旧 payload 的守约兜底
-    if not cta.get("label") and isinstance(legacy_cta, dict):
-        cta["target"] = legacy_cta.get("target", "none")
-        cta["label"] = legacy_cta.get("label", "")
-        # 图片卡文案必须由按钮文案 strip emoji 派生，保持强绑定
-        cta["image_label"] = strip_visual_emoji(legacy_cta.get("label", ""))
-        cta["url"] = legacy_cta.get("url", "")
-        cta["style"] = legacy_cta.get("style", "default")
-        cta["closing"] = legacy_cta.get("closing", "")
-    return cta
+    # 统一池按配置（cta_enabled=false 等）返回空按钮时，沿用旧 payload 的守约兜底
+    if not combo.get("buttons") and isinstance(legacy_cta, dict) and legacy_cta.get("label"):
+        fallback = {
+            "target": legacy_cta.get("target", "none"),
+            "label": legacy_cta.get("label", ""),
+            # 图片卡不再印字；image_label 仅作兼容字段保留
+            "image_label": strip_visual_emoji(legacy_cta.get("label", "")),
+            "url": legacy_cta.get("url", ""),
+            "mini_app": legacy_cta.get("mini_app"),
+            "style": legacy_cta.get("style", "default"),
+            "closing": legacy_cta.get("closing", ""),
+        }
+        combo = {"buttons": [fallback], "closing": fallback.get("closing", "")}
+    return combo
 
 
 def build_mystic_cta_markup(payload: dict, config: dict = None):
-    """每张卡最多一个、且与正文说明一致的 CTA。"""
-    cta = build_mystic_cta(payload, config=config)
-    return build_cta_markup(cta, config=config)
+    """每张卡 1-2 个与正文说明一致的真实按钮（InlineKeyboard）。"""
+    combo = build_mystic_cta(payload, config=config)
+    return build_cta_markup_combo(combo, config=config)
 
 
-def _build_mystic_image_card(payload: dict, config: dict = None, cta: dict = None) -> str | None:
-    """生成玄学播报图片卡，返回本地 PNG 路径；失败返回 None。"""
+def _build_mystic_image_card(payload: dict, config: dict = None) -> str | None:
+    """生成玄学播报图片卡，返回本地 PNG 路径；失败返回 None。
+
+    [v5.38.27] 图片卡不再印按钮文字（cta_text 传空），真实按钮以
+    InlineKeyboard 附加，避免图片上“看看预览”等字样无用。
+    """
     try:
         image_payload = build_mystic_image_payload(payload)
-        cta_text = ""
-        if isinstance(cta, dict):
-            cta_text = cta.get("image_label", "")
-
         out_path = build_broadcast_image_card(
             image_payload,
             cache_key=f"mystic_{payload.get('mode', 'almanac')}_{payload.get('date', 'unknown')}",
             config=config,
-            cta_text=cta_text,
+            cta_text="",
             options=resolve_theme_options(config, payload.get("period", "")),
         )
         if out_path:
@@ -109,12 +114,21 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
                 raise TaskAbort("玄学播报内容未通过门禁", expected=True)
 
             cfg = rm.config or {}
-            cta = build_mystic_cta(payload, config=cfg)
-            # 统一 CTA 回填 payload：HTML/Rich 正文 closing 与按钮/图片卡同源
-            payload["cta"] = cta
+            combo = build_mystic_cta(payload, config=cfg)
+            buttons = combo.get("buttons") or []
+            # payload["cta"] 回填单按钮结构（兼容门禁 is_usable_mystic_broadcast 与正文 closing）
+            payload["cta"] = buttons[0] if buttons else {
+                "target": "none",
+                "label": "",
+                "image_label": "",
+                "url": "",
+                "mini_app": None,
+                "style": "default",
+                "closing": "",
+            }
             rich_message = build_rich_mystic_card_message(payload)
             html_message = build_mystic_html(payload)
-            reply_markup = build_cta_markup(cta, config=cfg)
+            reply_markup = build_cta_markup_combo(combo, config=cfg)
             rich_enabled = bool(cfg.get("RICH_MESSAGE_ENABLED", False))
             format_version = str(cfg.get("BROADCAST_FORMAT_VERSION", "html") or "html").lower()
             mystic_cfg = cfg.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
@@ -124,7 +138,7 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
 
             # [v5.38.15] 优先发送图片卡，失败回退 Rich Message / HTML
             if image_card_enabled:
-                image_path = _build_mystic_image_card(payload, config=cfg, cta=cta)
+                image_path = _build_mystic_image_card(payload, config=cfg)
                 if image_path and os.path.isfile(image_path):
                     try:
                         with rm.locked("bot"):
@@ -188,7 +202,7 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
             logger.info(
                 f"✅ {payload['title']}已发送"
                 f"（mode={payload['mode']}，msg={sent.message_id}，"
-                f"cta={cta.get('target', 'none')}）"
+                f"cta={','.join(b.get('target', 'none') for b in buttons) or 'none'}）"
             )
     except TaskAbort as exc:
         if exc.expected:

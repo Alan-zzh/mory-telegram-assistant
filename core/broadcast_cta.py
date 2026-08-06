@@ -34,6 +34,24 @@ _DEFAULT_URLS = {
     TARGET_CONTACT: "https://t.me/Moryfansbot",
 }
 
+# ── 组合模式池（v5.38.27：按钮随机组合，按日期种子稳定）──
+# 模式名 → 目标列表；duo 时 preview 必须第一，目标不重复
+_COMBO_POOLS: List[str] = [
+    "single_preview",
+    "single_contact",
+    "single_subscribe",
+    "duo_preview_contact",
+    "duo_preview_subscribe",
+]
+
+_COMBO_TARGETS: Dict[str, List[str]] = {
+    "single_preview": [TARGET_PREVIEW],
+    "single_contact": [TARGET_CONTACT],
+    "single_subscribe": [TARGET_SUBSCRIBE],
+    "duo_preview_contact": [TARGET_PREVIEW, TARGET_CONTACT],
+    "duo_preview_subscribe": [TARGET_PREVIEW, TARGET_SUBSCRIBE],
+}
+
 # ── 各场景 CTA 文案池 ──
 # 元组格式：(label, image_label, closing)
 # label: 真实按钮文案（可含 emoji）
@@ -409,6 +427,99 @@ def get_broadcast_cta(
     }
 
 
+def _build_combo_button(
+    scene: str,
+    period: str,
+    mode: str,
+    config: dict,
+    user_profile: dict,
+    rng: random.Random,
+    target: str,
+) -> Optional[dict]:
+    """按指定 target 构建单按钮 cta dict（结构同 get_broadcast_cta，复用现有文案池）。"""
+    cfg = config or {}
+    pool_name = _resolve_pool_name(scene, mode=mode, period=period)
+    pool = _CTA_POOLS.get(pool_name, {})
+    choices = pool.get(target, [])
+    if not choices:
+        # 该目标没有文案时回退 preview
+        choices = pool.get(TARGET_PREVIEW, [])
+        target = TARGET_PREVIEW
+    if not choices:
+        return None
+
+    choice = rng.choice(choices)
+    label, pool_image_label, closing = choice
+    label, _, closing = _personalize_label(label, pool_image_label, closing, user_profile)
+    image_label = _derive_image_label(label, pool_image_label)
+    url = _get_url(target, cfg)
+    mini_app = None
+    if target == TARGET_MINI_APP:
+        mini_app = {
+            "url": url,
+            "short_name": cfg.get("MINI_APP_SHORT_NAME", "Mory"),
+        }
+    return {
+        "target": target,
+        "label": label,
+        "image_label": image_label,
+        "url": url,
+        "mini_app": mini_app,
+        "style": _STYLE_MAP.get(target, "default"),
+        "closing": closing,
+    }
+
+
+def get_broadcast_cta_combo(
+    scene: str,
+    period: str = "",
+    mode: str = "",
+    config: dict = None,
+    user_profile: dict = None,
+    date_key: str = "",
+) -> dict:
+    """生成组合 CTA 对象（1-2 个真实 InlineKeyboard 按钮）。
+
+    组合模式按「场景参数 + 北京日期」确定性随机：同 date_key 稳定（同日全群一致）、
+    跨日自然轮换。场景约束与 _choose_target 对齐：
+    - news / greeting 非午后夜间（morning/evening）→ 无按钮（空 buttons）
+    - greeting afternoon/night → 仅 preview 单按钮（问候低打扰，不组合）
+    - scheduled → 仅 preview 单按钮（定点播报历史规则只给预览）
+    - mystic（cta_enabled=true）→ 全组合模式随机；cta_enabled=false 空按钮
+
+    返回字段：
+        buttons: [cta_dict, ...]，每项结构同 get_broadcast_cta
+                 （target/label/image_label/url/style/closing）
+        closing: 正文结尾引导语（取第一个按钮的 closing，无按钮时为空串）
+    """
+    cfg = config or {}
+    rng = random.Random(_stable_seed(scene, period, mode, date_key=date_key))
+
+    if scene == "news":
+        return {"buttons": [], "closing": ""}
+    if scene == "greeting" and period not in ("afternoon", "night"):
+        return {"buttons": [], "closing": ""}
+    if scene == "mystic":
+        mystic_cfg = cfg.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
+        if not bool(mystic_cfg.get("cta_enabled", False)):
+            return {"buttons": [], "closing": ""}
+        mode_name = rng.choice(_COMBO_POOLS)
+    else:
+        # greeting（afternoon/night）、scheduled 及未知场景：只给 preview 单按钮
+        mode_name = "single_preview"
+
+    buttons = []
+    closing = ""
+    for target in _COMBO_TARGETS.get(mode_name, [TARGET_PREVIEW]):
+        cta = _build_combo_button(scene, period, mode, cfg, user_profile, rng, target)
+        if cta is None:
+            continue
+        buttons.append(cta)
+        if not closing:
+            closing = cta.get("closing", "")
+    return {"buttons": buttons, "closing": closing}
+
+
 def build_cta_markup(cta: dict, config: dict = None):
     """把 CTA 对象转成 telebot.types.InlineKeyboardMarkup。
 
@@ -453,6 +564,64 @@ def build_cta_markup(cta: dict, config: dict = None):
         button = types.InlineKeyboardButton(text=label, url=url)
 
     markup.add(button)
+    return markup
+
+
+def build_cta_markup_combo(combo: dict, config: dict = None):
+    """把组合 CTA 对象转成 telebot.types.InlineKeyboardMarkup（1-2 个真实按钮）。
+
+    - 单按钮一行 1 个、双按钮同一行 2 个（row_width=2）
+    - 沿用 BUTTON_STYLE_ENABLED 彩色按钮逻辑
+    - 无有效按钮（空 buttons / 全部跳过）时返回 None
+    """
+    if not isinstance(combo, dict):
+        return None
+    buttons = combo.get("buttons") or []
+    if not buttons:
+        return None
+
+    cfg = config or {}
+    button_style_enabled = bool(cfg.get("BUTTON_STYLE_ENABLED", False))
+
+    from telebot import types
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    valid_buttons = []
+    for cta in buttons:
+        if not isinstance(cta, dict):
+            continue
+        target = cta.get("target", TARGET_NONE)
+        if target == TARGET_NONE:
+            continue
+        label = cta.get("label") or cta.get("image_label")
+        url = cta.get("url", "")
+        mini_app = cta.get("mini_app")
+        if not label:
+            continue
+
+        if target == TARGET_MINI_APP and mini_app and mini_app.get("url"):
+            # Mini App 入口按钮
+            try:
+                button = types.InlineKeyboardButton(
+                    text=label,
+                    web_app=types.WebAppInfo(url=mini_app["url"]),
+                )
+            except Exception:
+                # 旧版本 SDK 没有 web_app，回退 URL 按钮
+                button = types.InlineKeyboardButton(text=label, url=url or mini_app["url"])
+        elif button_style_enabled:
+            from core.telebot_compat import create_colored_button
+            button = create_colored_button(text=label, url=url, style=cta.get("style", "default"))
+        else:
+            button = types.InlineKeyboardButton(text=label, url=url)
+
+        valid_buttons.append(button)
+
+    if not valid_buttons:
+        return None
+    # 单按钮一行 1 个、双按钮同一行 2 个（markup.add 每次调用成一行，需一次传入一行按钮）
+    for i in range(0, len(valid_buttons), 2):
+        markup.add(*valid_buttons[i:i + 2])
     return markup
 
 

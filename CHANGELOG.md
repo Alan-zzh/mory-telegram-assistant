@@ -8,6 +8,7 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-08-06 | 新增/优化 | v5.38.27 播报体验二轮：问候卡新增「一言」独白区块+深色主题可读性；图片卡去图上按钮改真实按钮随机组合；vote_kick 事务暗病修复。 | \core/broadcast_image_payload.py\、\core/broadcast_cta.py\、\modules/vote_kick.py\、\AGENTS.md\ 等 |
 | 2026-08-06 | 新增/优化 | v5.38.26 播报体验升级+人设治理：图片卡主题化与问候卡改版（含 night 档）、CTA 每日轮换与玄学三入口、搭讪/FAQ 人设升级、风格样本分组投喂与蒸馏、死代码清理。 | \core/broadcast_image_card.py\、\tasks/broadcast/greeting_task.py\、\modules/admin_cmds.py\、\AGENTS.md\ 等 |
 | 2026-08-05 | 修复/清理 | v5.38.24 遗留闭环：mypy 10 项清零入 CI；sanitize 自愈修复生效；get_pool_info 补测试；文档治理+垃圾清理。 | \core/ai_engine.py\、\	ests/unit/test_ai_engine_resilience.py\、\project_snapshot.md\ 等 |
 | 2026-08-05 | 修复 | v5.38.23 Harness 六项修复：CI 门禁断链、状态残留三路径、.venv 重建 3.12、request_id 关联。 | \core/ai_engine.py\、\core/database.py\、\.github/workflows/ci.yml\、\AGENTS.md\ 等 |

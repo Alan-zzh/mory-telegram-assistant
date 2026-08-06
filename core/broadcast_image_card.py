@@ -8,7 +8,7 @@
 - 仅依赖 PIL，不调用模型池
 - 输出 PNG，适配移动端竖屏
 - 右下角保留 "Mory / 沫沫的沫" 品牌印章
-- 底部 CTA 按钮视觉（真实可点击入口由调用方以 InlineKeyboard 方式附加）
+- 图片内不再绘制 CTA 按钮视觉（真实可点击按钮由调用方以 Telegram InlineKeyboard 附加，图片只管画面）
 - v4.6：font() LRU 缓存 + 临时 Image 显式 close + 单区块异常隔离
 """
 
@@ -556,7 +556,7 @@ def draw_block_two_column(
     yy = y + 68
     for item in left_items:
         draw.ellipse([(lx + 24, yy + 10), (lx + 34, yy + 20)], fill=GREEN)
-        draw.text((lx + 44, yy), item, font=f_body, fill=INK)
+        draw.text((lx + 44, yy), item, font=f_body, fill=_theme_color("text", INK))
         yy += line_h
 
     # 忌栏
@@ -567,7 +567,7 @@ def draw_block_two_column(
     jy = y + 68
     for item in right_items:
         draw.ellipse([(rx + 24, jy + 10), (rx + 34, jy + 20)], fill=RED)
-        draw.text((rx + 44, jy), item, font=f_body, fill=INK)
+        draw.text((rx + 44, jy), item, font=f_body, fill=_theme_color("text", INK))
         jy += line_h
 
     return y + box_h + 30
@@ -596,7 +596,7 @@ def draw_block_key_value(
         draw.rounded_rectangle([(margin, y), (margin + tag_w, y + tag_h)],
                                radius=6, fill=GOLD_BG)
         draw.text((margin + 8, y + 5), str(label), font=f_label, fill=GOLD_DARK)
-        draw.text((margin + tag_w + 14, y + 5), str(value), font=f_small, fill=INK_SOFT)
+        draw.text((margin + tag_w + 14, y + 5), str(value), font=f_small, fill=_theme_color("text_soft", INK_SOFT))
         y += 34
     return y + 20
 
@@ -640,7 +640,7 @@ def draw_block_list(
         max_text_w = width - margin - text_x
         wrapped = wrap_text(draw, line_text, f_body, max_text_w)
         for ln in wrapped:
-            draw.text((text_x, y), ln, font=f_body, fill=INK)
+            draw.text((text_x, y), ln, font=f_body, fill=_theme_color("text", INK))
             y += 30
         y += 6
     return y + 20
@@ -685,7 +685,7 @@ def draw_insight_card(
     draw.text((margin + 18, y + 6), "\u201c", font=font(32, "kai"), fill=(200, 215, 205))
     iy = y + 24
     for ln in lines:
-        draw.text((margin + 30, iy), ln, font=f_insight, fill=INK)
+        draw.text((margin + 30, iy), ln, font=f_insight, fill=_theme_color("text", INK))
         iy += 32
     return y + i_h + 28
 
@@ -730,7 +730,7 @@ def draw_tags(
         value_text = str(value)
         lw, _ = ts(draw, label, f_tag)
         vw, _ = ts(draw, value_text, f_tag)
-        draw.text((x + 10, yy + 8), label, font=f_tag, fill=GRAY)
+        draw.text((x + 10, yy + 8), label, font=f_tag, fill=_theme_color("text_soft", GRAY))
         draw.text((x + tag_w - vw - 10, yy + 8), value_text, font=f_tag, fill=fg)
         # 中间小分隔
         draw.line([(x + tag_w // 2, yy + 8), (x + tag_w // 2, yy + tag_h - 8)], fill=(220, 220, 220), width=1)
@@ -775,7 +775,7 @@ def draw_footer_lines(
     x = box_x + 20
     for (label, value), w in zip(lines, widths):
         text = f"{label}：{value}"
-        draw.text((x, y + 12), text, font=f_small, fill=INK_SOFT)
+        draw.text((x, y + 12), text, font=f_small, fill=_theme_color("text_soft", INK_SOFT))
         x += w + 50
     return y + box_h + 24
 
@@ -816,7 +816,8 @@ def draw_card(
     参数：
         payload: 标准化播报数据，字段见下
         out: 输出 PNG 路径
-        cta: 底部按钮文案（纯视觉，真实按钮由调用方附加）
+        cta: 底部按钮文案（仅透传记录，图片内不再绘制按钮视觉，
+            真实按钮由调用方以 Telegram InlineKeyboard 附加）
         width: 图片宽度
         min_height: 最小高度（内容少时占位）
         options: 扩展选项（当前保留兼容，未启用新字段）
@@ -909,9 +910,9 @@ def draw_card(
             except Exception as exc:
                 _logger.warning("skip time_text(tmp): %s", exc)
 
-        # 底部留白 + CTA + 印章
+        # 底部留白 + 印章
         cta_text = strip_visual_emoji(cta or "")
-        footer_reserve = 170 if cta_text else 120
+        footer_reserve = 120
         content_bottom = y + footer_reserve
         height = max(min_height, content_bottom)
 
@@ -922,6 +923,10 @@ def draw_card(
         # 可选外部背景图半透明叠加（缺失/损坏时静默跳过，不影响出图）
         if background_path:
             _compose_background(img, background_path, width, height)
+            # 深色主题（night/evening）+ 启用背景：叠加半透明深色遮罩压暗背景，
+            # 提升近白正文文字的对比度；浅色主题不叠加，保持原有明快视觉。
+            if opts.get("theme") in ("night", "evening"):
+                _apply_dark_overlay(img, width, height)
         _draw_cloud_pattern(draw, width, height)
         _draw_top_bar(draw, width)
 
@@ -986,13 +991,6 @@ def draw_card(
         # 底部分隔线
         draw.line([(margin, height - 130), (width - margin, height - 130)],
                   fill=GREEN_LINE, width=1)
-
-        # CTA 按钮视觉
-        if cta_text:
-            try:
-                _draw_cta_button(img, draw, cta_text, height - 115, width, margin)
-            except Exception as exc:
-                _logger.warning("skip cta_button: %s", exc)
 
         # 品牌印章（使用临时画布已测量的尺寸精确定位）
         stamp_w, stamp_h = draw_brand_stamp(tmp_draw, x=0, y=0)
@@ -1096,6 +1094,10 @@ THEMES = {
         "divider": (216, 178, 108),
         "cta_top": (222, 184, 120),
         "cta_bottom": (158, 116, 62),
+        "text": INK,
+        "text_soft": INK_SOFT,
+        "tag_text": (110, 98, 78),
+        "divider_soft": (232, 218, 192),
     },
     "afternoon": {
         "label": "青绿生息",
@@ -1104,6 +1106,10 @@ THEMES = {
         "divider": (150, 190, 165),
         "cta_top": (92, 160, 136),
         "cta_bottom": (38, 92, 74),
+        "text": INK,
+        "text_soft": INK_SOFT,
+        "tag_text": (72, 110, 98),
+        "divider_soft": (206, 224, 212),
     },
     "evening": {
         "label": "靛蓝暮色",
@@ -1112,6 +1118,10 @@ THEMES = {
         "divider": (150, 160, 205),
         "cta_top": (110, 122, 190),
         "cta_bottom": (48, 56, 108),
+        "text": (245, 243, 238),
+        "text_soft": (206, 204, 198),
+        "tag_text": (186, 190, 216),
+        "divider_soft": (196, 200, 228),
     },
     "night": {
         "label": "深空蓝",
@@ -1120,6 +1130,10 @@ THEMES = {
         "divider": (140, 160, 215),
         "cta_top": (80, 105, 175),
         "cta_bottom": (28, 44, 96),
+        "text": (238, 238, 232),
+        "text_soft": (200, 200, 192),
+        "tag_text": (178, 186, 212),
+        "divider_soft": (172, 182, 212),
     },
 }
 
@@ -1164,6 +1178,24 @@ def _compose_background(
     finally:
         if bg is not None:
             bg.close()
+
+
+def _apply_dark_overlay(
+    img: Image.Image,
+    width: int,
+    height: int,
+    color: Tuple[int, int, int] = (10, 10, 15),
+    alpha: int = 70,
+) -> None:
+    """深色主题下对整幅画面叠加一层半透明深色遮罩，压暗背景、提升浅色文字对比度。
+
+    仅在 night/evening 且启用了背景图时由 draw_card 调用；浅色主题不叠加。
+    """
+    overlay = Image.new("RGBA", (width, height), color + (alpha,))
+    try:
+        img.paste(overlay, (0, 0), overlay)
+    finally:
+        overlay.close()
 
 
 def draw_tarot_cards(

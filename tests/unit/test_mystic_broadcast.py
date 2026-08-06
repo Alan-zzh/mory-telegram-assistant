@@ -114,7 +114,7 @@ def test_iching_has_all_patterns_and_moving_line_produces_changed_hexagram():
 
 
 def test_cta_uses_unified_pool_and_can_be_disabled():
-    """CTA 由统一组件生成：target 合法、label/image_label 强绑定、单按钮、可关闭。"""
+    """CTA 由统一组件生成：组合按钮 1-2 个、target 合法、label/image_label 强绑定、可关闭。"""
     from core.broadcast_image_card import strip_visual_emoji
     from tasks.broadcast.mystic_broadcast_task import build_mystic_cta, build_mystic_cta_markup
     from tasks.support.mystic_content import build_mystic_broadcast
@@ -129,18 +129,22 @@ def test_cta_uses_unified_pool_and_can_be_disabled():
         payload = build_mystic_broadcast(_config(), period, now)
         # 旧第二套 CTA 已收敛：payload 不再自带 cta，由发送层统一生成并回填
         assert payload.get("cta") is None
-        cta = build_mystic_cta(payload, config=_config())
-        assert cta["target"] in expected_urls
-        assert cta["label"]
-        assert cta["url"] == expected_urls[cta["target"]]
-        # 强绑定：图片卡文案必须由按钮文案 strip emoji 派生
-        assert cta["image_label"] == strip_visual_emoji(cta["label"])
+        combo = build_mystic_cta(payload, config=_config())
+        buttons = combo.get("buttons") or []
+        assert buttons, "玄学 CTA 不应为空"
+        assert 1 <= len(buttons) <= 2, "组合按钮应为 1-2 个"
+        for cta in buttons:
+            assert cta["target"] in expected_urls
+            assert cta["label"]
+            assert cta["url"] == expected_urls[cta["target"]]
+            # 强绑定：图片卡文案必须由按钮文案 strip emoji 派生
+            assert cta["image_label"] == strip_visual_emoji(cta["label"])
         markup = build_mystic_cta_markup(payload, config=_config())
         assert len(markup.keyboard) == 1
-        assert len(markup.keyboard[0]) == 1
+        assert 1 <= len(markup.keyboard[0]) <= 2
         button = markup.keyboard[0][0]
-        assert button.text == cta["label"]
-        assert button.url == cta["url"]
+        assert button.text == buttons[0]["label"]
+        assert button.url == buttons[0]["url"]
 
     no_cta = build_mystic_broadcast(
         _config(cta_enabled=False), "morning", now
@@ -164,14 +168,16 @@ def test_renderers_have_structured_layout_sender_and_matching_cta_copy():
     )
     # 与发送层一致：统一 CTA 生成后回填 payload，正文 closing 与按钮同源
     from tasks.broadcast.mystic_broadcast_task import build_mystic_cta
-    payload["cta"] = build_mystic_cta(payload, config=_config())
+    combo = build_mystic_cta(payload, config=_config())
+    payload["cta"] = (combo.get("buttons") or [{}])[0]
     html = build_mystic_html(payload)
     rich = build_rich_mystic_card_message(payload)
     for text in (html, rich):
         assert "@MoryMateBot" in text
-        assert payload["cta"]["closing"] in text
+        assert combo.get("closing") in text
         assert "新闻" not in text
-        assert payload["cta"]["url"] not in text
+        for cta in combo.get("buttons") or []:
+            assert cta.get("url") not in text
         assert "不替代现实判断" not in text
         assert "传统民俗参考" not in text
         assert "不作确定性断言" not in text
