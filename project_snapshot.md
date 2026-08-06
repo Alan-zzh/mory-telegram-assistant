@@ -38,7 +38,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.27（2026-08-06）· 播报体验二轮（问候卡"一言"内容丰富化+深色主题可读性、图片卡去图上按钮改真实 InlineKeyboard 随机组合、vote_kick 事务暗病修复）
 
-生产状态：**v5.38.27 已增量部署 VPS 并验收通过**（生产版本 v5.38.27、双服务 active、health 200、VPS 素材就位、玄学 cta_enabled=true 与主题 theme=true 生效、night 档默认关；08:05 早安生产实发证据：图片卡生成 578KB + 问候已发送 msg=64260；vote_kick 事务暗病修复后 08:15/08:20 两次执行零错误）。验收：pytest 全仓 907 passed/7 skipped、四门禁通过、runtime/verify_prod.py PROD_VERIFY_PASS。
+生产状态：**v5.38.27 已增量部署 VPS 并验收通过**（生产版本 v5.38.27、双服务 active、health 200、VPS 素材就位、玄学 cta_enabled=true 与主题 theme=true 生效、night 档默认关；08:05 早安 + 12:35 午安实发证据；13:05 塔罗实发证据：图片卡已生成 + 已发送 msg=64308 + cta=subscribe 组合按钮生效；vote_kick 事务暗病修复后执行零错误）。验收：pytest 全仓 907 passed/7 skipped、四门禁通过、runtime/verify_prod.py PROD_VERIFY_PASS。已知可观测性说明：VPS journal 当日 11:33 前记录被外部清理（boot FIRST ENTRY=11:33），09:05 黄历日志无法回溯取证，但服务 NRestarts=0 且相邻时段塔罗/午安均正常。
 
 ## 最近 3 条大事
 1. 2026-08-06 v5.38.27：问候卡「一言」+深色可读性+真实按钮随机组合；已部署验收。
