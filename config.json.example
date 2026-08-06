@@ -31,6 +31,14 @@
       "quarterly": 229,
       "yearly": 667,
       "note": "纯看图选这个，去 @MorychannelBot 自助下单或订阅"
+    },
+    "社交解锁1阶": {
+      "price": 89.8,
+      "note": "TG，1v1聊天，解锁定制/原味/寄拍权限"
+    },
+    "社交解锁2阶": {
+      "price": 518.5,
+      "note": "私人微信，线下见面资格，支持视频验证"
     }
   },
   "REPLY_SPEED": "human",
@@ -1216,5 +1224,11 @@
   },
   "HTTP_CLIENT_CONFIG": {},
   "RETROACTIVE_SCAN_ENABLED": false,
-  "RETROACTIVE_SCAN_RANGE": 200
+  "RETROACTIVE_SCAN_RANGE": 200,
+  "INPUT_HINTS": [
+    "想聊什么，直接发给我就好～",
+    "继续说，我在听～",
+    "想了解哪档，随时问我～",
+    "慢慢说，我陪着你～"
+  ]
 }

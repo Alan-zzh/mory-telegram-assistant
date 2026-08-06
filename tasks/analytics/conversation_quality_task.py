@@ -54,12 +54,3 @@ class ConversationQualityTask(BaseTask):
                 logger.info(f"🍼 风格样本蒸馏结果: {distill_result}")
             except Exception as e:
                 logger.error(f"风格样本蒸馏失败: {e}")
-
-        # [Agent G] 风格样本蒸馏链路：默认关闭，开启时从高分评估对话中提取 pending 样本
-        if (ctx.config or {}).get("REPLY_EVOLUTION_DISTILL_ENABLED", False):
-            try:
-                from tasks.analytics.reply_evolution_distill import distill_reply_style_samples
-                distill_result = distill_reply_style_samples(ctx.db, config=ctx.config)
-                logger.info(f"🍼 风格样本蒸馏结果: {distill_result}")
-            except Exception as e:
-                logger.error(f"风格样本蒸馏失败: {e}")
