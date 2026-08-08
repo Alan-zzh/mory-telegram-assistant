@@ -39,7 +39,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.31（2026-08-09）· 特定词自动回复卡片化（Rich/HTML 双排版+单入口随机按钮，默认关）+ v5.38.30 关联频道联动与广告规避漏判修复
 
-生产状态：**v5.38.29 已部署 VPS 并验收通过**（PROD_VERIFY_PASS：双服务 active、health 200、VPS 版本 v5.38.29；54 组风格样本 pending（chat 29/engage 23/greeting 2）、INPUT_HINTS 4 条、PRICE_LIST 社交解锁 2 阶（89.8/518.5）全部就位；FAQ 高频自动收集每日跑 + 每周一 10:00 人设优化提醒任务已创建）。验收：pytest 908 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods/check_deploy_ready 四门禁全过。
+生产状态：**v5.38.31 已部署 VPS 并验收通过**（PROD_VERIFY_PASS：双服务 active、health 200、VPS 版本 v5.38.31；部署脚本超时中断后 dashboard 手动拉起，NRestarts 0/0 无 ERROR。特定词自动回复卡片开关 AUTO_REPLY_CARD_ENABLED 默认关，未在 config 开启；积分/签到咨询规则与放行白名单随本版上线）。验收：pytest 940 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods/check_deploy_ready 四门禁全过、flake8/mypy/compileall 零告警。
 
 ## 最近 3 条大事
 1. 2026-08-09 v5.38.31：特定词自动回复卡片化（默认关闭）；本地门禁通过。
