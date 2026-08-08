@@ -431,7 +431,7 @@
     "enable": true,
     "sensitivity": 3
   },
-  "AD_EXEMPT_CHANNEL_FORWARDS": true,
+  "AD_EXEMPT_CHANNEL_FORWARDS": false,
   "SPAM_ACTION": "mute",
   "EMOJI_MASK_DETECT": false,
   "EDIT_DETECT_ENABLE": false,
@@ -799,6 +799,17 @@
     "orphan_seconds": 30,
     "greeting_chain_delete": true
   },
+  "LINKED_CHANNEL_SYNC_CONFIG": {
+    "enabled": false,
+    "unpin_auto_forward": true,
+    "auto_like_enabled": true,
+    "like_emoji": "👍",
+    "auto_comment_enabled": true,
+    "comment_style": "mixed",
+    "comment_timeout_seconds": 15,
+    "comment_fallback_direct": false,
+    "max_comments_per_hour": 10
+  },
   "PROACTIVE_ENGAGE_CONFIG": {
     "enabled": true,
     "cooldown_minutes": 45,
@@ -808,7 +819,7 @@
   "FAQ_TRACKING_ENABLED": true,
   "FAQ_AUTO_REPLY_ENABLED": true,
   "FAQ_DISTILL_INTERVAL": 86400,
-  "FAQ_MIN_FREQUENCY": 3,
+  "FAQ_MIN_FREQUENCY": 2,
   "RELAY_MODE_ENABLED": false,
   "DAILY_BACKUP_ENABLED": false,
   "LOG_RETENTION_DAYS": 30,

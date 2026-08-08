@@ -113,6 +113,57 @@ _UNRESOLVED_REPLY_MARKERS = (
     "问mory", "问 mory", "联系mory", "联系 mory",
 )
 
+# [方案3] 调侃/玩笑性质的问题特征：短消息 + 疑问词 + 特定场景
+_JOKE_OR_TEASING_PATTERNS = (
+    "可不可以", "可以吗", "能不能", "行不行", "好不好",
+    "左拥右抱", "左拥右抱可不可以",
+)
+
+# [方案3] 真实问题特征：消息较长、包含具体业务词汇、非调侃场景
+_BUSINESS_QUESTION_MARKERS = (
+    "价格", "多少钱", "费用", "收费", "会员", "订阅", "开通", "购买",
+    "内容", "预览", "套餐", "定制", "权限", "频道",
+)
+
+
+def _is_serious_question(msg: str) -> bool:
+    """[方案3] 判断消息是否是真实问题（不是调侃/玩笑性质）。
+    
+    调侃/玩笑性质的问题通常具有以下特征：
+    1. 消息较短（< 15 字）
+    2. 包含"可不可以"、"可以吗"等疑问词
+    3. 包含"左拥右抱"等调侃性词汇
+    
+    真实问题通常具有以下特征：
+    1. 消息较长（>= 15 字）
+    2. 包含具体业务词汇（价格、会员、订阅等）
+    3. 包含具体问题描述
+    """
+    if not msg:
+        # [方案3] 如果没有用户消息，默认视为真实问题（保留原有逻辑）
+        return True
+    
+    msg_lower = msg.lower().strip()
+    msg_len = len(msg_lower)
+    
+    # 1. 短消息 + 调侃性疑问词 → 调侃/玩笑
+    if msg_len < 15:
+        for pattern in _JOKE_OR_TEASING_PATTERNS:
+            if pattern in msg_lower:
+                return False
+    
+    # 2. 包含具体业务词汇 → 真实问题
+    for marker in _BUSINESS_QUESTION_MARKERS:
+        if marker in msg_lower:
+            return True
+    
+    # 3. 消息较长（>= 20 字）→ 可能是真实问题
+    if msg_len >= 20:
+        return True
+    
+    # 4. 其他情况：默认视为真实问题（避免误判）
+    return True
+
 _CUSTOM_DETAIL_MARKERS = (
     "舞", "舞蹈", "开场", "穿衣服", "服装", "卡点", "变装", "镜头", "风格",
 )
@@ -254,8 +305,14 @@ def _should_offer_handoff(
     ai_attempted: bool = False,
     mode: str = "normal",
     is_priv: bool = False,
+    user_msg: str = "",
 ) -> bool:
-    """FAQ未命中且 AI 无法可靠回答时，给用户明确的人工/自助出口。"""
+    """FAQ未命中且 AI 无法可靠回答时，给用户明确的人工/自助出口。
+    
+    [方案3] 添加上下文判断：
+    1. 调侃/玩笑性质的问题不触发 handoff（保留 AI 原始回复）
+    2. 只有在 AI 明确表示无法回答且消息是真实问题时才触发 handoff
+    """
     if faq_hit_id or not ai_attempted:
         return False
     if response is None:
@@ -267,6 +324,11 @@ def _should_offer_handoff(
     text = response.strip()
     if text == _final_ai_reply_fallback(mode, is_priv=is_priv):
         return True
+    
+    # [方案3] 检查是否是调侃/玩笑性质的问题
+    if not _is_serious_question(user_msg):
+        return False
+    
     lowered = text.lower()
     return any(marker in lowered for marker in _UNRESOLVED_REPLY_MARKERS)
 
@@ -950,6 +1012,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         ai_attempted=ai_attempted,
         mode=mode,
         is_priv=is_priv,
+        user_msg=msg,
     )
     if needs_handoff:
         conversion_target = "none"
@@ -963,7 +1026,8 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             prefix = str(resp or "").strip()
             if prefix and prefix[-1] not in "。！？!?～~\n":
                 prefix += "。"
-            resp = f"{prefix}这个我不乱说，直接问 @Moryfansbot。"
+            # [方案3] 优化 handoff 文案，让它更自然
+            resp = f"{prefix}这个问题我也不太确定，要不你直接问问 Mory？@Moryfansbot"
 
     # 直接入口/人工交接会改写最终目标，短期上下文必须以最终结果为准。
     dctx.conversion_target = conversion_target

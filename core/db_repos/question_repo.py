@@ -592,7 +592,7 @@ class QuestionRepo:
 
     # ─────────────────────────────── FAQ蒸馏 ────────────────────────────
 
-    def distill_candidates(self, min_frequency=3, days=7):
+    def distill_candidates(self, min_frequency=2, days=7):
         """从用户问题中蒸馏高频问题，生成FAQ候选
 
         扫描最近N天的user_questions，按分类+模式+意图分组，

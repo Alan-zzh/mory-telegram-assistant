@@ -15,6 +15,28 @@ from tasks.support.fault_reporter import get_fault_reporter
 logger = get_logger("tasks.analytics.faq_distill")
 
 
+# 兜底文案特征：AI 模型调用全失败时的降级回复，不是话术可优化项
+_FALLBACK_REPLY_MARKERS = (
+    "这个我不乱说",
+    "这条我不乱说",
+    "这个需要 Mory 看一下",
+    "这个需要 mory 看一下",
+    "直接问 @moryfansbot",
+    "直接问 @Moryfansbot",
+)
+
+
+def _is_command_text(text: str) -> bool:
+    """以 / 开头的命令类消息不进话术待优化统计。"""
+    return str(text or "").strip().startswith("/")
+
+
+def _is_fallback_reply(summary: str) -> bool:
+    """模型故障兜底文案，不是话术待优化项。"""
+    lowered = str(summary or "").lower()
+    return any(marker in lowered for marker in _FALLBACK_REPLY_MARKERS)
+
+
 def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
     """把最近一天问题整理成老板可直接优化话术的简报。"""
     if not questions:
@@ -41,14 +63,21 @@ def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
     unresolved = [
         item
         for item in questions
-        if not str(item.get("ai_reply_summary", "") or "").strip()
-        or str(item.get("ai_reply_summary", "")).startswith("[UNRESOLVED]")
+        if (
+            not str(item.get("ai_reply_summary", "") or "").strip()
+            or str(item.get("ai_reply_summary", "")).startswith("[UNRESOLVED]")
+        )
+        and not _is_command_text(item.get("question_text", ""))
+        and not _is_fallback_reply(item.get("ai_reply_summary", ""))
     ]
     faq_hits = sum(1 for item in questions if int(item.get("faq_hit_id", 0) or 0) > 0)
     faq_misses = [
         item
         for item in questions
-        if int(item.get("faq_hit_id", 0) or 0) <= 0 and item not in unresolved
+        if int(item.get("faq_hit_id", 0) or 0) <= 0
+        and item not in unresolved
+        and not _is_command_text(item.get("question_text", ""))
+        and not _is_fallback_reply(item.get("ai_reply_summary", ""))
     ]
 
     lines = [
@@ -127,7 +156,7 @@ class FaqDistillTask(BaseTask):
                 self._send_daily_summary(ctx)
                 return
 
-            min_frequency = ctx.rm.config.get("FAQ_MIN_FREQUENCY", 3)
+            min_frequency = ctx.rm.config.get("FAQ_MIN_FREQUENCY", 2)
 
             with TaskTransactionManager("faq_distill", ctx.rm.db, min_interval_sec=86400) as tx:
                 if not tx.claimed:

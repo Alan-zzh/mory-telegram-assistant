@@ -155,7 +155,7 @@ P10钩子中根据 mode 自动映射：
 | FAQ_TRACKING_ENABLED | true | 问题记录开关；开启后明显问句会主动进入P10 |
 | FAQ_AUTO_REPLY_ENABLED | true | FAQ自动回复开关（命中FAQ时优先用审核话术） |
 | FAQ_DISTILL_INTERVAL | 86400 | 蒸馏任务间隔（秒，默认每日一次） |
-| FAQ_MIN_FREQUENCY | 3 | 蒸馏最低频次（出现次数≥此值才生成候选） |
+| FAQ_MIN_FREQUENCY | 2 | 蒸馏最低频次（出现次数≥此值才生成候选） |
 
 示例配置已开启追踪和FAQ自动回复；既有环境仍以当前 `config.json` 为准。每日23:50问题汇总复用 `FAQ_TRACKING_ENABLED` 和 `ADMIN_ID`，不新增漂移开关。
 

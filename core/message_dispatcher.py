@@ -654,6 +654,16 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     if _dispatch_forward_delete(dctx):
         return
 
+    # ── P0.1：关联频道转发联动（取消自动置顶 + 评论转化），命中即停止后续分发 ──
+    try:
+        if dctx.is_group and dctx.msg and getattr(dctx.msg, "sender_chat", None):
+            from modules.linked_channel_sync import handle_group_forward
+            if handle_group_forward(ctx.bot, dctx.msg, ctx.config):
+                clear_logging_context()
+                return
+    except Exception as e:
+        logger.debug(f"P0.1 关联频道联动处理异常（静默）: {e}")
+
     # ── P0：新人入群 ──
     if _dispatch_p0_member(dctx):
         return

@@ -18,6 +18,12 @@ def dispatch_utility_commands(bot, msg, m, CONFIG, db) -> bool:
     if not msg:
         return False
 
+    # 查询自己的 UID（帮助文案 /help 承诺存在，此前缺失实现）
+    if msg.startswith("/myid"):
+        uid = getattr(getattr(m, "from_user", None), "id", 0)
+        bot.reply_to(m, f"🔢 你的 Telegram UID：{uid}")
+        clear_logging_context(); return True
+
     # 反频道转发
     if msg.startswith("/antichannel"):
         from modules.anti_channel import handle_antichannel

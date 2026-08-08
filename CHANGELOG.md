@@ -8,6 +8,8 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-08-09 | 新增 | v5.38.30 关联频道联动模块（默认关）：频道新帖自动点赞、群内转发自动取消置顶、每帖至多一条评论转化，命中即停止分发。 | `modules/linked_channel_sync.py`、`core/message_dispatcher.py`、`core/handlers/media_handlers.py` 等 |
+| 2026-08-08 | 修复 | v5.38.30 广告规避漏判修复：跳过"简"字的"看我💬介"变体现在被正确识别为引流用户名并触发永久禁言+删消息处置。 | `modules/ad_patterns_encoded.py`、`tests/unit/test_ad_patterns_v5161.py` |
 | 2026-08-07 | 新增/优化 | v5.38.29 人设预设全量录入：54 组风格样本落库（15 方向）、INPUT_HINTS 启用、社交解锁改 2 阶、敏感话题先引导 VIP、FAQ 每周自动提醒优化。 | \core/db_repos/reply_evolution_repo.py\、\config.json\、\AGENTS.md\、\docs/technical/persona-qna-edit.md\ 等 |
 | 2026-08-06 | 优化 | v5.38.28 播报视觉修复+文案随机化：深色主题夜色底+深色区块+近白字；背景图去云纹；字号≥16px；塔罗牌名半截修复；傍晚改暮安；问候文案每次发送重新随机。 | \core/broadcast_image_card.py\、\core/broadcast_image_payload.py\、\tasks/support/mystic_content.py\ 等 |
 | 2026-08-06 | 新增/优化 | v5.38.27 播报体验二轮：问候卡新增「一言」独白区块+深色主题可读性；图片卡去图上按钮改真实按钮随机组合；vote_kick 事务暗病修复。 | \core/broadcast_image_payload.py\、\core/broadcast_cta.py\、\modules/vote_kick.py\、\AGENTS.md\ 等 |

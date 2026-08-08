@@ -388,7 +388,7 @@ def test_daily_question_summary_separates_unresolved_and_faq_misses():
     summary = _build_daily_question_summary([
         {
             "question_text": "这个能不能定制",
-            "ai_reply_summary": "[UNRESOLVED] 这个我不乱说",
+            "ai_reply_summary": "[UNRESOLVED] 不确定具体交付时间",
             "faq_hit_id": 0,
         },
         {
@@ -408,6 +408,35 @@ def test_daily_question_summary_separates_unresolved_and_faq_misses():
     assert "这个能不能定制" in summary
     assert "AI已答但FAQ未命中：" in summary
     assert "积分能换什么" in summary
+
+
+def test_daily_question_summary_excludes_commands_and_model_fallback():
+    from tasks.analytics.faq_distill_task import _build_daily_question_summary
+
+    summary = _build_daily_question_summary([
+        {
+            "question_text": "/myid",
+            "ai_reply_summary": "[UNRESOLVED] 这个我不乱说，直接问 @Moryfansbot。",
+            "faq_hit_id": 0,
+        },
+        {
+            "question_text": "/me@afoolGroupBot",
+            "ai_reply_summary": "早啊～这是有事情要问我嘛",
+            "faq_hit_id": 0,
+        },
+        {
+            "question_text": "真牛",
+            "ai_reply_summary": "[UNRESOLVED] 这个我不乱说，直接问 @Moryfansbot。",
+            "faq_hit_id": 0,
+        },
+    ])
+
+    assert "共记录 3 条｜FAQ命中 0 条｜待优化 0 条" in summary
+    assert "待老板优化：" not in summary
+    assert "AI已答但FAQ未命中：" not in summary
+    assert "/myid" not in summary
+    assert "/me@afoolGroupBot" not in summary
+    assert "真牛" not in summary
 
 
 def test_daily_summary_job_sends_to_admin():

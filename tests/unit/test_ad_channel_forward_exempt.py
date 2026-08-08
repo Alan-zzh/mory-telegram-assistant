@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-频道转发消息广告检测豁免测试
+频道转发消息广告检测测试
 
-测试场景：
-1. 频道转发消息应跳过广告检测
-2. 配置开关 AD_EXEMPT_CHANNEL_FORWARDS 控制豁免行为
-3. 非频道转发消息应正常进行广告检测
+测试场景（v5.38.29 变更）：
+1. 频道转发消息应正常进行广告检测（不再豁免）
+2. 非频道转发消息应正常进行广告检测
+3. AD_EXEMPT_CHANNEL_FORWARDS 配置已废弃，频道转发不再豁免
 """
 
 import os
@@ -225,17 +225,15 @@ def _create_dctx_without_channel_forward(config_overrides=None):
     return dctx, ad_detector
 
 
-def test_channel_forward_message_skips_ad_detection():
-    """测试：频道转发消息应跳过广告检测"""
+def test_channel_forward_message_runs_ad_detection():
+    """测试：频道转发消息应正常进行广告检测（v5.38.29 不再豁免）"""
     from core.handlers.security_handlers import check_ad_detection
 
     dctx, ad_detector = _create_dctx_with_channel_forward()
     result = check_ad_detection(dctx)
 
-    # 应该返回 False（跳过广告检测）
-    assert result is False
-    # 广告检测不应该被调用
-    assert len(ad_detector.detect_calls) == 0
+    # 广告检测应该被调用（频道转发不再豁免）
+    assert len(ad_detector.detect_calls) == 1
 
 
 def test_non_channel_forward_message_runs_ad_detection():
@@ -249,33 +247,18 @@ def test_non_channel_forward_message_runs_ad_detection():
     assert len(ad_detector.detect_calls) == 1
 
 
-def test_channel_forward_exempt_disabled():
-    """测试：关闭频道转发豁免时，频道转发消息应进行广告检测"""
+def test_channel_forward_exempt_config_ignored():
+    """测试：AD_EXEMPT_CHANNEL_FORWARDS 配置已废弃，不再影响行为"""
     from core.handlers.security_handlers import check_ad_detection
 
-    dctx, ad_detector = _create_dctx_with_channel_forward(
-        config_overrides={"AD_EXEMPT_CHANNEL_FORWARDS": False}
-    )
-    result = check_ad_detection(dctx)
-
-    # 广告检测应该被调用
-    assert len(ad_detector.detect_calls) == 1
-
-
-def test_channel_forward_exempt_default_enabled():
-    """测试：默认配置下，频道转发消息应跳过广告检测"""
-    from core.handlers.security_handlers import check_ad_detection
-
-    # 不传入 AD_EXEMPT_CHANNEL_FORWARDS 配置，使用默认值 True
+    # 即使配置 AD_EXEMPT_CHANNEL_FORWARDS=True，频道转发仍应检测
     dctx, ad_detector = _create_dctx_with_channel_forward(
         config_overrides={"AD_EXEMPT_CHANNEL_FORWARDS": True}
     )
     result = check_ad_detection(dctx)
 
-    # 应该返回 False（跳过广告检测）
-    assert result is False
-    # 广告检测不应该被调用
-    assert len(ad_detector.detect_calls) == 0
+    # 广告检测应该被调用（配置已废弃）
+    assert len(ad_detector.detect_calls) == 1
 
 
 @pytest.mark.parametrize(

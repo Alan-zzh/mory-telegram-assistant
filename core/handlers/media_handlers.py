@@ -147,8 +147,15 @@ def register_media_handlers(bot, ctx):
         views = getattr(m, 'views', 0) or 0
         forwards = getattr(m, 'forward_count', 0) or 0
         content_type = m.content_type if hasattr(m, 'content_type') else "text"
+        content_type = m.content_type if hasattr(m, 'content_type') else "text"
         ctx.db.track_channel_post(cid, m.message_id, int(m.date.timestamp()), views, forwards, content_type)
         logger.info(f"📺 频道帖子捕获: chat_id={cid} msg_id={m.message_id} views={views} type={content_type}")
+        # 关联频道联动（点赞 + 登记自动评论），默认关闭
+        try:
+            from modules.linked_channel_sync import handle_channel_post
+            handle_channel_post(bot, m, ctx.config)
+        except Exception as e:
+            logger.debug(f"关联频道联动（点赞/评论登记）异常: {e}")
 
     # ── 频道帖子编辑事件捕获 ──────────────────────────────────────────
     @bot.edited_channel_post_handler(func=lambda m: True)

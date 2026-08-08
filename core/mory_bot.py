@@ -91,21 +91,9 @@ class MoryBot:
                 "message to be replied not found",
                 "not found", "bad request: message"
             ]):
-                logger.warning(f"⚡ 原消息{user_msg_id}已被删，降级为普通发送")
-                try:
-                    kwargs_clean = {k: v for k, v in kwargs.items() 
-                                   if k != 'reply_to_message_id'}
-                    sent = self.send_message(cid, text, **kwargs_clean)
-                    return sent  # 降级发送的不需要追踪阅后即焚
-                except Exception as fb_err:
-                    logger.error(f"❌ 降级发送也失败：{fb_err}")
-                    try:
-                        from modules.auto_tasks import report_fault
-                        report_fault("Telegram发送失败", f"降级发送也失败，用户完全无响应: {str(fb_err)[:100]}", "⚠️",
-                                     f"chat_id={cid}")
-                    except Exception as e:
-                        logger.debug(f"操作异常: {e}")
-                    return None
+                # 原消息已删除，不再发送回复（避免尴尬）
+                logger.info(f"🚫 原消息{user_msg_id}已删除，跳过回复")
+                return None
             else:
                 logger.error(f"reply_and_track API异常：{e}")
                 try:

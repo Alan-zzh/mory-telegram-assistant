@@ -1929,7 +1929,7 @@ def _job_faq_distill(rm):
         if not rm.config.get("FAQ_TRACKING_ENABLED", False):
             return
 
-        min_frequency = rm.config.get("FAQ_MIN_FREQUENCY", 3)
+        min_frequency = rm.config.get("FAQ_MIN_FREQUENCY", 2)
 
         with TaskTransactionManager("faq_distill", rm.db, min_interval_sec=86400) as tx:
             if not tx.claimed:

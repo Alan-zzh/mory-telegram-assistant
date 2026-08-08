@@ -164,27 +164,11 @@ def check_ad_detection(dctx) -> bool:
     if not dctx.is_group:
         return False
 
-    # 频道转发消息豁免：频道转发的消息由 anti_channel.py 统一处理，避免误判
-    # 配置 AD_EXEMPT_CHANNEL_FORWARDS=true 开启豁免（默认开启）
+    # [v5.38.29] 频道转发消息不再完全豁免广告检测
+    # 旧版 AD_EXEMPT_CHANNEL_FORWARDS=true 会导致色情/灰产频道转发广告完全漏检
+    # 频道转发消息现在正常进入广告检测流程，anti_channel.py 可独立开启删除所有频道转发
     m = dctx.msg
     CONFIG = dctx.ctx.config
-    if CONFIG.get("AD_EXEMPT_CHANNEL_FORWARDS", True):
-        try:
-            # 检测是否为频道转发消息
-            is_channel_forward = False
-            if hasattr(m, 'forward_origin') and m.forward_origin:
-                origin = m.forward_origin
-                if hasattr(origin, 'type') and origin.type == 'channel':
-                    is_channel_forward = True
-            if hasattr(m, 'forward_from_chat') and m.forward_from_chat:
-                if hasattr(m.forward_from_chat, 'type') and m.forward_from_chat.type == 'channel':
-                    is_channel_forward = True
-            
-            if is_channel_forward:
-                logger.debug(f"[AD] 频道转发消息跳过广告检测: uid={dctx.uid} chat_id={dctx.chat_id}")
-                return False
-        except Exception as e:
-            logger.debug(f"[AD] 频道转发检测异常: {e}")
 
     msg = dctx.text
     m = dctx.msg

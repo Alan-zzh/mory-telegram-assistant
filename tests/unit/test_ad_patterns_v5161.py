@@ -94,6 +94,18 @@ class TestUsernamePatternV5161:
         """学生小李 - 正常账号 - 不能误判"""
         assert not match_any(USERNAME_PATTERNS, "学生小李"), "正常账号被误判"
 
+    def test_kanwo_jie_skip_jian(self):
+        """[Puzan-OS] v5.38.29 新增：看我💬介 - 跳过简字变体"""
+        assert match_any(USERNAME_PATTERNS, "😀姜👑看我💬介"), "用户案例必须命中"
+
+    def test_kanwo_jie_short(self):
+        """看我介 - 最短变体"""
+        assert match_any(USERNAME_PATTERNS, "看我介"), "最短变体必须命中"
+
+    def test_kanwo_jie_with_emoji(self):
+        """看我🎯介 - emoji夹杂变体"""
+        assert match_any(USERNAME_PATTERNS, "看我🎯介"), "emoji夹杂变体必须命中"
+
 
 class TestBioPatternV5161:
     """[Trae] v5.16.1 BIO_PATTERNS 核心骗术关键词"""
