@@ -81,7 +81,7 @@ class KeywordTrigger:
     """
     关键词触发回复管理器
     """
-    
+
     def __init__(self, db, mory_bot=None, ai=None, config=None):
         self.db = db
         self.mory_bot = mory_bot
@@ -89,18 +89,18 @@ class KeywordTrigger:
         self.config = config or {}
         # 需要管理员权限才能触发的动作类型
         self._admin_actions = {"deploy", "restart", "backup", "restore", "sync"}
-    
+
     def handle_message(self, text: str, chat_id: int, message, bot, is_admin: bool = False) -> bool:
         """
         处理消息，匹配关键词
-        
+
         Args:
             text: 用户输入的文本
             chat_id: 聊天ID
             message: 消息对象
             bot: Telegram Bot实例
             is_admin: 是否为管理员
-            
+
         Returns:
             True表示已处理（已回复/执行动作），False表示未匹配
         """
@@ -114,13 +114,13 @@ class KeywordTrigger:
             special_rule = self._match_special_rule(text)
             if special_rule:
                 return self._handle_special_rule(special_rule, chat_id, message, bot)
-            
+
             matched_triggers = self.db.match_keyword_trigger(text)
             if not matched_triggers:
                 return False
-            
+
             logger.info(f"🔑 匹配到 {len(matched_triggers)} 个关键词触发")
-            
+
             # 过滤掉非管理员不能触发的动作类型
             filtered_triggers = []
             for trigger in matched_triggers:
@@ -130,14 +130,14 @@ class KeywordTrigger:
                         logger.info(f"🔑 跳过需要管理员权限的动作: {trigger['keyword']} (action={action_type})")
                         continue
                 filtered_triggers.append(trigger)
-            
+
             if not filtered_triggers:
                 return False
-            
+
             # 只处理第一个匹配的
             trigger = filtered_triggers[0]
             logger.info(f"🔑 使用触发: {trigger['keyword']}")
-            
+
             if trigger["reply_type"] == "static":
                 return self._handle_static(trigger, chat_id, message, bot)
             elif trigger["reply_type"] == "ai":
@@ -147,7 +147,7 @@ class KeywordTrigger:
             else:
                 logger.warning(f"🔑 未知的触发类型: {trigger['reply_type']}")
                 return False
-                
+
         except Exception as e:
             logger.error(f"🔑 关键词触发处理异常: {e}")
             logger.error(traceback.format_exc())
@@ -276,9 +276,10 @@ class KeywordTrigger:
             if self.ai and rule.get("ai_polish", True):
                 rule_prompt = (rule.get("polish_prompt") or "").strip()
                 polish_prompt = (
-                    "请按当前已加载的Mory人设，把业务底稿改成一次自然回复。\n"
+                    "请按当前已加载的Mory人设，把下面的业务底稿润色成一次自然回复。\n"
                     "硬约束：\n"
-                    "1. 先正面回应用户这句话，再自然带出底稿里的有效信息。\n"
+                    "1. 底稿原文是唯一信息源，逐句顺着原文意思精修，只做语气和措辞的打磨；"
+                    "禁止重写、扩写、增删信息点或另起一段新文案。\n"
                     "2. 只写1到2句、25到70个汉字；不要标题、列表、解释或客服腔。\n"
                     "3. 不编造价格、优惠、库存、权益、交付能力；不确定就保守表达。\n"
                     "4. 底稿里的必要入口必须保留，其他措辞要换成当下对话的说法。\n"
@@ -298,10 +299,8 @@ class KeywordTrigger:
                     final_reply = ai_reply.strip().strip("\"'“”")
                     was_polished = True
 
-            if self.mory_bot:
-                self.mory_bot.reply_and_track(message, final_reply)
-            else:
-                bot.reply_to(message, final_reply)
+            if not self._send_special_reply(message, chat_id, final_reply, rule, bot):
+                return False
             self._record_topic_reply(
                 rule,
                 message,
@@ -314,6 +313,84 @@ class KeywordTrigger:
         except Exception as e:
             logger.error(f"🔑 特定词自动回复失败: {e}")
             return False
+
+    def _send_special_reply(self, message, chat_id: int, final_reply: str, rule, bot) -> bool:
+        """发送特定词自动回复；卡片开关开启时走 Rich→HTML→纯文本回退链。
+
+        AUTO_REPLY_CARD_ENABLED=false 时保持旧行为（纯文本 reply），回归安全。
+        卡片模式下私聊不挂按钮（红线），群聊挂单入口按钮。
+        """
+        from core.auto_reply_card import (
+            build_auto_reply_card,
+            is_auto_reply_card_enabled,
+            is_rich_message_enabled,
+        )
+
+        if not is_auto_reply_card_enabled(self.config):
+            if self.mory_bot:
+                return bool(self.mory_bot.reply_and_track(message, final_reply))
+            return bool(bot.reply_to(message, final_reply))
+
+        try:
+            card = build_auto_reply_card(rule, final_reply, chat_id, self.config)
+        except Exception as e:
+            logger.warning(f"🔑 自动回复卡片构建失败，回退纯文本: {e}")
+            card = None
+
+        if not card:
+            if self.mory_bot:
+                return bool(self.mory_bot.reply_and_track(message, final_reply))
+            return bool(bot.reply_to(message, final_reply))
+
+        sent = None
+        rich_html = card.get("rich_html", "")
+        if rich_html and is_rich_message_enabled(self.config):
+            raw_bot = getattr(self.mory_bot, "_bot", None) or bot
+            try:
+                from core.telebot_compat import send_rich_message_compat
+
+                sent = send_rich_message_compat(
+                    raw_bot,
+                    chat_id,
+                    rich_html,
+                    reply_markup=card.get("markup"),
+                )
+                if sent and hasattr(sent, "message_id") and int(chat_id or 0) < 0:
+                    try:
+                        self.db.track_channel_message(chat_id, sent.message_id, "rich")
+                    except Exception as e:
+                        logger.debug(f"🔑 Rich 消息追踪入库失败: {e}")
+                logger.info(f"🔑 特定词自动回复成功（Rich 卡片）: {rule.get('name', '未命名规则')}")
+            except Exception as e:
+                logger.warning(f"🔑 Rich 卡片发送失败，回退 HTML: {e}")
+                sent = None
+
+        if sent is None:
+            html_text = card.get("html_text", "")
+            send_kwargs = {}
+            if html_text:
+                send_kwargs = {"parse_mode": "HTML", "reply_markup": card.get("markup")}
+            try:
+                if self.mory_bot:
+                    sent = self.mory_bot.reply_and_track(
+                        message, html_text or final_reply, **send_kwargs
+                    )
+                else:
+                    sent = bot.reply_to(message, html_text or final_reply, **send_kwargs)
+            except Exception as e:
+                logger.warning(f"🔑 HTML 卡片发送失败，回退纯文本: {e}")
+                sent = None
+
+        if sent is None:
+            try:
+                if self.mory_bot:
+                    sent = self.mory_bot.reply_and_track(message, final_reply)
+                else:
+                    sent = bot.reply_to(message, final_reply)
+            except Exception as e:
+                logger.error(f"🔑 特定词自动回复发送失败: {e}")
+                return False
+        return bool(sent)
 
     @staticmethod
     def _get_matched_keyword(rule, user_text: str) -> str:
@@ -383,7 +460,7 @@ class KeywordTrigger:
             )
         except Exception as e:
             logger.warning(f"🔑 关键话题统计写入失败: {e}")
-    
+
     def _handle_static(self, trigger, chat_id, message, bot):
         reply_text = trigger["reply_text"]
         try:
@@ -396,7 +473,7 @@ class KeywordTrigger:
         except Exception as e:
             logger.error(f"🔑 静态回复失败: {e}")
             return False
-    
+
     def _handle_ai(self, trigger, chat_id, message, bot):
         ai_prompt = trigger["reply_text"]
         try:
@@ -414,7 +491,7 @@ class KeywordTrigger:
         except Exception as e:
             logger.error(f"🔑 AI回复失败: {e}")
             return False
-    
+
     def _handle_action(self, trigger, chat_id, message, bot):
         action_type = trigger.get("action_type", "")
         logger.info(f"🔑 执行动作: {action_type}")

@@ -32,24 +32,24 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py`、`core/broadcast_image_card.py`、`core/broadcast_image_payload.py`、`core/broadcast_cta.py` | v5.38.16：黄历/塔罗/易经公共 helper 去重 170 行；CTA label↔image_label 强绑定 + 清理全部 24 条 mystic contact/preview/subscribe img_label 遗留“· 点击头像”后缀；新增 greeting/scheduled × afternoon/night 四套时段 CTA 池；font() LRU(128)；11 处 PIL Image.close()；单 block 异常隔离占位；失败自动回退 Rich/HTML；字体兜底 Windows→Linux→仓库；README 新增图片卡章节；20 smoke 单测。v5.38.22：CTA 收敛为统一单一真相源（删旧 CTA 池/get_random_cta/cta_pool 死参/mystic 第二套 CTA，发送层统一生成回填）、四路开关收敛 `is_broadcast_image_enabled`、视觉常量对齐（CTA 圆角 18/标签 8）、缓存存在性短路 + 原子写、`_stable_seed` 改 md5 确定性 |
 | 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段；早晚正文无按钮，午后/睡前如带入口只到预览；AI 失败回退可信底稿；v5.38.16 CTA 支持 afternoon/night 精确池 |
 | 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 早 09:05 风水黄历(almanac)/午 13:05 塔罗(tarot)/晚 20:35 易经(iching)；v5.37.0 替换原新闻播报；v5.38.20 修复 MYSTIC.enabled 配置脏状态(07-30 起误关致停摆 5 天已恢复)；NewsTask 代码已删，NEWS_BROADCAST_CONFIG.enabled 残留已清理为 false |
-| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token |
+| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token；v5.38.31 特定词自动回复卡片化：`core/auto_reply_card.py` 生成 Rich/HTML 双排版 + 单入口随机按钮（AUTO_REPLY_CARD_ENABLED 默认关），conversion_target 绑定目标、未声明时联系/自助随机二选一，私聊零按钮，润色只精修原文 |
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录 |
 | 关联频道联动 | 默认关闭 | `modules/linked_channel_sync.py` | v5.38.30：频道新帖自动点赞 + 群内关联转发取消置顶 + 每帖至多一条评论（彩虹屁/转化单按钮），按 forward_origin 精确匹配、时间窗兜底、小时限流；接入 media_handlers 与 message_dispatcher P0.1 |
 
 ## 当前版本
-v5.38.30（2026-08-09）· 关联频道联动模块（频道新帖点赞/关联转发取消置顶/每帖一条评论转化）+ 广告规避漏判修复
+v5.38.31（2026-08-09）· 特定词自动回复卡片化（Rich/HTML 双排版+单入口随机按钮，默认关）+ v5.38.30 关联频道联动与广告规避漏判修复
 
 生产状态：**v5.38.29 已部署 VPS 并验收通过**（PROD_VERIFY_PASS：双服务 active、health 200、VPS 版本 v5.38.29；54 组风格样本 pending（chat 29/engage 23/greeting 2）、INPUT_HINTS 4 条、PRICE_LIST 社交解锁 2 阶（89.8/518.5）全部就位；FAQ 高频自动收集每日跑 + 每周一 10:00 人设优化提醒任务已创建）。验收：pytest 908 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods/check_deploy_ready 四门禁全过。
 
 ## 最近 3 条大事
-1. 2026-08-09 v5.38.30：关联频道联动模块（默认关闭）+ 广告规避漏判修复；本地门禁通过。
-2. 2026-08-07 v5.38.29：人设预设全量录入 54 组样本；已部署验收。
-3. 2026-08-06 v5.38.28：播报视觉修复+文案随机化；已部署验收。
+1. 2026-08-09 v5.38.31：特定词自动回复卡片化（默认关闭）；本地门禁通过。
+2. 2026-08-09 v5.38.30：关联频道联动模块（默认关闭）+ 广告规避漏判修复；本地门禁通过。
+3. 2026-08-07 v5.38.29：人设预设全量录入 54 组样本；已部署验收。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=137
-core_py=81
+core_py=82
 job_count=33
 db_tables=173
 dashboard_routes=164

@@ -190,6 +190,69 @@
         "限时"
       ],
       "base_reply": "想先了解内容的话可以去 @moryselect 看预览，没写清楚的再问我呀。"
+    },
+    {
+      "name": "积分咨询",
+      "topic": "积分",
+      "enabled": true,
+      "keywords": [
+        "积分可以干嘛",
+        "积分能干嘛",
+        "积分有什么用",
+        "积分怎么用",
+        "积分怎么获得",
+        "怎么获得积分",
+        "积分多少",
+        "我的积分",
+        "查看积分",
+        "积分排行",
+        "排行榜",
+        "积分抽奖",
+        "抽奖"
+      ],
+      "ai_polish": true,
+      "ai_mode": "normal",
+      "conversion_target": "none",
+      "polish_prompt": "用温柔俏皮的语气说明积分用途，突出'不搞套路、说送就送'的特点。提到：不定期积分抽奖活动、签到90天以上不断档mory会免费送会员、积分商城可直接换会员（不用评论转发点赞那套）。最后一句带点小傲娇：白嫖也是真香，Mory也喜欢白嫖～嫌麻烦或经济实力允许的宝宝直接自助下单就好，丰俭由己。不要带任何入口链接。",
+      "required_terms": [],
+      "forbidden_terms": [
+        "@moryselect",
+        "@MorychannelBot",
+        "保证",
+        "限时",
+        "评论",
+        "转发",
+        "点赞"
+      ],
+      "base_reply": "积分用途还挺多的～不定期有积分抽奖活动，签到90天以上不断档的话mory偶尔会搞免费送会员。积分商城长期有效，说'积分商城'就能直接换会员，不用搞评论转发点赞那套，咱们不玩套路，说送就送～白嫖也是真香，Mory也喜欢白嫖。嫌麻烦或经济实力允许的宝宝直接自助下单就好，丰俭由己，顺心就行。"
+    },
+    {
+      "name": "签到奖励咨询",
+      "topic": "签到",
+      "enabled": true,
+      "keywords": [
+        "签到有什么用",
+        "签到干嘛",
+        "签到干嘛用",
+        "签到有什么好处",
+        "签到干嘛的",
+        "签到有什么奖励"
+      ],
+      "ai_polish": true,
+      "ai_mode": "normal",
+      "conversion_target": "none",
+      "polish_prompt": "用温柔俏皮的语气说明签到奖励，突出'不搞套路'的特点。提到：每天签到领积分、连续签到90天以上不断档mory会免费送会员、积分可以换会员。最后一句带点小傲娇：不用不好意思，白嫖就白嫖～不要带任何入口链接。",
+      "required_terms": [],
+      "forbidden_terms": [
+        "@moryselect",
+        "@MorychannelBot",
+        "保证",
+        "限时",
+        "评论",
+        "转发",
+        "点赞"
+      ],
+      "base_reply": "签到就是每天领积分呀～连续签到90天以上不断档的话，mory偶尔会搞免费送会员。积分攒够了可以直接在积分商城换会员，不用搞评论转发点赞那套，咱们不玩套路，说送就送～不用不好意思，白嫖就白嫖，白嫖也是真香，Mory也喜欢白嫖～"
     }
   ],
   "PHOTO_KEYWORDS": [
@@ -678,6 +741,7 @@
   "AD_CLEANUP_REACTIONS": true,
   "RICH_MESSAGE_ENABLED": true,
   "BROADCAST_FORMAT_VERSION": "auto",
+  "AUTO_REPLY_CARD_ENABLED": false,
   "BROADCAST_IMAGE_CARD_ENABLED": false,
   "BROADCAST_TEMPLATE_VARIATION_ENABLED": false,
   "BROADCAST_THEME_ENABLED": true,

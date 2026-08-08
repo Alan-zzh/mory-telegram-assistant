@@ -6,11 +6,12 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.38.30"
-CONFIG_VERSION = "5.38.30"
+VERSION = "v5.38.31"
+CONFIG_VERSION = "5.38.31"
 __version__ = VERSION
 
 VERSION_HISTORY = [
+    "v5.38.31: [特定词自动回复卡片化] 微调对接 keyword_trigger 特定词自动回复：新增 core/auto_reply_card.py（Rich Message 卡片 + HTML 卡片双排版 + 单入口随机按钮，AUTO_REPLY_CARD_ENABLED 默认关）。润色 prompt 强化「精准润色原文」（底稿唯一信息源，禁止重写/增删信息点）；按钮目标按规则 conversion_target 绑定（preview→@moryselect / subscribe→@MorychannelBot / contact→@Moryfansbot），未声明时在联系/自助下单间随机二选一，按钮文案与标题表情从池随机；私聊不挂按钮（红线）、群聊单入口；发送链 Rich→HTML→纯文本逐级回退且追踪入库；config 三处同步。验收：test_auto_reply_card 15 passed、全仓 pytest 940 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods 三门禁通过。",
     "v5.38.30: [关联频道联动模块] 新增 modules/linked_channel_sync.py（默认关闭，LINKED_CHANNEL_SYNC_CONFIG 开启）：① 频道新帖自动点赞（set_message_reaction）；② 群内关联频道自动转发消息取消置顶（unpin_chat_message，解决 Telegram 群设置『频道消息置顶』开关不生效）；③ 每帖至多一条自动评论（彩虹屁无按钮 / 转化评论带单按钮，正文与按钮一致，按钮仅预览福利与自助下单目标，不引导看预览），按 forward_origin 精确匹配防错位、无 origin 时按时间窗兜底，超时可选直接回复频道（默认关），每小时评论上限限流；接入 media_handlers on_channel_post + message_dispatcher P0.1 早拦截（命中即停止后续分发，避免误当用户消息触发广告检测/AI）；config 三处同步。验收：test_linked_channel_sync 9 passed、check_config_sync/doc_consistency/verify_db_methods 三门禁通过。",
     "v5.38.29: [人设预设全量录入] 用户 15 方向你问我答全部落库：54 组风格样本（问候/闲聊/身份/情绪/曖昧/内容/价格/订阅/定制/加友/敏感话题/资金安全/拒绝/看完预览）更新 VPS 生产库（含管理员确认放行的傲娇版话术与真实业务词）；INPUT_HINTS 私聊占位提示 4 条启用；PRICE_LIST 社交解锁改 2 阶（1阶 89.8 TG 1v1、2阶 518.5 私人微信+线下见面，删除原 3 阶 188.1）；AGENTS.md 规则修订 5 处（曖昧度 5/5、闲聊/情绪轻带入口克制、敏感话题先引导 VIP、身份设定沫沫的沫 26 岁、傲娇话术限管理员场景）；conversation_quality_task 蒸馏代码重复块修复；FAQ 高频问题自动收集每周提醒机制（schedule 每周任务）。验收：pytest 全仓通过、check_config_sync/doc_consistency/verify_db_methods 三门禁通过。",
     "v5.38.28: [播报视觉修复] 深色主题播报卡可读性根治：evening/night 改为夜色底+深色区块+近白字，消除旧浅底配浅字导致的正文/标题看不清；区块标题、宜忌栏、塔罗牌面、六爻、分隔线、边框、印章区全部随主题换材质；背景图上不再叠云纹；小字号（14/15/16px）统一上提到 ≥16px；塔罗牌名修复罗马数字/emoji 混入导致印出半截名字；傍晚问候标题由「晚安」改「暮安」（晚安留给深夜档，图片卡与 HTML 降级链同步）；问候卡「今日一句/一言」改每次发送重新随机（cache_key 带内容指纹不复用旧图），玄学点评文案独立随机源并扩池（牌面日期稳定承诺不变）；新增视觉基准 docs/technical/broadcast-card-design-philosophy.md。验收：pytest 908 passed、doc_consistency 全项通过、样卡人工复核与随机化冒烟（3 次发送 3 套图文）。",

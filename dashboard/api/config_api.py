@@ -50,6 +50,7 @@ ALLOWED_CONFIG_FIELDS = {
     "AD_AI_AUTO_REPLY_ENABLED", "AD_AVATAR_AI_REVIEW_ENABLED",
     # Telegram API 2026 适配
     "RICH_MESSAGE_ENABLED", "BROADCAST_FORMAT_VERSION", "BROADCAST_TEMPLATE_VARIATION_ENABLED", "RICH_MESSAGE_STYLE",
+    "AUTO_REPLY_CARD_ENABLED",  # 特定词自动回复 Rich/HTML 卡片+随机入口按钮（默认关闭）
     "BUTTON_STYLE_ENABLED", "BUTTON_COLOR_MAP",
     "EPHEMERAL_MESSAGE_ENABLED",
     "CUSTOM_EMOJI_ENABLED", "CUSTOM_EMOJI_POOL",
@@ -212,9 +213,9 @@ def api_config_natural():
             mory_bot=proxy,
             is_admin=True,
         )
-    except AttributeError as e:
+    except AttributeError:
         return jsonify({"ok": False, "msg": "该指令暂不支持在网页端使用（缺少Bot上下文），请在Telegram中使用"}), 400
-    except Exception as e:
+    except Exception:
         return jsonify({"ok": False, "msg": "处理失败，请检查参数"}), 500
     if not handled:
         return jsonify({"ok": False, "msg": "这句话我还没听明白，换个更明确的说法试试"}), 400

@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.30**：关联频道联动模块（频道新帖自动点赞、关联转发取消置顶、每帖一条评论转化；默认关闭）与广告规避漏判修复。v5.38.29：人设预设全量录入——54 组风格样本落库（15 方向你问我答）、INPUT_HINTS 私聊占位启用、社交解锁改 2 阶档位、敏感话题先引导 VIP、FAQ 高频问题每周自动提醒优化。
+当前版本 **v5.38.31**：特定词自动回复卡片化（Rich Message/HTML 双排版 + 单入口随机按钮，默认关闭，润色只精修原文不重写）。v5.38.30：关联频道联动模块（频道新帖自动点赞、关联转发取消置顶、每帖一条评论转化；默认关闭）与广告规避漏判修复。
 
 ## 快速开始
 
@@ -115,7 +115,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 > 普通用户命令见 `/help`；管理员在私聊触发 `/help` 会额外附带上述清单。
 
 ## 目录结构
-- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（81 个业务 `.py`）。
+- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（82 个业务 `.py`）。
 - `modules/`：135 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等 v5.34.0+ 默认关闭）。
 - `dashboard/`：运营后台（`app` + `api`，164 路由，含人工审核风格样本 API）。
 - `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
@@ -126,8 +126,8 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `runtime/audit-reports/`：审计报告与完工报告。
 - `config/`：systemd 服务文件。
 
-## 客观指标（2026-08-06 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 137，core 业务 `.py` = 81，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 164，消息分发函数 = 9，model_router 映射 = 10。
+## 客观指标（2026-08-09 实测，`scripts/doc_consistency.py` 全过）
+modules 业务 `.py` = 137，core 业务 `.py` = 82，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 164，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）
