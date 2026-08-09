@@ -47,6 +47,13 @@ _MERGE_SET = set(MERGE_FIELDS)
 
 RUNTIME_SYNC_FIELDS = _natural_keys - _MERGE_SET
 
+# 旧 AUTO_* 总开关由仓库发布策略控制；真实时段开关在 GREETING_CONFIG。
+# 若把线上旧值回灌到本地，会在部署前悄悄撤销本次“关闭泛问候”的修复。
+LOCAL_AUTHORITATIVE_DEPLOY_FIELDS = {
+    "AUTO_GREETING",
+    "AUTO_GOODNIGHT",
+}
+
 
 def safe_merge_config(local_cfg: dict, vps_cfg: dict) -> dict:
     """
@@ -219,7 +226,7 @@ def sync_runtime_fields_from_vps(local_cfg: dict, vps_cfg: dict) -> tuple[dict, 
     if not vps_cfg:
         return local_cfg, synced
 
-    for field in sorted(RUNTIME_SYNC_FIELDS):
+    for field in sorted(RUNTIME_SYNC_FIELDS - LOCAL_AUTHORITATIVE_DEPLOY_FIELDS):
         if field in PROTECTED_FIELDS:
             continue
         if field in vps_cfg and local_cfg.get(field) != vps_cfg.get(field):

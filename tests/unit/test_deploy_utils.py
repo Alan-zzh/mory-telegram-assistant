@@ -49,6 +49,19 @@ def test_safe_merge_config_updates_non_protected_fields_from_local():
     assert merged["NEWS_BROADCAST_CONFIG"]["preferred_source"] == "real_first"
 
 
+def test_runtime_sync_cannot_restore_legacy_auto_greeting_switches():
+    from core.deploy_utils import sync_runtime_fields_from_vps
+
+    local = {"AUTO_GREETING": False, "AUTO_GOODNIGHT": False}
+    remote = {"AUTO_GREETING": True, "AUTO_GOODNIGHT": True}
+
+    merged, synced = sync_runtime_fields_from_vps(local, remote)
+
+    assert merged == {"AUTO_GREETING": False, "AUTO_GOODNIGHT": False}
+    assert "AUTO_GREETING" not in synced
+    assert "AUTO_GOODNIGHT" not in synced
+
+
 def test_deploy_manifest_excludes_sync_conflicts_and_includes_truth_docs():
     import deploy_vps
 
