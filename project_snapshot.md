@@ -30,26 +30,26 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
 | Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py`、`core/broadcast_image_card.py`、`core/broadcast_image_payload.py`、`core/broadcast_cta.py` | v5.38.16：黄历/塔罗/易经公共 helper 去重 170 行；CTA label↔image_label 强绑定 + 清理全部 24 条 mystic contact/preview/subscribe img_label 遗留“· 点击头像”后缀；新增 greeting/scheduled × afternoon/night 四套时段 CTA 池；font() LRU(128)；11 处 PIL Image.close()；单 block 异常隔离占位；失败自动回退 Rich/HTML；字体兜底 Windows→Linux→仓库；README 新增图片卡章节；20 smoke 单测。v5.38.22：CTA 收敛为统一单一真相源（删旧 CTA 池/get_random_cta/cta_pool 死参/mystic 第二套 CTA，发送层统一生成回填）、四路开关收敛 `is_broadcast_image_enabled`、视觉常量对齐（CTA 圆角 18/标签 8）、缓存存在性短路 + 原子写、`_stable_seed` 改 md5 确定性 |
-| 定点播报 | 在用 | `tasks/maintenance/scheduled_broadcast_task.py`、`modules/scheduled_broadcast.py` | 4 个时段；早晚正文无按钮，午后/睡前如带入口只到预览；AI 失败回退可信底稿；v5.38.16 CTA 支持 afternoon/night 精确池 |
-| 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 早 09:05 风水黄历(almanac)/午 13:05 塔罗(tarot)/晚 20:35 易经(iching)；v5.37.0 替换原新闻播报；v5.38.20 修复 MYSTIC.enabled 配置脏状态(07-30 起误关致停摆 5 天已恢复)；NewsTask 代码已删，NEWS_BROADCAST_CONFIG.enabled 残留已清理为 false |
-| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token；v5.38.31 特定词自动回复卡片化：`core/auto_reply_card.py` 生成 Rich/HTML 双排版 + 单入口随机按钮（AUTO_REPLY_CARD_ENABLED 默认关），conversion_target 绑定目标、未声明时联系/自助随机二选一，私聊零按钮，润色只精修原文 |
+| 泛问候/定点播报 | 生产关闭 | `tasks/broadcast/greeting_task.py`、`tasks/maintenance/scheduled_broadcast_task.py` | 早午晚泛问候与 4 档定点播报全部关闭，避免与内容栏目重叠；若未来人工开启，问候模型失败直接跳过，不用固定套话，图片卡只渲染同源正文 |
+| 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 生产唯一主动栏目：09:05 黄历、13:05 塔罗、20:35 易经；三档语义各异、间隔至少 4 小时，图片卡保留；新闻执行链已删除 |
+| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token；自动回复卡片 conversion_target=none 禁止按钮，仅未声明键才随机入口；opt_out 跳过关键词销售路由 |
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录 |
 | 关联频道联动 | 默认关闭 | `modules/linked_channel_sync.py` | v5.38.30：频道新帖自动点赞 + 群内关联转发取消置顶 + 每帖至多一条评论（彩虹屁/转化单按钮），按 forward_origin 精确匹配、时间窗兜底、小时限流；接入 media_handlers 与 message_dispatcher P0.1 |
 
 ## 当前版本
-v5.38.31（2026-08-09）· 特定词自动回复卡片化（Rich/HTML 双排版+单入口随机按钮，默认关）+ v5.38.30 关联频道联动与广告规避漏判修复
+v5.38.33（2026-08-09）· 播报与接话闭环：三档内容栏目 + 图片单正文 + 实时模型去超时 + 尬聊输出门禁
 
-生产状态：**v5.38.31 已部署 VPS 并验收通过**（PROD_VERIFY_PASS：双服务 active、health 200、VPS 版本 v5.38.31；部署脚本超时中断后 dashboard 手动拉起，NRestarts 0/0 无 ERROR。特定词自动回复卡片开关 AUTO_REPLY_CARD_ENABLED 默认关，未在 config 开启；积分/签到咨询规则与放行白名单随本版上线）。验收：pytest 940 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods/check_deploy_ready 四门禁全过、flake8/mypy/compileall 零告警。
+生产状态：**v5.38.33 本地验收通过，待部署**。验收：pytest 929 passed/4 skipped，compileall/flake8/mypy、配置/DB/文档门禁通过；真实问候与短消息模型调用约 1.2 秒。
 
 ## 最近 3 条大事
-1. 2026-08-09 v5.38.31：特定词自动回复卡片化（默认关闭）；本地门禁通过。
-2. 2026-08-09 v5.38.30：关联频道联动模块（默认关闭）+ 广告规避漏判修复；本地门禁通过。
-3. 2026-08-07 v5.38.29：人设预设全量录入 54 组样本；已部署验收。
+1. 2026-08-09 v5.38.33：播报收敛、图片单正文、实时模型与尬聊门禁；待部署。
+2. 2026-08-09 v5.38.32：全仓暗病闭环（安全/调度/CTA/媒体）；并入本次部署。
+3. 2026-08-09：自动新闻播报执行链清除；并入本次部署。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=137
-core_py=82
+core_py=81
 job_count=33
 db_tables=173
 dashboard_routes=164

@@ -53,11 +53,77 @@ def register_media_handlers(bot, ctx):
             logger.debug(f"媒体中继失败（静默）: {relay_err}")
             return False
 
+    def _group_media_security_block(m) -> bool:
+        """群媒体安全预检：黑名单 + caption 广告。命中处置返回 True（阻断后续）。"""
+        chat = getattr(m, "chat", None)
+        if not chat or getattr(chat, "type", "") not in ("group", "supergroup"):
+            return False
+        uid = getattr(getattr(m, "from_user", None), "id", 0) or 0
+        if not uid:
+            return False
+        try:
+            admin_ids = set((ctx.config or {}).get("ADMIN_IDS", []) or [])
+            admin_id = (ctx.config or {}).get("ADMIN_ID", 0)
+            if admin_id:
+                admin_ids.add(admin_id)
+            if uid in admin_ids:
+                return False
+            if ctx.db and ctx.db.is_blacklisted(uid):
+                from modules.ad_enforcement import enforce_ad_user
+                enforce_ad_user(
+                    bot=bot,
+                    db=ctx.db,
+                    config=ctx.config,
+                    chat_id=chat.id,
+                    uid=uid,
+                    uname=getattr(m.from_user, "first_name", "") or str(uid),
+                    reason="黑名单用户媒体消息",
+                    message=m,
+                    current_msg_id=getattr(m, "message_id", 0),
+                    current_message_is_ad=True,
+                    notify_admin=False,
+                )
+                return True
+            ad_detector = getattr(ctx, "ad_detector", None)
+            if ad_detector is None:
+                return False
+            caption = (getattr(m, "caption", None) or "").strip()
+            # 无 caption 时仍走 extract（entities / 文件名等）
+            ad_text = ""
+            if hasattr(ad_detector, "extract_message_ad_text"):
+                ad_text = ad_detector.extract_message_ad_text(m) or caption
+            else:
+                ad_text = caption
+            if not ad_text:
+                return False
+            result = ad_detector.detect(ad_text, uid=uid, chat_id=chat.id)
+            if result and result.get("is_ad") and result.get("action") == "ban":
+                from modules.ad_enforcement import enforce_ad_user
+                enforce_ad_user(
+                    bot=bot,
+                    db=ctx.db,
+                    config=ctx.config,
+                    chat_id=chat.id,
+                    uid=uid,
+                    uname=getattr(m.from_user, "first_name", "") or str(uid),
+                    reason=f"媒体广告-{result.get('reason', '')}",
+                    message=m,
+                    current_msg_id=getattr(m, "message_id", 0),
+                    current_message_is_ad=True,
+                    notify_admin=True,
+                )
+                return True
+        except Exception as e:
+            logger.warning(f"群媒体安全预检异常: {e}")
+        return False
+
     # ── 图片处理（打码+识图）───────────────────────────────────────────
     @bot.message_handler(content_types=["photo"])
     def on_photo(m):
         try:
             if _is_private_blacklisted(m):
+                return
+            if _group_media_security_block(m):
                 return
             _relay_private_media(m, "🖼️ 私聊图片")
             from modules.content import handle_photo
@@ -109,9 +175,11 @@ def register_media_handlers(bot, ctx):
 
     @bot.message_handler(content_types=["video", "document", "audio", "sticker"])
     def on_private_media(m):
-        """私聊常见附件直接中继给管理员，保持双线对话完整。"""
+        """群媒体安全预检 + 私聊附件中继。"""
         try:
             if _is_private_blacklisted(m):
+                return
+            if _group_media_security_block(m):
                 return
             note_map = {
                 "video": "🎬 私聊视频",
@@ -153,7 +221,7 @@ def register_media_handlers(bot, ctx):
         # 关联频道联动（点赞 + 登记自动评论），默认关闭
         try:
             from modules.linked_channel_sync import handle_channel_post
-            handle_channel_post(bot, m, ctx.config)
+            handle_channel_post(bot, m, ctx.config, db=ctx.db)
         except Exception as e:
             logger.debug(f"关联频道联动（点赞/评论登记）异常: {e}")
 

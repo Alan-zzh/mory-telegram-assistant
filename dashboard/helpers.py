@@ -205,7 +205,8 @@ def get_vps_status():
         stdin, stdout, stderr = client.exec_command("uptime -p 2>/dev/null || uptime", timeout=5)
         results["uptime"] = stdout.read().decode("utf-8", errors="replace").strip()
     except Exception as e:
-        results["error"] = str(e)[:100]
+        results["error"] = "vps_status_unavailable"
+        logger.warning(f"VPS 状态查询失败: {e}")
     finally:
         try:
             client.close()

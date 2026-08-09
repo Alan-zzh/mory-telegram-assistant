@@ -293,96 +293,7 @@ def build_broadcast_html(
     )
 
 
-# ── 新闻播报卡片 ─────────────────────────────────────────────────────────────
-def _parse_news_copy(news_content: str, max_items: int = 5) -> tuple[list[str], list[str]]:
-    """统一解析 AI 文案和真实标题兜底：前5条为新闻，之后为观察。"""
-    import re as _re
-
-    body_lines = [
-        line.strip()
-        for line in normalize_text(news_content).split("\n")
-        if line.strip()
-    ]
-    numbered_re = _re.compile(r"^\s*(\d+)[\.、)]\s*(.+)$")
-    header_re = _re.compile(r"^\s*[📰📌🌟🔥]+\s*(.+新闻|.+速览|.+热点).*$")
-    observation_re = _re.compile(r"^\s*(💡|以上为|以上就是|观察|总结).*$")
-    news_items: list[str] = []
-    observation_parts: list[str] = []
-
-    for line in body_lines:
-        if header_re.match(line):
-            continue
-        if observation_re.match(line):
-            observation_parts.append(line)
-            continue
-        match = numbered_re.match(line)
-        candidate = match.group(2).strip() if match else line
-        if candidate.startswith("📌"):
-            candidate = candidate[1:].strip()
-        if len(news_items) < max_items:
-            news_items.append(candidate)
-        else:
-            observation_parts.append(candidate)
-
-    return news_items, observation_parts
-
-
-def build_news_html(
-    time_desc: str,
-    news_content: str,
-    source_name: str = "",
-    closing: str = "",
-) -> str:
-    """
-    新闻播报卡片。
-
-    排版结构：
-    <b><i>emoji 时段新闻</i></b>
-    <空行>
-    📌 新闻1
-    📌 新闻2
-    ...
-    <blockquote expandable><i>观察行</i></blockquote>
-    💬 结尾引导语（可选）
-    <空行>
-    <i>@MoryMateBot</i>
-    """
-    period_emojis = {
-        "早间": "☀️",
-        "午间": "🍵",
-        "晚间": "🌙",
-    }
-    emoji = period_emojis.get(time_desc, "📰")
-
-    title = f"<b><i>{emoji} {time_desc}新闻</i></b>"
-    # source_name 仅用于内部日志和诊断，不能把聚合策略/供应链名称展示给用户。
-    _ = source_name
-
-    news_items, observation_parts = _parse_news_copy(news_content, max_items=5)
-    formatted_lines = [
-        f"📌 {escape_html_text(item)}"
-        for item in news_items
-    ]
-    if observation_parts:
-        observation = escape_html_text(" ".join(observation_parts))
-        formatted_lines.append(
-            f"<blockquote expandable><i>{observation}</i></blockquote>"
-        )
-
-    if closing:
-        safe_closing = escape_html_text(closing)
-        formatted_lines.append(f"💬 {safe_closing}")
-
-    formatted_body = "\n".join(formatted_lines)
-
-    # 底部自然引导（不用分隔线，用折叠区）
-    footer = f"<i>{BROADCAST_SENDER_HANDLE}</i>"
-
-    parts = [title, "", formatted_body, "", footer]
-    return "\n".join(parts)
-
-
-# ── 旧版兼容（保留，避免其他模块引用报错）────────────────────────────────────
+# ── 旧版兼容（保留，历史版本引用报错）────────────────────────────────────
 def build_rich_broadcast_html(**kwargs) -> str:
     """兼容旧接口，转发到 build_broadcast_html。"""
     return build_broadcast_html(
@@ -406,19 +317,6 @@ def build_rich_greeting_html(
         footer=footer,
         badge=kwargs.get("badge", ""),
         user_profile=kwargs.get("user_profile"),
-        closing=kwargs.get("closing", ""),
-    )
-
-
-def build_rich_news_html(time_desc: str, news_content: str, source_name: str = "", **kwargs) -> str:
-    """兼容旧接口，转发到 build_news_html。
-
-    source_name 仅用于兼容旧调用方，当前排版不展示来源。
-    """
-    return build_news_html(
-        time_desc=time_desc,
-        news_content=news_content,
-        source_name=source_name,
         closing=kwargs.get("closing", ""),
     )
 
@@ -566,64 +464,9 @@ def build_rich_broadcast_card_message(
     )
 
 
-def build_rich_news_card_message(
-    time_desc: str,
-    news_content: str,
-    source_name: str = "",
-) -> str:
-    """[v5.32] Rich Message 新闻卡片（用 <ol> 编号列表 + <hr> 分隔 + <footer>）。
-
-    排版结构：
-        <h2>📰 时段新闻</h2>
-        <p><i>来源标签</i></p>
-        <ol>
-          <li>新闻1</li>
-          <li>新闻2</li>
-          ...
-        </ol>
-        <blockquote>观察行</blockquote>
-        <hr>
-        <footer>@MoryMateBot</footer>
-
-    [v5.32 修复] 解析逻辑：
-    - 识别 "N. xxx" 或 "N、 xxx" 编号格式，提取纯标题作为 <li>
-    - 跳过 "📰 xxx" 这种 header 行
-    - 跳过 "以上为 xxx" 这种 observation 行
-    - 把 observation 放到 <blockquote>
-    """
-    period_emojis = {
-        "早间": "☀️",
-        "午间": "🍵",
-        "晚间": "🌙",
-    }
-    emoji = period_emojis.get(time_desc, "📰")
-
-    safe_title = escape_html_text(f"{time_desc}新闻")
-    parts = [f"<h2>{emoji} {safe_title}</h2>"]
-
-    # source_name 仅用于内部日志和诊断，不能把聚合策略/供应链名称展示给用户。
-    _ = source_name
-
-    news_items, observation_parts = _parse_news_copy(news_content, max_items=5)
-    safe_news_items = [escape_html_text(item) for item in news_items]
-
-    if safe_news_items:
-        list_html = "<ol>" + "".join(f"<li>{item}</li>" for item in safe_news_items) + "</ol>"
-        parts.append(list_html)
-
-    if observation_parts:
-        observation = escape_html_text(" ".join(observation_parts))
-        parts.append(f"<blockquote>{observation}</blockquote>")
-
-    parts.append("<hr>")
-    parts.append(f"<footer>{BROADCAST_SENDER_HANDLE}</footer>")
-
-    return "\n".join(parts)
-
-
 def build_mystic_html(payload: dict) -> str:
     """[v5.38.15] 传统文化栏目的 Telegram HTML 降级卡片。"""
-    # 标题统一 <b><i> 风格，与 build_card_html / build_news_html 一致
+    # 标题统一 <b><i> 风格，与 build_card_html 一致
     parts = [
         f"<b><i>{escape_html_text(payload.get('emoji', '🔮'))} "
         f"{escape_html_text(payload.get('title', '今日栏目'))}</i></b>",

@@ -295,12 +295,6 @@ def test_persona_adapter_never_instructs_human_impersonation_or_aggressive_flirt
     assert "不声明自己是真人" in rendered
 
 
-def test_automatic_broadcast_sanitizer_removes_sales_cta_lines():
-    raw = "今天有三条新闻。\n去 @MorychannelBot 自助下单\n普通观察结论。"
-    safe = legacy._sanitize_automatic_broadcast_text(raw)
-    assert safe == "今天有三条新闻。\n普通观察结论。"
-
-
 def test_scheduled_commercial_broadcast_is_retargeted_to_preview_only():
     original = {
         "BROADCAST_TEMPLATE_VARIATION_ENABLED": True,

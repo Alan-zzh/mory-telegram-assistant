@@ -262,16 +262,11 @@
     "视频",
     "看图"
   ],
-  "CURRENT_MODEL_INDEX": 0,
+  "CURRENT_MODEL_INDEX": 3,
   "IMAGE_POOL": [],
   "VOICE_POOL": [],
   "MODEL_POOLS": {
     "llm": [
-      {
-        "name": "qwen3.6-27b",
-        "expire": "2026-07-23",
-        "desc": "通义千问3.6 27B"
-      },
       {
         "name": "qwen3.7-max-2026-05-17",
         "expire": "2026-08-24",
@@ -326,21 +321,21 @@
     "hook": "【续话】：只有当前话题自然需要时，给一个简短问题；不强行留悬念。",
     "nudge": "【预览承接】：仅当本轮已判定预览目标时，先回应问题再给一次 @moryselect；不施压。",
     "convert_soft": "【普通聊天】：没有本轮成交目标时不主动转化，不使用稀缺或从众话术。",
-    "morning": "你是 Mory 小助理，在熟悉的粉丝群里发一条早安。35到70字，最多两句，像熟人自然问候。不得虚构天气、行程、动作或生活剧情；正文不营销、不带入口、不使用稀缺或社交证明。{seed_hint}",
-    "afternoon": "你是 Mory 小助理，在熟悉的粉丝群里发一条午安。35到70字，最多两句，像熟人自然问候。不得虚构天气、行程、动作或生活剧情；正文不营销、不带入口、不使用稀缺或社交证明。{seed_hint}",
-    "evening": "你是 Mory 小助理，在熟悉的粉丝群里发一条晚间问候。35到70字，最多两句，像熟人自然问候。不得虚构天气、行程、动作或生活剧情；正文不营销、不带入口、不使用稀缺或社交证明。{seed_hint}",
-    "night": "你是 Mory 小助理，在熟悉的粉丝群里留一句晚安。30到65字，最多两句，像熟人自然道别。不得虚构生活剧情；正文不营销、不带入口、不使用稀缺或社交证明。{seed_hint}"
+    "morning": "你是 Mory 小助理，在熟悉的粉丝群里发一条早安。25到55字，最多两句；不虚构天气、行程、动作或生活剧情，不催回应、不提问、不命令、不撒鸡汤，正文不营销。{seed_hint}",
+    "afternoon": "你是 Mory 小助理，在熟悉的粉丝群里发一条午安。25到55字，最多两句；不虚构状态、动作或生活剧情，不催聊天、不提问、不命令、不写模板化建议，正文不营销。{seed_hint}",
+    "evening": "你是 Mory 小助理，在熟悉的粉丝群里发一条晚间问候。25到55字，最多两句；不虚构状态、动作或生活剧情，不盘问、不提问、不命令、不写鸡汤套话，正文不营销。{seed_hint}",
+    "night": "你是 Mory 小助理，在熟悉的粉丝群里留一句晚安。25到55字，最多两句；不虚构状态、动作或生活剧情，不引导倾诉、不提问、不写睡眠建议，正文不营销。{seed_hint}"
   },
   "MODEL_ROUTER_ENABLED": false,
-  "MODEL_POOL_PREMIUM": "qwen3.6-27b",
-  "MODEL_POOL_STANDARD": "qwen3.6-27b",
-  "MODEL_POOL_LIGHT": "qwen3.6-27b",
+  "MODEL_POOL_PREMIUM": "qwen3.7-max-2026-06-08",
+  "MODEL_POOL_STANDARD": "qwen3.7-plus-2026-05-26",
+  "MODEL_POOL_LIGHT": "qwen3.7-plus-2026-05-26",
   "MODEL_ROUTER_OVERRIDE": {},
   "GROWTH_OPTIMIZER_ENABLED": true,
   "GROWTH_AB_SPLIT": 50,
   "AB_TEST_ENABLED": false,
-  "AB_TEST_GROUP_A_MODEL": "qwen3.6-27b",
-  "AB_TEST_GROUP_B_MODEL": "qwen3.7-max-2026-05-17",
+  "AB_TEST_GROUP_A_MODEL": "qwen3.7-plus-2026-05-26",
+  "AB_TEST_GROUP_B_MODEL": "qwen3.7-max-2026-06-08",
   "LLM_COST_GUARD_ENABLED": true,
   "LLM_COST_USER_HOURLY_LIMIT": 1.0,
   "LLM_COST_GLOBAL_HOURLY_LIMIT": 5.0,
@@ -350,9 +345,6 @@
   "BOT_ROUTING_DEFAULT_POLICY": "allow",
   "MODEL_COSTS": {
     "llm": {
-      "qwen3.6-27b": {
-        "cost_level": "medium"
-      },
       "qwen3.7-max-2026-05-17": {
         "cost_level": "high",
         "input_price": 2.5e-06,
@@ -550,7 +542,7 @@
       "image_card_enabled": false,
       "silent": false,
       "protect_content": false,
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "afternoon_tease",
@@ -568,7 +560,7 @@
       "image_card_enabled": false,
       "silent": false,
       "protect_content": false,
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "evening_warm",
@@ -586,7 +578,7 @@
       "image_card_enabled": false,
       "silent": false,
       "protect_content": false,
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "night_hook",
@@ -604,7 +596,7 @@
       "image_card_enabled": false,
       "silent": true,
       "protect_content": false,
-      "enabled": true
+      "enabled": false
     }
   ],
   "ANTI_DELETE_CONFIG": {

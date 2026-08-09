@@ -60,31 +60,6 @@ def is_greeting_enabled(config: dict, period: str) -> bool:
     return bool(config.get("AUTO_GREETING", False))
 
 
-def get_news_time(config: dict, period: str) -> Tuple[int, int]:
-    """新闻播报时间读取配置，兼容旧小时键。"""
-    cfg = config.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
-    defaults = {
-        "morning": (9, 5, "morning_time", "NEWS_HOUR_MORNING"),
-        "afternoon": (13, 5, "afternoon_time", "NEWS_HOUR_AFTERNOON"),
-        "evening": (20, 35, "evening_time", "NEWS_HOUR_EVENING"),
-    }
-    default_hour, default_minute, time_key, legacy_hour_key = defaults.get(period, defaults["morning"])
-    if time_key in cfg:
-        return parse_hhmm(cfg.get(time_key), default_hour, default_minute)
-    if legacy_hour_key in config:
-        return parse_hhmm(config.get(legacy_hour_key), default_hour, default_minute)
-    return default_hour, default_minute
-
-
-def get_news_source_strategy(config: dict) -> str:
-    """新闻源优先级：默认真实源优先，TrendRadar 兜底。"""
-    cfg = config.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
-    strategy = str(cfg.get("preferred_source", "real_first")).strip().lower()
-    if strategy in {"real_first", "trendradar_first"}:
-        return strategy
-    return "real_first"
-
-
 def get_mystic_time(config: dict, period: str) -> Tuple[int, int]:
     """风水/塔罗栏目时间读取新配置，不再继承新闻开关。"""
     cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}

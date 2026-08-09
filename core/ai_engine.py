@@ -288,14 +288,6 @@ class AIEngine:
 
     # 默认的6个池名
     POOL_NAMES = ["llm", "vision", "omni", "voice_tts", "voice_asr", "embedding"]
-    _NEWS_PROMPT_MODES = {
-        "news",
-        "afternoon_news",
-        "evening_news",
-        "trendradar_morning_news",
-        "trendradar_noon_news",
-        "trendradar_evening_news",
-    }
     _GREETING_PROMPT_MODES = {"morning", "afternoon", "evening", "night"}
     _TONE_CONTRACT_VERSION = "1.0.0"
     _CONVERSATIONAL_TONE_INTENTS = (
@@ -346,12 +338,6 @@ class AIEngine:
         "treehole": "\n【树洞模式】：对方心情不好，用极其温柔的知心姐姐语气安抚，署名Mory。",
         "dream": "\n【解梦模式】：对方梦到Mory，用玄学逻辑解梦，暗示这是宿命缘分。",
         "fortune": "\n【运势模式】：在正常回复末尾，加一句简短今日专属运势签（不超过15字）。",
-        "news": "你是Mory，在群里把今天真正值得知道的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先说清事件本身，再点明进展、影响或下一步；五条之间不得同题重复。\n4. 优先社会民生、国内要闻、国际和公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气像真人刚看完后讲重点，可以有轻微态度，但不玩梗、不煽情、不站队、不写主持稿。\n6. 只能依据给你的真实标题，禁止编造数字、原因、结果和背景；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'播报''以上就是''据悉''据报道''热搜第一'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "afternoon_news": "你是Mory，在群里把午间值得补看的综合头条讲清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先讲发生了什么，再点一下现实影响或后续看点；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，允许一点真实反应，但不要乱玩梗、阴阳怪气或像标题搬运机。\n6. 只能依据真实标题，禁止编造；信息不足时宁可写稳一点。\n7. 不写平台名、来源、热度或聚合方式，不出现'午报''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "evening_news": "你是Mory，在群里把今晚最值得知道的综合头条收清楚（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先把事件说明白，再点一下结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留一点人味，但不煽情、不说教、不替大家下结论，也不写主持稿。\n6. 只能依据真实标题，禁止编造细节；拿不准就用保守说法。\n7. 不写平台名、来源、热度或聚合方式，不出现'晚报''回顾''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_morning_news": "你是Mory，在群里把刚看到的综合热点讲明白（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先交代事件，再补一句为什么值得看；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留聊天感但别夸张、别端着，更不要像复制热搜标题。\n6. 只能依据真实标题，禁止脑补细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''以上就是''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_noon_news": "你是Mory，在群里快速讲清午间冒头的综合热点（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先说发生了什么，再补一句后续看点或现实影响；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 语气自然利落，不刻意吐槽，不堆热词，不写主持稿。\n6. 只基于真实标题，禁止编造；信息不足就保守表达。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
-        "trendradar_evening_news": "你是Mory，在群里把今晚值得继续盯的综合热点讲顺（{SEED}）。\n要求：\n1. 从10条候选中按公共影响、时效性和进展明确度挑出最重要的5条，不要机械照抄前5条。\n2. 严格只写5条，每条单独一行，不编号，不加标题；第6行固定写“以上是本次刚刚更新的最新新闻。”，不得添加互动、观点、总结、建议或引导。\n3. 每条22到38个字，先把事情讲清楚，再补一句结果、争议或后续方向；五条之间不得同题重复。\n4. 优先社会民生、国内、国际和生活公共事件，条件允许时至少覆盖4个方向；科技和财经合计最多2条，单类最多1条。\n5. 保留生活化语气，但不鸡汤、不说教、不替读者站队。\n6. 只能依据真实标题，禁止编造细节。\n7. 不写平台名、来源、热度或聚合方式，不出现'热搜''播报''据悉''据报道'。\n\n真实新闻标题：\n{NEWS_CONTENT}",
         "leak": "只依据知识库中已确认的信息做轻松互动；没有可靠资料就直接换成普通聊天，禁止编造生活偏好、场景或秘密。",
         "rules": "你是群规的讲解员。用自然、友好的语气，逐条讲解群内的规则。重点强调'不能发什么'和'可以享受什么福利'。最后用一句欢迎的话迎接新人。",
         "convert": "\n【转化模式】：只服从本轮唯一成交目标；先回答当前问题，再按 stage_hint 给唯一入口。{convert_stage_hint}",
@@ -360,37 +346,38 @@ class AIEngine:
         "convert_soft": "\n【轻量转化】：普通聊天不主动转化。只有本轮唯一目标已确定时才给对应入口，且不编造内容、福利、价格或服务。",
         "morning": (
             "你是Mory，在熟悉的粉丝群里发一条早安，延续主助理人设里的清冷、小傲娇和温柔。\n"
-            "只写35到70个汉字，最多两句，不加标题，不写清单。重点是让群友感到被惦记、愿意冒泡，"
-            "像熟人自然开口，不是客服、公告或生活导师。\n"
+            "只写25到55个汉字，最多两句，不加标题，不写清单。像熟人自然开口，不是客服、公告或生活导师。\n"
             "不写AI、编程、运维或效率指导，不谈多线程、任务、通知、窗口、待办和工作方法；"
-            "不虚构Mory刚醒、天气、行程或动作场景，也不替群友断言身体和情绪。\n"
+            "不虚构Mory刚醒、天气、行程或动作场景，也不替群友断言身体和情绪；"
+            "不催大家冒泡、不要求回应、不用反问句、不命令群友做事。\n"
             "按钮会单独提供入口，正文不要营销、不要提完整版/圈层/懂的人。"
-            "允许一点傲娇或亲近感，但不油腻、不撒鸡汤、不写万能安慰。{seed_hint}"
+            "允许一点亲近感，但不挖苦、不揣测、不撒鸡汤、不写万能安慰。{seed_hint}"
         ),
         "afternoon": (
             "你是Mory，在熟悉的粉丝群里发一条午安，延续主助理人设里的清冷、小傲娇和温柔。\n"
-            "只写35到70个汉字，最多两句，不加标题，不写清单。先自然问候，再用一句走心的话"
-            "让群友感到你真的在意他们、愿意听他们说，像熟人聊天而不是统一群发。\n"
+            "只写25到55个汉字，最多两句，不加标题，不写清单。只做自然问候，像熟人聊天而不是统一群发。\n"
             "不写AI、编程、运维或效率指导，不谈多线程、任务、通知、窗口、待办和工作方法；"
-            "不虚构天气、地点、会议、Mory生活经历或动作场景，也不替群友判断状态。\n"
+            "不虚构天气、地点、会议、Mory生活经历或动作场景，也不替群友判断状态；"
+            "不催大家聊天、不要求吐槽或分享、不用反问句、不命令群友做事。\n"
             "按钮会单独提供入口，正文不要营销。允许一点清冷、小傲娇或亲近感，"
-            "但不油腻、不鸡汤、不主持、不写模板化生活建议。{seed_hint}"
+            "但不挖苦、不油腻、不鸡汤、不主持、不写模板化生活建议。{seed_hint}"
         ),
         "evening": (
             "你是Mory，在熟悉的粉丝群里发一条晚间问候，延续主助理人设里的清冷、小傲娇和温柔。\n"
-            "只写35到70个汉字，最多两句，不加标题，不写清单。像熟人来问一句今天过得怎样，"
-            "有温度、愿意听，但不替大家总结人生，也不端着安慰人。\n"
+            "只写25到55个汉字，最多两句，不加标题，不写清单。像熟人自然道一声晚安，"
+            "有温度但不盘问大家今天过得怎样，也不替大家总结人生。\n"
             "不写AI、编程、运维或效率指导，不谈任务、进度、复盘、通知、窗口、待办和工作方法；"
-            "不虚构Mory刚下班、洗澡、天气、景色或动作场景，也不替群友判断状态。\n"
-            "按钮会单独提供入口，正文不要营销。可以有一点傲娇或走心，"
-            "但不油腻、不鸡汤、不写“剩下交给明天”之类套话。{seed_hint}"
+            "不虚构Mory刚下班、洗澡、天气、景色或动作场景，也不替群友判断状态；"
+            "不要求回应、不引导倾诉、不用反问句、不命令群友做事。\n"
+            "按钮会单独提供入口，正文不要营销。可以有一点亲近感，"
+            "但不挖苦、不油腻、不鸡汤、不写“剩下交给明天”之类套话。{seed_hint}"
         ),
         "night": (
             "你是Mory，在熟悉的粉丝群里留一句睡前话，延续主助理人设里的清冷、小傲娇和温柔。\n"
-            "只写30到65个汉字，最多两句，不加标题，不写清单。像熟人认真道晚安，"
-            "让群友感到被记得、愿意再说一句，而不是给睡眠或效率建议。\n"
+            "只写25到55个汉字，最多两句，不加标题，不写清单。像熟人认真道晚安，不给睡眠或效率建议。\n"
             "不写AI、编程、运维或效率指导，不谈任务、手机、通知、待办和工作方法；"
-            "不虚构Mory洗澡、被窝、失眠、窗外景色或动作场景，也不替群友判断状态。\n"
+            "不虚构Mory洗澡、被窝、失眠、窗外景色或动作场景，也不替群友判断状态；"
+            "不要求回应、不引导倾诉、不用反问句。\n"
             "按钮会单独提供入口，正文不要营销。可以走心但别煽情，亲近但别演暧昧剧情。{seed_hint}"
         ),
     }
@@ -471,8 +458,7 @@ class AIEngine:
     }
 
     # 播报类 mode 集合（用于判断是否注入增强层）
-    _BROADCAST_MODES = {"morning", "afternoon", "evening", "news", "afternoon_news", "evening_news",
-                        "trendradar_morning_news", "trendradar_noon_news", "trendradar_evening_news",
+    _BROADCAST_MODES = {"morning", "afternoon", "evening",
                         "tarot_interpret"}
 
     # ── Few-shot 示例库（用对话示例引导风格，比规则更有效）── [TRAE SOLO CN]
@@ -773,7 +759,10 @@ class AIEngine:
             self.model_pool = combined_pool
         else:
             # 旧的单池结构 → 自动迁移
-            old_pool = config.get("MODEL_POOL", [{"name": "qwen3.6-27b", "expire": "2026-07-23"}])
+            old_pool = config.get(
+                "MODEL_POOL",
+                [{"name": "qwen3.7-plus-2026-05-26", "enable_thinking": False}],
+            )
             self.model_pool = self._filter_runtime_pool(old_pool, "llm")
             self.model_pools = {"llm": old_pool}
 
@@ -820,7 +809,6 @@ class AIEngine:
             "normal": "llm_standard", "tarot": "llm_standard", "treehole": "llm_standard",
             "dream": "llm_standard", "rules": "llm_standard", "convert": "llm_standard",
             "cart_recovery": "llm_standard", "tarot_interpret": "llm_standard",
-            "news": "llm_standard", "afternoon_news": "llm_standard", "evening_news": "llm_standard", "trendradar_morning_news": "llm_standard", "trendradar_noon_news": "llm_standard", "trendradar_evening_news": "llm_standard",
         }
         # 局部 MODE_ROUTING 只覆盖明确配置的 mode，不能让未列出的午安/晚安
         # 从 llm_light 意外掉到 llm_standard。
@@ -1815,7 +1803,7 @@ class AIEngine:
 
         strong_cues = (
             "托腮", "托着下巴", "看窗外", "望向窗", "回过神",
-            "把手机拿近", "放下手机", "偷偷看你", "心理活动",
+            "把手机拿近", "拿近手机", "放下手机", "瞥一眼", "揉眼睛", "偷偷看你", "心理活动",
             "内心独白", "镜头转向", "脑补画面",
         )
         leading_cues = (
@@ -1916,18 +1904,30 @@ class AIEngine:
         """拦截模型偶发的怼人/赶客输出，统一降级为友好承接。"""
         if not text:
             return text, False
+        clarification_patterns = (
+            r"话都不说全",
+            r"考我阅读理解",
+            r"说清楚点",
+            r"我干嘛告诉你",
+            r"替你尴尬",
+            r"自己玩去",
+        )
+        if any(re.search(pattern, text, re.IGNORECASE) for pattern in clarification_patterns):
+            return "我可能没接准你的意思，你再补一句就好。", True
         hostile_patterns = (
             r"爱信不信",
             r"不信(?:就|拉倒)",
             r"别再问(?:了)?",
             r"问这么多",
             r"懒得(?:理|说|解释)",
+            r"不想理你",
             r"我没空",
             r"关我什么事",
             r"自己不会",
             r"你是不是(?:傻|蠢)",
+            r"去别处",
             r"好坏你自己(?:分辨|判断)(?:就行)?",
-            r"自己去.{0,30}(?:看|分辨|判断)(?:就行)?",
+            r"自己(?:去)?.{0,30}(?:看|分辨|判断)(?:就行)?",
         )
         if not any(re.search(pattern, text, re.IGNORECASE) for pattern in hostile_patterns):
             return text, False
@@ -1954,9 +1954,27 @@ class AIEngine:
         # 第三层：移除括号/星号动作和心理旁白。混合回复直接保留正文；
         # 若整条只剩舞台动作，则触发一次重试，避免发送空消息。
         stage_filtered = AIEngine._strip_stage_directions(sanitized)
+        stage_changed = stage_filtered != sanitized
         stage_filtered, hostile_changed = AIEngine._soften_hostile_reply(stage_filtered)
+        identity_leak = any(
+            re.search(pattern, stage_filtered, re.IGNORECASE)
+            for pattern in (
+                r"(?:作为|我是|身为)\s*(?:一?个)?\s*(?:AI|人工智能|语言模型|机器人|程序)",
+                r"我(?:不需要|不用)(?:睡觉|吃饭|休息)",
+                r"我没有(?:身体|现实生活|真实情绪)",
+            )
+        )
+        if pinyin_leak or identity_leak:
+            stage_filtered = ""
         stage_only = bool(sanitized.strip()) and not bool(stage_filtered.strip())
-        triggered = identity_changed or pinyin_leak or stage_only or hostile_changed
+        triggered = (
+            identity_changed
+            or pinyin_leak
+            or identity_leak
+            or stage_changed
+            or stage_only
+            or hostile_changed
+        )
         return stage_filtered, triggered
 
     @staticmethod
@@ -1976,31 +1994,19 @@ class AIEngine:
             return "\n【今天是七夕：可以自然提一句节日，但不默认恋爱关系、不黏人、不调情。】"
         return ""
 
-    def _get_mode_persona(self, mode: str, seed: int = 0, news_content: str = "", stage_hint: str = "") -> tuple:
+    def _get_mode_persona(self, mode: str, seed: int = 0, stage_hint: str = "") -> tuple:
         """根据模式返回prompt文本。返回 (text, is_full_replacement)
         stage_hint: 递进引导提示词，由main.py根据对话轮次动态生成
         """
         seed_hint = f"\n【随机种子{seed}，必须生成全新的文案，绝对不能重复】" if seed else ""
         # 配置只覆盖明确给出的 mode；不能因为配置里有少量自定义模板，
-        # 就把新闻/问候等内置模板整组丢掉。
+        # 就把问候等内置模板整组丢掉。
         modes = dict(self._DEFAULT_PROMPT_TEMPLATES)
         configured_modes = {} if self._uses_reply_contract_v1() else self.config.get("PROMPT_TEMPLATES", {})
         if isinstance(configured_modes, dict):
-            legacy_news_modes = []
             legacy_greeting_modes = []
             for configured_mode, configured_prompt in configured_modes.items():
                 prompt_text = str(configured_prompt or "")
-                if configured_mode in self._NEWS_PROMPT_MODES:
-                    if (
-                        "严格只写5条" not in prompt_text
-                        or "第6行" not in prompt_text
-                        or "从10条候选中" not in prompt_text
-                        or "科技和财经合计最多2条" not in prompt_text
-                        or "以上是本次刚刚更新的最新新闻。" not in prompt_text
-                        or "不得添加互动、观点、总结、建议或引导" not in prompt_text
-                    ):
-                        legacy_news_modes.append(configured_mode)
-                        continue
                 if configured_mode in self._GREETING_PROMPT_MODES:
                     if (
                         "熟悉的粉丝群" not in prompt_text
@@ -2010,15 +2016,6 @@ class AIEngine:
                         legacy_greeting_modes.append(configured_mode)
                         continue
                 modes[configured_mode] = configured_prompt
-            if (
-                legacy_news_modes
-                and not getattr(self, "_legacy_news_prompt_warned", False)
-            ):
-                logger.warning(
-                    "检测到旧版新闻提示词覆盖，已自动忽略并使用5条头条+固定时效说明模板："
-                    + ",".join(sorted(legacy_news_modes))
-                )
-                self._legacy_news_prompt_warned = True
             if (
                 legacy_greeting_modes
                 and not getattr(self, "_legacy_greeting_prompt_warned", False)
@@ -2030,11 +2027,7 @@ class AIEngine:
                 self._legacy_greeting_prompt_warned = True
         if mode not in modes:
             return ("", False)
-        if mode in self._NEWS_PROMPT_MODES:
-            persona = modes[mode].replace("{SEED}", f"种子{seed}")
-            persona = persona.replace("{NEWS_CONTENT}", news_content or "（无新闻数据）")
-            return (persona, True)
-        elif mode in ("leak", "rules", "morning", "afternoon", "evening", "night"):
+        if mode in ("leak", "rules", "morning", "afternoon", "evening", "night"):
             return (modes[mode].replace("{seed_hint}", seed_hint), True)
         elif mode == "convert":
             return (modes[mode].replace("{convert_stage_hint}", stage_hint), False)
@@ -2083,13 +2076,12 @@ class AIEngine:
         )
         return "\n".join(part for part in parts if part)
 
-    def _build_persona(self, mode: str, seed: int = 0, news_content: str = "", is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, message: str = "", model_name: str = None) -> str:
+    def _build_persona(self, mode: str, seed: int = 0, is_priv: bool = False, stage_hint: str = "", user_profile: dict = None, message: str = "", model_name: str = None) -> str:
         """根据模式动态拼装 system prompt，seed用于防重复
 
         参数：
             mode: 模式名称
             seed: 随机种子
-            news_content: 真实新闻内容，用于新闻模式
             is_priv: 是否私聊场景，影响人设追加
             user_profile: [TRAE SOLO CN] 用户画像（用于亲密度计算）
             message: [TRAE SOLO CN] 当前用户消息（用于意图分类和上下文感知）
@@ -2202,10 +2194,8 @@ class AIEngine:
         # 节日人格
         persona += self._get_festival_persona()
         # 模式人格
-        mode_text, is_full = self._get_mode_persona(mode, seed, news_content, stage_hint)
+        mode_text, is_full = self._get_mode_persona(mode, seed, stage_hint)
         if is_full:
-            if mode in self._NEWS_PROMPT_MODES:
-                return mode_text
             if mode in self._GREETING_PROMPT_MODES:
                 return (
                     self._get_greeting_persona_anchor()
@@ -2320,7 +2310,7 @@ class AIEngine:
 
     def ask(self, question: str, mode: str = "normal", retry: int = 3, seed: int = 0,
             tools: list = None, tool_choice: str = "auto", is_priv: bool = False,
-            stage_hint: str = "", user_profile: dict = None, news_content: str = "",
+            stage_hint: str = "", user_profile: dict = None,
             conversation_history: list[dict] | None = None) -> str | None:
         """
         调用AI，失败时自动重试并切换模型。
@@ -2585,7 +2575,7 @@ class AIEngine:
                 if not _allowed:
                     # 24h 超限直接拒绝，返回降级文案
                     logger.warning(f"💰 LLM 成本熔断拒绝调用: uid={_uid} reason={_reason}")
-                    return "Mory 累了，不想理你嘛~ 自己玩去~ 💤"
+                    return self._final_fallback_reply(mode=mode, is_priv=is_priv)
                 if _final_tier != _cost_tier:
                     # 降级：切换到 light 模型（复用百炼 API，仅切模型名）
                     _light_model = self.config.get("MODEL_POOL_LIGHT", "qwen-flash")
@@ -2619,7 +2609,7 @@ class AIEngine:
                 _mem_summary = (user_profile.get("memory_summary") or "").strip()
             self._last_memory_assisted = bool(_mem_summary or normalized_history)
             request_messages = [
-                {"role": "system", "content": self._build_persona(mode, seed, news_content if mode in ("news", "afternoon_news", "evening_news") else "", is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile, message=question, model_name=active_model)},
+                {"role": "system", "content": self._build_persona(mode, seed, is_priv=is_priv, stage_hint=stage_hint, user_profile=user_profile, message=question, model_name=active_model)},
                 *normalized_history,
                 {"role": "user", "content": question},
             ]
@@ -2632,6 +2622,8 @@ class AIEngine:
                 "frequency_penalty": dyn_freq_pen,
                 "presence_penalty": dyn_pres_pen
             }
+            if mode in self._GREETING_PROMPT_MODES:
+                payload["max_tokens"] = min(int(payload["max_tokens"] or 400), 160)
             # [v5.38.24] 穿帮自愈重试参数：上一轮触发降温度重试时，本轮应用降温度+约束注入
             # （payload 每轮重建，必须在构建后应用，否则 continue 后修改会被覆盖丢失）
             if getattr(self, '_sanitize_retry_done', False):

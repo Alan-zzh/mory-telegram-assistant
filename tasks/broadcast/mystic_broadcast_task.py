@@ -226,6 +226,10 @@ class MysticBroadcastTask(BaseTask):
         return "mystic_broadcast"
 
     def schedule(self) -> List[Dict[str, Any]]:
+        # schedule 与 execute 统一检查 enabled，避免“注册成功但执行跳过”假死
+        if not is_mystic_enabled(self.rm.config):
+            logger.info("🔮 传统文化播报未开启，跳过调度注册")
+            return []
         schedule_list = []
         for period in ("morning", "afternoon", "evening"):
             hour, minute = get_mystic_time(self.rm.config, period)

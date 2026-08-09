@@ -28,13 +28,18 @@ def check_antiflood(bot, m, config, db):
     chat_id = m.chat.id
     uid = m.from_user.id
 
-    # 管理员豁免
+    # 管理员豁免（三态：unknown 不处罚）
     try:
-        member = bot.get_chat_member(chat_id, uid)
-        if member.status in ("administrator", "creator"):
+        from modules.ad_enforcement import _is_chat_admin_member
+        admin_status = _is_chat_admin_member(bot, chat_id, uid)
+        if admin_status == "admin":
+            return False
+        if admin_status == "unknown":
+            logger.debug(f"antiflood 群管查询失败，跳过处罚: uid={uid} chat={chat_id}")
             return False
     except Exception as e:
-        logger.debug(f"操作异常: {e}")
+        logger.debug(f"antiflood 群管检查异常，跳过处罚: {e}")
+        return False
     # 获取群设置
     settings = _get_settings(db, chat_id)
     if not settings or not settings.get("enabled"):

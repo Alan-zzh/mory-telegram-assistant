@@ -1662,6 +1662,18 @@ class AdDetector:
             
             user_info = {"uid": uid, "score": total_score, "deleted": 0, "banned": False}
 
+            # 证据门禁：无任何直证广告消息时不得永久禁言（行为/资料分 alone 不够）
+            has_any_direct = any(
+                self._has_direct_message_evidence(item)
+                for item in messages
+                if isinstance(item, dict)
+            )
+            if not has_any_direct:
+                logger.warning(
+                    f"[AD] 启动追溯跳过（无直证消息）: uid={uid} score={total_score} msgs={len(messages)}"
+                )
+                continue
+
             # 累计评分只授权账号处置；逐条删除仍需该条自己的 is_ad/score 证据。
             messages_by_chat = {}
             for msg_info in messages:

@@ -28,6 +28,9 @@ class LeakTask(BaseTask):
         return "leak"
 
     def schedule(self) -> List[Dict[str, Any]]:
+        cfg = self.rm.config.get("LEAK_CONFIG", {}) if self.rm.config else {}
+        if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+            return []
         return [{
             "job_id": "leak",
             "trigger": "cron",

@@ -119,6 +119,8 @@ class FaqDistillTask(BaseTask):
         return "faq_distill"
 
     def schedule(self) -> List[Dict[str, Any]]:
+        if not (self.rm.config or {}).get("FAQ_TRACKING_ENABLED", False):
+            return []
         interval = self.rm.config.get("FAQ_DISTILL_INTERVAL", 86400)
         return [
             {

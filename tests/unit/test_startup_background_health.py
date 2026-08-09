@@ -126,6 +126,7 @@ def test_clean_checkout_discovers_all_task_classes():
     from tasks.task_scheduler import TaskScheduler
 
     scheduler = TaskScheduler.__new__(TaskScheduler)
+    # 空 config：默认关闭的任务 schedule() 返回 []，避免僵尸 job
     scheduler.rm = SimpleNamespace(config={})
     scheduler.tasks = {}
 
@@ -134,7 +135,29 @@ def test_clean_checkout_discovers_all_task_classes():
     assert len(scheduler.tasks) == 45
     assert "check_db_migration" in scheduler.tasks
     assert "check_expired_redpackets" in scheduler.tasks
-    assert sum(len(task.schedule()) for task in scheduler.tasks.values()) == 46
+    empty_cfg_jobs = sum(len(task.schedule()) for task in scheduler.tasks.values())
+    assert empty_cfg_jobs < 46  # 关闭态不应注册满量 job
+    assert empty_cfg_jobs >= 20  # 仍有一批始终在线的维护/监控 job
+
+    # 开启关键播报/互动开关后，应恢复到满量调度项
+    enabled = {
+        "AUTO_GREETING": True,
+        "GREETING_CONFIG": {
+            "morning_enabled": True,
+            "afternoon_enabled": True,
+            "evening_enabled": True,
+            "night_enabled": False,
+        },
+        "MYSTIC_BROADCAST_CONFIG": {"enabled": True},
+        "CART_RECOVERY_CONFIG": {"enabled": True},
+        "LEAK_CONFIG": {"enabled": True},
+        "FAQ_TRACKING_ENABLED": True,
+        "DAILY_BACKUP_ENABLED": True,
+    }
+    for task in scheduler.tasks.values():
+        task.rm = SimpleNamespace(config=enabled)
+    enabled_jobs = sum(len(task.schedule()) for task in scheduler.tasks.values())
+    assert enabled_jobs >= 40
 
 
 def test_task_discovery_import_failure_is_fatal(monkeypatch):

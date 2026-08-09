@@ -36,10 +36,7 @@ import threading
 import html
 from typing import Any, Dict
 from datetime import datetime, timedelta, timezone
-from core.broadcast_cta import is_broadcast_image_enabled
-from core.broadcast_formatter import build_greeting_html, build_rich_greeting_html, build_rich_news_html
-from core.broadcast_image_card import build_broadcast_image_card
-from core.broadcast_image_payload import build_news_image_payload
+from core.broadcast_formatter import build_greeting_html, build_rich_greeting_html
 from core.helpers import can_delete_message, can_orphan_cleanup, get_broadcast_auto_delete_config
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
@@ -70,22 +67,6 @@ except ImportError:
 
 # 记录上次保存的模型索引，避免重复写文件
 _last_saved_model_idx = None
-
-# 当日已推送的新闻标题缓存（防止早中晚重复）
-_news_pushed_today = set()
-_news_cache_lock = threading.Lock()
-
-_AI_FALLBACK_MARKERS = (
-    "脑子刚才短路",
-    "刚才走神",
-    "网络有点卡",
-    "刚刚没反应过来",
-    "咨询入口这会儿卡住了",
-    "抓不到牌位",
-    "我这边没接上你的这段情绪",
-    "被路况卡住",
-    "暂时没法稳定接上模型",
-)
 
 _last_task_run = {}
 _task_lock = threading.Lock()
@@ -193,37 +174,6 @@ def _is_greeting_enabled(config: dict, period: str) -> bool:
 def _is_greeting_window(now: datetime, config: dict, period: str, window_minute: int = 5) -> bool:
     """[Codex] legacy loop 使用配置时间窗口，不再写死 8/12/23 点。"""
     hour, minute = _get_greeting_time(config, period)
-    return now.hour == hour and minute <= now.minute < min(60, minute + window_minute)
-
-
-def _get_news_time(config: dict, period: str) -> tuple[int, int]:
-    """[Codex] 新闻播报时间读取配置，兼容旧小时键。"""
-    cfg = config.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
-    defaults = {
-        "morning": (9, 5, "morning_time", "NEWS_HOUR_MORNING"),
-        "afternoon": (13, 5, "afternoon_time", "NEWS_HOUR_AFTERNOON"),
-        "evening": (20, 35, "evening_time", "NEWS_HOUR_EVENING"),
-    }
-    default_hour, default_minute, time_key, legacy_hour_key = defaults.get(period, defaults["morning"])
-    if time_key in cfg:
-        return _parse_hhmm(cfg.get(time_key), default_hour, default_minute)
-    if legacy_hour_key in config:
-        return _parse_hhmm(config.get(legacy_hour_key), default_hour, default_minute)
-    return default_hour, default_minute
-
-
-def _get_news_source_strategy(config: dict) -> str:
-    """[Codex] 新闻源优先级：默认真实源优先，TrendRadar 兜底。"""
-    cfg = config.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
-    strategy = str(cfg.get("preferred_source", "real_first")).strip().lower()
-    if strategy in {"real_first", "trendradar_first"}:
-        return strategy
-    return "real_first"
-
-
-def _is_news_window(now: datetime, config: dict, period: str, window_minute: int = 5) -> bool:
-    """[Codex] legacy loop 使用新闻配置时间窗口。"""
-    hour, minute = _get_news_time(config, period)
     return now.hour == hour and minute <= now.minute < min(60, minute + window_minute)
 
 
@@ -903,121 +853,6 @@ def _mark_done(task_name: str):
         _last_task_run[task_name] = now
 
 
-def _clear_news_cache_if_new_day():
-    """每日凌晨自动清空新闻去重缓存（防止跨天失效），加锁防竞态"""
-    today = datetime.now(_CST).strftime("%Y-%m-%d")
-    with _news_cache_lock:
-        if not getattr(_clear_news_cache_if_new_day, "last_day", None) == today:
-            _news_pushed_today.clear()
-            _clear_news_cache_if_new_day.last_day = today
-            logger.info(" 新闻去重缓存已按日清空")
-
-
-def _extract_news_key(line: str) -> str:
-    """抽取新闻去重键，尽量忽略序号、来源和热度等包装字符"""
-    text = line.strip()
-    if not text:
-        return ""
-
-    if ". " in text[:4]:
-        text = text.split(". ", 1)[-1].strip()
-
-    if text.startswith("【") and "】" in text:
-        text = text.split("】", 1)[-1].strip()
-
-    if " 🔥" in text:
-        text = text.split(" 🔥", 1)[0].strip()
-
-    return text
-
-
-def _prepare_news_lines(raw_news: str, source_hint: str = "", limit: int = 10) -> list[str]:
-    """整理新闻标题，过滤当天已发送内容，但只在真正发送成功后再写入缓存"""
-    _clear_news_cache_if_new_day()
-    with _news_cache_lock:
-        lines = [l.strip() for l in raw_news.split("\n") if l.strip()]
-        unique_lines = []
-        for line in lines:
-            core = _extract_news_key(line)
-            if core and core not in _news_pushed_today:
-                unique_lines.append(line)
-    if source_hint:
-        logger.info(f"📰 {source_hint}: 过滤前{len(lines)}条 → 去重后{len(unique_lines)}条")
-    return unique_lines[:limit]
-
-
-def _remember_news_lines(lines: list[str]):
-    """新闻真正发送成功后，再把标题写入当天去重缓存"""
-    _clear_news_cache_if_new_day()
-    with _news_cache_lock:
-        for line in lines:
-            core = _extract_news_key(line)
-            if core:
-                _news_pushed_today.add(core)
-
-
-def _build_news_ai_mode(time_desc: str, source_name: str) -> str:
-    """根据时段和新闻源选择对应的AI播报模式"""
-    if source_name == "trendradar":
-        mapping = {
-            "早间": "trendradar_morning_news",
-            "午间": "trendradar_noon_news",
-            "晚间": "trendradar_evening_news",
-        }
-        return mapping.get(time_desc, "trendradar_morning_news")
-
-    mapping = {
-        "早间": "news",
-        "午间": "afternoon_news",
-        "晚间": "evening_news",
-    }
-    return mapping.get(time_desc, "news")
-
-
-def _looks_like_ai_fallback(text: str) -> bool:
-    """识别 AIEngine 所有模型失败后的聊天兜底，避免当新闻播报发送。"""
-    value = (text or "").strip()
-    return bool(value) and any(marker in value for marker in _AI_FALLBACK_MARKERS)
-
-
-def _build_news_without_ai(lines: list[str], time_desc: str) -> str:
-    """LLM 不可用时，用真实标题生成保守新闻文案。"""
-    cleaned = []
-    for line in lines[:5]:
-        core = line.split("】", 1)[-1].split("🔥", 1)[0].strip()
-        if core:
-            cleaned.append(core[:36])
-    while len(cleaned) < 5:
-        cleaned.append("晚点再补一条更稳的消息")
-    observation = f"{time_desc}先看这几条，后续有新进展再跟"
-    return "\n".join(cleaned[:5] + [observation])
-
-
-def _get_preferred_news_lines(time_desc: str, config: dict | None = None) -> tuple[list[str], str]:
-    """优先用真实新闻源，失败后再降级到聚合热点。"""
-    from core.trendradar_news import fetch_trendradar_news, fetch_real_news
-
-    strategy = _get_news_source_strategy(config or {})
-    if strategy == "trendradar_first":
-        source_chain = [
-            ("trendradar", fetch_trendradar_news, f"{time_desc}新闻-TrendRadar"),
-            ("fallback", fetch_real_news, f"{time_desc}新闻-真实新闻源"),
-        ]
-    else:
-        source_chain = [
-            ("fallback", fetch_real_news, f"{time_desc}新闻-真实新闻源"),
-            ("trendradar", fetch_trendradar_news, f"{time_desc}新闻-TrendRadar"),
-        ]
-
-    for source_name, fetcher, source_hint in source_chain:
-        raw_news = fetcher() or ""
-        lines = _prepare_news_lines(raw_news, source_hint)
-        if lines:
-            return lines, source_name
-
-    return [], "none"
-
-
 def _retry_task(rm, task_func, task_name: str, delay_sec: int = 300):
     """5分钟后重试失败的任务，仍失败则通知管理员（使用APScheduler调度，避免线程无法取消）
 
@@ -1057,12 +892,6 @@ def _retry_task(rm, task_func, task_name: str, delay_sec: int = 300):
 def _notify_admin_failure(rm, task_name: str, error_msg: str):
     """任务重试仍失败时通知管理员（走_FaultReporter统一通道）"""
     _fault_reporter.report("定时任务失败", f"任务: {task_name}，错误: {error_msg[:200]}", "⚠️")
-
-
-def _notify_admin_news_failure(rm, news_type: str, error_msg: str = ""):
-    """新闻源全部失败时通知管理员（走_FaultReporter统一通道）"""
-    detail = f"错误: {error_msg[:200]}" if error_msg else "所有新闻源均无法获取"
-    _fault_reporter.report("新闻源故障", f"类型: {news_type}，{detail}", "⚠️")
 
 
 def _notify_admin_system_failure(rm, failure_type: str, detail: str = "", severity: str = "⚠️"):
@@ -1124,152 +953,6 @@ def _do_delete_message(rm, chat_id, message_id):
             logger.info(f"消息删除已禁用，跳过删除: chat={chat_id}, msg={message_id}")
     except Exception as e:
         logger.debug(f"定时消息删除失败（可能已被手动删除）: {e}")
-
-
-_AUTOMATIC_CTA_MARKERS = (
-    "@morychannelbot",
-    "@moryselect",
-    "自助下单",
-    "自助订阅",
-    "来找mory",
-    "私聊我",
-    "找我私聊",
-    "戳我",
-)
-
-
-def _sanitize_automatic_broadcast_text(text: str) -> str:
-    """移除普通新闻/问候里意外生成的销售或私聊 CTA 行。"""
-    if not isinstance(text, str):
-        return ""
-    safe_lines = [
-        line for line in text.splitlines()
-        if not any(marker in line.lower() for marker in _AUTOMATIC_CTA_MARKERS)
-    ]
-    return "\n".join(safe_lines).strip()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# APScheduler 版本：独立 Job，互不干扰
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _execute_news_task(rm, task_name: str, time_desc: str):
-    """
-    执行新闻播报任务的公共函数（富文本排版，不附带成交 CTA）。
-
-    【v5.9.0】使用 TaskTransactionManager 替代手动 _try_claim_and_lock / _release_task / _confirm_task_done
-    【v5.11.0】abort 原因记录到 _ABORT_HISTORY，连续 3 次触发 P0 告警
-    新闻只承担信息播报，不借新闻强塞预览或下单。
-    """
-    try:
-        with TaskTransactionManager(task_name, rm.db, resources=None, min_interval_sec=7200) as tx:
-            if not tx.claimed:
-                return
-            gid = rm.config.get("GROUP_ID", 0)
-            if gid == 0:
-                _record_abort(task_name, "GROUP_ID为0")
-                raise _TaskAbort("GROUP_ID为0")
-
-            logger.info(f"📰 触发{time_desc}新闻播报（统一主流程）")
-            seed = random.randint(100000, 999999)
-
-            lines, source_name = _get_preferred_news_lines(time_desc, rm.config)
-            if not lines:
-                logger.warning(f"{time_desc}新闻：所有源均失败，跳过发送")
-                _notify_admin_news_failure(rm, f"{time_desc}新闻")
-                _record_abort(task_name, "新闻源均失败")
-                raise _TaskAbort("新闻源均失败")
-            news_input = "\n".join(lines)
-
-            ai_mode = _build_news_ai_mode(time_desc, source_name)
-            news = rm.ai.ask(news_input, mode=ai_mode, seed=seed, news_content=news_input)
-            if not news or _looks_like_ai_fallback(news):
-                logger.warning(f"{time_desc}新闻 AI 生成不可用，使用真实标题兜底排版")
-                _notify_admin_system_failure(
-                    rm,
-                    "新闻AI生成降级",
-                    f"类型: {time_desc}新闻，模型不可用，已用真实标题兜底，避免重复重试",
-                    "⚠️",
-                )
-                news = _build_news_without_ai(lines, time_desc)
-
-            if news:
-                news = _sanitize_automatic_broadcast_text(news)
-                if not news:
-                    news = _build_news_without_ai(lines, time_desc)
-                # 使用 v1.0 富文本新闻排版（自动 HTML 转义 + emoji 点缀 + 观察行 blockquote）
-                rich_news = build_rich_news_html(time_desc, news, source_name=source_name)
-
-                # [v5.38.15] 新闻播报也支持图片卡（全局总闸 + NEWS_BROADCAST_CONFIG.image_card_enabled，统一 helper）
-                cfg = rm.config or {}
-                news_cfg = cfg.get("NEWS_BROADCAST_CONFIG", {}) if isinstance(cfg, dict) else {}
-                news_image_enabled = is_broadcast_image_enabled(cfg, news_cfg)
-                image_path = ""
-                if news_image_enabled:
-                    try:
-                        image_payload = build_news_image_payload(news, time_desc=time_desc)
-                        today = datetime.now(_CST).strftime("%Y%m%d")
-                        image_path = build_broadcast_image_card(
-                            image_payload,
-                            cache_key=f"news_{time_desc}_{today}",
-                            config=cfg,
-                            min_height=1100,
-                        ) or ""
-                        if image_path and not os.path.isfile(image_path):
-                            image_path = ""
-                    except Exception as e:
-                        logger.warning(f"📰 {time_desc}新闻图片卡生成失败，回退文字: {e}")
-                        image_path = ""
-
-                # 新闻不附带销售或私聊按钮。
-                if image_path:
-                    try:
-                        with rm.locked('bot'):
-                            sent = send_photo_compat(
-                                rm.bot, gid, image_path,
-                                caption=None,
-                                disable_notification=False,
-                            )
-                        if sent and hasattr(sent, 'message_id'):
-                            _schedule_auto_delete(rm, gid, sent.message_id, 24 * 3600)
-                            rm.db.track_channel_message(gid, sent.message_id, "image")
-                            rm.db.track_bot_message(gid, sent.message_id)
-                            _remember_news_lines(lines)
-                            logger.info(f"✅ {time_desc}新闻图片卡已发送（来源: {source_name}）")
-                            return
-                    except Exception as e:
-                        logger.warning(f"📰 {time_desc}新闻图片卡发送失败，回退文字: {e}")
-
-                try:
-                    with rm.locked('bot'):
-                        sent = send_message_compat(
-                            rm.bot, gid, rich_news,
-                            parse_mode="HTML",
-                            disable_web_page_preview=True,
-                            link_preview_options={"is_disabled": True},
-                        )
-                    if sent and hasattr(sent, 'message_id'):
-                        _schedule_auto_delete(rm, gid, sent.message_id, 24 * 3600)
-                        rm.db.track_channel_message(gid, sent.message_id, "text")
-                        rm.db.track_bot_message(gid, sent.message_id)
-                        _remember_news_lines(lines)
-                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，无成交CTA）")
-                        return
-                except Exception as e:
-                    logger.warning(f"{time_desc}新闻富文本发送失败，降级纯文本: {e}")
-                    sent = _send_and_track(rm, gid, news)
-                    if sent:
-                        _remember_news_lines(lines)
-                        logger.info(f"✅ {time_desc}新闻已发送（来源: {source_name}，纯文本降级）")
-                        return
-
-            _record_abort(task_name, "新闻发送失败")
-            raise _TaskAbort("新闻发送失败")
-    except _TaskAbort as e:
-        _handle_task_abort(task_name, e, time_desc)
-    except Exception as e:
-        logger.error(f"{time_desc}新闻播报失败：{e}")
-        _retry_task(rm, lambda rm: _execute_news_task(rm, task_name, time_desc), task_name)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1375,7 +1058,7 @@ def _job_wakeup_check(rm):
 
     【v5.31.2 修复】锁顺序死锁：
     原持有 locked_multi(['db','bot','config']) 期间调用 _generate_wakeup_message
-    (内部 locked('ai'))，锁顺序为 config→ai，与 _execute_news_task/_job_leak 的
+    (内部 locked('ai'))，锁顺序为 config→ai，与 _job_leak 的
     ai→config 形成 AB-BA 死锁，30秒超时打破后两任务都失败。
     修复：分离数据读取与 AI 生成，只在读 db 时持锁，AI 生成+发送不持 db/config 锁。
     """

@@ -104,22 +104,41 @@ class BurnOrphanTask(BaseTask):
                     success_count = 0
                     fail_count = 0
                     for bot_mid, cid, user_mid in targets:
+                        deleted_ok = False
+                        already_gone = False
                         try:
                             with self.rm.locked('bot'):
                                 self.rm.bot.delete_message(cid, int(bot_mid))
+                            deleted_ok = True
                             success_count += 1
                         except Exception as del_err:
-                            fail_count += 1
-                            logger.debug(f"  删除失败：bot_mid={bot_mid}, err={del_err}")
-                            failures.append(del_err)
-                        try:
-                            if hasattr(self.rm.db, "delete_bot_message_records"):
-                                self.rm.db.delete_bot_message_records(cid, bot_mid)
+                            err_l = str(del_err).lower()
+                            # 消息已不存在可清追踪；其他失败必须保留追踪供下次重试
+                            if any(
+                                token in err_l
+                                for token in (
+                                    "message to delete not found",
+                                    "message can't be deleted",
+                                    "message not found",
+                                    "not found",
+                                )
+                            ):
+                                already_gone = True
+                                success_count += 1
+                                logger.debug(f"  消息已不存在，清理追踪：bot_mid={bot_mid}")
                             else:
-                                self.rm.db.delete_tracked(bot_mid, cid)
-                        except Exception as record_err:
-                            logger.error(f"删除孤儿追踪记录失败 bot_mid={bot_mid}: {record_err}")
-                            failures.append(record_err)
+                                fail_count += 1
+                                logger.debug(f"  删除失败保留追踪：bot_mid={bot_mid}, err={del_err}")
+                                failures.append(del_err)
+                        if deleted_ok or already_gone:
+                            try:
+                                if hasattr(self.rm.db, "delete_bot_message_records"):
+                                    self.rm.db.delete_bot_message_records(cid, bot_mid)
+                                else:
+                                    self.rm.db.delete_tracked(bot_mid, cid)
+                            except Exception as record_err:
+                                logger.error(f"删除孤儿追踪记录失败 bot_mid={bot_mid}: {record_err}")
+                                failures.append(record_err)
                     logger.info(f"✅ Phase1完成：成功{success_count}条，失败{fail_count}条")
                     try:
                         self.rm.db.log_orphan_cleanup(

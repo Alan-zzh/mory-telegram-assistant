@@ -8,7 +8,11 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
-| 2026-08-09 | 新增 | v5.38.31 特定词自动回复卡片化：Rich/HTML 双排版+单入口随机按钮（默认关），润色只精修原文不重写。 | `core/auto_reply_card.py`（新增）、`modules/keyword_trigger.py`、`tests/unit/test_auto_reply_card.py`（新增）等 |
+| 2026-08-09 | 修复 | v5.38.33 播报收敛为三档玄学栏目，图片单正文，实时模型去超时并拦截尬聊。 | `ai_engine`、`greeting_task`、`broadcast_image_payload`、配置与测试 |
+| 2026-08-09 | 清理 | 停止自动新闻播报执行链：删除 common.py / auto_tasks.py 中新闻任务、格式化与发送链，保留 news 配置与 Dashboard 面板，同步清理测试。 | `tasks/support/common.py`、`modules/auto_tasks.py`、`tests/unit/test_broadcast*` 等 |
+| 2026-08-09 | 修复 | v5.38.32 全仓暗病闭环：转发删鉴权、解封四项条件、延迟禁言证据门、schedule/enabled 统一、问候部分成功保日锁、none 无按钮、媒体广告预检等。 | `message_dispatcher`、`ad_enforcement`、`greeting_task`、`burn_orphan` 等 |
+| 2026-08-09 | 修复 | verify_deployment 日志检查误报修复：grep -v 漏过滤 gevent 停机 Traceback 上下文行，改 awk 整块剔除噪声，杜绝健康部署被误判失败触发保险重启。 | `core/deploy_utils.py` |
+| 2026-08-09 | 新增 | v5.38.31 特定词自动回复卡片化：Rich/HTML 双卡片+单入口随机按钮（默认关），润色只精修原文不重写。 | `core/auto_reply_card.py`（新增）、`modules/keyword_trigger.py`、`tests/unit/test_auto_reply_card.py`（新增）等 |
 | 2026-08-09 | 新增 | v5.38.30 关联频道联动模块（默认关）：频道新帖自动点赞、群内转发自动取消置顶、每帖至多一条评论转化，命中即停止分发。 | `modules/linked_channel_sync.py`、`core/message_dispatcher.py`、`core/handlers/media_handlers.py` 等 |
 | 2026-08-08 | 修复 | v5.38.30 广告规避漏判修复：跳过"简"字的"看我💬介"变体现在被正确识别为引流用户名并触发永久禁言+删消息处置。 | `modules/ad_patterns_encoded.py`、`tests/unit/test_ad_patterns_v5161.py` |
 | 2026-08-07 | 新增/优化 | v5.38.29 人设预设全量录入：54 组风格样本落库（15 方向）、INPUT_HINTS 启用、社交解锁改 2 阶、敏感话题先引导 VIP、FAQ 每周自动提醒优化。 | \core/db_repos/reply_evolution_repo.py\、\config.json\、\AGENTS.md\、\docs/technical/persona-qna-edit.md\ 等 |

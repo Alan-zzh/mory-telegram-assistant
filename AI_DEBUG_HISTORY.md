@@ -115,3 +115,24 @@
 - 根因：收工六件套无触发条件（每次全量同步→流水账）；六文档版本纯人工同步、脚本零覆盖；完成判据只列本地证据，部署无机械出口。
 - 解法：AGENTS 重写为触发式更新矩阵（未达条件不写）+ 部署三选一（已部署/无需部署/门禁阻断，未填视为未完工）；doc_consistency 扩展机械断言（版本五源一致/六文档行数/CHANGELOG 条目 ≤100 字/snapshot 大事 ≤3 条/README 指标一致）；新增 scripts/check_deploy_ready.py 一键检查；CHANGELOG v5.38.15 及之前整体归档。
 - 预防：文档更新按触发矩阵执行；升版五源同改（脚本拦截）；规则不锚历史版本号；收工必填部署三选一。
+
+### 60. verify_deployment 日志检查漏过滤 gevent 停机噪声块，健康部署被误判失败（2026-08-09 修复）
+- 问题：全量部署成功（health=200、双服务 active），verify_deployment 却报日志错误→保险无谓 restart。
+- 根因：gunicorn/gevent 停机噪声是多行块，原过滤只剔末行，Traceback 上下文仍命中 error。
+- 解法：`deploy_utils` 校验改 awk 整块剔除后再 grep。
+- 预防：日志校验按块过滤；改校验后必须 VPS 实测命令本身。
+
+### 61. 转发即删除无鉴权 + 解封不全 + 累计分无直证可永禁（v5.38.32）
+- 问题：任意私聊用户转发群消息可触发 bot 删原消息；自助解封/ungban 只清 blacklist 留 global/mute/tracking→P1 再封；延迟/启动追溯仅靠累计分（含 profile emoji）永久禁言。
+- 根因：特权动作缺管理员门禁；恢复路径未统一 restore_ad_user；行为/资料分被当广告证据。
+- 解法：转发删强制 ADMIN_IDS；解封全走 restore_ad_user；延迟/启动追溯要求≥1 条直证；enforce 补 AD_WHITELIST。
+- 预防：不可逆动作=配置白名单先于网络+失败降级；解封唯一入口 restore；累计分 alone 不得 ban。
+
+### 62. schedule 与 enabled 分离 + 问候部分成功释放日锁双发（v5.38.32）
+- 问题：mystic/greeting 等 schedule 无条件注册、execute 才查 enabled（假死）；多群问候部分成功抛错释放日锁可同日双发。
+- 根因：注册与执行门禁分裂；事务异常分支一律 release claim。
+- 解法：schedule 按 enabled 返回 []；部分成功 return 保留日锁；claim 孤立 task_log 启动回收。
+- 预防：schedule/execute 门禁统一；部分成功不得当全失败释放日锁。
+
+### 63. 三套主动触达叠加 + 随机拼图 + 思考模型超时导致重复套话
+- 问题|根因|解法|预防：10 档播报时段重叠，问候图拼无关随机句，实时问候误跑思考模型超时后发固定兜底；收敛为三档传统文化栏目，图片单正文，移除固定兜底和过期模型，实时模型显式禁思考，并加节奏/输出回归门禁。

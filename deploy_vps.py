@@ -4,7 +4,7 @@
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║  deploy_vps.py  ·  一键部署脚本（systemd管理）                           ║
 ║                                                                            ║
-║  功能：停止Bot → 上传代码 → 安全合并配置 → 启动Bot → 验证部署             ║
+║  功能：上传代码（全程不停服，文件就位后单步切换）→ 安全合并配置 → 重启服务 → 验证部署     ║
 ║  使用：python deploy_vps.py                                               ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
@@ -76,6 +76,7 @@ DEAD_REMOTE_FILES = [
     "core/monitoring.py",
     "core/rate_limiter.py",
     "core/router_statistics.py",
+    "core/trendradar_news.py",
     "modules/predictive_patrol.py",
     "docs/review-report-20260621.md",
     # 内部文档（曾误上传至 VPS，现已从 ROOT_FILES 移除；部署时清理远端旧版本，
@@ -304,12 +305,18 @@ def main():
 
     sftp = client.open_sftp()
     try:
-        sftp.get_channel().settimeout(60)
+        ch = sftp.get_channel()
+        if ch is not None:
+            ch.settimeout(60)
     except Exception as e:
         print(f"  ⚠️ SFTP超时设置失败（非致命）：{e}")
 
-    # 记录是否已停止服务（finally 块需要知道要不要重启）
+    # 部署状态：services_stopped 恒为 False（v5.38.32 起全程不停服，仅 restart 切换）；
+    # restart_attempted：仅当 [4/5] 的 systemctl restart 已真正发出才置 True，
+    #   保险 restart 只在该情况下触发（中途异常时旧版服务仍在运行，无需干预）。
+    # deploy_ok 仅在 health=200 + 双服务 active 后置 True。
     services_stopped = False
+    restart_attempted = False
     deploy_ok = False
 
     # ═══════════════════════════════════════════════════════════════
@@ -334,38 +341,46 @@ def main():
         except Exception as e:
             print(f"  ⚠️ 同步失败（非致命）：{e}")
 
-        # 4. 停止Bot（systemd）→ 标记 services_stopped
-        print("\n[3/5] 停止Bot服务 ...")
-        stdin, stdout, stderr = client.exec_command("sudo systemctl stop mory-assistant mory-dashboard", timeout=30)
-        exit_code = stdout.channel.recv_exit_status()
-        if exit_code == 0:
-            print("  ✅ Bot和Dashboard已停止")
-        else:
-            err = stderr.read().decode("utf-8", errors="replace").strip()
-            print(f"  ⚠️ 停止服务返回码 {exit_code}：{err}")
-        services_stopped = True  # 不管停没停成功，保险都标记
-
-        time.sleep(2)
+        # [v5.38.32 加固] 不再提前 stop 服务：全程保持双服务运行，
+        # 待代码/配置全部就位后在 [4/5] 单步 systemctl restart 完成切换。
+        # 旧版先 stop 再上传，若进程在停摆窗口被外部硬杀（finally 不可靠），
+        # 双服务会长时间下线；现方案任意时刻被中断，服务都在跑上一版本（安全侧）。
+        # services_stopped 保持 False，finally 仅当 restart 已发生但 health 未确认时兜底重启。
 
         # 4.5 部署前备份 VPS 当前代码（失败不阻断部署）
+        # [v5.38.32 加固] 改为 tar 精准快照：排除 mory.db/.venv/logs/runtime/backups/缓存，
+        # 避免旧版 cp -r 整目录复制（含大型运行态）拖慢部署并放大被外部中断的风险窗口。
+        # 备份落 backups/code_deploy_*.tar.gz，保留最近 2 份；回滚 = 解压覆盖。
         print("\n  备份 VPS 当前代码 ...")
         try:
-            backup_cmd = (
-                f"cp -r {VPS_PATH} {VPS_PATH}.bak.$(date +%s) && "
-                f"ls -dt {VPS_PATH}.bak.* 2>/dev/null | tail -n +3 | xargs -r rm -rf"
-            )
-            stdin, stdout, stderr = client.exec_command(backup_cmd, timeout=120)
+            bak_stdin, bak_stdout, bak_stderr = client.exec_command(
+                "mkdir -p " + VPS_PATH + "/backups", timeout=15)
+            bak_stdout.channel.recv_exit_status()
+        except Exception:
+            pass
+        backup_cmd = (
+            f"cd {VPS_PATH} && "
+            "tar --exclude='./mory.db' --exclude='./.venv' --exclude='./logs' "
+            "--exclude='./runtime' --exclude='./backups' --exclude='./backup' "
+            "--exclude='*__pycache__*' "
+            "--exclude='*.pyc' -czf backups/code_deploy_$(date +%s).tar.gz . 2>/dev/null && "
+            "ls -dt backups/code_deploy_*.tar.gz 2>/dev/null | tail -n +3 | xargs -r rm -f && "
+            "echo BACKUP_OK"
+        )
+        try:
+            stdin, stdout, stderr = client.exec_command(backup_cmd, timeout=180)
             rc = stdout.channel.recv_exit_status()
-            if rc == 0:
-                print("  ✅ VPS 代码已备份（保留最近 2 个）")
+            out = stdout.read().decode("utf-8", errors="replace").strip()
+            if rc == 0 and "BACKUP_OK" in out:
+                print("  ✅ VPS 代码已备份（tar 快照，保留最近 2 个）")
             else:
                 err = stderr.read().decode("utf-8", errors="replace").strip()
-                print(f"  ⚠️ VPS 代码备份返回码 {rc}（继续部署）：{err[:200]}")
+                print(f"  ⚠️ VPS 代码备份返回码 {rc}（继续部署）：{(err or out)[:200]}")
         except Exception as e:
             print(f"  ⚠️ VPS 代码备份失败（继续部署）：{e}")
 
         # 5. 上传代码文件
-        print("\n[4/5] 上传代码文件 ...")
+        print("\n[3/5] 上传代码文件 ...")
         files_to_upload = []
         skipped_ul = []
         for rel_path in UPLOAD_FILES:
@@ -549,14 +564,16 @@ def main():
                     "sudo apt install -y python3-gunicorn python3-gevent 2>&1", timeout=180)
                 out = stdout.read().decode("utf-8", errors="replace").strip()
                 exit_code = stdout.channel.recv_exit_status()
-                print(f"  ✅ gunicorn+gevent 已就绪" if exit_code == 0 else f"  ⚠️ apt安装输出: {err[:200]}")
+                apt_tail = (out or "").splitlines()[-3:] if out else ""
+                print(f"  ✅ gunicorn+gevent 已就绪" if exit_code == 0 else f"  ⚠️ apt安装异常（非致命），输出尾部: {' / '.join(apt_tail)}")
         except Exception as e:
             print(f"  ⚠️ gunicorn检查/安装失败（非致命）: {e}")
 
         # 6. 启动Bot（systemd）→ 取消保险标记
-        print("\n[5/5] 启动Bot服务 ...")
+        print("\n[4/5] 启动Bot服务 ...")
         _DEPLOY_STATE["phase"] = "starting"
         stdin, stdout, stderr = client.exec_command("sudo systemctl restart mory-assistant mory-dashboard", timeout=60)
+        restart_attempted = True
         exit_code = stdout.channel.recv_exit_status()
         if exit_code == 0:
             print("  ✅ Bot和Dashboard已重启")
@@ -565,23 +582,32 @@ def main():
             print(f"  ❌ 启动失败：{err}（保险机制将重试）")
 
         # [v5.31.4 修复] 健康检查轮询：start 是异步的，必须等真正起来再判成功
+        # [v5.38.32 加固] 同时校验双服务 is-active（restart 返回 0 不代表进程存活），
+        # 轮询上限 20 次（约 60s）覆盖 gunicorn 慢启动。
         print("  ⏳ 等待服务就绪并轮询 health ...")
-        for attempt in range(10):
+        for attempt in range(1, 21):
             time.sleep(3)
             try:
                 hc = client.exec_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:6616/api/health", timeout=10)
                 code = hc[1].read().decode("utf-8", "replace").strip()
             except Exception:
                 code = ""
-            if code == "200":
-                print(f"  ✅ health=200（第 {attempt+1} 次轮询）")
+            active_out = ""
+            try:
+                ac = client.exec_command("systemctl is-active mory-assistant mory-dashboard", timeout=10)
+                active_out = ac[1].read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            both_active = active_out.count("active") >= 2
+            if code == "200" and both_active:
+                print(f"  ✅ health=200 且双服务 active（第 {attempt+1} 次轮询）")
                 services_stopped = False  # 已确认起来，保险不用再管
                 deploy_ok = True
                 break
             else:
-                print(f"  ... 第 {attempt+1} 次 health={code or '无响应'}")
+                print(f"  ... 第 {attempt+1} 次 health={code or '无响应'} active=[{active_out.replace(chr(10), '/')}]")
         if not deploy_ok:
-            print("  ⚠️ 启动后 health 未达 200，保险机制将重试重启")
+            print("  ⚠️ 启动后 health 未达 200 或服务未 active，保险机制将重试重启")
 
         # 7. 验证部署
         print("\n验证部署结果 ...")
@@ -595,10 +621,12 @@ def main():
         print("  保险机制将自动恢复服务...")
 
     finally:
-        # ── 🛡️ 保险：无论部署成功/失败/被外部杀死，确保服务在跑 ──
+        # ── 🛡️ 保险：restart 已发生但 health 未确认时，确保服务在跑 ──
         # [v5.31.4 修复] 用全新 SSH 连接重启（主连接可能已损坏/超时）；
         # 并修复原 finally 引用未定义 logger 的 NameError。
-        if services_stopped or not deploy_ok:
+        # [v5.38.32] 服务全程未被 stop：被外部硬杀时旧版进程仍在运行（安全侧），
+        # 只有走到 restart 且 health 未达 200 时才需要保险重启。
+        if restart_attempted and not deploy_ok:
             print("\n🛡️ [保险触发] 检测到服务未确认运行，自动恢复中...")
             restored = _restart_services_fresh()
             if restored:

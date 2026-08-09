@@ -203,78 +203,6 @@ def build_mystic_image_payload(mystic_payload: dict) -> dict:
     return build_almanac_image_payload(mystic_payload)
 
 
-def build_news_image_payload(news_content: str, time_desc: str = "午间") -> dict:
-    """把新闻文本转成图片卡 payload。
-
-    news_content 预期是编号列表或标题列表。
-    """
-    from core.broadcast_formatter import _parse_news_copy
-
-    news_items, observations = _parse_news_copy(news_content, max_items=5)
-
-    lines = []
-    for i, item in enumerate(news_items, 1):
-        lines.append((f"{i}.", item))
-
-    blocks = []
-    if lines:
-        blocks.append({
-            "heading": f"{time_desc}速览",
-            "lines": lines,
-            "style": "list",
-        })
-
-    insight = ""
-    if observations:
-        # 去掉 insight 前的 emoji，避免 PIL 渲染为 tofu
-        insight = re.sub(r"^[💡✨🌟⭐🔥\s]+", "", " ".join(observations)).strip()
-
-    return {
-        "title": f"{time_desc}新闻",
-        "kicker": "热点速览",
-        "meta": "",
-        "blocks": blocks,
-        "insight": insight,
-    }
-
-
-# 走心小贴士池：只写共情，不写天气/行程/动作；不鸡汤、不万能安慰、不教导，
-# 不替群友断言身体和情绪，延续 Mory 清醒温柔带小傲娇的调性（与 GREETING_STYLE_BAN 对齐）
-_GREETING_TIPS = [
-    "新的一天，按自己的节奏来就行，不用跟谁比。",
-    "忙归忙，记得吃口热乎的，别的都不急。",
-    "今天想偷懒就偷懒，又没人给你打分。",
-    "有话想说就来群里冒个泡，我在呢。",
-    "遇到卡壳的事先放一放，说不定待会儿就有思路了。",
-    "不用事事都有回应，先把自己在乎的顾好。",
-    "累了就早点休息，明天的事明天再说。",
-    "不用每天都元气满满，按自己舒服的来。",
-    "想安静就安静，想聊就聊，群里随你节奏。",
-]
-
-
-# Mory 独白金句池：清冷温柔带小傲娇的品牌口吻为主，辅以少量正能量句子
-# 与 1-2 条公共领域经典名言。约束：不鸡汤套话、不虚假承诺、不营销硬广、
-# 不虚构动作场景，并避开 GREETING_STYLE_BAN 禁区词（与 _GREETING_TIPS 同一套约束）。
-_MORY_QUOTES = [
-    "我记性不太好，但你说过的话，我通常都记得。",
-    "这世上热闹的地方很多，你肯在我这里安静待着，我就很满意了。",
-    "你可以不用那么懂事，偶尔任性一下，我也不会说你的。",
-    "别人夸你我就听着，别人说你我也记着，最后都归我管。",
-    "我不催你发光，你按自己的速度亮起来就行。",
-    "偶尔摆烂也不是罪，我替你记着，改天再算总账。",
-    "我喜欢听你说话，你不说话的时候，我也陪着。",
-    "你不用事事都答得漂亮，答不上来的时候，也有我兜着。",
-    "我陪你走的路，不怕走得慢，只怕你半路拐错弯。",
-    "你只管往前走，回头要人搭把手的时候，记得吱一声。",
-    "把今天过好，明天的烦恼，明天再拆。",
-    "今天也要记得，你比你以为的更有耐心。",
-    "路是一步一步走出来的，今天这一步也算数。",
-    "千里之行，始于足下。",
-    "纸上得来终觉浅，绝知此事要躬行。",
-]
-
-
 _CST = timezone(timedelta(hours=8))
 
 
@@ -286,13 +214,8 @@ def _beijing_now() -> datetime:
 def build_greeting_image_payload(period: str, body: str, badge: str = "", seed: str = "") -> dict:
     """把问候语转成图片卡 payload。
 
-    走心小贴士与一言默认每次发送重新随机（seed 留空），避免每次都是同一句；
-    传入 seed 时按 seed 稳定选取（测试/回放用）。文案池本身已过人设约束，
-    怎么抽都不会违和。
-
-    高度说明：图片高度由调用方（greeting_task 的 build_broadcast_image_card min_height）
-    控制，本函数只负责内容；若需要内容驱动高度，请在调用处把 min_height 调低到
-    内容实际高度附近（当前生产 min_height=900 对新增的"今日一句"区块依然合适）。
+    问候卡只展示本轮通过质量门禁的唯一正文，不再把独立随机的“今日一句”与
+    “一言”硬拼进同一张卡。seed 参数仅为兼容既有调用方保留。
     """
     # 傍晚档不叫晚安（那会提前透支深夜的问候）：用"暮安"与早安/午安同一造词法，
     # 晚安留给 night 档；徽标也随语境改成傍晚收工的调子
@@ -309,26 +232,12 @@ def build_greeting_image_payload(period: str, body: str, badge: str = "", seed: 
     weekday = "一二三四五六日"[now.weekday()]
     date_text = f"{now.month}月{now.day}日 周{weekday}"
 
-    # 走心小贴士与一言：默认每次发送重新随机；传 seed 时稳定选取（测试/回放）。
-    # 两条用不同子键抽取，避免同种子下总是固定搭配。
-    if seed:
-        tip_rng = random.Random(f"{seed}|tip")
-        quote_rng = random.Random(f"{seed}|quote")
-    else:
-        tip_rng = random.SystemRandom()
-        quote_rng = random.SystemRandom()
-    tip = tip_rng.choice(_GREETING_TIPS)
-    quote = quote_rng.choice(_MORY_QUOTES)
-
     return {
         "title": title,
         "kicker": badge or default_badge,
         "meta": "",
         "date_text": date_text,
-        "blocks": [
-            {"heading": "今日一句", "lines": [("", tip)], "style": "list"},
-            {"heading": "一言", "lines": [("", quote)], "style": "list"},
-        ],
+        "blocks": [],
         "insight": body,
     }
 

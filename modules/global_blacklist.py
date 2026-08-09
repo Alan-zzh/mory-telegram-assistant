@@ -140,7 +140,24 @@ def handle_ungban(bot, m, config, db):
         bot.reply_to(m, f"⚠️ 用户 {target_uid} 不在全局黑名单中")
         return
 
-    db.blacklist_remove(target_uid)
+    # 统一走 restore_ad_user：TG 解禁 + blacklist/global_blacklist/mute_records/ad_suspicious 四项清理
+    try:
+        from modules.ad_enforcement import restore_ad_user
+        result = restore_ad_user(
+            bot=bot,
+            db=db,
+            config=config,
+            chat_id=int(getattr(m.chat, "id", 0) or 0),
+            uid=int(target_uid),
+            actor_id=int(user_id),
+            ad_detector=None,
+        )
+        data = (result or {}).get("data") or {}
+        ok = (result or {}).get("code") == 200 or data.get("blacklist_removed")
+    except Exception as e:
+        logger.warning(f"/ungban restore_ad_user 失败 uid={target_uid}: {e}")
+        db.blacklist_remove(target_uid)
+        ok = True
 
     target_name = f"用户{target_uid}"
     try:
@@ -149,8 +166,11 @@ def handle_ungban(bot, m, config, db):
         target_name = member.user.first_name or target_name
     except Exception as e:
         logger.debug(f"操作异常: {e}")
-    bot.reply_to(m, f"✅ 已将 {target_name} 从全局黑名单移除")
-    logger.info(f"全局黑名单移除: uid={target_uid} by={user_id}")
+    if ok:
+        bot.reply_to(m, f"✅ 已将 {target_name} 从全局黑名单移除并恢复权限")
+    else:
+        bot.reply_to(m, f"⚠️ {target_name} 解封未完全成功，请查日志")
+    logger.info(f"全局黑名单移除: uid={target_uid} by={user_id} ok={ok}")
 
 
 def check_global_blacklist(bot, m, config, db):

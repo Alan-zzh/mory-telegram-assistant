@@ -223,12 +223,25 @@ class TaskExecHistoryRepo:
                         "DELETE FROM task_log WHERE task_key=? AND exec_date=?",
                         (task_key, exec_date),
                     )
+                # claim 成功但 record_task_start 前崩溃：task_log 孤立日锁无 history
+                orphan_logs = self.conn.execute(
+                    "SELECT task_key, exec_date FROM task_log WHERE exec_date >= date('now', 'localtime', '-1 day') "
+                    "AND NOT EXISTS ("
+                    "  SELECT 1 FROM task_execution_history h "
+                    "  WHERE h.task_key = task_log.task_key AND h.exec_date = task_log.exec_date"
+                    ")"
+                ).fetchall()
+                for task_key, exec_date in orphan_logs:
+                    self.conn.execute(
+                        "DELETE FROM task_log WHERE task_key=? AND exec_date=?",
+                        (task_key, exec_date),
+                    )
                 self.conn.commit()
-                affected = len(rows)
+                affected = len(rows) + len(orphan_logs)
                 if affected > 0:
                     logger.warning(
-                        f"📊 [task_exec] cleanup_zombie_running: {affected} 条旧进程 running "
-                        "已标记为 failed 并释放任务锁"
+                        f"📊 [task_exec] cleanup_zombie_running: history_running={len(rows)} "
+                        f"orphan_task_log={len(orphan_logs)} 已释放"
                     )
                 return affected
             except Exception as exc:

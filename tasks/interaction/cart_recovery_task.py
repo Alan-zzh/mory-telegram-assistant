@@ -69,6 +69,9 @@ class CartRecoveryTask(BaseTask):
         return "cart_recovery"
 
     def schedule(self) -> List[Dict[str, Any]]:
+        cfg = self.rm.config.get("CART_RECOVERY_CONFIG", {}) if self.rm.config else {}
+        if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+            return []
         return [{
             "job_id": "cart_recovery",
             "trigger": "cron",

@@ -172,7 +172,7 @@ def create_request(requester_id: int, target_user_id: int,
         return {"ok": True, "msg": "申请已提交", "request_id": req_id}
     except sqlite3.Error as e:
         logger.error(f"创建权限申请失败: {e}")
-        return {"ok": False, "msg": f"数据库错误: {e}", "request_id": None}
+        return {"ok": False, "msg": "数据库错误，请查看服务器日志获取详情", "request_id": None}
     except Exception as e:
         logger.error(f"创建权限申请异常: {e}")
         return {"ok": False, "msg": "内部错误", "request_id": None}
@@ -231,7 +231,7 @@ def approve_request(request_id: int, approver_id: int) -> dict:
         return {"ok": True, "msg": "审批通过"}
     except sqlite3.Error as e:
         logger.error(f"审批通过失败: {e}")
-        return {"ok": False, "msg": f"数据库错误: {e}"}
+        return {"ok": False, "msg": "数据库错误，请查看服务器日志获取详情"}
     except Exception as e:
         logger.error(f"审批通过异常: {e}")
         return {"ok": False, "msg": "内部错误"}
@@ -281,7 +281,7 @@ def reject_request(request_id: int, approver_id: int, reason: str = "") -> dict:
         return {"ok": True, "msg": "已拒绝"}
     except sqlite3.Error as e:
         logger.error(f"审批拒绝失败: {e}")
-        return {"ok": False, "msg": f"数据库错误: {e}"}
+        return {"ok": False, "msg": "数据库错误，请查看服务器日志获取详情"}
     except Exception as e:
         logger.error(f"审批拒绝异常: {e}")
         return {"ok": False, "msg": "内部错误"}
@@ -320,7 +320,7 @@ def cancel_request(request_id: int, requester_id: int) -> dict:
         return {"ok": True, "msg": "已取消"}
     except sqlite3.Error as e:
         logger.error(f"取消申请失败: {e}")
-        return {"ok": False, "msg": f"数据库错误: {e}"}
+        return {"ok": False, "msg": "数据库错误，请查看服务器日志获取详情"}
     except Exception as e:
         logger.error(f"取消申请异常: {e}")
         return {"ok": False, "msg": "内部错误"}

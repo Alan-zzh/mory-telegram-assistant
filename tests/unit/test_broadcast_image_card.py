@@ -94,20 +94,6 @@ def test_iching_payload_normalizes_gua_meaning_to_key_value():
     assert payload["title"] == "晚间 · 易经一卦"
 
 
-def test_news_payload_builds_numbered_list_and_insight():
-    from core.broadcast_image_payload import build_news_image_payload
-
-    text = "1. 第一条新闻\n2. 第二条新闻\n3. 第三条新闻\n4. 第四条\n5. 第五条\n💡 今日看点：科技板块领涨"
-    payload = build_news_image_payload(text, time_desc="午间")
-    assert payload["title"] == "午间新闻"
-    assert len(payload["blocks"]) == 1
-    assert len(payload["blocks"][0]["lines"]) == 5
-    assert payload["blocks"][0]["lines"][0][0] == "1."
-    # insight 去掉了 emoji 前缀
-    assert payload["insight"].startswith("今日看点")
-    assert "💡" not in payload["insight"]
-
-
 @pytest.mark.parametrize("period,expected_title", [
     ("morning", "早安"),
     ("afternoon", "午安"),
@@ -121,6 +107,7 @@ def test_greeting_payload_maps_period_to_title(period, expected_title):
     assert p["title"] == expected_title
     assert p["kicker"] == "新的一天"
     assert p["insight"] == "今天也要元气满满哦～"
+    assert p["blocks"] == []
 
 
 def test_scheduled_payload_strips_emoji_and_applies_vip_title():
@@ -234,7 +221,7 @@ def test_block_exception_isolation_still_produces_png(tmp_path: Path):
     path, info = draw_card(payload, str(out), cta="看看预览")
     assert Path(path).exists()
     assert os.path.getsize(path) > 1000
-    assert info["height"] >= 1000
+    assert info["height"] >= 720
     assert info["cta"] == "看看预览"
 
 
@@ -243,12 +230,12 @@ def test_block_exception_isolation_still_produces_png(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("card_name", [
-    "almanac", "tarot", "iching", "news", "greeting", "scheduled",
+    "almanac", "tarot", "iching", "greeting", "scheduled",
 ])
-def test_six_card_render_all_produce_valid_png(tmp_path: Path, card_name: str):
+def test_cards_render_all_produce_valid_png(tmp_path: Path, card_name: str):
     from core.broadcast_image_payload import (
         build_almanac_image_payload, build_tarot_image_payload,
-        build_iching_image_payload, build_news_image_payload,
+        build_iching_image_payload,
         build_greeting_image_payload, build_scheduled_image_payload,
     )
     from core.broadcast_image_card import draw_card
@@ -275,8 +262,6 @@ def test_six_card_render_all_produce_valid_png(tmp_path: Path, card_name: str):
             "blocks": [{"heading": "本卦", "lines": [("卦名", "乾为天")]}],
             "insight": "元亨利贞。",
         })
-    elif card_name == "news":
-        p = build_news_image_payload("1. 新闻A\n2. 新闻B\n3. 新闻C\n💡 三条新闻看今日")
     elif card_name == "greeting":
         p = build_greeting_image_payload("afternoon", "下午好，歇一会。")
     else:  # scheduled

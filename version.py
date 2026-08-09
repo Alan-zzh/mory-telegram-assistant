@@ -6,11 +6,13 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.38.31"
-CONFIG_VERSION = "5.38.31"
+VERSION = "v5.38.33"
+CONFIG_VERSION = "5.38.33"
 __version__ = VERSION
 
 VERSION_HISTORY = [
+    "v5.38.33: [播报与接话闭环] 生产主动触达从十档收敛为黄历/塔罗/易经三档；泛问候与定点播报关闭。问候卡移除随机今日一句/一言，只留同源正文；模型不可用时跳过而非固定套话。移除过期 qwen3.6，实时模型显式关闭思考。接话清除动作旁白、身份泄露与挖苦赶客输出，成本熔断改为安全兜底。",
+    "v5.38.32: [全仓暗病闭环] 安全：转发删消息强制管理员鉴权；私聊自助解封/ungban 走 restore_ad_user 四项清理；延迟/启动追溯禁言加直证证据门禁；enforce 补 AD_WHITELIST；群媒体 caption 广告预检；antiflood/security 群管三态 unknown 不处罚。调度：mystic/greeting/cart/leak/faq/backup schedule 与 enabled 统一；问候部分成功保留日锁防双发；claim 孤立 task_log 启动回收；burn_orphan 删除失败保留追踪。CTA：conversion_target=none 禁止按钮；关键词 ADMIN_IDS+opt_out；天气/黑话命中停管线防双回。关联频道：评论 track_bot_message、限流原子预占、fallback 传 bot。API：rbac/quality/vps 禁止 str(e) 进响应。验收：pytest 943 passed/7 skipped。",
     "v5.38.31: [特定词自动回复卡片化] 微调对接 keyword_trigger 特定词自动回复：新增 core/auto_reply_card.py（Rich Message 卡片 + HTML 卡片双排版 + 单入口随机按钮，AUTO_REPLY_CARD_ENABLED 默认关）。润色 prompt 强化「精准润色原文」（底稿唯一信息源，禁止重写/增删信息点）；按钮目标按规则 conversion_target 绑定（preview→@moryselect / subscribe→@MorychannelBot / contact→@Moryfansbot），未声明时在联系/自助下单间随机二选一，按钮文案与标题表情从池随机；私聊不挂按钮（红线）、群聊单入口；发送链 Rich→HTML→纯文本逐级回退且追踪入库；config 三处同步。验收：test_auto_reply_card 15 passed、全仓 pytest 940 passed/7 skipped、check_config_sync/doc_consistency/verify_db_methods 三门禁通过。",
     "v5.38.30: [关联频道联动模块] 新增 modules/linked_channel_sync.py（默认关闭，LINKED_CHANNEL_SYNC_CONFIG 开启）：① 频道新帖自动点赞（set_message_reaction）；② 群内关联频道自动转发消息取消置顶（unpin_chat_message，解决 Telegram 群设置『频道消息置顶』开关不生效）；③ 每帖至多一条自动评论（彩虹屁无按钮 / 转化评论带单按钮，正文与按钮一致，按钮仅预览福利与自助下单目标，不引导看预览），按 forward_origin 精确匹配防错位、无 origin 时按时间窗兜底，超时可选直接回复频道（默认关），每小时评论上限限流；接入 media_handlers on_channel_post + message_dispatcher P0.1 早拦截（命中即停止后续分发，避免误当用户消息触发广告检测/AI）；config 三处同步。验收：test_linked_channel_sync 9 passed、check_config_sync/doc_consistency/verify_db_methods 三门禁通过。",
     "v5.38.29: [人设预设全量录入] 用户 15 方向你问我答全部落库：54 组风格样本（问候/闲聊/身份/情绪/曖昧/内容/价格/订阅/定制/加友/敏感话题/资金安全/拒绝/看完预览）更新 VPS 生产库（含管理员确认放行的傲娇版话术与真实业务词）；INPUT_HINTS 私聊占位提示 4 条启用；PRICE_LIST 社交解锁改 2 阶（1阶 89.8 TG 1v1、2阶 518.5 私人微信+线下见面，删除原 3 阶 188.1）；AGENTS.md 规则修订 5 处（曖昧度 5/5、闲聊/情绪轻带入口克制、敏感话题先引导 VIP、身份设定沫沫的沫 26 岁、傲娇话术限管理员场景）；conversation_quality_task 蒸馏代码重复块修复；FAQ 高频问题自动收集每周提醒机制（schedule 每周任务）。验收：pytest 全仓通过、check_config_sync/doc_consistency/verify_db_methods 三门禁通过。",

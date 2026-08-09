@@ -64,11 +64,19 @@ _AUTO_REPLY_TITLE_EMOJIS = ("💌", "✨", "🤍", "💬", "🌷")
 
 
 def _resolve_cta_target(rule: Dict[str, Any]) -> Optional[str]:
-    """按规则声明解析按钮目标；未声明/未知返回 None（走随机二选一）。"""
-    target = str(rule.get("conversion_target", "") or "").strip().lower()
+    """按规则声明解析按钮目标。
+
+    - contact/preview/subscribe：绑定对应池
+    - none/空串/显式无入口：返回 \"none\"（禁止按钮）
+    - 键缺失：返回 None（仅此时随机二选一）
+    """
+    if "conversion_target" not in rule:
+        return None
+    target = str(rule.get("conversion_target") or "").strip().lower()
     if target in _AUTO_REPLY_CTA_POOLS:
         return target
-    return None
+    # none / 空 / 未知目标一律视为无入口（普通聊天红线）
+    return "none"
 
 
 def pick_auto_reply_cta(
@@ -78,7 +86,8 @@ def pick_auto_reply_cta(
     """选一个入口按钮（含文案与引导语），不选时返回 None。
 
     规则显式声明 conversion_target 时绑定对应目标；
-    未声明时在「联系 / 自助下单」间随机二选一。
+    conversion_target=none/空串时无按钮；
+    仅未声明 conversion_target 键时在「联系 / 自助下单」间随机二选一。
     """
     if not isinstance(rule, dict):
         return None
@@ -87,6 +96,8 @@ def pick_auto_reply_cta(
 
     rng = rng or random.Random()
     target = _resolve_cta_target(rule)
+    if target == "none":
+        return None
     if target is None:
         target = rng.choice(_AUTO_REPLY_RANDOM_TARGETS)
 

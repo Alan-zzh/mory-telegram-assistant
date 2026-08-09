@@ -133,11 +133,16 @@ def test_rate_limit_blocks_when_hour_exceeded():
 
 
 def test_rate_records_after_comment():
+    """限流在 _check_rate 原子预占；失败可 _refund_rate 退回。"""
     _reset_state()
-    mod._record_rate()
-    mod._record_rate()
+    from modules.linked_channel_sync import _load_config
+    cfg = _load_config(_channel_config(max_comments_per_hour=10))
+    assert mod._check_rate(cfg, 100) is True
+    assert mod._check_rate(cfg, 100) is True
     total = sum(mod._rate_counts.values())
     assert total == 2
+    mod._refund_rate()
+    assert sum(mod._rate_counts.values()) == 1
 
 
 def test_convert_comment_has_button():

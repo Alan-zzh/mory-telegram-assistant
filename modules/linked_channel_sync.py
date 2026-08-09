@@ -159,21 +159,33 @@ def _prune_stale():
             _rate_counts.pop(k, None)
 
 
-def _check_rate(cfg: dict, channel_id: int) -> bool:
-    """评论限流：超过每小时上限返回 False（点赞不受限）。"""
+def _check_rate(cfg: dict, channel_id: int = 0) -> bool:
+    """评论限流：原子预占名额，超过每小时上限返回 False（点赞不受限）。
+
+    预占后若发送失败须调用 _refund_rate() 退回，避免 TOCTOU 突发超限。
+    """
     hour_key = datetime.now(_CST).strftime("%Y-%m-%d-%H")
+    limit = _as_int(cfg.get("max_comments_per_hour"), _DEFAULT_CONFIG["max_comments_per_hour"])
     with _rate_lock:
         current = _rate_counts.get(hour_key, 0)
-        if current >= _as_int(cfg.get("max_comments_per_hour"), _DEFAULT_CONFIG["max_comments_per_hour"]):
+        if current >= limit:
             return False
-        # 记录按帖子维度计数，只在成功消费时真正自增
+        _rate_counts[hour_key] = current + 1
         return True
 
 
 def _record_rate():
+    """兼容旧调用：预占已在 _check_rate 完成，此处为空操作。"""
+    return
+
+
+def _refund_rate():
+    """发送失败时退回预占名额。"""
     hour_key = datetime.now(_CST).strftime("%Y-%m-%d-%H")
     with _rate_lock:
-        _rate_counts[hour_key] = _rate_counts.get(hour_key, 0) + 1
+        current = _rate_counts.get(hour_key, 0)
+        if current > 0:
+            _rate_counts[hour_key] = current - 1
 
 
 def _mark_handled(chat_id: int, message_id: int) -> bool:
@@ -234,7 +246,7 @@ def build_comment_button(target: str, config: dict):
         return None
 
 
-def _register_pending(cfg: dict, channel_id: int, post_msg_id: int):
+def _register_pending(cfg: dict, channel_id: int, post_msg_id: int, bot=None, root_config=None, db=None):
     """登记待评论帖子，并安排超时兜底线程。"""
     key = (channel_id, post_msg_id)
     with _pending_lock:
@@ -242,22 +254,36 @@ def _register_pending(cfg: dict, channel_id: int, post_msg_id: int):
             try:
                 oldest = min(_pending_comments, key=lambda k: _pending_comments[k]["ts"])
                 _pending_comments.pop(oldest, None)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"pending 淘汰失败（非致命）: {e}")
         _pending_comments[key] = {"ts": time.time(), "consumed": False}
 
     timeout = _as_float(cfg.get("comment_timeout_seconds"), _DEFAULT_CONFIG["comment_timeout_seconds"])
-    if timeout > 0 and cfg.get("comment_fallback_direct"):
-        timer = threading.Timer(timeout, _timeout_fallback, args=(channel_id, post_msg_id, cfg))
+    if timeout > 0 and cfg.get("comment_fallback_direct") and bot is not None:
+        timer = threading.Timer(
+            timeout,
+            _timeout_fallback,
+            args=(bot, channel_id, post_msg_id, cfg, root_config or {}, db),
+        )
         timer.daemon = True
         timer.start()
 
 
-def _timeout_fallback(channel_id: int, post_msg_id: int, cfg: dict):
+def _track_sent_message(db, chat_id: int, sent) -> None:
+    """评论消息写入追踪，供 burn_orphan 回收。"""
+    try:
+        mid = getattr(sent, "message_id", None)
+        if not mid or db is None:
+            return
+        if hasattr(db, "track_bot_message"):
+            db.track_bot_message(int(chat_id), int(mid))
+    except Exception as e:
+        logger.debug(f"评论追踪写入失败 chat={chat_id}: {e}")
+
+
+def _timeout_fallback(bot, channel_id: int, post_msg_id: int, cfg: dict, root_config=None, db=None):
     """超时未收到群转发：可选直接回复频道帖子（默认关闭）。"""
     try:
-        from core.bot_initializer import ctx  # type: ignore
-        bot = getattr(ctx, "bot", None)
         if not bot:
             return
         _prune_stale()
@@ -266,16 +292,28 @@ def _timeout_fallback(channel_id: int, post_msg_id: int, cfg: dict):
             if not pending or pending["consumed"]:
                 return
             pending["consumed"] = True
+        if not _check_rate(cfg, channel_id):
+            with _pending_lock:
+                pending = _pending_comments.get((channel_id, post_msg_id))
+                if pending:
+                    pending["consumed"] = False
+            return
         text, target = build_comment(cfg)
-        markup = build_comment_button(target, cfg)
-        bot.send_message(channel_id, text, reply_to_message_id=post_msg_id, reply_markup=markup)
-        _record_rate()
+        # 按钮样式读根配置，业务参数读模块 cfg
+        markup = build_comment_button(target, root_config or cfg)
+        sent = bot.send_message(channel_id, text, reply_to_message_id=post_msg_id, reply_markup=markup)
+        _track_sent_message(db, channel_id, sent)
         logger.info(f"📝 频道直评（兜底）: channel={channel_id} msg={post_msg_id} style={cfg.get('comment_style')}")
     except Exception as e:
         logger.debug(f"频道直评兜底失败: channel={channel_id} msg={post_msg_id}: {e}")
+        _refund_rate()
+        with _pending_lock:
+            pending = _pending_comments.get((channel_id, post_msg_id))
+            if pending:
+                pending["consumed"] = False
 
 
-def handle_channel_post(bot, m, config: dict) -> bool:
+def handle_channel_post(bot, m, config: dict, db=None) -> bool:
     """频道新帖联动：点赞 + 登记评论（返回 True 表示已处理）。"""
     cfg = _load_config(config)
     if not cfg.get("enabled"):
@@ -301,15 +339,13 @@ def handle_channel_post(bot, m, config: dict) -> bool:
 
     if cfg.get("auto_comment_enabled") and msg_id:
         _prune_stale()
-        if _check_rate(cfg, cid):
-            _register_pending(cfg, cid, msg_id)
-        else:
-            logger.info(f"⏳ 评论限流，跳过: channel={cid} msg={msg_id}")
+        # 限流在真正发送时预占；登记阶段只记 pending
+        _register_pending(cfg, cid, msg_id, bot=bot, root_config=config, db=db)
 
     return True
 
 
-def handle_group_forward(bot, m, config: dict) -> bool:
+def handle_group_forward(bot, m, config: dict, db=None) -> bool:
     """处理群内收到的关联频道自动转发消息：
     取消自动置顶 + 匹配并回复评论（每条帖子最多一条）。"""
     cfg = _load_config(config)
@@ -346,7 +382,10 @@ def handle_group_forward(bot, m, config: dict) -> bool:
     if cfg.get("auto_comment_enabled"):
         post_msg_id = _match_pending_post(m, channel_id, cfg)
         if post_msg_id is not None:
-            _try_consumed_post(bot, chat_id, message_id, channel_id, post_msg_id, cfg)
+            _try_consumed_post(
+                bot, chat_id, message_id, channel_id, post_msg_id, cfg,
+                root_config=config, db=db,
+            )
 
     return True
 
@@ -387,7 +426,7 @@ def _match_pending_post(m, channel_id: int, cfg: dict) -> int | None:
             return None
         return best
 
-def _try_consumed_post(bot, chat_id, message_id, channel_id, post_msg_id, cfg):
+def _try_consumed_post(bot, chat_id, message_id, channel_id, post_msg_id, cfg, root_config=None, db=None):
     """消费并发送评论（防重复）。"""
     with _pending_lock:
         pending = _pending_comments.get((channel_id, post_msg_id))
@@ -395,19 +434,28 @@ def _try_consumed_post(bot, chat_id, message_id, channel_id, post_msg_id, cfg):
             return
         pending["consumed"] = True
 
+    if not _check_rate(cfg, channel_id):
+        with _pending_lock:
+            pending = _pending_comments.get((channel_id, post_msg_id))
+            if pending:
+                pending["consumed"] = False
+        logger.info(f"⏳ 评论限流，跳过发送: chat={chat_id} post={post_msg_id}")
+        return
+
     text, target = build_comment(cfg)
-    markup = build_comment_button(target, cfg)
+    markup = build_comment_button(target, root_config or cfg)
     try:
-        bot.send_message(
+        sent = bot.send_message(
             chat_id,
             text,
             reply_to_message_id=message_id,
             reply_markup=markup,
         )
-        _record_rate()
+        _track_sent_message(db, chat_id, sent)
         logger.info(f"💬 关联频道评论已发: chat={chat_id} channel={channel_id} post={post_msg_id} target={target}")
     except Exception as e:
         logger.warning(f"评论发送失败: chat={chat_id} post={post_msg_id}: {e}")
+        _refund_rate()
         # 发送失败恢复待消费，下次转发（如编辑）可再尝试
         with _pending_lock:
             pending = _pending_comments.get((channel_id, post_msg_id))

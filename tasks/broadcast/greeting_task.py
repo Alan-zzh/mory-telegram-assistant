@@ -4,7 +4,6 @@ tasks/broadcast/greeting_task.py - 早/午/晚安问候任务
 负责按配置时间向管理群发送早安、午安、晚安问候，支持链式互删。
 """
 
-import hashlib
 import os
 import random
 from datetime import datetime, timedelta, timezone
@@ -47,9 +46,12 @@ class GreetingTask(BaseTask):
         return "greeting"
 
     def schedule(self) -> List[Dict[str, Any]]:
-        periods = ["morning", "afternoon", "evening"]
+        # 各时段在 schedule 即按 enabled 过滤，与 execute 一致，避免僵尸 job
+        periods = ["morning", "afternoon", "evening", "night"]
         schedule_list = []
         for period in periods:
+            if not is_greeting_enabled(self.rm.config, period):
+                continue
             hour, minute = get_greeting_time(self.rm.config, period)
             schedule_list.append({
                 "job_id": f"greeting_{period}",
@@ -63,22 +65,8 @@ class GreetingTask(BaseTask):
                     "misfire_grace_time": 60,
                 },
             })
-        # 深夜问候（night）：新功能默认关闭，仅配置开启时调度
-        greeting_cfg = self.rm.config.get("GREETING_CONFIG", {}) if isinstance(self.rm.config, dict) else {}
-        if bool(greeting_cfg.get("night_enabled", False)):
-            hour, minute = get_greeting_time(self.rm.config, "night")
-            schedule_list.append({
-                "job_id": "greeting_night",
-                "trigger": "cron",
-                "hour": hour,
-                "minute": minute,
-                "params": {"period": "night"},
-                "options": {
-                    "max_instances": 1,
-                    "coalesce": True,
-                    "misfire_grace_time": 60,
-                },
-            })
+        if not schedule_list:
+            logger.info("🌅 问候任务均未开启，跳过调度注册")
         return schedule_list
 
     def execute(self, ctx: TaskContext) -> None:
@@ -106,8 +94,11 @@ class GreetingTask(BaseTask):
                     seed=seed,
                 )
                 if not MessageTemplates.is_usable_greeting(period, msg):
-                    msg = MessageTemplates.get_fallback_greeting(period)
-                    logger.info(f"🌅 {period} 问候未通过质量门禁，使用话术池兜底")
+                    logger.warning(
+                        f"🌅 {period} 问候未通过质量门禁，本轮跳过发送；"
+                        "禁止用固定套话冒充正常问候"
+                    )
+                    raise TaskAbort("问候模型输出不可用", expected=True)
 
                 # v5.35.6：正文与按钮分工，不再追加一段固定“温柔收尾”破坏短文案。
                 msg = msg.strip()[:120]
@@ -132,21 +123,12 @@ class GreetingTask(BaseTask):
                         badge = str(greeting_cfg.get(f"{period}_badge", "") or "").strip()
                         image_payload = build_greeting_image_payload(period, msg, badge=badge)
                         _cst = timezone(timedelta(hours=8))
-                        # cache_key 带内容指纹：贴士/一言/正文每次发送重新随机，
-                        # 文本变了必须重绘，不能被同日缓存短路复用旧图
-                        _tips = {
-                            b["heading"]: str(b["lines"][0][1])
-                            for b in image_payload.get("blocks", [])
-                            if b.get("lines")
-                        }
-                        _fp_src = "|".join([msg, _tips.get("今日一句", ""), _tips.get("一言", "")])
-                        _fp = hashlib.md5(_fp_src.encode("utf-8")).hexdigest()[:8]
-                        cache_key = f"greeting_{period}_{datetime.now(_cst).strftime('%Y%m%d')}_{_fp}"
+                        cache_key = f"greeting_{period}_{datetime.now(_cst).strftime('%Y%m%d')}"
                         image_path = build_broadcast_image_card(
                             image_payload,
                             cache_key=cache_key,
                             config=cfg,
-                            min_height=900,
+                            min_height=720,
                             # [v5.38.27] 图片卡不再印按钮文字，真实按钮以 InlineKeyboard 附加
                             cta_text="",
                             options=resolve_theme_options(cfg, period),
@@ -176,16 +158,25 @@ class GreetingTask(BaseTask):
                         logger.warning(f"🌅 {period} 问候发送到群 {gid} 失败: {e}")
                         failures.append((gid, e))
 
-                if failures:
-                    error = GreetingDeliveryError(period, failures, partial=sent_count > 0)
+                if failures and sent_count == 0:
+                    # 全失败：抛错释放日锁，允许同日重试
+                    error = GreetingDeliveryError(period, failures, partial=False)
                     raise error from failures[0][1]
+                if failures and sent_count > 0:
+                    # 部分成功：保留日锁（正常返回），避免已成功群同日双发
+                    failed_gids = [gid for gid, _ in failures]
+                    logger.error(
+                        f"🌅 {period} 问候部分成功 sent={sent_count} "
+                        f"failed_gids={failed_gids}；保留日锁不重试"
+                    )
+                    return
         except TaskAbort as exc:
             if exc.expected:
                 return
             raise
         except Exception as e:
             logger.error(f"{period} 问候失败：{e}")
-            # 部分群已成功时不做整批自动重试，避免给成功群重复发送；调度器仍记录 ERROR。
+            # 全失败才自动重试；部分成功已在上方 return，不会进入此分支
             if not isinstance(e, GreetingDeliveryError) or not e.partial:
                 retry_task(self.rm, lambda rm: self.run({"period": period}), f"greeting_{period}")
             raise

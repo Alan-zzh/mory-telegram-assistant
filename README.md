@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.31**：特定词自动回复卡片化（Rich Message/HTML 双排版 + 单入口随机按钮，默认关闭，润色只精修原文不重写）。v5.38.30：关联频道联动模块（频道新帖自动点赞、关联转发取消置顶、每帖一条评论转化；默认关闭）与广告规避漏判修复。
+当前版本 **v5.38.33**：播报与接话闭环（主动触达减为三档传统文化栏目、图片单正文、实时模型去思考超时、动作/挖苦输出门禁）。v5.38.32：全仓暗病闭环。
 
 ## 快速开始
 
@@ -127,13 +127,13 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `config/`：systemd 服务文件。
 
 ## 客观指标（2026-08-09 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 137，core 业务 `.py` = 82，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 164，消息分发函数 = 9，model_router 映射 = 10。
+modules 业务 `.py` = 137，core 业务 `.py` = 81，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 164，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）
 全播报类型统一走图片卡视觉输出，失败自动回退 Rich Message / HTML，不丢内容。
 
-**支持类型**（5 类）：黄历（早间 09:05）、塔罗（午间 13:05）、易经（晚间 20:35）、问候（08:05/12:35/23:05）、定点播报（10:00/14:30/19:00/22:30）。新闻播报 v5.37.0 已下线，代码分支保留以防恢复但任务不注册。
+**生产启用类型**（3 类）：黄历（09:05）、塔罗（13:05）、易经（20:35）。泛问候与四档定点播报默认关闭，避免同一时段重复主动触达；新闻执行链已删除。
 
 **统一视觉**：Mory 品牌配色（墨绿+金+朱砂）、右上角日期标签、`Mory / 沫沫的沫` 右下角红章、底部渐变 CTA 按钮视觉。
 
@@ -141,8 +141,8 @@ modules 业务 `.py` = 137，core 业务 `.py` = 82，`_job_` = 33，DB 表 = 17
 - `BROADCAST_IMAGE_CARD_ENABLED`：总开关（默认 False，生产已开启）
 - 分类型子开关（嵌套在各自 CONFIG 里，非独立顶层键）：
   - `MYSTIC_BROADCAST_CONFIG.image_card_enabled`：黄历/塔罗/易经共用一个开关
-  - `GREETING_CONFIG.image_card_enabled`：问候播报
-  - `SCHEDULED_BROADCASTS[].image_card_enabled`：每个定点播报单独配
+  - `GREETING_CONFIG.image_card_enabled`：问候播报（生产关闭）
+  - `SCHEDULED_BROADCASTS[].image_card_enabled`：每个定点播报单独配（生产全关）
   - `NEWS_BROADCAST_CONFIG.image_card_enabled`：新闻（已下线，保留开关防恢复）
 - `BROADCAST_THEME_ENABLED`：主题色开关
 - `BUTTON_STYLE_ENABLED`：Inline Keyboard 彩色按钮样式

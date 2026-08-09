@@ -263,7 +263,8 @@ def test_scheduled_broadcast_enabled_without_group_fails(monkeypatch):
         broadcast_module.ScheduledBroadcastTask(rm).run({"broadcast_id": "enabled_job"})
 
 
-def test_greeting_partial_group_failure_is_scheduler_error_without_bulk_retry(monkeypatch):
+def test_greeting_partial_group_failure_keeps_day_lock_without_bulk_retry(monkeypatch):
+    """部分群成功：正常返回保留日锁，禁止整批重试导致成功群双发。"""
     import tasks.broadcast.greeting_task as greeting_module
 
     class _ClaimedTx:
@@ -273,7 +274,9 @@ def test_greeting_partial_group_failure_is_scheduler_error_without_bulk_retry(mo
         def __enter__(self):
             return self
 
-        def __exit__(self, *_args):
+        def __exit__(self, exc_type, *_args):
+            # 部分成功路径不应抛异常，事务走成功确认
+            assert exc_type is None
             return False
 
     retries = []
@@ -288,11 +291,45 @@ def test_greeting_partial_group_failure_is_scheduler_error_without_bulk_retry(mo
         config={"AUTO_GREETING": True, "GROUP_ID": -1001, "MANAGED_GROUPS": [-1002]},
         db=SimpleNamespace(),
         bot=SimpleNamespace(),
-        ai=SimpleNamespace(ask=lambda *_args, **_kwargs: "早安呀，今天也慢慢来。"),
+        ai=SimpleNamespace(
+            ask=lambda *_args, **_kwargs: "早安呀，今天来群里跟大家问声好，照顾好自己，按自己的节奏过就行。"
+        ),
     )
 
-    with pytest.raises(greeting_module.GreetingDeliveryError, match="1 个群失败") as exc_info:
-        greeting_module.GreetingTask(rm).run({"period": "morning"})
+    # 不抛异常 = 日锁保留；无整批重试
+    greeting_module.GreetingTask(rm).run({"period": "morning"})
+    assert retries == []
 
-    assert exc_info.value.partial is True
+
+def test_greeting_unusable_model_output_skips_instead_of_sending_fixed_copy(monkeypatch):
+    """模型失败或僵硬输出时宁可跳过，也不能每天重复固定早安。"""
+    import tasks.broadcast.greeting_task as greeting_module
+
+    class _ClaimedTx:
+        claimed = True
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    sends = []
+    retries = []
+    monkeypatch.setattr(greeting_module, "TaskTransactionManager", _ClaimedTx)
+    monkeypatch.setattr(greeting_module, "send_greeting", lambda *args, **kwargs: sends.append(args))
+    monkeypatch.setattr(greeting_module, "retry_task", lambda *args: retries.append(args))
+    rm = SimpleNamespace(
+        config={"AUTO_GREETING": True, "GROUP_ID": -1001},
+        db=SimpleNamespace(),
+        bot=SimpleNamespace(),
+        ai=SimpleNamespace(ask=lambda *_args, **_kwargs: ""),
+    )
+
+    greeting_module.GreetingTask(rm).run({"period": "morning"})
+
+    assert sends == []
     assert retries == []

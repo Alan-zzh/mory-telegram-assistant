@@ -229,17 +229,29 @@ def check_ad_detection(dctx) -> bool:
 
     # 白名单和群管理员必须在任何资料层检测前放行，避免 Bio/emoji 状态误伤正常用户。
     whitelist_cfg = CONFIG.get("AD_WHITELIST", {})
-    whitelist_uids = whitelist_cfg.get("user_ids", []) if isinstance(whitelist_cfg, dict) else []
-    if uid in whitelist_uids:
+    raw_wl = whitelist_cfg.get("user_ids", []) if isinstance(whitelist_cfg, dict) else []
+    whitelist_uids = set()
+    for item in (raw_wl or []):
+        try:
+            whitelist_uids.add(int(item))
+        except (TypeError, ValueError):
+            continue
+    if int(uid) in whitelist_uids:
         logger.debug(f"[AD] 白名单用户免检: uid={uid}")
         return False
     try:
-        member = bot.get_chat_member(chat_id, uid)
-        if member and member.status in ("administrator", "creator"):
-            logger.debug(f"[AD] 群管理员免检: uid={uid} status={member.status}")
+        from modules.ad_enforcement import _is_chat_admin_member
+        admin_status = _is_chat_admin_member(bot, chat_id, uid)
+        if admin_status == "admin":
+            logger.debug(f"[AD] 群管理员免检: uid={uid}")
+            return False
+        if admin_status == "unknown":
+            # 网络失败不能默认有罪：跳过本轮自动处置，保留后续消息再判
+            logger.warning(f"[AD] 群管身份查询失败，跳过本轮广告检测: uid={uid} chat={chat_id}")
             return False
     except Exception as e:
-        logger.debug(f"操作异常: {e}")
+        logger.warning(f"[AD] 群管身份检查异常，跳过本轮: uid={uid} err={e}")
+        return False
 
     # 短消息也必须先看资料层信号：广告号常用“1”等无意义内容探活。
     profile_score = 0
@@ -567,7 +579,20 @@ def _handle_delayed_ad_tracking(dctx, track_result: dict) -> bool:
     chat_id = dctx.chat_id
 
     if track_result["action"] == "ban":
-        # 延迟封禁触发
+        # 证据门禁：累计分 alone 不能永久禁言；至少 1 条直证广告消息
+        msgs = track_result.get("messages") or []
+        has_direct = any(
+            bool(item.get("direct_message_is_ad") or item.get("is_ad"))
+            for item in msgs
+            if isinstance(item, dict)
+        )
+        if not has_direct:
+            logger.warning(
+                f"[AD] 延迟封禁被证据门禁拦截（仅累计分/资料分无直证）: "
+                f"uid={uid} total={track_result.get('total_score')} msgs={len(msgs)}"
+            )
+            return False
+
         logger.warning(f"[AD] 🚫 延迟封禁执行: uid={uid}, 累计评分={track_result['total_score']}")
         from modules.ad_enforcement import enforce_ad_user
 

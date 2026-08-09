@@ -407,7 +407,7 @@ def get_average_scores(db, days: int = 7) -> Dict:
             "avg_persona": 0,
             "total_evaluated": 0,
             "days": days,
-            "error": str(e),
+            "error": "internal_error",
         }
 
 

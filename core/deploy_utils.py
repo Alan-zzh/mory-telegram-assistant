@@ -361,7 +361,8 @@ def verify_deployment(ssh, vps_path: str) -> bool:
         # 验证 3：Dashboard health API 返回 200
         ("Health API", "curl -s -o /dev/null -w '%{http_code}' http://localhost:6616/api/health"),
         # 验证 4：只检查 Dashboard 本次进入 active 后的新日志，避免 systemd 停旧进程时的 gevent 退出噪声误报
-        ("Dashboard日志", """since=$(systemctl show mory-dashboard -p ActiveEnterTimestamp --value); journalctl -u mory-dashboard --since "$since" -n 80 --no-pager 2>/dev/null | grep -Ei 'importerror|modulenotfounderror|failed to find application|worker failed to boot|traceback|exception|error' | grep -vi 'greenlet is being finalized' || echo '✅ 无报错'"""),
+        # awk 按整块剔除 gevent 优雅停机噪声（Exception ignored in ... greenlet is being finalized），逐行 grep -v 会漏掉 Traceback 上下文行
+        ("Dashboard日志", """since=$(systemctl show mory-dashboard -p ActiveEnterTimestamp --value); journalctl -u mory-dashboard --since "$since" -n 80 --no-pager 2>/dev/null | awk '/Exception ignored in/{skip=1} /greenlet is being finalized/{skip=0; next} !skip' | grep -Ei 'importerror|modulenotfounderror|failed to find application|worker failed to boot|traceback|exception|error' || echo '✅ 无报错'"""),
         # 配置完整性检查
         ("配置完整性", f"""cd {vps_path} && python3 << 'PYEOF'
 import json

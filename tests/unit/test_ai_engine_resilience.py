@@ -380,8 +380,7 @@ def test_stage_direction_filter_keeps_only_normal_chat_text():
     cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
 
     assert cleaned == "在呀～怎么啦，想我了？还是有什么事想跟我说？"
-    # 混合回复可以直接清掉旁白，不需要额外消耗一次模型请求。
-    assert triggered is False
+    assert triggered is True
 
 
 def test_stage_direction_filter_preserves_factual_parentheses_and_plain_emphasis():
@@ -399,11 +398,46 @@ def test_stage_direction_filter_handles_square_bracket_variants():
     cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
 
     assert cleaned == "行啊，这次听你的。"
-    assert triggered is False
+    assert triggered is True
 
 
 def test_stage_only_reply_requests_retry_instead_of_sending_empty_text():
     cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2("*歪头看你*")
+
+    assert cleaned == ""
+    assert triggered is True
+
+
+@pytest.mark.parametrize("raw", [
+    "48什么？话都不说全，你是在考我阅读理解吗",
+    "这么猛？说清楚点嘛",
+    "七八点？我干嘛告诉你～",
+    "替你尴尬，自己玩去。",
+])
+def test_historical_hostile_replies_are_replaced(raw):
+    cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
+
+    assert cleaned == "我可能没接准你的意思，你再补一句就好。"
+    assert triggered is True
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("*瞥一眼手机* 七八点。", "七八点。"),
+    ("……没太看懂。*揉眼睛*", "……没太看懂。"),
+])
+def test_historical_action_narration_is_removed(raw, expected):
+    cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
+
+    assert cleaned == expected
+    assert triggered is True
+
+
+@pytest.mark.parametrize("raw", [
+    "作为一个 AI，我不需要睡觉。",
+    "我是机器人，没有现实生活。",
+])
+def test_identity_leak_is_never_sent(raw):
+    cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
 
     assert cleaned == ""
     assert triggered is True
@@ -481,8 +515,9 @@ def test_ask_strips_brain_scene_and_sends_normal_reply(monkeypatch):
     result = engine.ask("在吗", mode="normal", retry=1, is_priv=True)
 
     assert result == "在呀～怎么啦，想我了？还是有什么事想跟我说？"
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert "最终回复格式（最高优先级）" in calls[0]["messages"][0]["content"]
+    assert "上一条回复违反输出规范" in calls[1]["messages"][-1]["content"]
 
 
 def test_cached_reply_also_passes_stage_direction_filter(monkeypatch):

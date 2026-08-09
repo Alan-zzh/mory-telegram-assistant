@@ -345,12 +345,11 @@ def _get_minimal_default_config() -> dict:
         "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         # 兜底配置不设过期，确保 config.json 损坏时始终可用
         "MODEL_POOLS": {"llm": [
-            {"name": "qwen3.6-27b"},
-            {"name": "qwen3.7-max-2026-05-17"},
-            {"name": "qwen3.7-max-preview"},
-            {"name": "qwen3.7-plus-2026-05-26"},
-            {"name": "qwen3.7-max-2026-06-08"},
-            {"name": "kimi-k2.7-code"},
+            {"name": "qwen3.7-max-2026-05-17", "enable_thinking": True},
+            {"name": "qwen3.7-max-preview", "enable_thinking": True},
+            {"name": "qwen3.7-plus-2026-05-26", "enable_thinking": False},
+            {"name": "qwen3.7-max-2026-06-08", "enable_thinking": False},
+            {"name": "kimi-k2.7-code", "enable_thinking": False},
         ]},
         "REPLY_CHANCE": 10, "_CONFIG_VERSION": "5.0.0",
         "SYSTEM_PROMPT": "你是Mory，一个活泼可爱的小助理。",

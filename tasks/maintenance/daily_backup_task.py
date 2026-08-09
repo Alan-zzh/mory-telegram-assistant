@@ -27,6 +27,8 @@ class DailyBackupTask(BaseTask):
         return "daily_backup"
 
     def schedule(self) -> List[Dict[str, Any]]:
+        if not (self.rm.config or {}).get("DAILY_BACKUP_ENABLED", False):
+            return []
         return [{
             "job_id": "daily_backup",
             "trigger": "cron",

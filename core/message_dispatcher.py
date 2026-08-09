@@ -658,7 +658,7 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     try:
         if dctx.is_group and dctx.msg and getattr(dctx.msg, "sender_chat", None):
             from modules.linked_channel_sync import handle_group_forward
-            if handle_group_forward(ctx.bot, dctx.msg, ctx.config):
+            if handle_group_forward(ctx.bot, dctx.msg, ctx.config, db=ctx.db):
                 clear_logging_context()
                 return
     except Exception as e:
@@ -717,9 +717,9 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
 # ═══════════════════════════════════════════════════════════════════════
 
 def _dispatch_forward_delete(dctx: DispatchContext) -> bool:
-    """P0-：转发即删除。私聊中收到被转发的群消息时，自动从原群删除原消息。
+    """P0-：转发即删除。仅管理员私聊转发群消息时可删原消息。
     触发条件：
-    - 私聊消息
+    - 私聊消息 + 管理员（ADMIN_ID / ADMIN_IDS）
     - 消息有 forward_from_chat（从群组转发而来）
     - 消息有 forward_from_message_id（原消息 msg_id）
     - 原消息发送时间在 48 小时内（Telegram API 限制）
@@ -727,6 +727,7 @@ def _dispatch_forward_delete(dctx: DispatchContext) -> bool:
     m = dctx.msg
     ctx = dctx.ctx
     bot = ctx.bot
+    CONFIG = ctx.config
 
     # 仅处理私聊中的转发消息
     if not dctx.is_priv:
@@ -735,6 +736,18 @@ def _dispatch_forward_delete(dctx: DispatchContext) -> bool:
         return False
     if not hasattr(m, "forward_from_message_id") or not m.forward_from_message_id:
         return False
+
+    # 安全红线：非管理员不得触发群消息删除
+    if not _is_admin_uid(CONFIG, dctx.uid):
+        logger.warning(
+            f"[转发即删除] 拒绝非管理员 uid={dctx.uid} chat={getattr(m.forward_from_chat, 'id', 0)}"
+        )
+        try:
+            bot.reply_to(m, "❌ 仅管理员可通过转发删除群消息")
+        except Exception as e:
+            logger.debug(f"reply_to 非管理员拒绝提示失败: {e}")
+        clear_logging_context()
+        return True
 
     original_chat_id = m.forward_from_chat.id
     original_msg_id = m.forward_from_message_id
@@ -753,9 +766,9 @@ def _dispatch_forward_delete(dctx: DispatchContext) -> bool:
         logger.warning(f"[转发即删除] 删除失败 chat={original_chat_id} msg_id={original_msg_id}: {e}")
         # 失败时告知用户原因
         try:
-            bot.reply_to(m, f"❌ 删除失败（消息可能已超过48小时或 Bot 权限不足）")
-        except Exception:
-            pass
+            bot.reply_to(m, "❌ 删除失败（消息可能已超过48小时或 Bot 权限不足）")
+        except Exception as reply_err:
+            logger.debug(f"reply_to 删除失败提示失败: {reply_err}")
         # 不阻断消息继续处理（交给后续 relay 等）
         return False
 
@@ -1474,26 +1487,7 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
         except Exception as e:
             logger.debug(f"自定义命令检测异常: {e}")
 
-    # P6.6：关键词触发回复
-    if msg:
-        try:
-            admin_id = CONFIG.get("ADMIN_ID", 0)
-            is_admin = (uid == admin_id)
-            if ctx.keyword_trigger.handle_message(msg, chat_id, m, bot, is_admin=is_admin):
-                logger.info(f"🔑 关键词触发回复成功 uid={uid} msg={msg[:30]}")
-                clear_logging_context()
-                return True
-        except Exception as e:
-            logger.error(f"🔑 关键词触发检测异常: {e}")
-
-    # P6.6：管理员专属新功能指令
-    if is_group and msg:
-        if _handle_admin_feature_commands(dctx):
-            return True
-
-    # 所有后续分支（P7 雷达、P8 固定回复、P10 AI）共用同一拒绝/询价状态。
-    # 这一步在概率回复之前执行，确保“别再推荐”不会被任何旁路或重启丢掉；
-    # 只有当前轮明确询价/购买才会解除既有拒绝。
+    # 转化状态前置：关键词早路由也需遵守 opt_out / 近期 CTA 抑制
     try:
         from core.growth_optimizer import (
             get_conversion_state,
@@ -1513,6 +1507,25 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
         persist_conversion_decision(db, uid, chat_id, conversion_target, conversion_reason)
     except Exception as e:
         logger.debug("预处理转化状态失败 uid=%s: %s", uid, e)
+
+    # P6.6：关键词触发回复（ADMIN_IDS 全量管理员；opt_out 时跳过销售类关键词）
+    if msg:
+        try:
+            is_admin = _is_admin_uid(CONFIG, uid)
+            conversion_state = getattr(dctx, "conversion_state", None) or {}
+            if conversion_state.get("opt_out") and not is_admin:
+                logger.debug("🔑 转化 opt_out，跳过关键词销售路由 uid=%s", uid)
+            elif ctx.keyword_trigger.handle_message(msg, chat_id, m, bot, is_admin=is_admin):
+                logger.info(f"🔑 关键词触发回复成功 uid={uid} msg={msg[:30]}")
+                clear_logging_context()
+                return True
+        except Exception as e:
+            logger.error(f"🔑 关键词触发检测异常: {e}")
+
+    # P6.6：管理员专属新功能指令
+    if is_group and msg:
+        if _handle_admin_feature_commands(dctx):
+            return True
 
     # P7：视奸雷达（v5.14.0 扩展：使用扩展的 convert 关键词 + 标志位供 P7.5 消费）
     _cleanup_radar_cooldown()
@@ -1591,14 +1604,18 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
         db.set_cart(uid)
         db.log_conversion_event(uid, "interested")
 
-    # P9.3：天气/城市共情
+    # P9.3：天气/城市共情（命中后停止，避免与 P10 AI 双回复）
     if analysis.get("weather_empathy") and is_group:
         mory_bot.reply_and_track(m, analysis["weather_empathy"])
+        clear_logging_context()
+        return True
 
-    # P9.5：黑话/行话自动科普
+    # P9.5：黑话/行话自动科普（命中后停止，避免与 P10 AI 双回复）
     if analysis.get("slang_reply") and is_group:
         if random.randint(1, 20) == 1:
             mory_bot.reply_and_track(m, analysis["slang_reply"])
+            clear_logging_context()
+            return True
 
     # P9.7：用户反馈/找Mory
     if analysis.get("mode") in ("feedback", "contact_mory"):
@@ -1663,25 +1680,32 @@ def _handle_feedback(dctx: DispatchContext, analysis: dict) -> bool:
         )
         mory_bot.reply_and_track(m, feedback_reply)
     else:
-        # 私聊：尝试自助解封
+        # 私聊：尝试自助解封（走 restore_ad_user 四项持久态全清，避免 P1 再封循环）
         if "解封" in msg or "解禁" in msg or "被封" in msg or "封了" in msg or "禁言" in msg:
             gid = CONFIG.get("GROUP_ID", 0)
             unban_success = False
             if gid:
                 try:
-                    from telebot.types import ChatPermissions
-                    bot.restrict_chat_member(
-                        gid, uid,
-                        permissions=ChatPermissions(
-                            can_send_messages=True,
-                            can_send_media_messages=True,
-                            can_send_other_messages=True,
-                            can_add_web_page_previews=True,
-                        )
+                    from modules.ad_enforcement import restore_ad_user
+                    result = restore_ad_user(
+                        bot=bot,
+                        db=db,
+                        config=CONFIG,
+                        chat_id=int(gid),
+                        uid=int(uid),
+                        actor_id=int(uid),
+                        ad_detector=getattr(ctx, "ad_detector", None),
                     )
-                    db.blacklist_remove(uid)
-                    unban_success = True
-                    logger.info(f"✅ 私聊自助解封成功: {uname}({uid})")
+                    data = (result or {}).get("data") or {}
+                    unban_success = bool(
+                        (result or {}).get("code") == 200
+                        or data.get("blacklist_removed")
+                        or data.get("permissions_restored")
+                    )
+                    if unban_success:
+                        logger.info(f"✅ 私聊自助解封成功: {uname}({uid}) result={result}")
+                    else:
+                        logger.warning(f"私聊自助解封未完全成功: {uname}({uid}) result={result}")
                 except Exception as e:
                     logger.warning(f"私聊自助解封失败: {e}")
                     unban_success = False

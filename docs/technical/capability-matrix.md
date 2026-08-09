@@ -1053,24 +1053,13 @@ P0(新成员) → P0.5(验证码) → P0.6(设置面板) → P0.7(私聊连接)
 > 事实源：`modules/auto_tasks.py` 共 **35 个独立 `_job_*` 函数 + 1 个带参 + 4 个类内 = 40 个调度任务**。
 > 注册入口：`modules/auto_tasks.py:AutoTaskManager.register_all_jobs()`（`apscheduler` 调度）。
 
-### 6.1 问候类（3 个）
+### 6.1 问候类
 
-| 行号 | 函数 | 一句话说明 |
-|------|------|-----------|
-| 1166 | `_job_greeting_morning` | 早安问候（早 7-9 点群发各群活跃用户） |
-| 1194 | `_job_greeting_afternoon` | 午安问候（午 12-13 点） |
-| 1222 | `_job_greeting_evening` | 晚安问候（晚 22-23 点，附带次日运势） |
+问候已迁移到 `tasks/broadcast/greeting_task.py`，生产配置全部关闭；`modules/auto_tasks.py` 不再保留旧 `_job_greeting_*` 包装函数。
 
-### 6.2 新闻类（6 个）
+### 6.2 新闻类
 
-| 行号 | 函数 | 一句话说明 |
-|------|------|-----------|
-| 1007 | `_job_news_morning` | 早间新闻抓取（早 8 点） |
-| 1012 | `_job_news_afternoon` | 午后新闻抓取（14 点） |
-| 1017 | `_job_news_evening` | 晚间新闻抓取（20 点） |
-| 1022 | `_job_trendradar_morning` | 早间趋势雷达（社交热点 + 平台热点） |
-| 1027 | `_job_trendradar_noon` | 午间趋势雷达 |
-| 1032 | `_job_trendradar_evening` | 晚间趋势雷达 |
+自动新闻播报执行链已删除，不再存在 `_job_news_*` 或 `_job_trendradar_*`；生产主动栏目由 `MysticBroadcastTask` 的黄历、塔罗、易经三档承担。
 
 ### 6.3 营销转化类（6 个）
 

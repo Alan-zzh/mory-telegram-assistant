@@ -110,13 +110,22 @@ def test_pick_binds_preview_target():
     assert cta["url"] == _DEFAULT_URLS[TARGET_PREVIEW]
 
 
+def test_pick_none_target_returns_no_button():
+    """conversion_target=none 是普通聊天红线：禁止挂销售按钮。"""
+    assert pick_auto_reply_cta(_NONE_RULE) is None
+    assert pick_auto_reply_cta({"conversion_target": ""}) is None
+    assert pick_auto_reply_cta({"conversion_target": "unknown"}) is None
+
+
 def test_pick_random_contact_or_subscribe_when_undeclared():
     import random
 
+    # 仅未声明 conversion_target 键时才随机二选一
+    undeclared = {"name": "未声明目标", "topic": "其他"}
     rng = random.Random(7)
     seen = set()
     for _ in range(200):
-        cta = pick_auto_reply_cta(_NONE_RULE, rng=rng)
+        cta = pick_auto_reply_cta(undeclared, rng=rng)
         assert cta is not None
         assert cta["target"] in (TARGET_CONTACT, TARGET_SUBSCRIBE)
         seen.add(cta["target"])

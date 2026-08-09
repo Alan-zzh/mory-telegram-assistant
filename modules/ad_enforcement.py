@@ -628,6 +628,18 @@ def enforce_ad_user(
             f"广告检测命中配置管理员(ADMIN_IDS/ADMIN_ID)，跳过全部处置: uid={uid} chat={chat_id} reason={reason}"
         )
         return _admin_skip_result(uid, chat_id, "admin_or_creator")
+    # AD_WHITELIST 配置白名单（零网络，与检测层一致）
+    wl_cfg = (config or {}).get("AD_WHITELIST", {}) or {}
+    raw_wl = wl_cfg.get("user_ids", []) if isinstance(wl_cfg, dict) else []
+    for item in (raw_wl or []):
+        try:
+            if int(item) == int(uid):
+                logger.warning(
+                    f"广告检测命中 AD_WHITELIST，跳过全部处置: uid={uid} chat={chat_id} reason={reason}"
+                )
+                return _admin_skip_result(uid, chat_id, "whitelist")
+        except (TypeError, ValueError):
+            continue
     if not current_msg_id and message is not None:
         current_msg_id = getattr(message, "message_id", 0) or 0
     # 【v5.38.21】群管/群主豁免：禁言、黑名单、删消息只针对普通成员，避免误封管理
