@@ -249,17 +249,23 @@ def test_new_member_welcome_has_only_preview_target(monkeypatch):
         group_mgr, "check_avatar_ocr_text",
         lambda _bot, _uid, _config: (False, "", 0),
     )
-    monkeypatch.setattr(
-        group_mgr, "detect_profile_ad_signal",
-        lambda _bot, _user, _bio, _config: {"is_ad": False},
-    )
+    profile_calls = []
+
+    def _detect_profile(_bot, _user, _bio, _config, chat_info=None):
+        profile_calls.append(chat_info)
+        return {"is_ad": False}
+
+    monkeypatch.setattr(group_mgr, "detect_profile_ad_signal", _detect_profile)
 
     class WelcomeBot(_Bot):
+        get_chat_calls = 0
+
         def get_me(self):
             return SimpleNamespace(id=999)
 
         def get_chat(self, _uid):
-            return SimpleNamespace(bio="")
+            self.get_chat_calls += 1
+            return SimpleNamespace(bio="", personal_chat=None)
 
     class WelcomeDB:
         def record_group_join(self, *_args):
@@ -285,6 +291,9 @@ def test_new_member_welcome_has_only_preview_target(monkeypatch):
     assert text.lower().count("@moryselect") == 1
     assert "@morychannelbot" not in text.lower()
     assert "http" not in text.lower()
+    assert bot.get_chat_calls == 1
+    assert len(profile_calls) == 1
+    assert profile_calls[0] is not None
 
 
 def test_persona_adapter_never_instructs_human_impersonation_or_aggressive_flirt():

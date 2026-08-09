@@ -916,6 +916,7 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
                 )
                 continue
             user_bio = ""
+            chat_info = None
             try:
                 chat_info = bot.get_chat(user_id)
                 user_bio = (getattr(chat_info, "bio", "") or "")[:500]
@@ -923,7 +924,9 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
                 logger.debug(f"入群拉取用户bio失败 uid={user_id}: {e}")
 
             from modules.ad_profile_signals import detect_profile_ad_signal
-            profile_result = detect_profile_ad_signal(bot, user, user_bio, config)
+            profile_result = detect_profile_ad_signal(
+                bot, user, user_bio, config, chat_info=chat_info
+            )
             if profile_result.get("is_ad"):
                 logger.warning(
                     f"🚫 [入群资料检测] 拦截广告新人: {user_display}({user_id}) "

@@ -64,6 +64,21 @@ def test_daily_report_get_chat_member_count_fallback_has_trace():
     assert trace_exists, "群人数 API 失败日志未包含 gid/err 留痕字段"
 
 
+def test_reports_do_not_claim_unimplemented_telegram_statistics_api():
+    """历史统计必须来自真实采集数据，不能保留恒为 None 的伪 API 分支。"""
+    report_paths = (
+        _PROJECT_ROOT / "tasks" / "analytics" / "daily_report_task.py",
+        _PROJECT_ROOT / "tasks" / "analytics" / "weekly_report_task.py",
+        _PROJECT_ROOT / "tasks" / "analytics" / "monthly_report_task.py",
+    )
+    for path in report_paths:
+        src = path.read_text(encoding="utf-8")
+        assert "api_data = None" not in src
+        assert "api_ch = None" not in src
+        assert "Telegram官方统计" not in src
+        assert "Bot事件自统计 + Telegram实时人数" in src
+
+
 def test_sanitization_branches_cover_all_primitive_types():
     """脱敏分支至少覆盖 None / str / 容器 / 其他标量 四类（bot_initializer + config_repo 均如此）。"""
     for label, path in (

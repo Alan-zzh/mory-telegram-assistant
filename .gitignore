@@ -73,6 +73,7 @@ runtime/*_payload_b64.txt
 
 # 临时诊断/运维脚本（含硬编码VPS路径/Token/群ID，不提交）
 scripts/vps_*.py
+!scripts/vps_watchdog.py
 scripts/bruteforce_delete.py
 scripts/clean_restart.py
 scripts/emergency_ban_ad_user.py

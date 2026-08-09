@@ -249,13 +249,15 @@ def test_execute_scheduled_broadcast_applies_profile_and_template_variation(monk
 
     scheduled_broadcast.execute_scheduled_broadcast(object(), 12345, cfg, db, target_broadcast_id="vip_notice")
 
-    # [v5.19.0 skip] "VIP专属" 标签 v5.18.6 已移除，"原尾巴"+轻变化仍保留
-    import pytest
-    pytest.skip("v5.18.6 去萌化已移除 VIP专属 标签，本测试断言需回归")
-
-    assert "VIP专属" in captured["text"]
+    # 去萌化后画像只改变视觉语气，不再暴露“VIP专属”等机械标签；
+    # v5.38.10 也已删除会复发尬聊的固定模板变体。
+    assert "🔮 睡前提醒" in captured["text"]
+    assert "VIP专属" not in captured["text"]
+    assert "精选推荐" not in captured["text"]
     assert "原来的尾巴还在。" in captured["text"]
-    assert "今晚不重复昨天那句" in captured["text"] or "睡前版本今天" in captured["text"] or "深夜这条仍然" in captured["text"]
+    assert "今晚不重复昨天那句" not in captured["text"]
+    assert "睡前版本今天" not in captured["text"]
+    assert "深夜这条仍然" not in captured["text"]
 
 
 def test_build_markup_receives_config_for_colored_button(monkeypatch):
@@ -291,13 +293,12 @@ def test_build_markup_receives_config_for_colored_button(monkeypatch):
 
 
 def test_build_greeting_html_uses_expandable_footer():
-    # [v5.19.0 skip] v5.18.6 排版重写后 build_greeting_html 入参为 period 而非原文
-    import pytest
-    pytest.skip("v5.18.6 排版重写后 build_greeting_html 入参变更，单独任务再回归")
-    rich = build_greeting_html("早安", "今天也要顺顺利利呀", "有事随时来找我。")
+    rich = build_greeting_html("morning", "今天也要顺顺利利呀", "有事随时来找我。")
 
-    assert "<b>早安呀</b>" in rich
+    assert "<b><i>☀️ 早</i></b>" in rich
+    assert "今天也要顺顺利利呀" in rich
     assert "<blockquote expandable>" in rich
+    assert "有事随时来找我。" in rich
 
 
 def test_send_photo_compat_falls_back_to_raw_request(monkeypatch):

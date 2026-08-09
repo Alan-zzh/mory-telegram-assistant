@@ -7,7 +7,7 @@ tasks/task_scheduler.py - 统一任务调度器
 import importlib
 import inspect
 import pkgutil
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
@@ -35,6 +35,11 @@ def get_scheduler_instance() -> Optional[Any]:
     return _scheduler_instance.scheduler
 
 
+def get_task_scheduler() -> Optional["TaskScheduler"]:
+    """返回调度控制器，供配置热重载按最新开关重编排任务。"""
+    return _scheduler_instance
+
+
 class TaskScheduler:
     """
     统一任务调度器。
@@ -49,6 +54,7 @@ class TaskScheduler:
         self.rm = rm
         self.tasks: Dict[str, BaseTask] = {}
         self.scheduler = self._create_scheduler(max_workers)
+        self._registered_job_ids: set[str] = set()
         self._discover_and_load_tasks()
 
     @staticmethod
@@ -73,7 +79,7 @@ class TaskScheduler:
 
     def _discover_and_load_tasks(self):
         """自动发现并实例化所有任务类。"""
-        errors = []
+        errors: list[Exception] = []
         for package_name in _TASK_PACKAGES:
             try:
                 package = importlib.import_module(package_name)
@@ -124,10 +130,17 @@ class TaskScheduler:
                 "任务发现失败明细", errors
             )
 
-    def _register_tasks(self):
-        """将所有任务的 schedule() 配置注册到 APScheduler。"""
+    def _register_tasks(self, *, replace_existing: bool = False, remove_stale: bool = False):
+        """按当前配置同步任务。
+
+        首次启动只注册；配置热重载时替换仍启用的 job，并删除本控制器此前
+        注册但当前已关闭的 job。动态 retry/auto-delete 等外部 job 不在
+        ``_registered_job_ids`` 中，不会被误删。
+        """
         registered = 0
-        errors = []
+        errors: list[Exception] = []
+        desired_job_ids: set[str] = set()
+        previous_job_ids = set(getattr(self, "_registered_job_ids", set()))
         for task_id, task in self.tasks.items():
             try:
                 schedule_items = task.schedule()
@@ -141,10 +154,16 @@ class TaskScheduler:
                 trigger = cfg.get("trigger", "cron")
                 job_id = cfg.get("job_id")
                 if not job_id:
-                    error = ValueError(f"任务 {task_id} 的调度配置缺少 job_id")
-                    logger.error(str(error))
-                    errors.append(error)
+                    missing_job_error = ValueError(f"任务 {task_id} 的调度配置缺少 job_id")
+                    logger.error(str(missing_job_error))
+                    errors.append(missing_job_error)
                     continue
+                if job_id in desired_job_ids:
+                    duplicate_job_error = RuntimeError(f"任务 job_id 重复: {job_id}")
+                    logger.error(str(duplicate_job_error))
+                    errors.append(duplicate_job_error)
+                    continue
+                desired_job_ids.add(job_id)
 
                 params = cfg.get("params", {})
                 options = cfg.get("options", {})
@@ -176,6 +195,7 @@ class TaskScheduler:
                         trigger=trigger,
                         args=[ctx],
                         id=job_id,
+                        replace_existing=replace_existing,
                         **trigger_kwargs,
                         **options,
                     )
@@ -185,13 +205,28 @@ class TaskScheduler:
                     logger.error(f"注册任务 {job_id} 失败: {e}")
                     errors.append(RuntimeError(f"注册任务 {job_id} 失败: {e}"))
 
+        if not errors and remove_stale:
+            for stale_job_id in sorted(previous_job_ids - desired_job_ids):
+                try:
+                    self.scheduler.remove_job(stale_job_id)
+                    logger.info(f"移除已关闭任务: {stale_job_id}")
+                except Exception as e:
+                    logger.error(f"移除已关闭任务 {stale_job_id} 失败: {e}")
+                    errors.append(RuntimeError(f"移除已关闭任务 {stale_job_id} 失败: {e}"))
+
         if errors:
             summary = "; ".join(str(error) for error in errors[:10])
             raise RuntimeError(f"任务注册失败，共 {len(errors)} 项: {summary}") from ExceptionGroup(
                 "任务注册失败明细", errors
             )
 
+        self._registered_job_ids = desired_job_ids
         logger.info(f"✅ 任务调度器准备就绪，共注册 {registered} 个调度任务")
+
+    def refresh_tasks(self):
+        """配置热重载后重编排本控制器管理的 job。"""
+        self._register_tasks(replace_existing=True, remove_stale=True)
+        logger.info("✅ 调度任务已按热重载配置刷新")
 
     def start(self):
         """注册并启动调度器。"""

@@ -23,9 +23,9 @@ def _get_member_bio(bot, user_id):
     """读取 Telegram 私聊资料；失败时显式返回不可用，供延迟复审补偿。"""
     try:
         chat_info = bot.get_chat(user_id)
-        return (getattr(chat_info, "bio", "") or "")[:500], ""
+        return (getattr(chat_info, "bio", "") or "")[:500], "", chat_info
     except Exception as e:
-        return "", str(e)
+        return "", str(e), None
 
 
 def _enforce_member_ad(bot, db, config, chat_id, user_id, user_display, reason):
@@ -62,7 +62,9 @@ def _is_member_ad_exempt(bot, config, chat_id, user_id):
     return False
 
 
-def _review_member_profile(bot, user, bio, config, db, chat_id, ctx=None, stage="join"):
+def _review_member_profile(
+    bot, user, bio, config, db, chat_id, ctx=None, stage="join", chat_info=None
+):
     """审核显示名、username、Bio 与 Premium emoji 状态。命中返回 True。"""
     user_id = user.id
     user_display = (user.first_name or "") + (user.last_name or "")
@@ -70,7 +72,9 @@ def _review_member_profile(bot, user, bio, config, db, chat_id, ctx=None, stage=
 
     try:
         from modules.ad_profile_signals import detect_profile_ad_signal
-        profile_result = detect_profile_ad_signal(bot, user, bio, config)
+        profile_result = detect_profile_ad_signal(
+            bot, user, bio, config, chat_info=chat_info
+        )
         if profile_result.get("is_ad"):
             reason = profile_result.get("reason", "")
             logger.warning(
@@ -273,13 +277,14 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
 
         if not ad_exempt:
             # 步骤2.4：显示名、用户名、BIO、Premium emoji 状态统一资料审核。
-            user_bio, bio_error = _get_member_bio(bot, user_id)
+            user_bio, bio_error, chat_info = _get_member_bio(bot, user_id)
             if bio_error:
                 logger.warning(
                     f"[入群资料审核] stage=join uid={user_id} bio_available=False fetch_failed=True"
                 )
             if _review_member_profile(
-                bot, user, user_bio, config, db, chat_id, ctx=ctx, stage="join"
+                bot, user, user_bio, config, db, chat_id, ctx=ctx, stage="join",
+                chat_info=chat_info,
             ):
                 continue
 
@@ -384,7 +389,8 @@ def _handle_chat_member_update(bot, update, config, db, ctx=None):
                 if _is_member_ad_exempt(bot, config, chat_id, uid):
                     return
                 if _review_member_profile(
-                    bot, user, bio, config, db, chat_id, ctx=ctx, stage="verify_release"
+                    bot, user, bio, config, db, chat_id, ctx=ctx, stage="verify_release",
+                    chat_info=chat_info,
                 ):
                     return
                 _review_member_avatar(

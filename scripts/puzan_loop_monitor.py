@@ -6,8 +6,8 @@
   L1 VPS 实例层（CPU/MEM/DISK/LOAD/NET）
   L2 服务进程层（systemd 双 active + journalctl 错误）
   L3 应用健康层（/api/health + version 校验）
-  L4 业务指标层（task_log/token_usage/llm_cost/conversion/orphan）
-  L5 调度系统层（scheduler 日志 + 失败/运行中任务）
+  L4 业务指标层（task_execution_history/token_usage/llm_cost/conversion/orphan）
+  L5 调度系统层（持久化四态 + scheduler_metrics + journal）
   L6 看门狗层（watchdog.log + v5312_monitor.log + cron）
 
 用法：
@@ -145,6 +145,21 @@ def sqlite_query(client, db_path, sql, timeout=20):
     if code != 0:
         return "", f"sqlite3 err code={code}: {err or out}"
     return out, ""
+
+
+def _parse_status_counts(rows_str):
+    """解析 sqlite ``status|count`` 输出，未知状态保留但不制造假数字。"""
+    counts = {"success": 0, "failed": 0, "aborted": 0, "running": 0}
+    for line in (rows_str or "").splitlines():
+        parts = line.split("|", 1)
+        if len(parts) != 2:
+            continue
+        status = parts[0].strip().lower()
+        try:
+            counts[status] = int(parts[1].strip())
+        except ValueError:
+            continue
+    return counts
 
 
 # ============ L1 VPS 实例层 ============
@@ -345,7 +360,8 @@ def l3_app_check(client):
 # ============ L4 业务指标层 ============
 def l4_biz_check(client):
     """schema 参考 core/database.py + AI_DEBUG_HISTORY.md Loop 13/6：
-      - task_log: id, task_key, exec_date, exec_ts(REAL, 秒级 Unix 时间) - 设计决策：只记成功执行，失败通过 journalctl 检测
+      - task_execution_history: running/success/failed/aborted 四态，任务执行事实真相源
+      - task_log: 临时 claim/防重锁，不得用于执行量或成功率统计
       - token_usage（router_usage.db）: timestamp(TEXT, datetime isoformat) - 非 created_at
       - llm_cost_logs（mory.db）: timestamp(REAL/INTEGER, 秒级 Unix 时间)，成本熔断器刷盘日志
       - conversion_events: ts(REAL, 毫秒)
@@ -354,23 +370,35 @@ def l4_biz_check(client):
     details = {}
     status = "OK"
     try:
-        # task_log 最近 1h / 5min（exec_ts 秒级 Unix 时间）
+        # 任务执行量必须来自 task_execution_history；task_log 只是临时防重锁。
         q1h, e1 = sqlite_query(
             client, MORY_DB,
-            "SELECT COUNT(*) FROM task_log WHERE exec_ts >= strftime('%s', datetime('now', '-1 hour'));",
+            "SELECT COUNT(*) FROM task_execution_history "
+            "WHERE start_ts >= strftime('%s', datetime('now', '-1 hour'));",
         )
         details["task_1h"] = q1h.strip() if not e1 else f"ERR: {e1}"
         q5m, e5 = sqlite_query(
             client, MORY_DB,
-            "SELECT COUNT(*) FROM task_log WHERE exec_ts >= strftime('%s', datetime('now', '-5 minutes'));",
+            "SELECT COUNT(*) FROM task_execution_history "
+            "WHERE start_ts >= strftime('%s', datetime('now', '-5 minutes'));",
         )
         details["task_5min"] = q5m.strip() if not e5 else f"ERR: {e5}"
-        # task_log 无 status 列，只查 task_key/exec_date/exec_ts
+        status_rows, status_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT status, COUNT(*) FROM task_execution_history "
+            "WHERE start_ts >= strftime('%s', datetime('now', '-1 hour')) GROUP BY status;",
+        )
+        details["task_status_1h"] = (
+            _parse_status_counts(status_rows) if not status_err else {"error": status_err}
+        )
         recent, er = sqlite_query(
             client, MORY_DB,
-            "SELECT task_key, exec_date, exec_ts FROM task_log ORDER BY id DESC LIMIT 10;",
+            "SELECT task_key, status, start_ts FROM task_execution_history ORDER BY id DESC LIMIT 10;",
         )
         details["recent_tasks"] = recent if not er else f"ERR: {er}"
+        if e1 or e5 or status_err or er:
+            status = "ERROR"
+            details["_crit"] = "task_execution_history_query_failed"
 
         # router_usage.db: token_usage（timestamp 列为带 +08:00 的 ISO 字符串）。
         # 用 strftime('%s', timestamp) 统一转 UTC epoch，避免 CST/UTC 字符串互比错位。
@@ -427,9 +455,7 @@ def l4_biz_check(client):
 
 # ============ L5 调度系统层 ============
 def l5_scheduler_check(client):
-    """task_log 无 status 列（AI_DEBUG_HISTORY Loop 13 P0-3 确认：表语义只记成功执行）。
-    失败任务通过 journalctl 检测，不查 task_log.status。
-    """
+    """以 task_execution_history + scheduler_metrics 为主，journal 只做补充。"""
     details = {}
     status = "OK"
     try:
@@ -443,16 +469,75 @@ def l5_scheduler_check(client):
         )
         details["scheduler_log_10min"] = sch or "(none)"
 
-        # task_log 无 status 列，改为查最近 10 条调度记录（用 exec_ts 倒序）
+        status_rows, status_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT status, COUNT(*) FROM task_execution_history "
+            "WHERE start_ts >= strftime('%s', datetime('now', '-1 hour')) GROUP BY status;",
+        )
+        if status_err:
+            status = "ERROR"
+            details["_crit"] = f"execution_history_query_failed: {status_err}"
+            history_counts = _parse_status_counts("")
+        else:
+            history_counts = _parse_status_counts(status_rows)
+        details["task_status_1h"] = history_counts
+        details["failed_1h"] = history_counts["failed"]
+        details["running_1h"] = history_counts["running"]
+        details["aborted_1h"] = history_counts["aborted"]
+
+        stale_running, stale_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT COUNT(*) FROM task_execution_history WHERE status='running' "
+            "AND start_ts < strftime('%s', datetime('now', '-30 minutes'));",
+        )
+        try:
+            stale_count = int(stale_running.strip()) if not stale_err else 0
+        except ValueError:
+            stale_count = 0
+            stale_err = f"invalid count: {stale_running!r}"
+        details["stale_running_30m"] = stale_count
+
+        recent_failures, recent_failures_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT task_key, status, COALESCE(error_msg,''), start_ts "
+            "FROM task_execution_history WHERE status='failed' "
+            "AND start_ts >= strftime('%s', datetime('now', '-1 hour')) "
+            "ORDER BY id DESC LIMIT 10;",
+        )
+        details["recent_persisted_failures"] = (
+            recent_failures if not recent_failures_err else f"ERR: {recent_failures_err}"
+        )
+
+        bad_metrics, metrics_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT job_id, last_status, fail_count, miss_count, last_run, COALESCE(last_error,'') "
+            "FROM scheduler_metrics WHERE last_status IN ('error','missed') "
+            "ORDER BY COALESCE(last_run,0) DESC LIMIT 10;",
+        )
+        details["scheduler_metrics_errors"] = bad_metrics if not metrics_err else f"ERR: {metrics_err}"
+
         recent, er = sqlite_query(
             client, MORY_DB,
-            "SELECT task_key, exec_date FROM task_log "
-            "ORDER BY id DESC LIMIT 10;",
+            "SELECT task_key, status, exec_date FROM task_execution_history ORDER BY id DESC LIMIT 10;",
         )
         details["recent_scheduled_tasks"] = recent if not er else f"ERR: {er}"
 
-        # 失败任务：通过 journalctl 检测（task_log 无 status 列）
-        # 排除业务抓取重试日志和正常调度事件
+        db_errors = [err for err in (stale_err, recent_failures_err, metrics_err, er) if err]
+        if db_errors:
+            status = "ERROR"
+            details["_crit"] = details.get("_crit", "") + "; ".join(db_errors)
+        elif history_counts["failed"] > 0 or stale_count > 0 or bad_metrics:
+            status = "WARN"
+            if history_counts["failed"] > 0:
+                details["_warn"] = details.get("_warn", "") + (
+                    f"persisted_task_failures={history_counts['failed']}; "
+                )
+            if stale_count > 0:
+                details["_warn"] = details.get("_warn", "") + f"stale_running={stale_count}; "
+            if bad_metrics:
+                details["_warn"] = details.get("_warn", "") + "scheduler_metrics_has_errors; "
+
+        # journal 只补充当前窗口错误，不能替代持久化四态。
         fail_log, _, _ = ssh_run(
             client,
             r'journalctl -u mory-assistant --since "10 minutes ago" --no-pager '
@@ -463,11 +548,8 @@ def l5_scheduler_check(client):
         )
         details["fail_log_10min"] = fail_log or "(none)"
         if fail_log:
-            status = "WARN"
+            status = "WARN" if status != "ERROR" else "ERROR"
             details["_warn"] = details.get("_warn", "") + "journalctl_has_fail_logs; "
-
-        # task_log 无 status 列 - 设计决策：只记成功执行，失败通过 journalctl 检测
-        details["failed_1h"] = "INFO(task_log只记成功,失败通过journalctl检测)"
 
         # WatchdogSec 检查（已知未配置，参考 AI_DEBUG_HISTORY Loop 5）
         ws, _, _ = ssh_run(

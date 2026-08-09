@@ -398,6 +398,35 @@ def _load_dynamic_states(cfg: dict, db_instance=None):
             logger.debug(f"📌 动态状态加载: {key}=<{_safe}>")
 
 
+def _refresh_scheduled_tasks():
+    """让 schedule() 依赖配置开关的任务在热重载后真实增删。"""
+    from tasks.task_scheduler import get_task_scheduler
+
+    task_scheduler = get_task_scheduler()
+    if task_scheduler is not None:
+        task_scheduler.refresh_tasks()
+
+
+def _apply_reloaded_config(cfg: dict, new_cfg: dict):
+    """原子更新共享配置并刷新调度；失败时恢复旧配置与旧任务集。"""
+    old_cfg = dict(cfg)
+    for key in ("CURRENT_MODEL_INDEX", "IMAGE_POOL", "VOICE_POOL"):
+        if key in cfg and key not in new_cfg:
+            new_cfg[key] = cfg[key]
+    cfg.clear()
+    cfg.update(new_cfg)
+    try:
+        _refresh_scheduled_tasks()
+    except Exception:
+        cfg.clear()
+        cfg.update(old_cfg)
+        try:
+            _refresh_scheduled_tasks()
+        except Exception as rollback_error:
+            _get_logger().critical(f"[配置重载] 调度回滚失败: {rollback_error}")
+        raise
+
+
 def _check_config_hot_reload(cfg: dict):
     """检查config.json是否被外部修改（Dashboard/settings_panel），如有则重新加载"""
     logger = _get_logger()
@@ -413,14 +442,9 @@ def _check_config_hot_reload(cfg: dict):
         if mtime > _check_config_hot_reload._mtime:
             logger.info("🔄 检测到config.json变更，热重载中...")
             new_cfg = load_config()
-            # 保留运行时动态状态
-            for key in ("CURRENT_MODEL_INDEX", "IMAGE_POOL", "VOICE_POOL"):
-                if key in cfg and key not in new_cfg:
-                    new_cfg[key] = cfg[key]
-            cfg.clear()
-            cfg.update(new_cfg)
+            _apply_reloaded_config(cfg, new_cfg)
             _check_config_hot_reload._mtime = mtime
-            logger.info("✅ 配置热重载完成")
+            logger.info("✅ 配置与调度热重载完成")
     except Exception as e:
         logger.debug(f"配置热重载检查失败: {e}")
 
@@ -445,17 +469,13 @@ def start_config_reload_watcher(cfg: dict, interval: int = 30):
                     logger.info("[配置重载] 检测到reload_flag信号，开始重载...")
                     try:
                         new_cfg = load_config()
-                        for key in ("CURRENT_MODEL_INDEX", "IMAGE_POOL", "VOICE_POOL"):
-                            if key in cfg and key not in new_cfg:
-                                new_cfg[key] = cfg[key]
-                        cfg.clear()
-                        cfg.update(new_cfg)
+                        _apply_reloaded_config(cfg, new_cfg)
                         if hasattr(_check_config_hot_reload, "_mtime"):
                             try:
                                 _check_config_hot_reload._mtime = os.path.getmtime(CONFIG_FILE)
                             except Exception as e:
                                 logger.debug(f"操作异常: {e}")
-                        logger.info("[配置重载] Dashboard配置变更已同步到Bot内存")
+                        logger.info("[配置重载] Dashboard配置已同步到Bot内存与调度器")
                     except json.JSONDecodeError as e:
                         logger.error(f"[配置重载] config.json格式损坏，跳过本次重载: {e}")
                     except Exception as e:

@@ -370,6 +370,7 @@ class TestCriticalJobsConsistency:
         """
         from core.scheduler_monitor import _CRITICAL_JOBS
         expected_ids = {
+            "mystic_morning", "mystic_afternoon", "mystic_evening",
             "greeting_morning", "greeting_afternoon", "greeting_evening",
             "broadcast_morning_nudge", "broadcast_afternoon_tease",
             "broadcast_evening_warm", "broadcast_night_hook",
@@ -435,6 +436,18 @@ class TestCriticalJobsConsistency:
         assert _is_job_disabled_by_config("broadcast_afternoon_tease", cfg) is True
         # 配置中不存在：跳过（避免对已删除的播报任务误告警）
         assert _is_job_disabled_by_config("broadcast_nonexistent", cfg) is True
+
+    def test_is_job_disabled_by_config_mystic(self):
+        """mystic 三档跟随统一 enabled，关闭时不得误报，开启时必须监控。"""
+        from core.scheduler_monitor import _is_job_disabled_by_config
+
+        assert _is_job_disabled_by_config(
+            "mystic_morning", {"MYSTIC_BROADCAST_CONFIG": {"enabled": True}}
+        ) is False
+        assert _is_job_disabled_by_config(
+            "mystic_evening", {"MYSTIC_BROADCAST_CONFIG": {"enabled": False}}
+        ) is True
+        assert _is_job_disabled_by_config("mystic_afternoon", {}) is True
 
     def test_is_job_disabled_by_config_infrastructure_never_skipped(self):
         """_is_job_disabled_by_config：基础设施任务（backup/cart_recovery 等）永不被 config 跳过"""

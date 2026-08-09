@@ -120,14 +120,30 @@ class TestBroadcastFormatterUserProfile(unittest.TestCase):
     """测试 v4.0 用户画像个性化富文本。"""
 
     def test_vip_user_title(self):
-        """[v5.19.0 skip] VIP 标题应包含"VIP专属"标识（v5.18.6 去萌化已移除该标签，需独立任务回归）"""
-        import unittest
-        raise unittest.SkipTest("v5.18.6 去萌化已移除 VIP专属/精选推荐 标签，单独任务再回归")
+        """VIP 画像只做克制的视觉变化，不暴露机械身份标签。"""
+        from core.broadcast_formatter import build_rich_broadcast_html
+        result = build_rich_broadcast_html(
+            title="晚安",
+            body="做个好梦",
+            period="night",
+            user_profile={"tags": ["vip"], "level": 5, "interests": []},
+        )
+        self.assertIn("✨", result)
+        self.assertNotIn("VIP专属", result)
+        self.assertNotIn("精选推荐", result)
 
     def test_high_value_user_title(self):
-        """[v5.19.0 skip] 高价值用户标题追加精选推荐（v5.18.6 去萌化已移除）"""
-        import unittest
-        raise unittest.SkipTest("v5.18.6 去萌化已移除 VIP专属/精选推荐 标签，单独任务再回归")
+        """高等级画像沿用克制视觉提示，不恢复已删除的营销标签。"""
+        from core.broadcast_formatter import build_rich_broadcast_html
+        result = build_rich_broadcast_html(
+            title="晚安",
+            body="做个好梦",
+            period="night",
+            user_profile={"tags": [], "level": 6, "interests": []},
+        )
+        self.assertIn("✨", result)
+        self.assertNotIn("VIP专属", result)
+        self.assertNotIn("精选推荐", result)
 
     def test_tarot_user_interest(self):
         """塔罗兴趣用户显示塔罗 emoji。"""

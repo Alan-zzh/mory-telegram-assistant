@@ -7,6 +7,24 @@
 
 ## 反复暗病清单
 
+### 6.16 配置热重载只改内存，不重编排 APScheduler
+- 问题：Dashboard 打开问候或传统文化栏目后配置已保存，运行中却没有新增 job，必须重启才执行。
+- 根因：reload watcher 只原地更新 config dict，任务 `schedule()` 仅在启动时调用，配置可见被误当作运行态生效。
+- 解法：TaskScheduler 跟踪自身 job 集并支持 replace/add/remove；配置更新失败时恢复旧配置与旧任务集。
+- 预防：所有动态调度开关必须测试 disabled→enabled→disabled 的真实 scheduler job 集，不能只断言配置或 `schedule()` 返回值。
+
+### 6.17 任务监控使用临时防重锁表，失败事实被日志噪声遮蔽
+- 问题：Loop 用 `task_log` 统计成功率、journal 判断失败；重启和日志轮转后会漏掉真实 failed/aborted/running。
+- 根因：`task_log` 是 claim/防重锁，不是执行历史；已有四态表未成为监控真相源，关键清单也漏了生产三档栏目。
+- 解法：L4/L5 改读 `task_execution_history` 四态和 `scheduler_metrics`，查询失败 fail-close；30 分钟关键检查纳入 mystic 三任务。
+- 预防：任务健康只能以持久化四态和业务回执为主，journal 只补充；生产启用的用户面 job 必须进入关键清单。
+
+### 6.18 报表伪官方 API 与看门狗不可诊断失败
+- 问题：日/周/月报宣称可用 Telegram 官方统计但分支恒为 None；watchdog 重启失败只留空 stdout，日志无限增长。
+- 根因：未实现数据源的占位分支长期保留；子进程 stderr 被丢弃、外部 cron 日志不在轮转范围，关键 watchdog 还被通配规则误排除出 Git。
+- 解法：报表明确使用 Bot 事件自统计和 Telegram 实时人数；watchdog 纳入版本控制，严格解析 JSON、保留 stderr、root 直调 systemctl 并自轮转。
+- 预防：数据来源文案必须有可执行调用和回执测试；运维恢复链必须覆盖失败诊断、日志上限和非交互权限。
+
 ### 6.6 CTA 文案池 label/image_label 两处硬编码不同步（v5.38.16 新增）
 - 问题：mystic 三池子（almanac/tarot/iching）× 三目标（contact/preview/subscribe）共 24 条 img_label 历史上全部拼接“· 点击头像”视觉后缀，但图片按钮视觉与真实 InlineKeyboard 按钮视觉无法对应，validate_cta_consistency 校验全失败。
 - 根因：v5.38.15 初版文案池的 img_label 是给人读的“点击头像提示”，不是给 draw_card 画按钮的正文；两处独立维护没有单一真相源。

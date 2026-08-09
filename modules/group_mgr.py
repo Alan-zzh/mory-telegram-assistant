@@ -122,6 +122,7 @@ def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
         # ── v5.30.2 新增：BIO简介广告检测 ──
         bio_hit = False
         bio_text = ""
+        chat_info = None
         try:
             chat_info = bot.get_chat(user.id)
             bio_text = getattr(chat_info, "bio", "") or ""
@@ -138,15 +139,17 @@ def handle_new_members(bot, m, config: dict, db, keyword_manager=None):
                             break
                     except re.error:
                         continue
-                # 也调用 detect_profile_ad_signal 做完整检测（含emoji状态）
-                if not bio_hit:
-                    profile_result = detect_profile_ad_signal(bot, user, bio_text, config)
-                    if profile_result.get("is_ad"):
-                        bio_hit = True
-                        logger.warning(
-                            f"🚫 资料信号命中广告: {user_display}({user.id}) "
-                            f"reason={profile_result.get('reason', '')}"
-                        )
+            # 无 Bio 时 personal_chat 仍可能有广告；复用已取 Chat，禁止二次 getChat。
+            if not bio_hit:
+                profile_result = detect_profile_ad_signal(
+                    bot, user, bio_text, config, chat_info=chat_info
+                )
+                if profile_result.get("is_ad"):
+                    bio_hit = True
+                    logger.warning(
+                        f"🚫 资料信号命中广告: {user_display}({user.id}) "
+                        f"reason={profile_result.get('reason', '')}"
+                    )
         except Exception as e:
             logger.debug(f"BIO检测失败 {user_display}: {e}")
 

@@ -84,19 +84,6 @@ class DailyReportTask(BaseTask):
     def _send_daily_group_report(self, ctx: TaskContext, admin_id: int, today: str, yesterday: str, gid: int, trend_fn):
         """群数据日报：原始数据优先，分析后置，不做主观裁判。"""
         rm = ctx.rm
-        token = rm.config.get("TOKEN", "")
-        api_data = None
-        use_api = False
-
-        if token and gid:
-            try:
-                api_data = None
-                if api_data:
-                    use_api = True
-                    logger.info("📊 群日报使用API数据")
-            except Exception as e:
-                logger.debug(f"getChatStatistics群失败: {e}")
-
         group_stats_today = rm.db.get_group_stats_by_date(today)
         group_stats_yesterday = rm.db.get_group_stats_by_date(yesterday)
 
@@ -114,38 +101,24 @@ class DailyReportTask(BaseTask):
                 left_yest_db += row[3] or 0
                 net_yest_db += row[4] or 0
 
-        if use_api and api_data:
-            joined_today = max(api_data.get("growth_today", 0), 0)
-            net_today = api_data.get("growth_today", 0)
-            left_today = max(-net_today, 0) if net_today < 0 else 0
-            total_members = api_data.get("current_count", 0)
-            active_today = api_data.get("interactions_today", 0)
-            msgs_today = api_data.get("messages_today", 0)
-            if joined_today == 0 and left_today == 0 and net_today == 0 and (joined_today_db or left_today_db):
-                joined_today = joined_today_db
-                left_today = left_today_db
-                net_today = net_today_db
-                logger.info(f"📊 API数据为0，用自统计补充: 入群{joined_today} 离群{left_today}")
-            data_source = "📡 Telegram官方统计"
-        else:
-            joined_today = joined_today_db
-            left_today = left_today_db
-            net_today = net_today_db
-            total_members = 0
-            if gid:
-                try:
-                    with rm.locked('bot'):
-                        total_members = rm.bot.get_chat_member_count(gid)
-                except Exception as e:
-                    logger.debug(f"Telegram群组人数查询失败，回退DB历史值（非致命）：{e}")
-                    total_members = rm.db.get_group_total_members_latest(gid)
-            active_today = rm.db.get_daily_active_users(today, gid)
-            row = rm.db.conn.execute(
-                "SELECT COALESCE(SUM(count),0) FROM speech_daily WHERE date=? AND chat_id=?",
-                (today, gid),
-            ).fetchone()
-            msgs_today = row[0] if row else 0
-            data_source = "📊 自统计（事件追踪+校准）"
+        joined_today = joined_today_db
+        left_today = left_today_db
+        net_today = net_today_db
+        total_members = 0
+        if gid:
+            try:
+                with rm.locked('bot'):
+                    total_members = rm.bot.get_chat_member_count(gid)
+            except Exception as e:
+                logger.debug(f"Telegram群组人数查询失败，回退DB历史值（非致命）：{e}")
+                total_members = rm.db.get_group_total_members_latest(gid)
+        active_today = rm.db.get_daily_active_users(today, gid)
+        row = rm.db.conn.execute(
+            "SELECT COALESCE(SUM(count),0) FROM speech_daily WHERE date=? AND chat_id=?",
+            (today, gid),
+        ).fetchone()
+        msgs_today = row[0] if row else 0
+        data_source = "📊 Bot事件自统计 + Telegram实时人数"
 
         joined_yest = joined_yest_db
         left_yest = left_yest_db
@@ -202,7 +175,7 @@ class DailyReportTask(BaseTask):
 
         with rm.locked('bot'):
             rm.bot.send_message(admin_id, html, parse_mode="HTML")
-        logger.info(f"✅ 群日报已发送: 入群{joined_today} 离群{left_today} 净增{net_today} 来源={'API' if use_api else '自统计'}")
+        logger.info(f"✅ 群日报已发送: 入群{joined_today} 离群{left_today} 净增{net_today} 来源=Bot自统计")
 
     def _send_daily_channel_report(self, ctx: TaskContext, admin_id: int, today: str, trend_fn):
         """频道数据日报：真实数据优先，保留轻量分析，不做打分裁判。"""
@@ -211,7 +184,6 @@ class DailyReportTask(BaseTask):
         if not channel_ids:
             return
 
-        token = rm.config.get("TOKEN", "")
         yesterday = (datetime.now(_CST) - timedelta(days=1)).strftime("%Y-%m-%d")
         gid = rm.config.get("GROUP_ID", 0)
 
@@ -222,7 +194,6 @@ class DailyReportTask(BaseTask):
         total_views_today = 0
         total_forwards_today = 0
         total_channel_members = 0
-        any_api = False
 
         for ch in channel_ids:
             cid = ch.get("id", 0) if isinstance(ch, dict) else ch
@@ -249,15 +220,6 @@ class DailyReportTask(BaseTask):
             else:
                 channel_lines.append(f"├ {cname}：{ch_count}人 ({ch_type}) 今日无变化")
 
-            api_ch = None
-            if token:
-                try:
-                    api_ch = None
-                    if api_ch:
-                        any_api = True
-                except Exception as e:
-                    logger.debug(f"获取频道统计API失败: {e}")
-
             yest_stats = rm.db.get_channel_daily_stats(cid, yesterday)
             posts_yest = yest_stats.get("posts", 0)
             views_yest = yest_stats.get("views", 0)
@@ -268,28 +230,16 @@ class DailyReportTask(BaseTask):
             avg_views = 0
             has_data = False
 
-            if api_ch:
-                posts_today = api_ch.get("messages_today", 0)
-                views_today = api_ch.get("views_today", 0)
-                forwards_today = api_ch.get("forwards_today", 0)
-                if posts_today == 0 and views_today == 0:
-                    db_stats = rm.db.get_channel_daily_stats(cid, today)
-                    posts_today = db_stats.get("posts", 0)
-                    views_today = db_stats.get("views", 0)
-                    forwards_today = rm.db.get_channel_post_stats(cid, today).get("forwards", 0)
-                avg_views = views_today // max(posts_today, 1)
+            try:
+                today_stats = rm.db.get_channel_daily_stats(cid, today)
+                native_stats = rm.db.get_channel_post_stats(cid, today)
+                posts_today = today_stats.get("posts", 0)
+                views_today = today_stats.get("views", 0)
+                forwards_today = native_stats.get("forwards", 0)
+                avg_views = today_stats.get("avg_views", 0)
                 has_data = posts_today > 0 or views_today > 0
-            else:
-                try:
-                    today_stats = rm.db.get_channel_daily_stats(cid, today)
-                    native_stats = rm.db.get_channel_post_stats(cid, today)
-                    posts_today = today_stats.get("posts", 0)
-                    views_today = today_stats.get("views", 0)
-                    forwards_today = native_stats.get("forwards", 0)
-                    avg_views = today_stats.get("avg_views", 0)
-                    has_data = posts_today > 0 or views_today > 0
-                except Exception as e:
-                    logger.debug(f"频道统计获取失败: {cname} err={e}")
+            except Exception as e:
+                logger.debug(f"频道统计获取失败: {cname} err={e}")
 
             total_posts_today += posts_today
             total_views_today += views_today
@@ -356,7 +306,7 @@ class DailyReportTask(BaseTask):
         growth_note = f"全域净增 {total_net:+d}"
         avg_views_per_post = (total_views_today / total_posts_today) if total_posts_today else 0
 
-        data_source = "📡 Telegram官方统计" if any_api else "📊 自统计"
+        data_source = "📊 Bot事件自统计 + Telegram实时人数"
 
         html = f"""📢 <b>频道数据日报</b> · {today}
 
@@ -386,4 +336,4 @@ class DailyReportTask(BaseTask):
 
         with rm.locked('bot'):
             rm.bot.send_message(admin_id, html, parse_mode="HTML")
-        logger.info(f"✅ 频道日报已发送: 发帖{total_posts_today} 浏览{total_views_today} API={'是' if any_api else '否'}")
+        logger.info(f"✅ 频道日报已发送: 发帖{total_posts_today} 浏览{total_views_today} 来源=Bot自统计")

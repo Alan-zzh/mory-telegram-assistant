@@ -246,3 +246,78 @@ def test_task_registration_failure_prevents_scheduler_start():
         scheduler.start()
 
     assert scheduler.scheduler.started is False
+
+
+def test_task_refresh_adds_and_removes_config_gated_jobs_without_touching_dynamic_jobs():
+    """热重载必须真实增删 schedule() job，且不得误删运行时动态 job。"""
+    from tasks import task_scheduler
+
+    class _Task:
+        def __init__(self, rm):
+            self.rm = rm
+
+        def schedule(self):
+            if not self.rm.config.get("enabled", False):
+                return []
+            return [{"job_id": "toggle_job", "trigger": "cron", "minute": 5}]
+
+        def create_context(self, params):
+            return params
+
+        def execute(self, _ctx):
+            return None
+
+    class _Scheduler:
+        def __init__(self):
+            self.jobs = {"retry_dynamic": {"external": True}}
+
+        def add_job(self, _func, **kwargs):
+            job_id = kwargs["id"]
+            if job_id in self.jobs and not kwargs.get("replace_existing"):
+                raise ValueError("duplicate")
+            self.jobs[job_id] = kwargs
+
+        def remove_job(self, job_id):
+            self.jobs.pop(job_id)
+
+    rm = SimpleNamespace(config={"enabled": False})
+    controller = task_scheduler.TaskScheduler.__new__(task_scheduler.TaskScheduler)
+    controller.rm = rm
+    controller.tasks = {"toggle": _Task(rm)}
+    controller.scheduler = _Scheduler()
+    controller._registered_job_ids = set()
+
+    controller._register_tasks()
+    assert set(controller.scheduler.jobs) == {"retry_dynamic"}
+
+    rm.config["enabled"] = True
+    controller.refresh_tasks()
+    assert set(controller.scheduler.jobs) == {"retry_dynamic", "toggle_job"}
+    assert controller.scheduler.jobs["toggle_job"]["replace_existing"] is True
+
+    rm.config["enabled"] = False
+    controller.refresh_tasks()
+    assert set(controller.scheduler.jobs) == {"retry_dynamic"}
+
+
+def test_apply_reloaded_config_rolls_back_when_scheduler_refresh_fails(monkeypatch):
+    """调度刷新失败时配置不能单独生效，避免 UI 与运行任务再次分裂。"""
+    from core import bot_initializer
+
+    cfg = {"enabled": False, "CURRENT_MODEL_INDEX": 3}
+    calls = []
+
+    def _refresh():
+        calls.append(dict(cfg))
+        if len(calls) == 1:
+            raise RuntimeError("refresh failed")
+
+    monkeypatch.setattr(bot_initializer, "_refresh_scheduled_tasks", _refresh)
+
+    with pytest.raises(RuntimeError, match="refresh failed"):
+        bot_initializer._apply_reloaded_config(cfg, {"enabled": True})
+
+    assert cfg == {"enabled": False, "CURRENT_MODEL_INDEX": 3}
+    assert calls[0]["enabled"] is True
+    assert calls[0]["CURRENT_MODEL_INDEX"] == 3
+    assert calls[1]["enabled"] is False

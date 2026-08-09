@@ -277,6 +277,11 @@ def sync_metrics_to_db(db) -> int:
 #       监控逻辑：上次成功执行距今 > interval_minutes * 2 → CRITICAL 告警
 # 注：broadcast_* 和 greeting_* 的具体时间由 config.json 决定，这里只设一个保守的"当日必须执行"截止时间
 _CRITICAL_JOBS = {
+    # 生产唯一主动内容栏目：实际时间从 MYSTIC_BROADCAST_CONFIG 读取；
+    # 此处为默认时间 + 1 小时宽限，动态配置会在 check 时覆盖。
+    "mystic_morning": {"deadline_hour": 10, "deadline_minute": 5, "desc": "早间今日黄历(09:05)"},
+    "mystic_afternoon": {"deadline_hour": 14, "deadline_minute": 5, "desc": "午间三张塔罗(13:05)"},
+    "mystic_evening": {"deadline_hour": 21, "deadline_minute": 35, "desc": "晚间易经一卦(20:35)"},
     # 问候：早安 8:05 / 午安 12:35 / 晚安 23:05 — 所有问候最晚 23:35 前应执行至少一次（如果开启）
     "greeting_morning": {"deadline_hour": 9, "deadline_minute": 0, "desc": "早安问候(8:05)"},
     "greeting_afternoon": {"deadline_hour": 13, "deadline_minute": 30, "desc": "午安问候(12:35)"},
@@ -372,6 +377,7 @@ def _is_job_disabled_by_config(job_id: str, config) -> bool:
     - greeting_afternoon→ GREETING_CONFIG.afternoon_enabled，回退 AUTO_GREETING
     - greeting_evening  → GREETING_CONFIG.evening_enabled，回退 AUTO_GOODNIGHT / AUTO_GREETING
     - broadcast_*       → SCHEDULED_BROADCASTS 中对应 bc_id 的 enabled 字段
+    - mystic_*          → MYSTIC_BROADCAST_CONFIG.enabled
     - 其他 job（cart_recovery/backup/daily_backup/health_check/sync_*/flush_*）→ 永不禁用（基础设施任务）
 
     Args:
@@ -410,6 +416,9 @@ def _is_job_disabled_by_config(job_id: str, config) -> bool:
                     return not bool(bc.get("enabled", True))
             # 配置中找不到该 bc_id，视为禁用（避免对已删除的播报任务误告警）
             return True
+        if job_id.startswith("mystic_"):
+            mystic_cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
+            return not bool(isinstance(mystic_cfg, dict) and mystic_cfg.get("enabled", False))
         # 基础设施任务（backup/cart_recovery/health_check/sync_scheduler_metrics/flush_alert_summary）
         # 永不通过 config 跳过 — 这些是系统级保障任务
         return False
@@ -460,6 +469,29 @@ def check_critical_jobs_health(scheduler=None, config=None, db=None):
     # job_id = "broadcast_" + bc_id（见 auto_tasks._register_scheduled_broadcasts）
     jobs = dict(_CRITICAL_JOBS)
     if isinstance(config, dict):
+        mystic_cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) or {}
+        if isinstance(mystic_cfg, dict) and mystic_cfg.get("enabled", False):
+            mystic_specs = (
+                ("morning", "mystic_morning", "早间今日黄历"),
+                ("afternoon", "mystic_afternoon", "午间三张塔罗"),
+                ("evening", "mystic_evening", "晚间易经一卦"),
+            )
+            for period, job_id, desc in mystic_specs:
+                raw_time = str(mystic_cfg.get(f"{period}_time", "") or "")
+                try:
+                    hour_text, minute_text = raw_time.split(":", 1)
+                    hour = int(hour_text)
+                    minute = int(minute_text)
+                    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                        raise ValueError(raw_time)
+                except (TypeError, ValueError):
+                    continue
+                deadline_total = hour * 60 + minute + 60
+                jobs[job_id] = {
+                    "deadline_hour": (deadline_total // 60) % 24,
+                    "deadline_minute": deadline_total % 60,
+                    "desc": f"{desc}({raw_time})",
+                }
         broadcast_list = config.get("SCHEDULED_BROADCASTS", []) or []
         if isinstance(broadcast_list, list):
             for bc in broadcast_list:
