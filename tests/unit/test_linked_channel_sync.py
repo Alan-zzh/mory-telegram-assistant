@@ -2,6 +2,7 @@
 """linked_channel_sync 模块单测：频道联动（点赞/评论转化/置顶取消）。"""
 import threading
 import time
+import inspect
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -98,6 +99,67 @@ def test_group_forward_unpins_and_consumes():
     assert mod.handle_group_forward(bot, m, cfg) is True
     assert bot.unpinned == [(-123, {"message_id": 50})]
     assert mod._pending_comments[(100, 7)]["consumed"] is True
+
+
+def test_trusted_channel_forward_disabled_still_stops_user_pipeline():
+    """自有频道即使联动暂时关闭也只能保留，不能落入广告/AI/反频道管线。"""
+    _reset_state()
+    bot = _Bot()
+    m = _group_msg()
+    cfg = _channel_config(enabled=False)
+
+    assert mod.handle_group_forward(bot, m, cfg) is True
+    assert bot.unpinned == []
+    assert bot.sent == []
+
+
+def test_external_channel_forward_is_not_trusted():
+    _reset_state()
+    bot = _Bot()
+    m = _group_msg(sender_channel=999)
+
+    assert mod.get_trusted_forward_channel_id(m, _channel_config()) == 0
+    assert mod.handle_group_forward(bot, m, _channel_config()) is False
+
+
+def test_anti_channel_never_deletes_trusted_own_channel():
+    from modules.anti_channel import check_anti_channel
+
+    class _DeleteBot:
+        deleted = []
+
+        def delete_message(self, chat_id, message_id):
+            self.deleted.append((chat_id, message_id))
+
+    bot = _DeleteBot()
+    m = _group_msg()
+    cfg = _channel_config()
+    cfg["ANTI_CHANNEL_DEFAULT"] = True
+    cfg["ENABLE_MESSAGE_DELETION"] = True
+
+    assert check_anti_channel(bot, m, cfg, db=object()) is False
+    assert bot.deleted == []
+
+
+def test_trusted_media_forward_reuses_linked_channel_gate():
+    """视频/图片专用 handler 也必须先取消自有频道转发置顶。"""
+    from core.handlers.media_handlers import _handle_trusted_channel_forward
+
+    _reset_state()
+    bot = _Bot()
+    m = _group_msg()
+    ctx = SimpleNamespace(config=_channel_config(auto_comment_enabled=False), db=None)
+
+    assert _handle_trusted_channel_forward(bot, m, ctx) is True
+    assert bot.unpinned == [(-123, {"message_id": 50})]
+
+
+def test_media_ad_path_uses_unified_security_handler_not_invalid_detect_signature():
+    from core.handlers import media_handlers
+
+    source = inspect.getsource(media_handlers.register_media_handlers)
+    assert "check_ad_detection(dctx)" in source
+    assert "detect(ad_text, uid=" not in source
 
 
 def test_group_forward_skips_duplicate_message():

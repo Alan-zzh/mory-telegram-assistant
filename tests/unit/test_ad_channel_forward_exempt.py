@@ -261,6 +261,33 @@ def test_channel_forward_exempt_config_ignored():
     assert len(ad_detector.detect_calls) == 1
 
 
+def test_configured_own_channel_forward_skips_ad_detection():
+    """只有 CHANNEL_IDS 中的自有频道可信，不能把 Telegram 自动转发系统号当广告。"""
+    from core.handlers.security_handlers import check_ad_detection
+
+    dctx, ad_detector = _create_dctx_with_channel_forward(
+        config_overrides={"CHANNEL_IDS": [{"id": -10099, "name": "自有频道"}]}
+    )
+    dctx.msg.chat.type = "supergroup"
+    dctx.msg.sender_chat = type("SenderChat", (), {"id": -10099, "type": "channel"})()
+
+    assert check_ad_detection(dctx) is False
+    assert ad_detector.detect_calls == []
+
+
+def test_other_channel_forward_still_runs_ad_detection():
+    from core.handlers.security_handlers import check_ad_detection
+
+    dctx, ad_detector = _create_dctx_with_channel_forward(
+        config_overrides={"CHANNEL_IDS": [{"id": -10099, "name": "自有频道"}]}
+    )
+    dctx.msg.chat.type = "supergroup"
+    dctx.msg.sender_chat = type("SenderChat", (), {"id": -20088, "type": "channel"})()
+
+    assert check_ad_detection(dctx) is False
+    assert len(ad_detector.detect_calls) == 1
+
+
 @pytest.mark.parametrize(
     "text",
     [

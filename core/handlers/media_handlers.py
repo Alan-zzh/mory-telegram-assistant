@@ -16,6 +16,16 @@ from core.telebot_compat import delete_all_message_reactions_compat, delete_mess
 logger = get_logger("media_handlers")
 
 
+def _handle_trusted_channel_forward(bot, m, ctx) -> bool:
+    """自有频道媒体转发走可信联动并终止普通媒体/广告管线。"""
+    try:
+        from modules.linked_channel_sync import handle_group_forward
+        return bool(handle_group_forward(bot, m, ctx.config, db=ctx.db))
+    except Exception as e:
+        logger.warning(f"自有频道媒体联动异常: {e}")
+        return False
+
+
 def register_media_handlers(bot, ctx):
     """注册媒体与频道处理器到bot实例"""
 
@@ -58,6 +68,10 @@ def register_media_handlers(bot, ctx):
         chat = getattr(m, "chat", None)
         if not chat or getattr(chat, "type", "") not in ("group", "supergroup"):
             return False
+        # 视频/图片等由专用 handler 先于主分发器消费，必须在这里复用 P0.1。
+        # 只有 CHANNEL_IDS 中的自有频道可命中；其他频道继续走广告/反频道治理。
+        if _handle_trusted_channel_forward(bot, m, ctx):
+            return True
         uid = getattr(getattr(m, "from_user", None), "id", 0) or 0
         if not uid:
             return False
@@ -84,35 +98,25 @@ def register_media_handlers(bot, ctx):
                     notify_admin=False,
                 )
                 return True
-            ad_detector = getattr(ctx, "ad_detector", None)
-            if ad_detector is None:
-                return False
             caption = (getattr(m, "caption", None) or "").strip()
-            # 无 caption 时仍走 extract（entities / 文件名等）
-            ad_text = ""
-            if hasattr(ad_detector, "extract_message_ad_text"):
-                ad_text = ad_detector.extract_message_ad_text(m) or caption
-            else:
-                ad_text = caption
+            from modules.ad_detector import AdDetector
+            ad_text = AdDetector.extract_message_ad_text(m, caption)
             if not ad_text:
                 return False
-            result = ad_detector.detect(ad_text, uid=uid, chat_id=chat.id)
-            if result and result.get("is_ad") and result.get("action") == "ban":
-                from modules.ad_enforcement import enforce_ad_user
-                enforce_ad_user(
-                    bot=bot,
-                    db=ctx.db,
-                    config=ctx.config,
-                    chat_id=chat.id,
-                    uid=uid,
-                    uname=getattr(m.from_user, "first_name", "") or str(uid),
-                    reason=f"媒体广告-{result.get('reason', '')}",
-                    message=m,
-                    current_msg_id=getattr(m, "message_id", 0),
-                    current_message_is_ad=True,
-                    notify_admin=True,
-                )
-                return True
+            # 复用文本消息的完整广告链，避免媒体入口使用错误 detect 参数签名后静默放行。
+            from types import SimpleNamespace
+            from core.handlers.security_handlers import check_ad_detection
+            dctx = SimpleNamespace(
+                ctx=ctx,
+                msg=m,
+                uid=uid,
+                uname=(getattr(m.from_user, "first_name", "") or str(uid)),
+                chat_id=chat.id,
+                is_group=True,
+                is_priv=False,
+                text=ad_text,
+            )
+            return bool(check_ad_detection(dctx))
         except Exception as e:
             logger.warning(f"群媒体安全预检异常: {e}")
         return False

@@ -98,6 +98,9 @@
 - 解法：v5.38.23 先修复状态残留（全败兜底与 402/403 池耗尽早退路径清理 _sanitize_retry_done）；v5.38.24 彻底修复参数失效——把"降温度 + 约束注入"从穿帮触发点移至 while 循环内 payload 构建完成后应用（读取 _sanitize_retry_done 标记），触发点只置位标记并 continue；回归测试断言重试请求实际降温度（base*0.5）且 messages 含约束警告，两次 ask 序列均验证。
 - 预防：任何"修改请求参数后 continue 重试"的逻辑，必须先确认参数构建点与修改点在同一作用域层级；写测试断言重试请求的实际载荷（payload 内容），不能只断言"发生了重试"。
 
+### 57. 自有频道媒体转发绕过主分发器后被广告链删除（v5.38.34 新增）
+- 问题 | 自有频道视频转发被删，Telegram 系统号还被误封；正文广告首轮进入 AI。根因 | 联动生产关闭、媒体 handler 早于 P0.1 且广告调用签名错误。解法 | CHANNEL_IDS 精确可信门、媒体复用联动/统一广告链、补正文规则。预防 | 自有/外部频道正反例与文本/媒体入口同测。
+
 ### 57. .venv 是 Python 3.14 空壳导致依赖装不上、pytest 缺失（v5.38.23 新增）
 - 问题：本地 .venv 存在但完全为空（无 pip、无任何包），uv sync 静默跳过（pyproject.toml 无 [project] 段，uv 默认 requires-python>=3.14 且无依赖定义）；uv pip install 在 gevent==24.11.1 编译时失败（PyInt_AsLong 等 C API 在 3.14 被移除），pytest 始终不可用。
 - 根因：.venv 由 Python 3.14 创建（版本过新，gevent 等依赖尚无 3.14 wheel），且项目依赖真相源是 requirements.txt（50 行）而非 pyproject.toml（仅 [tool.interrogate]）。

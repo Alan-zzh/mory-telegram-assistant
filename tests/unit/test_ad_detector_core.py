@@ -580,6 +580,30 @@ def test_screenshot_ad_samples_trigger_immediate_ban(detector, text):
     assert result["score"] >= SCORE_THRESHOLD
 
 
+def test_screenshot_plane_earn_money_look_at_me_triggers_immediate_ban(detector):
+    """截图原文“飞机赚米看我”首条必须拦截，不能进入 AI 回复。"""
+    result = detector.detect(username="Tony Rogers", msg="飞机赚米看我", bio="")
+
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "我坐飞机去米兰看朋友",
+        "这个飞机模型能赚积分，看我的教程",
+        "坐飞机时看我刚下载的电影",
+        "游戏里赚米的方法看攻略就行",
+    ],
+)
+def test_plane_and_look_at_me_normal_contexts_are_not_ads(detector, text):
+    result = detector.detect(username="普通用户", msg=text, bio="")
+    assert result["is_ad"] is False
+    assert result["score"] == 0
+
+
 @pytest.mark.parametrize(
     "text",
     [

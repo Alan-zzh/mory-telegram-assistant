@@ -34,6 +34,14 @@ def check_anti_channel(bot, m, config, db):
     """检查消息是否为频道转发，返回True表示已处理（消息已删除）"""
     chat_id = m.chat.id
 
+    # 自有频道由 linked_channel_sync 负责保留、取消置顶和评论；反频道只治理外部频道。
+    try:
+        from modules.linked_channel_sync import get_trusted_forward_channel_id
+        if get_trusted_forward_channel_id(m, config):
+            return False
+    except Exception as e:
+        logger.debug(f"自有频道识别失败，继续反频道检查: {e}")
+
     # 检查是否开启
     enabled = _get_settings(db, chat_id)
     if not enabled:

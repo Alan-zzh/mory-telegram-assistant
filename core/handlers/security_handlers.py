@@ -187,9 +187,17 @@ def check_ad_detection(dctx) -> bool:
     if not dctx.is_group:
         return False
 
-    # [v5.38.29] 频道转发消息不再完全豁免广告检测
-    # 旧版 AD_EXEMPT_CHANNEL_FORWARDS=true 会导致色情/灰产频道转发广告完全漏检
-    # 频道转发消息现在正常进入广告检测流程，anti_channel.py 可独立开启删除所有频道转发
+    # CHANNEL_IDS 中的自有频道自动转发是可信内部内容，只能由频道联动处理；
+    # 其他频道不豁免，仍按普通广告证据门禁检测。
+    try:
+        from modules.linked_channel_sync import get_trusted_forward_channel_id
+        if get_trusted_forward_channel_id(dctx.msg, dctx.ctx.config):
+            return False
+    except Exception as e:
+        logger.debug(f"自有频道转发识别失败，继续广告检测: {e}")
+
+    # [v5.38.29] 外部频道转发不再完全豁免广告检测；上面的自有频道白名单是唯一例外。
+    # 旧版 AD_EXEMPT_CHANNEL_FORWARDS=true 会导致色情/灰产频道转发广告完全漏检。
     m = dctx.msg
     CONFIG = dctx.ctx.config
 

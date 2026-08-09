@@ -142,6 +142,25 @@ def _target_channel_ids(config: dict) -> set:
     return ids
 
 
+def get_trusted_forward_channel_id(m, config: dict) -> int:
+    """返回群内自有频道自动转发的频道 ID；非自有频道返回 0。
+
+    CHANNEL_IDS 是自有频道白名单的唯一真相源。只有 sender_chat 明确属于该
+    白名单时才可信，不能只凭 Telegram 的系统发送者或 forward_origin 放行。
+    """
+    chat = getattr(m, "chat", None)
+    if not chat or getattr(chat, "type", "") not in ("group", "supergroup"):
+        return 0
+    sender_chat = getattr(m, "sender_chat", None)
+    if not sender_chat or getattr(sender_chat, "type", "") != "channel":
+        return 0
+    try:
+        channel_id = int(getattr(sender_chat, "id", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return channel_id if channel_id in _target_channel_ids(config) else 0
+
+
 def _prune_stale():
     """清理过期待处理项与限流计数（幂等，幂等失败不影响主流程）。"""
     now = time.time()
@@ -349,20 +368,16 @@ def handle_group_forward(bot, m, config: dict, db=None) -> bool:
     """处理群内收到的关联频道自动转发消息：
     取消自动置顶 + 匹配并回复评论（每条帖子最多一条）。"""
     cfg = _load_config(config)
+    channel_id = get_trusted_forward_channel_id(m, config)
+    if not channel_id:
+        return False
+
+    # 自有频道转发永远在这里终止后续用户消息管线，避免被广告检测、反频道
+    # 或 AI 当作普通群成员消息。关闭联动时只保留消息，不执行点赞/取消置顶/评论。
     if not cfg.get("enabled"):
-        return False
+        return True
 
-    chat = getattr(m, "chat", None)
-    if not chat or chat.type not in ("group", "supergroup"):
-        return False
-
-    sender_chat = getattr(m, "sender_chat", None)
-    if not sender_chat:
-        return False
-    channel_id = getattr(sender_chat, "id", 0) or 0
-    if not channel_id or channel_id not in _target_channel_ids(config):
-        return False
-
+    chat = m.chat
     chat_id = chat.id
     message_id = getattr(m, "message_id", 0) or 0
 

@@ -8,6 +8,7 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-08-09 | 修复 | v5.38.34 自有频道转发保留并取消置顶、点赞和评论；外部频道不豁免，广告首条阻断 AI。 | `linked_channel_sync`、`media_handlers`、`ad_patterns_encoded` 等 |
 | 2026-08-09 | 修复 | v5.38.33 播报收敛为三档玄学栏目，图片单正文，实时模型去超时并拦截尬聊。 | `ai_engine`、`greeting_task`、`broadcast_image_payload`、配置与测试 |
 | 2026-08-09 | 清理 | 停止自动新闻播报执行链：删除 common.py / auto_tasks.py 中新闻任务、格式化与发送链，保留 news 配置与 Dashboard 面板，同步清理测试。 | `tasks/support/common.py`、`modules/auto_tasks.py`、`tests/unit/test_broadcast*` 等 |
 | 2026-08-09 | 修复 | v5.38.32 全仓暗病闭环：转发删鉴权、解封四项条件、延迟禁言证据门、schedule/enabled 统一、问候部分成功保日锁、none 无按钮、媒体广告预检等。 | `message_dispatcher`、`ad_enforcement`、`greeting_task`、`burn_orphan` 等 |
