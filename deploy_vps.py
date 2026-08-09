@@ -45,6 +45,66 @@ sys.path.insert(0, str(ROOT))
 from core.deploy_utils import safe_upload_config, upload_files, verify_deployment, sync_runtime_fields_from_vps, sync_env_api_key, ensure_remote_dir
 from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_KEY_FILES, VPS_PATH, ssh_connect
 
+
+def _open_deploy_connection():
+    """建立带 keepalive 的部署连接，返回 (SSHClient, SFTPClient)。"""
+    client = paramiko.SSHClient()
+    ssh_connect(client, timeout=15)
+    transport = client.get_transport()
+    if transport is not None:
+        transport.set_keepalive(10)
+    sftp = client.open_sftp()
+    channel = sftp.get_channel()
+    if channel is not None:
+        channel.settimeout(60)
+    return client, sftp
+
+
+def _upload_files_resilient(client, sftp, files, *, chunk_size=40, max_attempts=3):
+    """分批上传；连接断开时重连并重传当前批次，避免留下半部署假成功。"""
+    uploaded = []
+    total = len(files)
+    for offset in range(0, total, chunk_size):
+        chunk = files[offset:offset + chunk_size]
+        for attempt in range(1, max_attempts + 1):
+            try:
+                batch = upload_files(
+                    sftp,
+                    str(ROOT),
+                    VPS_PATH,
+                    chunk,
+                    progress_cb=lambda done, _batch_total: print(
+                        f"  ⏳ 上传进度: {min(offset + done, total)}/{total}", end="\r"
+                    ),
+                )
+                uploaded.extend(batch)
+                break
+            except Exception as e:
+                try:
+                    sftp.close()
+                except Exception:
+                    pass
+                try:
+                    client.close()
+                except Exception:
+                    pass
+                if attempt >= max_attempts:
+                    raise RuntimeError(
+                        f"上传批次 {offset + 1}-{offset + len(chunk)} 连续失败 {max_attempts} 次"
+                    ) from e
+                print(
+                    f"\n  ⚠️ 上传连接中断，重连后重传当前批次 "
+                    f"({attempt}/{max_attempts}): {type(e).__name__}"
+                )
+                time.sleep(attempt * 2)
+                client, sftp = _open_deploy_connection()
+    return client, sftp, uploaded
+
+
+def _deployment_exit_code(success: bool) -> int:
+    """部署未完成或验证失败必须给自动化返回非零。"""
+    return 0 if success else 1
+
 # 绝不上传的文件名（含凭据/运行态/旧备份）。_collect_upload_files 只扫描 .py 文件，
 # 故 .bat/.sh 等非 Python 脚本根本不会被收集，无需在此列举。
 # v5.16.5 曾在此防御已删除的 deploy.bat/start.sh/start_dashboard.bat/docker_deploy.sh，
@@ -266,7 +326,7 @@ def _cleanup_old_backups(backup_dir: str = "backups", keep: int = 2):
             print(f"  ⚠️ 清理 {d.name} 失败：{e}")
 
 
-def main():
+def main() -> bool:
     print("=" * 60)
     print("  Mory小助理 · 一键部署到VPS")
     print("=" * 60)
@@ -295,21 +355,12 @@ def main():
 
     # 2. 连接VPS
     print(f"\n[1/5] 连接VPS {VPS_HOST}:{VPS_PORT} ...")
-    client = paramiko.SSHClient()
     try:
-        ssh_connect(client, timeout=15)
+        client, sftp = _open_deploy_connection()
     except Exception as e:
         print(f"❌ SSH连接失败：{e}")
         sys.exit(1)
     print("  ✅ 连接成功")
-
-    sftp = client.open_sftp()
-    try:
-        ch = sftp.get_channel()
-        if ch is not None:
-            ch.settimeout(60)
-    except Exception as e:
-        print(f"  ⚠️ SFTP超时设置失败（非致命）：{e}")
 
     # 部署状态：services_stopped 恒为 False（v5.38.32 起全程不停服，仅 restart 切换）；
     # restart_attempted：仅当 [4/5] 的 systemctl restart 已真正发出才置 True，
@@ -404,8 +455,7 @@ def main():
             for rp, mb in skipped_ul[:3]:
                 print(f"     - {rp} ({mb}MB)")
 
-        uploaded = upload_files(sftp, str(ROOT), VPS_PATH, files_to_upload,
-            progress_cb=lambda done, total: print(f"  ⏳ 上传进度: {done}/{total}", end="\r") if done % 20 == 0 or done == total else None)
+        client, sftp, uploaded = _upload_files_resilient(client, sftp, files_to_upload)
         print(f"\r  ✅ 已上传 {len(uploaded)}/{len(files_to_upload)} 个文件" + " " * 20)
 
         # 【死代码清理】删除本地已移除的文件，保持服务器整洁
@@ -656,6 +706,7 @@ def main():
         print("  ❌ 部署失败，服务未确认运行")
         print("  查看日志：journalctl -u mory-assistant -n 100 --no-pager")
         print("=" * 60)
+    return deploy_ok
 
 
 def _handle_cli_args(args) -> bool:
@@ -674,4 +725,4 @@ def _handle_cli_args(args) -> bool:
 if __name__ == "__main__":
     _configure_stdio()
     if not _handle_cli_args(sys.argv[1:]):
-        main()
+        raise SystemExit(_deployment_exit_code(main()))

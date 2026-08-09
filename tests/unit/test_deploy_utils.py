@@ -3,6 +3,7 @@
 
 import os
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -139,3 +140,50 @@ def test_exclude_names_hits_execution_root_docs():
     legacy_required = {"config.json", ".env", "mory.db", "deploy_vps.py", ".sync-conflict-"}
     missing_legacy = legacy_required - deploy_vps.EXCLUDE_NAMES
     assert not missing_legacy, f"EXCLUDE_NAMES 缺少历史保护项: {sorted(missing_legacy)}"
+
+
+def test_resilient_upload_reconnects_and_retries_current_chunk(monkeypatch):
+    import deploy_vps
+
+    closed = []
+    first_client = SimpleNamespace(close=lambda: closed.append("client-1"))
+    first_sftp = SimpleNamespace(close=lambda: closed.append("sftp-1"))
+    second_client = SimpleNamespace(close=lambda: closed.append("client-2"))
+    second_sftp = SimpleNamespace(close=lambda: closed.append("sftp-2"))
+    calls = []
+
+    def fake_upload(sftp, _root, _vps_path, files, progress_cb=None):
+        calls.append((sftp, tuple(files)))
+        if len(calls) == 1:
+            raise ConnectionError("dropped")
+        if progress_cb:
+            progress_cb(len(files), len(files))
+        return [item[0] for item in files]
+
+    monkeypatch.setattr(deploy_vps, "upload_files", fake_upload)
+    monkeypatch.setattr(
+        deploy_vps,
+        "_open_deploy_connection",
+        lambda: (second_client, second_sftp),
+    )
+    monkeypatch.setattr(deploy_vps.time, "sleep", lambda _seconds: None)
+
+    client, sftp, uploaded = deploy_vps._upload_files_resilient(
+        first_client,
+        first_sftp,
+        [("a.py", "/remote/a.py"), ("b.py", "/remote/b.py")],
+        chunk_size=2,
+        max_attempts=2,
+    )
+
+    assert (client, sftp) == (second_client, second_sftp)
+    assert uploaded == ["a.py", "b.py"]
+    assert len(calls) == 2
+    assert closed == ["sftp-1", "client-1"]
+
+
+def test_deployment_exit_code_fails_closed():
+    import deploy_vps
+
+    assert deploy_vps._deployment_exit_code(True) == 0
+    assert deploy_vps._deployment_exit_code(False) == 1
