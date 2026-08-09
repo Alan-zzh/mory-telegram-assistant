@@ -264,15 +264,18 @@ def check_ad_detection(dctx) -> bool:
     # 短消息也必须先看资料层信号：广告号常用“1”等无意义内容探活。
     profile_score = 0
     profile_result = None
+    profile_chat_info = None
     try:
         user_bio = ""
         try:
-            user_chat = bot.get_chat(uid)
-            user_bio = (getattr(user_chat, "bio", "") or "")[:500]
+            profile_chat_info = bot.get_chat(uid)
+            user_bio = (getattr(profile_chat_info, "bio", "") or "")[:500]
         except Exception as e:
             logger.debug(f"[AD] 短消息资料检测拉取Bio失败: uid={uid} err={e}")
         from modules.ad_profile_signals import detect_profile_ad_signal
-        profile_result = detect_profile_ad_signal(bot, m.from_user, user_bio, CONFIG)
+        profile_result = detect_profile_ad_signal(
+            bot, m.from_user, user_bio, CONFIG, chat_info=profile_chat_info
+        )
         profile_score = int(profile_result.get("score", 0) or 0)
         if profile_result.get("is_ad"):
             from modules.ad_enforcement import enforce_ad_user
@@ -317,7 +320,7 @@ def check_ad_detection(dctx) -> bool:
     user_bio = None
     try:
         if bot and m and m.from_user:
-            user_chat = bot.get_chat(m.from_user.id)
+            user_chat = profile_chat_info or bot.get_chat(m.from_user.id)
             if user_chat and hasattr(user_chat, 'bio'):
                 user_bio = user_chat.bio
                 if user_bio:

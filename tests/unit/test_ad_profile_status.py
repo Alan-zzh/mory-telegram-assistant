@@ -95,6 +95,113 @@ def test_profile_bio_group_invite_link_blocks_on_join():
     assert "资料文字命中广告规则" in result["reason"]
 
 
+class _FakePersonalChannelBot:
+    def __init__(self, title, description="", username="channel_name"):
+        self.user_chat = type(
+            "UserChat",
+            (),
+            {
+                "bio": "",
+                "personal_chat": type(
+                    "PersonalChat",
+                    (),
+                    {
+                        "id": -1004432682202,
+                        "title": title,
+                        "username": username,
+                        "description": "",
+                    },
+                )(),
+            },
+        )()
+        self.channel_chat = type(
+            "ChannelChat",
+            (),
+            {
+                "id": -1004432682202,
+                "title": title,
+                "username": username,
+                "description": description,
+            },
+        )()
+
+    def get_chat(self, chat_id):
+        if chat_id == -1004432682202:
+            return self.channel_chat
+        return self.user_chat
+
+
+def test_personal_channel_exact_production_variant_is_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(
+        "财天下飞机进群结演员结算频道",
+        "别人准备干你说不好干，别人赚钱了你说人家干得早",
+        "gzy_9671271455_1_9203",
+    )
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is True
+    assert result["source"] == "personal_chat"
+    assert result["personal_chat_id"] == -1004432682202
+    assert set(result["personal_chat_anchors"]) >= {
+        "平台暗语", "拉群动作", "商业招揽", "频道载体"
+    }
+
+
+def test_personal_channel_split_words_and_reflective_expansion_is_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(
+        "财天下 飞 机 交 流 频 道",
+        "别人还在反思，你已经开始做；想了解就私 聊 进 群，每天统一结 算。",
+    )
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is True
+    assert result["source"] == "personal_chat"
+
+
+def test_personal_channel_rewritten_without_platform_slang_is_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(
+        "项目交流频道",
+        "需要了解的私聊我加群，做单佣金统一日结。",
+    )
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is True
+    assert set(result["personal_chat_anchors"]) >= {"拉群动作", "商业招揽", "频道载体"}
+
+
+def test_personal_channel_normal_flight_group_is_not_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot("飞机航班交流群", "每日更新天气、延误和登机口信息")
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is False
+
+
+def test_personal_channel_normal_actor_settlement_notice_is_not_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot("影视演员工作结算通知频道", "仅发布剧组工资到账通知")
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is False
+
+
+def test_personal_channel_reflective_motivation_alone_is_not_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot("每日反思", "别人赚钱不是运气，坚持努力也要尊重自己的节奏")
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is False
+
+
 def test_telebot_user_keeps_emoji_status_extra_field():
     from core.telebot_compat import preserve_user_extra_fields
     from telebot import types
@@ -189,6 +296,44 @@ def test_profile_ad_deletes_even_when_general_deletion_is_disabled():
     assert bot.restricted[0][0:2] == (-1001, 42)
     # 账号资料是广告证据，但正文“1”不是广告；仍删除拦截，不伪造逐条广告真值。
     assert db.ad_marked == []
+
+
+def test_personal_channel_ad_blocks_short_probe_before_ai_reply():
+    from core.handlers.security_handlers import check_ad_detection
+
+    bot = _FakePersonalChannelBot(
+        "财天下飞机进群结演员结算频道",
+        "别人准备干你说不好干，别人赚钱了你说人家干得早",
+    )
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.text = "凎活啦"
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": _FakeDB(),
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": _FakeAdDetector(),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": "凎活啦",
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": "李大哥",
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
 
 
 def test_profile_status_ad_does_not_block_whitelisted_user():

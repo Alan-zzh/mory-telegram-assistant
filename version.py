@@ -6,11 +6,12 @@
 """
 
 # 项目版本号（语义化版本）
-VERSION = "v5.38.34"
-CONFIG_VERSION = "5.38.34"
+VERSION = "v5.38.35"
+CONFIG_VERSION = "5.38.35"
 __version__ = VERSION
 
 VERSION_HISTORY = [
+    "v5.38.35: [个人资料关联频道广告修复] 读取 Telegram getChat.personal_chat 的频道标题、用户名与完整简介；以平台暗语/拉群动作/商业招揽/频道载体三锚点识别拆字、同义改写与反思式扩写，短句探路在 AI 回复前统一处置；正常航班群、工作结算通知及单纯励志反例不处罚。",
     "v5.38.34: [自有频道可信联动与广告漏判修复] CHANNEL_IDS 中的自有频道转发统一走保留消息、取消置顶、点赞与单条评论/彩虹屁链，文本及媒体入口均在广告/反频道/AI 前终止；外部频道不豁免。修复媒体广告检测参数签名错误；‘飞机赚米看我’首条直接处置并加入正常反例。",
     "v5.38.33: [播报与接话闭环] 生产主动触达从十档收敛为黄历/塔罗/易经三档；泛问候与定点播报关闭。问候卡移除随机今日一句/一言，只留同源正文；模型不可用时跳过而非固定套话。移除过期 qwen3.6，实时模型显式关闭思考。接话清除动作旁白、身份泄露与挖苦赶客输出，成本熔断改为安全兜底。",
     "v5.38.32: [全仓暗病闭环] 安全：转发删消息强制管理员鉴权；私聊自助解封/ungban 走 restore_ad_user 四项清理；延迟/启动追溯禁言加直证证据门禁；enforce 补 AD_WHITELIST；群媒体 caption 广告预检；antiflood/security 群管三态 unknown 不处罚。调度：mystic/greeting/cart/leak/faq/backup schedule 与 enabled 统一；问候部分成功保留日锁防双发；claim 孤立 task_log 启动回收；burn_orphan 删除失败保留追踪。CTA：conversion_target=none 禁止按钮；关键词 ADMIN_IDS+opt_out；天气/黑话命中停管线防双回。关联频道：评论 track_bot_message、限流原子预占、fallback 传 bot。API：rbac/quality/vps 禁止 str(e) 进响应。验收：pytest 943 passed/7 skipped。",

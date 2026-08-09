@@ -8,6 +8,7 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-08-09 | 修复 | v5.38.35 资料关联频道广告纳入多锚点检测，覆盖拆字与扩写，短句探路在 AI 前处置。 | `ad_profile_signals`、`security_handlers`、资料广告测试等 |
 | 2026-08-09 | 修复 | v5.38.34 自有频道转发保留并取消置顶、点赞和评论；外部频道不豁免，广告首条阻断 AI。 | `linked_channel_sync`、`media_handlers`、`ad_patterns_encoded` 等 |
 | 2026-08-09 | 修复 | v5.38.33 播报收敛为三档玄学栏目，图片单正文，实时模型去超时并拦截尬聊。 | `ai_engine`、`greeting_task`、`broadcast_image_payload`、配置与测试 |
 | 2026-08-09 | 清理 | 停止自动新闻播报执行链：删除 common.py / auto_tasks.py 中新闻任务、格式化与发送链，保留 news 配置与 Dashboard 面板，同步清理测试。 | `tasks/support/common.py`、`modules/auto_tasks.py`、`tests/unit/test_broadcast*` 等 |

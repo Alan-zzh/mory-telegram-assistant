@@ -163,7 +163,72 @@ def _match_ad_patterns(text: str) -> str:
     return ""
 
 
-def detect_profile_ad_signal(bot, user, bio: str = "", config: dict | None = None) -> dict:
+def _compact_profile_text(text: str) -> str:
+    """压平空格、标点和拆字，避免“飞 机 / 结 算”规避资料检测。"""
+    return re.sub(r"[\W_]+", "", str(text or "").lower(), flags=re.UNICODE)
+
+
+def _detect_personal_channel_ad(parts: list[str]) -> dict:
+    """识别个人资料关联频道中的组合广告语义。
+
+    单个“飞机”“频道”“赚钱”都不定罪；必须同时出现三个独立语义锚点，
+    从而覆盖同义改写、拆字和长段扩写，同时放过正常航班群、工作通知频道。
+    """
+    text = _compact_profile_text(" ".join(str(part or "") for part in parts))
+    if not text:
+        return {"is_ad": False, "anchors": []}
+
+    groups = {
+        "平台暗语": ("飞机", "飛機", "纸飞机", "紙飛機", "电报", "電報", "telegram", "tg群"),
+        "拉群动作": ("进群", "進群", "加群", "入群", "私聊", "联系", "聯繫", "找我", "点我", "點我"),
+        "商业招揽": (
+            "结算", "結算", "赚钱", "賺錢", "赚米", "賺米", "佣金", "日结", "日結",
+            "返利", "接单", "接單", "做单", "做單", "兼职", "兼職", "招募", "演员",
+            "演員", "项目", "項目", "利润", "利潤", "收益",
+        ),
+        "频道载体": ("频道", "頻道", "channel", "群组", "群組"),
+    }
+    anchors = [name for name, words in groups.items() if any(word in text for word in words)]
+    anchor_set = set(anchors)
+    strong = (
+        {"平台暗语", "拉群动作", "商业招揽"}.issubset(anchor_set)
+        or {"拉群动作", "商业招揽", "频道载体"}.issubset(anchor_set)
+    )
+    return {"is_ad": strong, "anchors": anchors}
+
+
+def _personal_channel_parts(bot, chat_info) -> tuple[list[str], int]:
+    """读取 getChat 返回的 personal_chat，并补拉频道完整简介。"""
+    personal_chat = getattr(chat_info, "personal_chat", None) if chat_info else None
+    if not personal_chat:
+        return [], 0
+
+    channel_id = int(getattr(personal_chat, "id", 0) or 0)
+    objects = [personal_chat]
+    if channel_id and bot and hasattr(bot, "get_chat"):
+        try:
+            full_chat = bot.get_chat(channel_id)
+            if full_chat is not None:
+                objects.append(full_chat)
+        except Exception as e:
+            logger.debug(f"[AD] 获取个人资料关联频道详情失败: channel={channel_id} err={e}")
+
+    parts = []
+    for obj in objects:
+        for attr in ("title", "username", "description"):
+            value = str(getattr(obj, attr, "") or "").strip()
+            if value and value not in parts:
+                parts.append(value[:1000])
+    return parts, channel_id
+
+
+def detect_profile_ad_signal(
+    bot,
+    user,
+    bio: str = "",
+    config: dict | None = None,
+    chat_info=None,
+) -> dict:
     """
     检测用户资料层广告信号。
 
@@ -183,19 +248,20 @@ def detect_profile_ad_signal(bot, user, bio: str = "", config: dict | None = Non
     # 从 User 对象先尝试拿 emoji 状态
     status_ids = _iter_status_ids(user)
 
-    # User 对象没有时，从 bot.get_chat() 的 Chat 对象拿
-    # （pyTelegramBotAPI 4.34.0 的 User 类不保存 emoji_status，但 Chat 对象有）
-    if not status_ids and uid:
+    # personal_chat、Bio 和 emoji 状态都只在 getChat 的 Chat 对象上稳定返回。
+    # 调用方已经拉取时可传 chat_info，避免同一条消息重复请求 Telegram。
+    if chat_info is None and uid and bot and hasattr(bot, "get_chat"):
         try:
             chat_info = bot.get_chat(uid)
-            status_ids = _iter_status_ids(chat_info)
-            # 同步更新 bio
-            if not bio:
-                chat_bio = getattr(chat_info, "bio", "") or ""
-                if chat_bio:
-                    bio = chat_bio
         except Exception as e:
-            logger.debug(f"[AD] get_chat获取emoji状态失败: uid={uid} err={e}")
+            logger.debug(f"[AD] get_chat获取用户完整资料失败: uid={uid} err={e}")
+            chat_info = None
+    if chat_info is not None:
+        status_ids = list(dict.fromkeys(status_ids + _iter_status_ids(chat_info)))
+        if not bio:
+            bio = getattr(chat_info, "bio", "") or ""
+
+    personal_parts, personal_chat_id = _personal_channel_parts(bot, chat_info)
 
     sticker_texts = _sticker_texts(bot, status_ids)
 
@@ -208,6 +274,20 @@ def detect_profile_ad_signal(bot, user, bio: str = "", config: dict | None = Non
             "is_ad": True,
             "score": 3,
             "reason": f"资料文字命中广告规则: {profile_hit}",
+            "status_ids": status_ids,
+            "status_text": status_text,
+        }
+
+    personal_result = _detect_personal_channel_ad(personal_parts)
+    if personal_result["is_ad"]:
+        anchor_text = "+".join(personal_result["anchors"])
+        return {
+            "is_ad": True,
+            "score": 3,
+            "reason": f"个人资料关联频道命中组合广告语义: {anchor_text}",
+            "source": "personal_chat",
+            "personal_chat_id": personal_chat_id,
+            "personal_chat_anchors": personal_result["anchors"],
             "status_ids": status_ids,
             "status_text": status_text,
         }
@@ -260,4 +340,6 @@ def detect_profile_ad_signal(bot, user, bio: str = "", config: dict | None = Non
         "reason": "",
         "status_ids": [],
         "status_text": "",
+        "personal_chat_id": personal_chat_id,
+        "personal_chat_anchors": personal_result["anchors"],
     }

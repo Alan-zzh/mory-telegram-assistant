@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；合同模式屏蔽旧毒舌/敷衍桶，FAQ/缓存/模型结果统一走动作旁白和敌意发送前门禁。普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类、46 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ai_advisor.py`、`modules/avatar_detector.py`、`core/handlers/*` | L0–L4 五层；入群四信号（显示名/username/Bio/头像 + Premium）任一高置信命中即统一处置，验证码解限后补审延迟 Bio/头像；头像只采纳明确暴露、广告文字/二维码或批量相似证据，弱视觉统计不定罪；消息层覆盖 QQ 数字群号、露出邀约 q裙色情招揽及彩票代称+货量+庄家交易三要素；外部 SPB 单探针熔断失败降级；追溯只删当前窗口内显式广告证据；v5.38.21 起 `enforce_ad_user` 统一处置链群内管理员/群主豁免（不禁言/不黑名单/不删消息/不清反应）；v5.38.22 加配置级 `ADMIN_IDS/ADMIN_ID` 白名单豁免前置（零网络）与 `get_chat_member` 失败三态降级（unknown 跳过不可逆惩罚 + 通知人工复核），启动追溯对跳过不再误报"禁言失败"，入群资料检测路径补 `_is_member_ad_exempt` 豁免前置；拼音检测增加中文字符过滤 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`core/handlers/*` | L0–L4 五层；资料层读取显示名/username/Bio/Premium/个人关联频道，关联频道以平台暗语、拉群动作、商业招揽、频道载体的三锚点识别拆字与扩写；头像只作明确文字/二维码或相似证据；短句命中资料强证据时在 AI 前统一禁言、黑名单与删除当前消息；群管及配置白名单前置豁免，网络查询 unknown 不处罚；历史追溯只删逐条显式证据 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史键 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
@@ -37,14 +37,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.34（2026-08-09）· 自有频道可信联动 + 广告首条与媒体检测链修复
+v5.38.35（2026-08-09）· 个人资料关联频道广告多锚点检测
 
-生产状态：**v5.38.34 已部署并验收通过**。双服务 active、NRestarts=0、health 200、VPS 版本一致；6 个运行文件 SHA-256 一致，联动配置开启；部署态探针为点赞/取消置顶/评论各 1，外部频道不可信；Telegram 系统号误封四项持久态均为 0。
+生产状态：**v5.38.35 待部署**。本地资料/广告处置回归已通过；部署后必须验证真实用户关联频道命中、当前两条残留消息清理、双服务 active、health 200 与 VPS 版本一致。
 
 ## 最近 3 条大事
-1. 2026-08-09 v5.38.34：自有频道可信联动与广告首条/媒体检测链已部署验收。
-2. 2026-08-09 v5.38.33：播报与接话闭环，三档内容栏目已部署并取得 Telegram 回执。
-3. 2026-08-09 v5.38.32：全仓暗病闭环（安全/调度/CTA/媒体）随本版上线。
+1. 2026-08-09 v5.38.35：个人资料关联频道纳入广告检测，覆盖拆字、改写和长段扩写。
+2. 2026-08-09 v5.38.34：自有频道可信联动与广告首条/媒体检测链已部署验收。
+3. 2026-08-09 v5.38.33：播报与接话闭环，三档内容栏目已部署并取得 Telegram 回执。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
