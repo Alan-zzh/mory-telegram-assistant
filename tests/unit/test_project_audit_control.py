@@ -169,6 +169,30 @@ def test_control_cli_direct_script_import_surface():
     assert json.loads(result.stdout)["status"] == "pass"
 
 
+def test_deployed_monthly_falls_back_to_changelog(monkeypatch, tmp_path):
+    from scripts import project_audit_control as control
+
+    (tmp_path / "CHANGELOG.md").write_text(
+        "| 2026-08-01 | 修复 | production deploy health | files |\n"
+        "| 2026-08-02 | 治理 | VPS deployment truth audit | files |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(control, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(control, "_run_local_command", lambda *_args, **_kwargs: (128, "", "not a git repository"))
+
+    checks = control.audit_monthly(_sample_config())
+
+    assert checks[0]["status"] == "pass"
+    assert "CHANGELOG" in checks[0]["coverage"]
+
+
+def test_deployed_runtime_uses_local_read_only_client(monkeypatch):
+    from scripts import project_audit_control as control
+
+    monkeypatch.setattr(control, "_is_deployed_runtime", lambda: True)
+    assert isinstance(control._default_client_factory(), control._LocalReadOnlyClient)
+
+
 def test_conflicting_legacy_health_and_auto_rollback_are_retired():
     import deploy_vps
 

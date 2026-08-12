@@ -15,9 +15,9 @@ python scripts/project_audit_control.py --profile monthly
 python scripts/project_audit_control.py --profile all
 ```
 
-- `production-truth`：复用 `puzan_loop_monitor` L1/L4/L5/L6 和 `core.deploy_utils` 发布门禁，核验双服务、远端版本/文件身份、health liveness、启动窗口日志、DB integrity/foreign keys、调度四态/失败/陈旧 running/coverage、权限/root watchdog、配置中的只读业务回执。
-- `drift`：运行项目既有 doc/config 合同门禁，对比受控文件 Git 状态、生产文件 hash 和生产配置键名；不读取配置值或凭据。
-- `monthly`：只分析最近 Git 历史的日期、commit 与主题，输出 Skill/Agent/Automation/skip 候选、估算假设和验收标准；绝不安装或晋升能力。
+- `production-truth`：开发机从 `.env` SSH 取证；部署在生产目录时自动走本机受限只读执行，不要求 VPS 再持有一份 SSH 密码。两种表面均复用 `puzan_loop_monitor` 和 `core.deploy_utils` 门禁，核验双服务、版本、health、日志、DB、调度、权限、watchdog 心跳与业务回执。
+- `drift`：完整 Git 工作区运行 doc/config/Git/hash 门禁；不带 `.git` 和内部治理文档的生产发布包只核对部署版本子集、配置合同、指定文件 hash 与生产配置键名，并在 coverage 明示边界。
+- `monthly`：完整工作区分析最近 Git 历史；生产发布包没有 `.git` 时分析随版本部署的 CHANGELOG 日期和主题。两者只输出 Skill/Agent/Automation/skip 候选、估算假设和验收标准，绝不安装或晋升能力。
 
 ## 定时定义（未启用）
 

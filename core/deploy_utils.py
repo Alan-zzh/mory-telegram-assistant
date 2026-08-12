@@ -408,9 +408,9 @@ def _deployment_verification_checks(vps_path: str) -> list[tuple[str, str]]:
     remote = shlex.quote(vps_path)
     return [
         # 验证 1：Bot 进程 active
-        ("Bot状态", "sudo systemctl is-active mory-assistant"),
+        ("Bot状态", "systemctl is-active mory-assistant"),
         # 验证 2：Dashboard 进程 active
-        ("Dashboard状态", "sudo systemctl is-active mory-dashboard"),
+        ("Dashboard状态", "systemctl is-active mory-dashboard"),
         # 验证 3：Dashboard health API 返回 200
         ("Health API", "curl -s -o /dev/null -w '%{http_code}' http://localhost:6616/api/health"),
         # 验证 4：直接读取远端 version.py；health 只判 liveness，不能提供版本证据。

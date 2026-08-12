@@ -34,6 +34,66 @@ STATUS_FAILED = "failed"
 EXIT_CODES = {STATUS_PASS: 0, STATUS_GAP: 2, STATUS_FAILED: 3}
 STATUS_RANK = {STATUS_PASS: 0, STATUS_GAP: 1, STATUS_FAILED: 2}
 
+
+class _LocalChannel:
+    def __init__(self, exit_code: int):
+        self._exit_code = exit_code
+
+    def recv_exit_status(self) -> int:
+        return self._exit_code
+
+
+class _LocalStream:
+    def __init__(self, value: str, exit_code: int):
+        self._value = value.encode("utf-8", errors="replace")
+        self.channel = _LocalChannel(exit_code)
+
+    def read(self) -> bytes:
+        return self._value
+
+
+class _LocalReadOnlyClient:
+    """SSHClient-compatible local executor for the deployed VPS checkout."""
+
+    def exec_command(self, command: str, timeout: int = 30):
+        completed = subprocess.run(
+            ["/bin/bash", "-lc", command],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+        return (
+            None,
+            _LocalStream(completed.stdout, completed.returncode),
+            _LocalStream(completed.stderr, completed.returncode),
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def _is_deployed_runtime() -> bool:
+    if os.name == "nt" or (PROJECT_ROOT / ".git").exists():
+        return False
+    try:
+        from core.vps_config import VPS_PATH
+
+        return PROJECT_ROOT.resolve() == Path(VPS_PATH).resolve()
+    except (OSError, ValueError):
+        return False
+
+
+def _default_client_factory():
+    if _is_deployed_runtime():
+        return _LocalReadOnlyClient()
+    from scripts.puzan_loop_monitor import make_ssh_client
+
+    return make_ssh_client()
+
 _SECRET_RE = re.compile(
     r"(?i)(token|password|passwd|secret|api[_-]?key|cookie|authorization)\s*[:=]\s*\S+"
 )
@@ -176,9 +236,7 @@ def audit_production_truth(config: dict[str, Any], client_factory: Callable[[], 
     """Collect production evidence without changing the host or Telegram."""
     checks: list[dict[str, Any]] = []
     if client_factory is None:
-        from scripts.puzan_loop_monitor import make_ssh_client
-
-        client_factory = make_ssh_client
+        client_factory = _default_client_factory
     try:
         client = client_factory()
     except Exception as exc:
@@ -192,12 +250,14 @@ def audit_production_truth(config: dict[str, Any], client_factory: Callable[[], 
         # Reuse the established monitor for resource, business, scheduler and
         # watchdog evidence.  Service/health/version/startup-window checks are
         # handled below by the shared deployment verification contract.
-        for layer, collector in (
+        monitor_collectors = [
             ("l1_resources", puzan_loop_monitor.l1_vps_check),
             ("l4_business_metrics", puzan_loop_monitor.l4_biz_check),
             ("l5_scheduler", puzan_loop_monitor.l5_scheduler_check),
-            ("l6_watchdog", puzan_loop_monitor.l6_watchdog_check),
-        ):
+        ]
+        if not _is_deployed_runtime():
+            monitor_collectors.append(("l6_watchdog", puzan_loop_monitor.l6_watchdog_check))
+        for layer, collector in monitor_collectors:
             try:
                 raw_status, details = collector(client)
                 if raw_status == "OK":
@@ -225,6 +285,25 @@ def audit_production_truth(config: dict[str, Any], client_factory: Callable[[], 
                     )
                 )
 
+        if _is_deployed_runtime():
+            command = f"""set -eu
+age=$(( $(date +%s) - $(stat -c %Y {VPS_PATH}/logs/watchdog.log) ))
+secure=$(stat -c '%U:%G %a' /usr/local/lib/mory-assistant/vps_watchdog.py)
+test "$age" -le 600
+test "$secure" = 'root:root 755'
+test -z "$(tail -30 {VPS_PATH}/logs/v5312_monitor.log 2>/dev/null | grep -i '_vps_monitor_cron.py' || true)"
+printf 'WATCHDOG_HEARTBEAT_OK age_seconds=%s secure=%s\n' "$age" "$secure"
+"""
+            rc, output, error = _remote_exec(client, command)
+            checks.append(
+                _check(
+                    "production.l6_watchdog",
+                    STATUS_PASS if rc == 0 and output.startswith("WATCHDOG_HEARTBEAT_OK") else STATUS_FAILED,
+                    "watchdog heartbeat and root-owned executable verified" if rc == 0 else "watchdog heartbeat or executable identity failed",
+                    evidence={"exit_code": rc, "stdout": output, "stderr": error},
+                    coverage="local restricted audit verifies the cron effect via heartbeat; deploy gate owns root crontab identity",
+                )
+            )
         for name, command in _deployment_verification_checks(VPS_PATH):
             try:
                 rc, output, error = _remote_exec(client, command)
@@ -313,10 +392,26 @@ def _sha256(path: Path) -> str:
 def audit_drift(config: dict[str, Any], client_factory: Callable[[], Any] | None = None) -> list[dict[str, Any]]:
     """Compare repository governance/deploy truth with read-only production facts."""
     checks: list[dict[str, Any]] = []
-    for check_id, command in (
-        ("drift.docs", [sys.executable, "scripts/doc_consistency.py"]),
-        ("drift.config_contract", [sys.executable, "scripts/check_config_sync.py"]),
-    ):
+    local_contracts = [("drift.config_contract", [sys.executable, "scripts/check_config_sync.py"])]
+    if (PROJECT_ROOT / "project_snapshot.md").is_file() and (PROJECT_ROOT / "AGENTS.md").is_file():
+        local_contracts.insert(0, ("drift.docs", [sys.executable, "scripts/doc_consistency.py"]))
+    else:
+        from version import VERSION
+
+        version_text = (PROJECT_ROOT / "VERSION.md").read_text(encoding="utf-8")
+        changelog_text = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        readme_text = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+        aligned = all(VERSION in text for text in (version_text, changelog_text, readme_text))
+        checks.append(
+            _check(
+                "drift.docs",
+                STATUS_PASS if aligned else STATUS_FAILED,
+                "deployed record subset is version-aligned" if aligned else "deployed record subset has version drift",
+                evidence={"version": VERSION, "sources": ["version.py", "VERSION.md", "CHANGELOG.md", "README.md"]},
+                coverage="deployment intentionally excludes internal AGENTS, AI_DEBUG_HISTORY and project_snapshot records",
+            )
+        )
+    for check_id, command in local_contracts:
         try:
             rc, output, error = _run_local_command(command)
             checks.append(
@@ -331,7 +426,7 @@ def audit_drift(config: dict[str, Any], client_factory: Callable[[], Any] | None
             checks.append(_check(check_id, STATUS_GAP, "local drift check unavailable", evidence=type(exc).__name__))
 
     watched = list(config.get("drift", {}).get("watched_workspace_paths", []))
-    if watched:
+    if watched and (PROJECT_ROOT / ".git").exists():
         rc, output, error = _run_local_command(["git", "status", "--porcelain", "--", *watched])
         checks.append(
             _check(
@@ -342,11 +437,19 @@ def audit_drift(config: dict[str, Any], client_factory: Callable[[], Any] | None
                 coverage="uncommitted state is not treated as deployed truth",
             )
         )
+    elif watched:
+        checks.append(
+            _check(
+                "drift.workspace_state",
+                STATUS_PASS,
+                "deployed package intentionally has no Git worktree",
+                evidence={"watched_paths": watched},
+                coverage="release identity is checked by version and configured file hashes",
+            )
+        )
 
     if client_factory is None:
-        from scripts.puzan_loop_monitor import make_ssh_client
-
-        client_factory = make_ssh_client
+        client_factory = _default_client_factory
     try:
         client = client_factory()
     except Exception as exc:
@@ -453,8 +556,18 @@ def audit_monthly(config: dict[str, Any]) -> list[dict[str, Any]]:
         ["git", "log", f"--since={lookback_days}.days", "--date=short", "--pretty=%ad|%H|%s"],
         timeout=30,
     )
+    source_coverage = "Git commit dates and subjects only; estimates are not measured savings"
     if rc != 0:
-        return [_check("monthly.source", STATUS_GAP, "Git history is unavailable", evidence={"exit_code": rc, "stderr": error})]
+        changelog = PROJECT_ROOT / "CHANGELOG.md"
+        if not changelog.is_file():
+            return [_check("monthly.source", STATUS_GAP, "Git history and deployed CHANGELOG are unavailable", evidence={"exit_code": rc, "stderr": error})]
+        rows = []
+        for line in changelog.read_text(encoding="utf-8").splitlines():
+            match = re.match(r"^\|\s*(20\d{2}-\d{2}-\d{2})\s*\|[^|]*\|\s*([^|]+)", line)
+            if match:
+                rows.append(f"{match.group(1)}|changelog|{match.group(2).strip()}")
+        output = "\n".join(rows)
+        source_coverage = "deployed CHANGELOG date and subject fallback; Git commit ids are unavailable in release packages"
     hits: dict[str, list[dict[str, str]]] = {key: [] for key in _REPEAT_CATEGORIES}
     for line in output.splitlines():
         parts = line.split("|", 2)
@@ -491,7 +604,7 @@ def audit_monthly(config: dict[str, Any]) -> list[dict[str, Any]]:
             STATUS_PASS,
             f"generated {len(candidates)} read-only candidates; installed nothing",
             evidence={"lookback_days": lookback_days, "minimum_occurrences": minimum, "candidates": candidates},
-            coverage="Git commit dates and subjects only; estimates are not measured savings",
+            coverage=source_coverage,
         )
     ]
 
