@@ -280,6 +280,9 @@ def test_deployment_verification_checks_direct_version_truth_and_permissions():
     assert "root:root 755" in checks["权限"]
     assert "STARTUP_TIMESTAMP_UNAVAILABLE" in checks["Bot日志"]
     assert "exit 2" in checks["Bot日志"]
+    assert r"\[(ERROR|CRITICAL)\]" in checks["Bot日志"]
+    assert "|critical|error" not in checks["Bot日志"].lower()
+    assert "critical_jobs_health_check" not in checks["Bot日志"]
     assert "failed_1h" in checks["调度事实"]
     assert "bad_metrics" in checks["调度事实"]
     assert "任务调度器准备就绪" in checks["调度注册"]
