@@ -106,6 +106,33 @@ def test_clean_profile_and_message_do_not_call_avatar_without_weak_signal(monkey
     assert calls == []
 
 
+def test_ordinary_username_is_not_direct_ad_evidence(monkeypatch):
+    from modules import ad_profile_signals
+    from modules.member_ad_scan import MemberAdEvaluator
+
+    monkeypatch.setattr(
+        ad_profile_signals,
+        "detect_profile_ad_signal",
+        lambda *_args, **_kwargs: _clean_profile_result(),
+    )
+    user = SimpleNamespace(
+        id=43,
+        first_name="Alice",
+        last_name="Smith",
+        username="alice313",
+        is_bot=False,
+    )
+
+    result = MemberAdEvaluator(SimpleNamespace(), _DB(), {}).evaluate(
+        user=user,
+        chat_id=-1001,
+        review_avatar=False,
+    )
+
+    assert result["is_ad"] is False
+    assert result["weak_signals"] == []
+
+
 def test_high_confidence_avatar_can_block_only_after_explicit_review(monkeypatch):
     from modules import ad_profile_signals, avatar_detector
     from modules.member_ad_scan import MemberAdEvaluator

@@ -5,7 +5,7 @@
 ## 安全合同
 
 - Pyrogram + bot token 枚举当前群成员；私有群可直接使用 `GROUP_ID`，不要求公开 username。
-- 判定复用 `MemberAdEvaluator`：显示名、username、Bio、Premium 状态、个人关联频道最近帖子、历史消息和高置信头像证据。
+- 判定复用 `MemberAdEvaluator`：资料走显示名/username/Bio/Premium/个人频道专用强证据；历史消息逐条只跑内容字段，禁止把普通 username 或 Bio 分数冒充该消息的直接证据；头像仅接受高置信复核。
 - 默认只生成报告；报告覆盖率低于 90%、启用 `--max-members`、版本不符、超过 6 小时或指纹不符时禁止应用。
 - 单独应用阶段逐个重新确认成员、管理员/白名单/黑名单和最新资料，再重新判定；任何关键状态 unknown 都跳过。
 - 处置只走 `modules/ad_enforcement.py:enforce_ad_user()`；弱信号、普通行为追踪和低置信头像不得处罚。

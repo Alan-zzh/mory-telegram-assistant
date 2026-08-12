@@ -147,8 +147,15 @@ def test_startup_member_scan_enforcement_failure_reaches_scheduler(monkeypatch):
         "tasks.maintenance.startup_member_scan_task.TaskTransactionManager",
         _ClaimedTransaction,
     )
-    monkeypatch.setattr("modules.ad_patterns_encoded.USERNAME_PATTERNS", [r"spam"])
-    monkeypatch.setattr("modules.ad_patterns_encoded.BIO_PATTERNS", [r"广告"])
+    monkeypatch.setattr(
+        "modules.ad_profile_signals.detect_profile_ad_signal",
+        lambda *_args, **_kwargs: {
+            "is_ad": True,
+            "score": 3,
+            "reason": "资料文字命中广告规则",
+            "source": "profile",
+        },
+    )
     monkeypatch.setattr(
         "modules.ad_enforcement.enforce_ad_user",
         lambda **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
