@@ -255,6 +255,27 @@ def test_delete_false_never_marks_snapshot_deleted():
     assert db.marked == []
 
 
+def test_repeated_spam_cleanup_deletes_group_without_ad_punishment():
+    from modules.ad_enforcement import delete_repeated_spam_messages
+
+    bot = _FakeBot()
+    db = _FakeDB()
+    result = delete_repeated_spam_messages(bot, db, [
+        {"chat_id": -1001, "msg_id": 10},
+        {"chat_id": -1001, "msg_id": 11},
+        {"chat_id": -1001, "msg_id": 12},
+    ])
+
+    assert result["handled"] is True
+    assert result["deleted_count"] == 3
+    assert result["failed_count"] == 0
+    assert bot.deleted == [(-1001, 10), (-1001, 11), (-1001, 12)]
+    assert db.marked == [(-1001, 10), (-1001, 11), (-1001, 12)]
+    assert db.ad_marked == []
+    assert bot.restricted == []
+    assert db.blacklist == []
+
+
 def test_restore_ad_user_removes_blacklists_and_restores_permissions():
     from modules.ad_enforcement import restore_ad_user
 

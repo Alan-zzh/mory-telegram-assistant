@@ -20,6 +20,7 @@ import time
 import threading
 import unicodedata
 import urllib.request
+from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from core.logging_util import get_logger
 from core.database import _db_lock
@@ -1357,6 +1358,85 @@ class AdDetector:
     # [Trae] v5.6.1 新增：连续消息模式检测
     # ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _normalize_repeat_text(text: str) -> str:
+        """规范化空格/标点/全半角；保留正文字符用于严格重复判定。"""
+        normalized = unicodedata.normalize("NFKC", str(text or "")).lower()
+        return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalized)
+
+    def _recent_repeat_candidates(
+        self, user_id: int, chat_id: int, window_minutes: int = 60
+    ) -> list[dict]:
+        """优先从持久快照取窗口消息，重启后仍可识别慢速重复。"""
+        now = datetime.now(timezone.utc)
+        cutoff = now.timestamp() - window_minutes * 60
+        candidates = []
+        if self.db and hasattr(self.db, "get_user_messages"):
+            try:
+                rows = self.db.get_user_messages(user_id, chat_id, limit=100) or []
+                for row in rows:
+                    if bool(row.get("deleted")) or float(row.get("ts", 0) or 0) < cutoff:
+                        continue
+                    candidates.append({
+                        "msg_id": int(row.get("msg_id", 0) or 0),
+                        "chat_id": int(row.get("chat_id", chat_id) or chat_id),
+                        "text": str(row.get("text", "") or ""),
+                        "time": datetime.fromtimestamp(
+                            float(row.get("ts", 0) or 0), timezone.utc
+                        ).isoformat(),
+                    })
+                return sorted(candidates, key=lambda item: item["time"])
+            except Exception as e:
+                logger.warning(
+                    f"[AD] 查询一小时重复消息快照失败，降级进程内追踪: "
+                    f"uid={user_id} chat={chat_id} err={e}"
+                )
+
+        track = self.suspicious_users.get(str(user_id), {})
+        for message in track.get("messages", []):
+            try:
+                msg_time = datetime.fromisoformat(message.get("time", now.isoformat()))
+                if msg_time.tzinfo is None:
+                    msg_time = msg_time.replace(tzinfo=timezone.utc)
+                if msg_time.timestamp() >= cutoff and int(message.get("chat_id", 0)) == int(chat_id):
+                    candidates.append(dict(message))
+            except (TypeError, ValueError):
+                continue
+        return candidates
+
+    def _find_repeat_cluster(self, messages: list[dict], threshold: int = 3) -> list[dict]:
+        """返回同文或极高相似度的重复组；常见短寒暄和命令不参与。"""
+        ignored = {
+            "签到", "打卡", "你好", "您好", "在吗", "谢谢", "感谢", "好的", "收到",
+            "早安", "晚安", "哈哈", "哈哈哈", "666", "支持", "没事", "可以",
+        }
+        prepared = []
+        for message in messages:
+            raw = str(message.get("text", "") or "").strip()
+            normalized = self._normalize_repeat_text(raw)
+            if raw.startswith("/") or len(normalized) < 4 or normalized in ignored:
+                continue
+            prepared.append((message, normalized))
+
+        exact_groups: dict[str, list[dict]] = {}
+        for message, normalized in prepared:
+            exact_groups.setdefault(normalized, []).append(message)
+        exact = [group for group in exact_groups.values() if len(group) >= threshold]
+        if exact:
+            return max(exact, key=len)
+
+        # 只对较长文本做 94% 极高相似度聚类，避免把正常相近问句当刷屏。
+        for seed_message, seed_text in prepared:
+            if len(seed_text) < 8:
+                continue
+            cluster = [
+                message for message, text in prepared
+                if SequenceMatcher(None, seed_text, text).ratio() >= 0.94
+            ]
+            if len(cluster) >= threshold:
+                return cluster
+        return []
+
     def check_consecutive_patterns(self, user_id: int, chat_id: int, bot=None) -> dict:
         """
         检测同一用户连续发送的多条消息是否构成广告模式
@@ -1369,16 +1449,26 @@ class AdDetector:
         
         返回: {"is_spam": bool, "reason": str, "score": int, "messages": list}
         """
+        # 行为重复不等于广告证据：一小时内第 3 次同文/极近文本只删除重复组，
+        # 不进入广告黑名单或永久禁言。持久快照保证进程重启后窗口不丢失。
+        repeat_candidates = self._recent_repeat_candidates(user_id, chat_id, 60)
+        repeat_cluster = self._find_repeat_cluster(repeat_candidates, 3)
+        if repeat_cluster:
+            return {
+                "is_spam": True,
+                "behavior_only": True,
+                "action": "delete_repeat_only",
+                "reason": f"一小时重复刷屏：同文或极近内容累计{len(repeat_cluster)}次",
+                "score": 0,
+                "messages": repeat_cluster,
+            }
+
         user_key = str(user_id)
-        if user_key not in self.suspicious_users:
-            return {"is_spam": False, "reason": "", "score": 0, "messages": []}
-        
-        user_track = self.suspicious_users[user_key]
+        user_track = self.suspicious_users.get(user_key, {})
         messages = user_track.get("messages", [])
-        
         if len(messages) < 3:
             return {"is_spam": False, "reason": "", "score": 0, "messages": []}
-        
+
         now = datetime.now(timezone.utc)
         
         # [Puzan-OS] v5.31.4 优化：扩大时间窗口到15分钟，捕获慢速刷屏

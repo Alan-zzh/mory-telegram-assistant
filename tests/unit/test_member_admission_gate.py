@@ -41,6 +41,30 @@ class _StatusBot(_Bot):
         ]
 
 
+class _PersonalChannelBot(_Bot):
+    def __init__(self):
+        super().__init__(bio="")
+        self.personal_chat = SimpleNamespace(
+            id=-1003735080194,
+            title="恒泰高聘换资车队有码就要",
+            username="gzy_channel",
+            description="",
+        )
+
+    def get_chat(self, uid):
+        if uid == self.personal_chat.id:
+            return self.personal_chat
+        return SimpleNamespace(
+            bio="", emoji_status_custom_emoji_id="", personal_chat=self.personal_chat
+        )
+
+    def get_user_personal_chat_messages(self, user_id, limit):
+        return [SimpleNamespace(
+            text="",
+            caption="微信支付宝来有码就要 无风险 日赚3ooo-8ooo，客服私信，担保公群",
+        )]
+
+
 class _DB:
     def __init__(self, blacklisted=False):
         self.upserts = []
@@ -150,6 +174,46 @@ def test_new_member_profile_block_stops_before_avatar_captcha_and_welcome(monkey
     assert bot.sent == []
     assert bot.restricted == []
     assert welcome_calls == []
+
+
+def test_new_member_personal_channel_ad_blocks_before_welcome(monkeypatch):
+    from core.handlers import member_handlers
+    from modules import anti_raid, emoji_mask_detector, federation, spam_watch, welcome_customization
+
+    bot = _PersonalChannelBot()
+    db = _DB()
+    user = _User("普通昵称", uid=8704705115, username="")
+    message = SimpleNamespace(
+        chat=SimpleNamespace(id=-1003004701688),
+        new_chat_members=[user],
+        from_user=user,
+    )
+    enforced = []
+    welcome_calls = []
+    monkeypatch.setattr(anti_raid, "check_raid", lambda *args, **kwargs: False)
+    monkeypatch.setattr(spam_watch, "check_user_spam", lambda *args, **kwargs: False)
+    monkeypatch.setattr(federation, "execute_fban_on_join", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        emoji_mask_detector, "check_emoji_mask_in_username", lambda *args, **kwargs: (False, "")
+    )
+    monkeypatch.setattr(
+        member_handlers,
+        "_enforce_member_ad",
+        lambda *args, **kwargs: enforced.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        welcome_customization,
+        "send_welcome_message",
+        lambda *args, **kwargs: welcome_calls.append(True),
+    )
+
+    member_handlers._handle_new_chat_members(
+        bot, message, {"VERIFICATION_CONFIG": {"enable": True}}, db
+    )
+
+    assert len(enforced) == 1
+    assert welcome_calls == []
+    assert bot.sent == []
 
 
 def test_existing_blacklist_rejoin_stops_before_all_admission_steps(monkeypatch):

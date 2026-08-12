@@ -498,11 +498,23 @@ def check_ad_detection(dctx) -> bool:
         if _handle_delayed_ad_tracking(dctx, track_result):
             return True
 
-    # [Trae] v5.6.1 新增：连续消息模式检测
-    # 5分钟内3条以上内容相同或高度相似 → 永久禁言
+    # 连续消息模式：一小时同文/极近 3 次只删重复组；其他独立强证据沿用广告处置。
     consecutive_result = ad_detector.check_consecutive_patterns(uid, chat_id, bot)
     if consecutive_result["is_spam"]:
         logger.warning(f"连续消息模式检测: uid={uid} reason={consecutive_result['reason']}")
+        if consecutive_result.get("behavior_only"):
+            from modules.ad_enforcement import delete_repeated_spam_messages
+            cleanup = delete_repeated_spam_messages(
+                bot, db, consecutive_result.get("messages", [])
+            )
+            logger.warning(
+                f"重复刷屏消息清理: uid={uid} chat={chat_id} "
+                f"deleted={cleanup['deleted_count']} absent={cleanup['already_absent_count']} "
+                f"failed={cleanup['failed_count']}"
+            )
+            # 即使 Telegram 某条删除失败，本轮也必须在 P10 AI 前停止，避免机器人接话。
+            clear_logging_context()
+            return True
         # 创建广告结果并处理
         ad_result["is_ad"] = True
         ad_result["action"] = "ban"

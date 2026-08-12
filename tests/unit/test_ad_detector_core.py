@@ -12,6 +12,7 @@
 
 import os
 import sys
+import time
 
 import pytest
 
@@ -28,6 +29,24 @@ from modules.ad_detector import AdDetector, check_username_suspicious, SCORE_THR
 def detector(ad_detector_config):
     """创建 AdDetector 实例（无数据库）"""
     return AdDetector(config=ad_detector_config, db=None)
+
+
+class _RepeatSnapshotDB:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def get_user_messages(self, user_id, chat_id=None, limit=100):
+        return list(self.rows)[:limit]
+
+
+def _repeat_row(msg_id, text, minutes_ago, deleted=0):
+    return {
+        "chat_id": -1001,
+        "msg_id": msg_id,
+        "text": text,
+        "ts": int(time.time() - minutes_ago * 60),
+        "deleted": deleted,
+    }
 
 
 # ──────────────────────────────────────────────────────
@@ -56,6 +75,89 @@ def test_clean_zero_width_normal_text_unchanged(detector):
     cleaned, count = detector._clean_zero_width(text)
     assert cleaned == text
     assert count == 0
+
+
+def test_one_hour_three_exact_repeats_are_behavior_only_spam(ad_detector_config):
+    db = _RepeatSnapshotDB([
+        _repeat_row(1, "进群演个二十", 42),
+        _repeat_row(2, "进群演个二十", 29),
+        _repeat_row(3, "进群演个二十", 12),
+    ])
+    detector = AdDetector(config=ad_detector_config, db=db)
+
+    result = detector.check_consecutive_patterns(42, -1001)
+
+    assert result["is_spam"] is True
+    assert result["behavior_only"] is True
+    assert result["action"] == "delete_repeat_only"
+    assert [item["msg_id"] for item in result["messages"]] == [1, 2, 3]
+
+
+def test_repeat_normalization_covers_spacing_and_punctuation(ad_detector_config):
+    db = _RepeatSnapshotDB([
+        _repeat_row(1, "一日4Q", 55),
+        _repeat_row(2, "一 日 4Q！", 25),
+        _repeat_row(3, "一日4Ｑ。", 1),
+    ])
+    detector = AdDetector(config=ad_detector_config, db=db)
+
+    result = detector.check_consecutive_patterns(42, -1001)
+
+    assert result["is_spam"] is True
+    assert result["behavior_only"] is True
+
+
+def test_long_near_identical_repeats_require_very_high_similarity(ad_detector_config):
+    detector = AdDetector(config=ad_detector_config, db=_RepeatSnapshotDB([
+        _repeat_row(1, "这个项目具体怎么参与麻烦详细介绍一下", 50),
+        _repeat_row(2, "这个项目具体怎么参与麻烦详细介绍下", 25),
+        _repeat_row(3, "这个项目具体怎么参与麻烦详细介绍一下呢", 1),
+    ]))
+
+    result = detector.check_consecutive_patterns(42, -1001)
+
+    assert result["is_spam"] is True
+    assert result["behavior_only"] is True
+
+
+def test_one_hour_repeat_threshold_does_not_trigger_at_two(ad_detector_config):
+    detector = AdDetector(config=ad_detector_config, db=_RepeatSnapshotDB([
+        _repeat_row(1, "进群演个二十", 40),
+        _repeat_row(2, "进群演个二十", 5),
+    ]))
+
+    assert detector.check_consecutive_patterns(42, -1001)["is_spam"] is False
+
+
+def test_one_hour_repeat_ignores_messages_outside_window(ad_detector_config):
+    detector = AdDetector(config=ad_detector_config, db=_RepeatSnapshotDB([
+        _repeat_row(1, "进群演个二十", 61),
+        _repeat_row(2, "进群演个二十", 30),
+        _repeat_row(3, "进群演个二十", 1),
+    ]))
+
+    assert detector.check_consecutive_patterns(42, -1001)["is_spam"] is False
+
+
+@pytest.mark.parametrize("text", ["签到", "谢谢", "在吗", "666"])
+def test_common_short_repeats_are_not_deleted(ad_detector_config, text):
+    detector = AdDetector(config=ad_detector_config, db=_RepeatSnapshotDB([
+        _repeat_row(1, text, 40),
+        _repeat_row(2, text, 20),
+        _repeat_row(3, text, 1),
+    ]))
+
+    assert detector.check_consecutive_patterns(42, -1001)["is_spam"] is False
+
+
+def test_three_different_normal_questions_are_not_repeat_spam(ad_detector_config):
+    detector = AdDetector(config=ad_detector_config, db=_RepeatSnapshotDB([
+        _repeat_row(1, "今天几点开播", 40),
+        _repeat_row(2, "这个功能怎么用", 20),
+        _repeat_row(3, "积分在哪里查看", 1),
+    ]))
+
+    assert detector.check_consecutive_patterns(42, -1001)["is_spam"] is False
 
 
 # ──────────────────────────────────────────────────────

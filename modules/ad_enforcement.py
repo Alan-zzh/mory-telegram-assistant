@@ -26,11 +26,11 @@ def _delete_message_with_status(bot, db, chat_id: int, msg_id: int) -> str:
     except Exception as e:
         err = str(e).lower()
         if "not found" in err:
-            logger.debug(f"广告消息已不存在: chat={chat_id} msg={msg_id}")
+            logger.debug(f"治理消息已不存在: chat={chat_id} msg={msg_id}")
             status = "already_absent"
             should_mark_deleted = True
         else:
-            logger.debug(f"删除广告消息失败: chat={chat_id} msg={msg_id} err={e}")
+            logger.debug(f"删除治理消息失败: chat={chat_id} msg={msg_id} err={e}")
     try:
         if should_mark_deleted and db and hasattr(db, "mark_message_deleted"):
             db.mark_message_deleted(chat_id, msg_id)
@@ -63,6 +63,34 @@ def delete_confirmed_ad_message(bot, db, chat_id: int, msg_id: int) -> dict:
         "evidence_persisted": evidence_persisted,
         "deleted": status == "deleted",
         "status": status,
+    }
+
+
+def delete_repeated_spam_messages(bot, db, messages: list[dict]) -> dict:
+    """只删除已达到重复阈值的消息组；不标广告、不禁言、不写黑名单。"""
+    statuses = []
+    seen = set()
+    for message in messages or []:
+        try:
+            chat_id = int(message.get("chat_id", 0) or 0)
+            msg_id = int(message.get("msg_id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        key = (chat_id, msg_id)
+        if not chat_id or not msg_id or key in seen:
+            continue
+        seen.add(key)
+        statuses.append({
+            "chat_id": chat_id,
+            "msg_id": msg_id,
+            "status": _delete_message_with_status(bot, db, chat_id, msg_id),
+        })
+    return {
+        "handled": bool(statuses),
+        "deleted_count": sum(item["status"] == "deleted" for item in statuses),
+        "already_absent_count": sum(item["status"] == "already_absent" for item in statuses),
+        "failed_count": sum(item["status"] == "failed" for item in statuses),
+        "statuses": statuses,
     }
 
 

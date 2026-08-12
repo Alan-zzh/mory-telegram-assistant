@@ -187,18 +187,39 @@ def _detect_personal_channel_ad(parts: list[str]) -> dict:
             "演員", "项目", "項目", "利润", "利潤", "收益",
         ),
         "频道载体": ("频道", "頻道", "channel", "群组", "群組"),
+        "资金码盘": (
+            "微信支付宝", "收款码", "付款码", "有码", "有码就要", "码商", "换资",
+            "換資", "资金盘", "資金盤",
+        ),
+        "灰产组织": (
+            "车队", "車隊", "老盘", "老盤", "开工", "開工", "做单", "做單",
+            "结算记录", "結算記錄", "担保公群", "擔保公群", "双向私信", "雙向私信",
+        ),
+        "收益承诺": (
+            "日赚", "日賺", "无风险", "無風險", "稳定开工", "穩定開工",
+            "首单", "首單", "高效率", "安全有保障",
+        ),
+        "资料导流": ("客服", "私信", "机器人", "機器人", "公群", "tme", "认准id", "認準id"),
     }
     anchors = [name for name, words in groups.items() if any(word in text for word in words)]
     anchor_set = set(anchors)
     strong = (
         {"平台暗语", "拉群动作", "商业招揽"}.issubset(anchor_set)
         or {"拉群动作", "商业招揽", "频道载体"}.issubset(anchor_set)
+        or (
+            {"资金码盘", "灰产组织"}.issubset(anchor_set)
+            and bool({"收益承诺", "资料导流"} & anchor_set)
+        )
+        or {"灰产组织", "收益承诺", "资料导流"}.issubset(anchor_set)
+        # “换资车队 + 有码”是高度特异的灰产频道标题；即使频道帖子 API
+        # 暂时不可用，也不能让入群审核退化为放行。
+        or ("换资" in text and "车队" in text and ("有码" in text or "码商" in text))
     )
     return {"is_ad": strong, "anchors": anchors}
 
 
-def _personal_channel_parts(bot, chat_info) -> tuple[list[str], int]:
-    """读取 getChat 返回的 personal_chat，并补拉频道完整简介。"""
+def _personal_channel_parts(bot, chat_info, user_id: int = 0) -> tuple[list[str], int]:
+    """读取 personal_chat 的资料和最近帖子正文/图片 caption。"""
     personal_chat = getattr(chat_info, "personal_chat", None) if chat_info else None
     if not personal_chat:
         return [], 0
@@ -219,6 +240,18 @@ def _personal_channel_parts(bot, chat_info) -> tuple[list[str], int]:
             value = str(getattr(obj, attr, "") or "").strip()
             if value and value not in parts:
                 parts.append(value[:1000])
+
+    # Telegram 资料卡展示的是个人频道最近帖子，而非频道 description。
+    # 只读最近 3 条即可覆盖资料卡预览，失败时保留标题/简介证据降级判断。
+    if user_id and bot and hasattr(bot, "get_user_personal_chat_messages"):
+        try:
+            for message in bot.get_user_personal_chat_messages(user_id, 3) or []:
+                for attr in ("text", "caption"):
+                    value = str(getattr(message, attr, "") or "").strip()
+                    if value and value not in parts:
+                        parts.append(value[:1500])
+        except Exception as e:
+            logger.debug(f"[AD] 获取个人资料关联频道最近帖子失败: uid={user_id} err={e}")
     return parts, channel_id
 
 
@@ -261,7 +294,7 @@ def detect_profile_ad_signal(
         if not bio:
             bio = getattr(chat_info, "bio", "") or ""
 
-    personal_parts, personal_chat_id = _personal_channel_parts(bot, chat_info)
+    personal_parts, personal_chat_id = _personal_channel_parts(bot, chat_info, int(uid or 0))
 
     sticker_texts = _sticker_texts(bot, status_ids)
 

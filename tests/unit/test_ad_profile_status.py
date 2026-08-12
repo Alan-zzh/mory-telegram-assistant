@@ -96,7 +96,8 @@ def test_profile_bio_group_invite_link_blocks_on_join():
 
 
 class _FakePersonalChannelBot:
-    def __init__(self, title, description="", username="channel_name"):
+    def __init__(self, title, description="", username="channel_name", posts=None):
+        self.posts = list(posts or [])
         self.user_chat = type(
             "UserChat",
             (),
@@ -129,6 +130,12 @@ class _FakePersonalChannelBot:
         if chat_id == -1004432682202:
             return self.channel_chat
         return self.user_chat
+
+    def get_user_personal_chat_messages(self, user_id, limit):
+        return [
+            type("ChannelMessage", (), {"text": "", "caption": caption})()
+            for caption in self.posts[:limit]
+        ]
 
 
 def test_personal_channel_exact_production_variant_is_ad():
@@ -197,6 +204,58 @@ def test_personal_channel_reflective_motivation_alone_is_not_ad():
     from modules.ad_profile_signals import detect_profile_ad_signal
 
     bot = _FakePersonalChannelBot("每日反思", "别人赚钱不是运气，坚持努力也要尊重自己的节奏")
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is False
+
+
+def test_personal_channel_payment_code_screenshot_title_blocks_on_join():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot("恒泰高聘换资车队有码就要")
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is True
+    assert result["source"] == "personal_chat"
+    assert set(result["personal_chat_anchors"]) >= {"资金码盘", "灰产组织"}
+
+
+def test_personal_channel_latest_post_payment_code_ad_blocks_on_join():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(
+        "恒泰业务交流",
+        posts=[
+            "微信支付宝来有码就要 无风险 日赚3ooo-8ooo\n"
+            "高效率稳定开工多年老盘安全有保障\n"
+            "飞哥客服：@Dl88o 双向私信：@feieobot 担保公群 https://t.me/example"
+        ],
+    )
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is True
+    assert result["source"] == "personal_chat"
+    assert set(result["personal_chat_anchors"]) >= {
+        "资金码盘", "灰产组织", "收益承诺", "资料导流"
+    }
+
+
+def test_personal_channel_normal_payment_tutorial_is_not_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(
+        "支付宝收款码操作教程频道",
+        posts=["本周讲解企业收款码申请、财务对账和支付故障排查"],
+    )
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is False
+
+
+def test_personal_channel_normal_vehicle_team_notice_is_not_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot("网约车队司机通知", posts=["今晚机场排队较长，请司机错峰交班"])
     result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
 
     assert result["is_ad"] is False

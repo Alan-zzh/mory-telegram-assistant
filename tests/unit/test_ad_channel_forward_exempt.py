@@ -261,6 +261,34 @@ def test_channel_forward_exempt_config_ignored():
     assert len(ad_detector.detect_calls) == 1
 
 
+def test_behavior_only_repeat_deletes_group_and_stops_before_ai_without_blacklist():
+    from core.handlers.security_handlers import check_ad_detection
+
+    dctx, ad_detector = _create_dctx_without_channel_forward()
+    dctx.text = "进群演个二十"
+    dctx.msg.text = dctx.text
+    ad_detector.check_consecutive_patterns = lambda *args, **kwargs: {
+        "is_spam": True,
+        "behavior_only": True,
+        "action": "delete_repeat_only",
+        "reason": "一小时重复刷屏：同文或极近内容累计3次",
+        "score": 0,
+        "messages": [
+            {"chat_id": -1001, "msg_id": 90},
+            {"chat_id": -1001, "msg_id": 95},
+            {"chat_id": -1001, "msg_id": 99},
+        ],
+    }
+
+    handled = check_ad_detection(dctx)
+
+    assert handled is True
+    assert dctx.ctx.bot.deleted == [(-1001, 90), (-1001, 95), (-1001, 99)]
+    assert dctx.ctx.bot.restricted == []
+    assert dctx.ctx.db.blacklist == []
+    assert not any("global_blacklist" in sql for sql, _ in dctx.ctx.db.conn.executed)
+
+
 def test_configured_own_channel_forward_skips_ad_detection():
     """只有 CHANNEL_IDS 中的自有频道可信，不能把 Telegram 自动转发系统号当广告。"""
     from core.handlers.security_handlers import check_ad_detection
