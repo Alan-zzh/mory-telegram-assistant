@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.39**：新增项目内只读巡检控制面、结构化回执和未启用的 systemd timer 部署定义。
+当前版本 **v5.38.39**：实时与全量广告治理共用规则并分离报告/处置，新增项目内只读巡检控制面、结构化回执和 systemd timer 部署定义。
 
 ## 快速开始
 
@@ -116,10 +116,10 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 
 ## 目录结构
 - `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（80 个业务 `.py`）。
-- `modules/`：136 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等默认关闭能力）。
+- `modules/`：137 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等默认关闭能力）。
 - `dashboard/`：运营后台（`app` + `api`，163 路由，含人工审核风格样本 API）。
 - `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
-- `scripts/`：工具脚本（含 `doc_consistency.py` 自检）。
+- `scripts/`：工具脚本（含 `doc_consistency.py` 自检与默认只报告的 `scan_group.py` 全量成员扫描）。
 - `tests/`：单元测试。
 - `docs/`：技术(`technical`)、计划(`plans`)、愿景(`vision`)、归档(`archive`)。
 - `migrations/`：Alembic 数据库迁移。
@@ -127,7 +127,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `config/`：systemd 服务文件。
 
 ## 客观指标（2026-08-09 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 136，core 业务 `.py` = 80，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 163，消息分发函数 = 9，model_router 映射 = 10。
+modules 业务 `.py` = 137，core 业务 `.py` = 80，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 163，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）

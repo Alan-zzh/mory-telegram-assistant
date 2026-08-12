@@ -14,8 +14,8 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；合同模式屏蔽旧毒舌/敷衍桶，FAQ/缓存/模型结果统一走动作旁白和敌意发送前门禁。普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类、46 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`core/handlers/*` | L0–L4 五层；资料层读取显示名/username/Bio/Premium及个人关联频道最近帖子；Q裙群号与新下海/配合听话等成人招揽锚点首条处置；1小时内同文至少3次只删重复组、不标广告或封禁；短句命中独立资料强证据时在 AI 前统一禁言、黑名单与删除当前消息；群管及配置白名单前置豁免，网络查询 unknown 不处罚 |
-| 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 136 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 实时与存量扫描共用显示名/username/Bio/Premium/个人频道/历史消息/高置信头像规则；Q裙成人招揽首条处置；1小时同文至少3次只删重复组、不标广告或封禁；全量扫描默认只报告，覆盖率不足、管理员/白名单或状态未知均不处罚，应用时重新取证并走统一处置链 |
+| 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 137 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
 | 多群托管 | 默认关闭 | `modules/managed_groups.py` | 代运营/套餐管理/功能矩阵，`MANAGED_GROUPS_CONFIG.enabled` |
@@ -37,18 +37,18 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.39（2026-08-13）· 项目只读巡检控制面与广告漏判修复已完成本地实现，尚未部署
+v5.38.39（2026-08-13）· 实时/存量广告治理与项目只读巡检控制面
 
-生产状态：**仍为 v5.38.38**。2026-08-13 03:09 CST 项目内只读巡检回执 16/16 通过；v5.38.39 与 timer 未部署/未安装，漂移回执以退出码 3 明确检出本地/生产 hash 不一致。
+生产状态：**v5.38.39 部署收口进行中**。最终结果须以服务重启后版本/哈希、广告业务探针、Telegram/数据库读回及三类巡检实跑回执覆盖更新。
 
 ## 最近 3 条大事
-1. 2026-08-13 v5.38.39：生产真相/漂移/月审控制面及个人频道、重复刷屏、Q裙广告修复完成，尚未发布。
-2. 2026-08-12 v5.38.38：部署日志只过滤确证退出栈，生产 Dashboard 依赖按 lock 读回。
-3. 2026-08-12 v5.38.37：自助复权、假绿灯、热重载/停机竞态与部署权限完成修复。
+1. 2026-08-13 v5.38.39：广告漏判修复、存量扫描和只读巡检控制面合并为同一发布基线。
+2. 2026-08-12 v5.38.38：部署日志只过滤确证退出栈，生产依赖按 lock 读回。
+3. 2026-08-12 v5.38.37：自助复权、假绿灯、热重载与部署权限完成修复。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
-modules_py=136
+modules_py=137
 core_py=80
 job_count=33
 db_tables=173
