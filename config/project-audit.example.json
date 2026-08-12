@@ -1,0 +1,31 @@
+{
+  "schema_version": "mory.project-audit-config/v1",
+  "production_truth": {
+    "business_receipts": [
+      {"task_key": "mystic_morning", "max_age_hours": 36},
+      {"task_key": "mystic_afternoon", "max_age_hours": 36},
+      {"task_key": "mystic_evening", "max_age_hours": 36}
+    ]
+  },
+  "drift": {
+    "watched_workspace_paths": [
+      "AGENTS.md",
+      "records.config.json",
+      "core/deploy_utils.py",
+      "deploy_vps.py",
+      "scripts/puzan_loop_monitor.py",
+      "scripts/project_audit_control.py",
+      "config/mory-assistant.service",
+      "config/mory-dashboard.service"
+    ],
+    "remote_hash_mappings": [
+      {"local": "version.py", "remote": "version.py"},
+      {"local": "core/deploy_utils.py", "remote": "core/deploy_utils.py"},
+      {"local": "scripts/puzan_loop_monitor.py", "remote": "scripts/puzan_loop_monitor.py"}
+    ]
+  },
+  "monthly": {
+    "lookback_days": 90,
+    "minimum_occurrences": 2
+  }
+}

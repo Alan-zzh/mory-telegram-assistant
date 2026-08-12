@@ -9,7 +9,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
-import json, logging, os, posixpath, tempfile, time
+import json, logging, os, posixpath, shlex, tempfile, time
 from datetime import datetime
 from pathlib import Path
 
@@ -403,54 +403,123 @@ def upload_files(sftp, local_root: str, vps_path: str, files: list, progress_cb=
     return uploaded
 
 
-def verify_deployment(ssh, vps_path: str) -> bool:
-    """验证VPS部署结果，返回True表示成功
-
-    涵盖 AGENTS.md 教训 #10 定义的 4 步验证标准：
-    1. mory-assistant active
-    2. mory-dashboard active
-    3. health API 返回 200
-    4. 日志无 ImportError
-    """
-    checks = [
+def _deployment_verification_checks(vps_path: str) -> list[tuple[str, str]]:
+    """构造运行态发布门禁；业务探针由调用方按受影响入口另行执行。"""
+    remote = shlex.quote(vps_path)
+    return [
         # 验证 1：Bot 进程 active
         ("Bot状态", "sudo systemctl is-active mory-assistant"),
         # 验证 2：Dashboard 进程 active
         ("Dashboard状态", "sudo systemctl is-active mory-dashboard"),
         # 验证 3：Dashboard health API 返回 200
         ("Health API", "curl -s -o /dev/null -w '%{http_code}' http://localhost:6616/api/health"),
-        # 验证 4：只检查 Dashboard 本次进入 active 后的新日志，避免 systemd 停旧进程时的 gevent 退出噪声误报
+        # 验证 4：直接读取远端 version.py；health 只判 liveness，不能提供版本证据。
+        ("运行版本", f"cd {remote} && python3 -c 'from version import VERSION; print(VERSION)'"),
+        # 验证 5：Bot 本次启动窗口无真实错误。
+        ("Bot日志", """since=$(systemctl show mory-assistant -p ActiveEnterTimestamp --value) || exit 2; test -n "$since" || { echo STARTUP_TIMESTAMP_UNAVAILABLE; exit 2; }; logs=$(journalctl -u mory-assistant --since "$since" -n 120 --no-pager 2>&1) || { printf '%s\n' "$logs"; exit 2; }; errors=$(printf '%s\n' "$logs" | grep -Ei 'importerror|modulenotfounderror|traceback|exception|critical|error' || true); test -z "$errors" || { printf '%s\n' "$errors"; exit 1; }; echo STARTUP_LOG_CLEAN"""),
+        # 验证 6：只检查 Dashboard 本次进入 active 后的新日志，避免 systemd 停旧进程时的 gevent 退出噪声误报
         # 仅过滤已实机确认的 logging._removeHandlerRef/gevent 退出栈；其他析构异常和启动失败必须保留。
-        ("Dashboard日志", f"""since=$(systemctl show mory-dashboard -p ActiveEnterTimestamp --value); cd {vps_path} && journalctl -u mory-dashboard --since "$since" -n 80 --no-pager 2>/dev/null | python3 -c 'import sys; from core.deploy_utils import filter_dashboard_teardown_noise as f; sys.stdout.write(f(sys.stdin.read()))' | grep -Ei 'importerror|modulenotfounderror|failed to find application|worker failed to boot|traceback|exception|error' || echo '✅ 无报错'"""),
+        ("Dashboard日志", f"""since=$(systemctl show mory-dashboard -p ActiveEnterTimestamp --value) || exit 2; test -n "$since" || {{ echo STARTUP_TIMESTAMP_UNAVAILABLE; exit 2; }}; logs=$(journalctl -u mory-dashboard --since "$since" -n 80 --no-pager 2>&1) || {{ printf '%s\n' "$logs"; exit 2; }}; cd {remote} || exit 2; filtered=$(printf '%s\n' "$logs" | python3 -c 'import sys; from core.deploy_utils import filter_dashboard_teardown_noise as f; sys.stdout.write(f(sys.stdin.read()))') || exit 2; errors=$(printf '%s\n' "$filtered" | grep -Ei 'importerror|modulenotfounderror|failed to find application|worker failed to boot|traceback|exception|critical|error' || true); test -z "$errors" || {{ printf '%s\n' "$errors"; exit 1; }}; echo STARTUP_LOG_CLEAN"""),
         # 配置完整性检查
-        ("配置完整性", f"""cd {vps_path} && python3 << 'PYEOF'
+        ("配置完整性", f"""cd {remote} && python3 << 'PYEOF'
 import json
 c = json.load(open('config.json'))
 ok = True
-for fld in ['TOKEN', 'API_KEY', 'MODEL_POOLS']:
+for fld in ['MODEL_POOLS']:
     if fld not in c or not c[fld]:
         print(f'MISSING: ' + fld)
         ok = False
 if ok:
     print('ALL CONFIG OK')
 PYEOF"""),
+        # 凭据只验证 .env 键存在，不输出值，也不要求 config.json 重复存储。
+        ("凭据键", f"""cd {remote} && python3 << 'PYEOF'
+from dotenv import dotenv_values
+env = dotenv_values('.env')
+required = ('TG_TOKEN', 'DASHSCOPE_KEY')
+missing = [key for key in required if not env.get(key)]
+if missing:
+    raise SystemExit('ENV_KEYS_MISSING ' + ','.join(missing))
+print('ENV_KEYS_OK')
+PYEOF"""),
+        # DB 完整性；只读 URI，避免验证步骤本身产生写入。
+        ("数据库完整性", f"""cd {remote} && python3 << 'PYEOF'
+import sqlite3
+conn = sqlite3.connect('file:mory.db?mode=ro', uri=True)
+integrity = conn.execute('PRAGMA integrity_check').fetchone()[0]
+foreign_keys = conn.execute('PRAGMA foreign_key_check').fetchall()
+if integrity != 'ok' or foreign_keys:
+    raise SystemExit(f'DB_INVALID integrity={{integrity}} foreign_keys={{len(foreign_keys)}}')
+print('DB_INTEGRITY_OK')
+PYEOF"""),
+        # 调度 coverage 可读且无陈旧 running；不把历史 metrics 冒充当前注册表。
+        ("调度事实", f"""cd {remote} && python3 << 'PYEOF'
+import sqlite3, time
+conn = sqlite3.connect('file:mory.db?mode=ro', uri=True)
+tables = {{row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}}
+required = {{'task_execution_history', 'scheduler_metrics'}}
+missing = required - tables
+if missing:
+    raise SystemExit('SCHEDULER_TABLES_MISSING ' + ','.join(sorted(missing)))
+cutoff = int(time.time()) - 3600
+stale = conn.execute("SELECT COUNT(*) FROM task_execution_history WHERE status='running' AND start_ts < ?", (int(time.time()) - 1800,)).fetchone()[0]
+failed = conn.execute("SELECT COUNT(*) FROM task_execution_history WHERE status='failed' AND start_ts >= ?", (cutoff,)).fetchone()[0]
+bad_metrics = conn.execute("SELECT COUNT(*) FROM scheduler_metrics WHERE last_status IN ('error','missed')").fetchone()[0]
+if stale or failed or bad_metrics:
+    raise SystemExit(f'SCHEDULER_UNHEALTHY stale_running={{stale}} failed_1h={{failed}} bad_metrics={{bad_metrics}}')
+print('SCHEDULER_TRUTH_OK coverage=transactional_history+historical_metrics registry=current_process_not_observed')
+PYEOF"""),
+        # 当前进程至少要有启动注册回执，且启动至今不能出现注册/热重载同步失败。
+        ("调度注册", """since=$(systemctl show mory-assistant -p ActiveEnterTimestamp --value) || exit 2; test -n "$since" || { echo SCHEDULER_STARTUP_TIMESTAMP_UNAVAILABLE; exit 2; }; logs=$(journalctl -u mory-assistant --since "$since" --no-pager 2>&1) || { printf '%s\n' "$logs"; exit 2; }; ready=$(printf '%s\n' "$logs" | grep -E '任务调度器准备就绪，共注册 [0-9]+ 个调度任务' | tail -1); test -n "$ready" || { echo SCHEDULER_STARTUP_RECEIPT_MISSING; exit 2; }; failures=$(printf '%s\n' "$logs" | grep -E '任务注册失败|读取任务 .* 调度配置失败|移除已关闭任务 .* 失败' || true); test -z "$failures" || { printf '%s\n' "$failures"; exit 1; }; echo SCHEDULER_REGISTRY_OK coverage=startup_registry+reload_error_scan current_api_not_observed"""),
+        # root 执行面和敏感文件权限必须读回，不接受部署命令“应该成功”。
+        ("权限", f"""test "$(stat -c '%U:%G %a' /etc/systemd/system/mory-assistant.service)" = 'root:root 644' && test "$(stat -c '%U:%G %a' /etc/systemd/system/mory-dashboard.service)" = 'root:root 644' && test "$(stat -c '%a' {remote}/.env)" = '600' && test "$(stat -c '%a' {remote}/config.json)" = '600' && test "$(stat -c '%a' {remote}/mory.db)" = '600' && test "$(stat -c '%U:%G %a' /usr/local/lib/mory-assistant/vps_watchdog.py)" = 'root:root 755' && echo PERMISSIONS_OK"""),
     ]
+
+
+def verify_deployment(ssh, vps_path: str) -> bool:
+    """验证 VPS 运行态发布门禁；真实业务完成仍需受影响入口探针。"""
+    from version import VERSION as expected_version
+
+    checks = _deployment_verification_checks(vps_path)
 
     all_ok = True
     for name, cmd in checks:
         try:
             stdin, stdout, stderr = ssh.exec_command(cmd, timeout=15)
             out = stdout.read().decode('utf-8', errors='replace').strip()
+            err = stderr.read().decode('utf-8', errors='replace').strip()
+            exit_code = stdout.channel.recv_exit_status()
             logger.info(f"  [{name}] {out}")
+            if exit_code != 0 or err:
+                logger.error(f"  ❌ {name} 检查命令失败 rc={exit_code}: {err or out}")
+                all_ok = False
+                continue
             # 逐项检查是否通过
-            if name == "Health API":
-                if out != "200":
-                    logger.error(f"  ❌ Health API 返回 {out}，预期 200")
+            if name in {"Bot状态", "Dashboard状态"} and out != "active":
+                logger.error(f"  ❌ {name} 返回 {out!r}，预期 active")
+                all_ok = False
+            elif name == "Health API" and out != "200":
+                logger.error(f"  ❌ Health API 返回 {out}，预期 200")
+                all_ok = False
+            elif name == "运行版本" and out != expected_version:
+                logger.error(f"  ❌ VPS 版本 {out or 'none'}，预期 {expected_version}")
+                all_ok = False
+            elif name in {"Bot日志", "Dashboard日志"}:
+                if out != "STARTUP_LOG_CLEAN":
+                    logger.error(f"  ❌ {name}中发现错误")
                     all_ok = False
-            elif name == "Dashboard日志":
-                if "✅" not in out and out.strip():
-                    logger.error("  ❌ Dashboard 日志中发现错误")
-                    all_ok = False
+            elif name == "配置完整性" and out != "ALL CONFIG OK":
+                all_ok = False
+            elif name == "凭据键" and out != "ENV_KEYS_OK":
+                all_ok = False
+            elif name == "数据库完整性" and out != "DB_INTEGRITY_OK":
+                all_ok = False
+            elif name == "调度事实" and not out.startswith("SCHEDULER_TRUTH_OK"):
+                all_ok = False
+            elif name == "调度注册" and not out.startswith("SCHEDULER_REGISTRY_OK"):
+                all_ok = False
+            elif name == "权限" and out != "PERMISSIONS_OK":
+                all_ok = False
             elif 'MISSING' in out or 'inactive' in out.lower() or 'failed' in out.lower() or '未运行' in out:
                 all_ok = False
         except Exception as e:

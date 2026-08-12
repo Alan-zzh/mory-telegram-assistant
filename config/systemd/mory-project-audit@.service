@@ -1,0 +1,16 @@
+[Unit]
+Description=Mory project-local read-only audit (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@AUDIT_USER@
+WorkingDirectory=@PROJECT_ROOT@
+ExecStart=@PYTHON@ -X utf8 @PROJECT_ROOT@/scripts/project_audit_control.py --profile %i
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@PROJECT_ROOT@/runtime/audit-reports/project-automation

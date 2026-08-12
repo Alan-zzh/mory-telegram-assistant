@@ -214,6 +214,10 @@ DEAD_REMOTE_FILES = [
     "core/trendradar_news.py",
     "modules/predictive_patrol.py",
     "modules/stats_report.py",
+    # 旧健康/自动回滚入口会把 health 200 当整体健康并自动改生产，已由只读巡检控制面取代。
+    "scripts/health_check.py",
+    "scripts/auto_rollback.py",
+    "scripts/rollback_config.json",
     "docs/review-report-20260621.md",
     # 内部文档（曾误上传至 VPS，现已从 ROOT_FILES 移除；部署时清理远端旧版本，
     # 避免暴露安全策略/踩坑病历/模块清单）
@@ -268,6 +272,15 @@ ROOT_FILES = [
     # VERSION.md 是版本说明（非内部规则），保留上传供 VPS 端查版本。
 ]
 
+# 项目内只读巡检的可部署静态资产；精确白名单，禁止把真实 config/.env 一并上传。
+PROJECT_AUDIT_FILES = [
+    "config/project-audit.example.json",
+    "config/systemd/mory-project-audit@.service",
+    "config/systemd/mory-project-audit-production-truth.timer",
+    "config/systemd/mory-project-audit-drift.timer",
+    "config/systemd/mory-project-audit-monthly.timer",
+]
+
 # 需要上传到 /etc/systemd/system/ 的服务文件
 # [v5.31.2 整改] 只保留双核心服务；mory-media-* 是引用不存在的 `main.py --media`
 # 参数的坏桩（启动必崩），已从仓库删除，不再部署。
@@ -292,6 +305,10 @@ def _collect_upload_files():
     for f in ROOT_FILES:
         fp = ROOT / f
         if fp.exists():
+            files.append(f)
+    for f in PROJECT_AUDIT_FILES:
+        fp = ROOT / f
+        if fp.is_file():
             files.append(f)
     # 递归扫描子目录（按目录决定扩展名，默认 .py；i18n 等目录走 SCAN_DIR_EXTS）
     for dir_name in SCAN_DIRS:
@@ -745,7 +762,8 @@ def main() -> bool:
         try:
             deploy_ok = verify_deployment(client, VPS_PATH)
         except Exception as e:
-            print(f"  ⚠️ 验证脚本异常（非致命）：{e}")
+            deploy_ok = False
+            print(f"  ❌ 验证脚本异常，发布门禁失败：{e}")
 
     except Exception as e:
         print(f"\n❌ 部署过程异常：{e}")
@@ -774,7 +792,8 @@ def main() -> bool:
     # ── 输出最终结果 ──
     if deploy_ok:
         print("\n" + "=" * 60)
-        print("  ✅ 部署成功！")
+        print("  ✅ 部署运行态门禁通过！")
+        print("  ℹ️ 仍须按受影响入口完成真实业务探针，才能宣称业务闭环")
         print("=" * 60)
     elif not services_stopped:
         # deploy_ok=False 但服务在跑（验证发现问题但服务正常）

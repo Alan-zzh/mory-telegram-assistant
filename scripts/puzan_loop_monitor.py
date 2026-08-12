@@ -5,7 +5,7 @@
 只读 VPS 监控，6 层 + 腾讯云 Lighthouse API：
   L1 VPS 实例层（CPU/MEM/DISK/LOAD/NET）
   L2 服务进程层（systemd 双 active + journalctl 错误）
-  L3 应用健康层（/api/health + version 校验）
+  L3 应用健康层（/api/health liveness + 远端 version.py 校验）
   L4 业务指标层（task_execution_history/token_usage/llm_cost/conversion/orphan）
   L5 调度系统层（持久化四态 + scheduler_metrics + journal）
   L6 看门狗层（watchdog.log + v5312_monitor.log + cron）
@@ -25,6 +25,7 @@ import argparse
 import traceback
 import subprocess
 import atexit
+import shlex
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -307,49 +308,51 @@ def l2_service_check(client):
 
 # ============ L3 应用健康层 ============
 def l3_app_check(client):
-    """health/version/uptime 都从 /api/health 一个端点解析（health_api.py 仅暴露 /health 路由）"""
+    """分别核验 health liveness 与远端版本，禁止从 health 猜部署版本。"""
     details = {}
     status = "OK"
     try:
-        # health（响应内含 status + version）
-        h, _, _ = ssh_run(client, f"curl -s -m 5 {HEALTH_URL}", timeout=10)
-        details["health_raw"] = h[:300]
-        home_code, _, _ = ssh_run(
+        raw_health, health_err, health_rc = ssh_run(
             client,
-            f'curl -s -m 5 -o /dev/null -w "%{{http_code}}" http://localhost:6616/',
+            f"curl -sS -m 5 -w '\n%{{http_code}}' {HEALTH_URL}",
             timeout=10,
         )
-        details["home_http_code"] = home_code.strip()
+        health_body, separator, health_code = raw_health.rpartition("\n")
+        if not separator:
+            health_body, health_code = raw_health, ""
+        health_body = health_body.strip()
+        health_code = health_code.strip()
+        details["health_raw"] = health_body[:300]
+        details["health_http_code"] = health_code
 
-        # 从 health 响应解析 version（响应形如 {"status":"ok","version":"v5.31.4"}）
-        ver_ok = False
-        ver = ""
-        if h:
-            try:
-                vj = json.loads(h)
-                ver = vj.get("version") or vj.get("data", {}).get("version", "")
-            except Exception:
-                # 非合法 JSON，尝试文本匹配
-                pass
-            if not ver:
-                # 文本搜索 v5.xx
-                import re
-                m = re.search(r"v\d+\.\d+\.\d+", h)
-                if m:
-                    ver = m.group(0)
-            details["version"] = ver
-            ver_ok = (ver == EXPECTED_VERSION)
-        if not ver_ok:
-            status = "WARN"
-            details["_warn"] = details.get("_warn", "") + f"version_mismatch(expect={EXPECTED_VERSION}, got={ver or 'none'}); "
-
-        # health 校验
-        if '"ok"' not in h.lower() and '"status":"ok"' not in h.lower().replace(" ", ""):
+        health_ok = False
+        try:
+            health_ok = json.loads(health_body).get("status") == "ok"
+        except (AttributeError, json.JSONDecodeError):
+            health_ok = False
+        if health_rc != 0 or health_err or health_code != "200" or not health_ok:
             status = "CRITICAL"
-            details["_crit"] = "health_not_ok"
-        if home_code.strip() != "200":
-            status = "WARN" if status != "CRITICAL" else "CRITICAL"
-            details["_warn"] = details.get("_warn", "") + f"home_code={home_code.strip()}; "
+            details["_crit"] = (
+                f"health_not_ok(rc={health_rc}, http={health_code or 'none'}, "
+                f"error={health_err or 'none'})"
+            )
+
+        remote_dir = shlex.quote(str(REMOTE))
+        version_cmd = (
+            f"cd {remote_dir} && /usr/bin/python3 -c "
+            "'from version import VERSION; print(VERSION)'"
+        )
+        remote_version, version_err, version_rc = ssh_run(client, version_cmd, timeout=10)
+        remote_version = remote_version.strip()
+        details["version"] = remote_version
+        details["version_source"] = f"{REMOTE}/version.py"
+        if version_rc != 0 or version_err or remote_version != EXPECTED_VERSION:
+            if status != "CRITICAL":
+                status = "WARN"
+            details["_warn"] = details.get("_warn", "") + (
+                f"version_mismatch(expect={EXPECTED_VERSION}, got={remote_version or 'none'}, "
+                f"rc={version_rc}, error={version_err or 'none'}); "
+            )
     except Exception as e:
         status = "ERROR"
         details["_exc"] = f"{type(e).__name__}: {e}"
@@ -694,6 +697,7 @@ def run_single_round(round_no, total_rounds, log_file):
     # 异常收集
     exceptions = []
     need_review = []
+    layer_statuses = []
 
     # 单 SSH client 复用所有命令
     client = None
@@ -708,11 +712,12 @@ def run_single_round(round_no, total_rounds, log_file):
         lines.append(f"[AI_DEBUG_HISTORY_HINT] {hint}")
         lines.append("========================================")
         _append_log(log_file, "\n".join(lines))
-        return {"round": round_no, "ssh_fail": str(e)}
+        return {"round": round_no, "status": "evidence_gap", "ssh_fail": str(e)}
 
     try:
         # L1
         s1, d1 = l1_vps_check(client)
+        layer_statuses.append(s1)
         line1 = (f"[L1 VPS] STATUS={s1} | cpu={d1.get('cpu_usage','?')} | mem_avail={d1.get('mem_avail_pct','?')} | "
              f"disk={d1.get('disk_usage_pct','?')} | load1={d1.get('load1','?')} | net_conn={d1.get('net_conn','?')}")
         if "_warn" in d1: line1 += f" | WARN={d1['_warn']}"
@@ -723,6 +728,7 @@ def run_single_round(round_no, total_rounds, log_file):
 
         # L2
         s2, d2 = l2_service_check(client)
+        layer_statuses.append(s2)
         line2 = (f"[L2 SVC] mory-assistant={d2.get('mory-assistant','?')} | "
                  f"mory-dashboard={d2.get('mory-dashboard','?')} | "
                  f"errors_10min={'yes' if d2.get('mory-assistant_errors_10min') and d2.get('mory-assistant_errors_10min') != '(none)' else 'none'}")
@@ -734,9 +740,10 @@ def run_single_round(round_no, total_rounds, log_file):
 
         # L3
         s3, d3 = l3_app_check(client)
+        layer_statuses.append(s3)
         line3 = (f"[L3 APP] health={'ok' if 'ok' in d3.get('health_raw','').lower() else 'FAIL'} | "
                  f"version={d3.get('version','?')} | "
-                 f"home_status={d3.get('home_http_code','?')}")
+                 f"health_http={d3.get('health_http_code','?')}")
         if s3 != "OK":
             line3 += f" | WARN={d3.get('_warn','')}{d3.get('_crit','')}"
         print(line3); lines.append(line3)
@@ -747,6 +754,7 @@ def run_single_round(round_no, total_rounds, log_file):
 
         # L4
         s4, d4 = l4_biz_check(client)
+        layer_statuses.append(s4)
         line4 = (f"[L4 BIZ] task_1h={d4.get('task_1h','?')} | task_5min={d4.get('task_5min','?')} | "
                  f"token_1h={d4.get('token_usage_1h','?')} | token_5min={d4.get('token_usage_5min','?')} | "
                  f"token_cost_1h={d4.get('token_cost_1h_sum','?')} | "
@@ -759,6 +767,7 @@ def run_single_round(round_no, total_rounds, log_file):
 
         # L5
         s5, d5 = l5_scheduler_check(client)
+        layer_statuses.append(s5)
         line5 = (f"[L5 SCHD] failed_1h={d5.get('failed_1h','?')} | watchdog_usec={d5.get('watchdog_usec','?')}")
         if s5 != "OK":
             line5 += f" | WARN={d5.get('_warn','')}"
@@ -780,6 +789,7 @@ def run_single_round(round_no, total_rounds, log_file):
 
         # L6
         s6, d6 = l6_watchdog_check(client)
+        layer_statuses.append(s6)
         wd_tail_short = _short(d6.get("watchdog_log_tail", ""), 200)
         vm_tail_short = _short(d6.get("v5312_monitor_tail", ""), 200)
         alerts_short = _short(d6.get("v5312_alerts_tail", ""), 100)
@@ -836,7 +846,13 @@ def run_single_round(round_no, total_rounds, log_file):
     print(sep); lines.append(sep)
 
     _append_log(log_file, "\n".join(lines) + "\n")
-    return {"round": round_no, "status": "ok"}
+    if "ERROR" in layer_statuses:
+        receipt_status = "evidence_gap"
+    elif any(status in {"WARN", "CRITICAL"} for status in layer_statuses):
+        receipt_status = "failed"
+    else:
+        receipt_status = "pass"
+    return {"round": round_no, "status": receipt_status, "needs_review": need_review}
 
 
 def _short(v, n=120):
@@ -894,8 +910,8 @@ def main():
         print(f"# Appending to existing log: {log_file}")
 
     if args.once:
-        run_single_round(1, 1, log_file)
-        return
+        result = run_single_round(1, 1, log_file)
+        return {"pass": 0, "evidence_gap": 2, "failed": 3}[result["status"]]
 
     if args.loop:
         print(f"[LOOP MODE] 无限循环启动，间隔 {args.interval}s。按 Ctrl+C 终止。")
@@ -906,19 +922,26 @@ def main():
                 time.sleep(args.interval)
             run_single_round(i, 0, log_file)  # total=0 表示无限
             i += 1
-        return
+        return 0
 
     start = args.start_round
     total = args.rounds
+    results = []
     for i in range(start, total + 1):
         # 第 1 轮不 sleep；续跑模式（start>1）第 2 轮起也 sleep，保证与基线间隔正确
         if i > 1:
             print(f"[SLEEP] waiting {args.interval}s before round {i}...")
             time.sleep(args.interval)
-        run_single_round(i, total, log_file)
+        results.append(run_single_round(i, total, log_file))
 
     print(f"\n[DONE] {total - start + 1} rounds finished. Log: {log_file}")
+    statuses = {item["status"] for item in results}
+    if "failed" in statuses:
+        return 3
+    if "evidence_gap" in statuses:
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

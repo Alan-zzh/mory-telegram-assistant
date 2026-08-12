@@ -18,6 +18,51 @@ def test_loop_monitor_expected_version_tracks_runtime_version():
     assert puzan_loop_monitor.EXPECTED_VERSION == VERSION
 
 
+def test_app_layer_reads_remote_version_instead_of_health_payload(monkeypatch):
+    """health 只判 liveness；部署版本必须直接读取 VPS version.py。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    seen_commands = []
+
+    def _ssh_run(_client, command, timeout=10):
+        seen_commands.append(command)
+        if "curl -sS" in command:
+            return '{"status":"ok"}\n200', "", 0
+        if "from version import VERSION" in command:
+            return monitor.EXPECTED_VERSION, "", 0
+        raise AssertionError(command)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l3_app_check(object())
+
+    assert status == "OK"
+    assert details["health_http_code"] == "200"
+    assert details["version"] == monitor.EXPECTED_VERSION
+    assert details["version_source"].endswith("/version.py")
+    assert any("from version import VERSION" in command for command in seen_commands)
+
+
+def test_app_layer_does_not_trust_version_embedded_in_health(monkeypatch):
+    """即使 health 伪带正确版本，远端 version.py 不一致仍必须告警。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    def _ssh_run(_client, command, timeout=10):
+        if "curl -sS" in command:
+            return f'{{"status":"ok","version":"{monitor.EXPECTED_VERSION}"}}\n200', "", 0
+        if "from version import VERSION" in command:
+            return "v0.0.0", "", 0
+        raise AssertionError(command)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l3_app_check(object())
+
+    assert status == "WARN"
+    assert details["version"] == "v0.0.0"
+    assert "version_mismatch" in details["_warn"]
+
+
 def test_loop_monitor_warn_is_not_reported_as_all_normal(monkeypatch, tmp_path, capsys):
     """任一层 WARN 都必须进入最终建议，不能继续输出 all normal。"""
     from scripts import puzan_loop_monitor as monitor
@@ -59,12 +104,22 @@ def test_loop_monitor_warn_is_not_reported_as_all_normal(monkeypatch, tmp_path, 
         lambda: {"status": "ok", "instance_state": "RUNNING", "public_ip": "", "metrics_note": "test"},
     )
 
-    monitor.run_single_round(1, 1, tmp_path / "monitor.log")
+    receipt = monitor.run_single_round(1, 1, tmp_path / "monitor.log")
     output = capsys.readouterr().out
 
     assert "[RECOMMEND] [NEEDS_REVIEW]" in output
     assert "L6" in output
     assert "[RECOMMEND] all normal" not in output
+    assert receipt["status"] == "failed"
+
+
+def test_loop_monitor_ssh_failure_is_evidence_gap(monkeypatch, tmp_path):
+    from scripts import puzan_loop_monitor as monitor
+
+    monkeypatch.setattr(monitor, "make_ssh_client", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+    receipt = monitor.run_single_round(1, 1, tmp_path / "monitor.log")
+
+    assert receipt["status"] == "evidence_gap"
 
 
 def test_watchdog_layer_warns_when_cron_is_missing(monkeypatch):

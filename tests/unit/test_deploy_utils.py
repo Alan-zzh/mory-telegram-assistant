@@ -8,6 +8,15 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 
+class _FakeStream:
+    def __init__(self, text, exit_code=0):
+        self._text = text
+        self.channel = SimpleNamespace(recv_exit_status=lambda: exit_code)
+
+    def read(self):
+        return self._text.encode("utf-8")
+
+
 def test_dashboard_teardown_filter_is_exact_and_preserves_real_errors():
     from core.deploy_utils import filter_dashboard_teardown_noise
 
@@ -249,3 +258,94 @@ def test_runtime_permission_hardening_protects_credentials_and_watchdog():
     assert "grep -Fxc" in command
     assert "/tmp/mory-root-cron" not in command
     assert ".deploy-staging/root-cron.$$$$" in command
+
+
+def test_deployment_verification_checks_direct_version_truth_and_permissions():
+    from core.deploy_utils import _deployment_verification_checks
+
+    checks = dict(_deployment_verification_checks("/home/ubuntu/mory_assistant"))
+
+    assert "from version import VERSION" in checks["运行版本"]
+    assert "/api/health" in checks["Health API"]
+    assert "version" not in checks["Health API"].lower()
+    assert "TOKEN" not in checks["配置完整性"]
+    assert "API_KEY" not in checks["配置完整性"]
+    assert "TG_TOKEN" in checks["凭据键"]
+    assert "DASHSCOPE_KEY" in checks["凭据键"]
+    assert "ENV_KEYS_OK" in checks["凭据键"]
+    assert "task_execution_history" in checks["调度事实"]
+    assert "scheduler_metrics" in checks["调度事实"]
+    assert "DB_INTEGRITY_OK" in checks["数据库完整性"]
+    assert "root:root 644" in checks["权限"]
+    assert "root:root 755" in checks["权限"]
+    assert "STARTUP_TIMESTAMP_UNAVAILABLE" in checks["Bot日志"]
+    assert "exit 2" in checks["Bot日志"]
+    assert "failed_1h" in checks["调度事实"]
+    assert "bad_metrics" in checks["调度事实"]
+    assert "任务调度器准备就绪" in checks["调度注册"]
+    assert "current_api_not_observed" in checks["调度注册"]
+
+
+def test_deployment_health_200_cannot_hide_version_mismatch():
+    from core.deploy_utils import verify_deployment
+
+    def exec_command(command, timeout=15):
+        if "is-active" in command:
+            output = "active"
+        elif "/api/health" in command:
+            output = "200"
+        elif "from version import VERSION" in command:
+            output = "v0.0.0"
+        elif "SCHEDULER_REGISTRY_OK" in command:
+            output = "SCHEDULER_REGISTRY_OK coverage=test"
+        elif "journalctl" in command:
+            output = "STARTUP_LOG_CLEAN"
+        elif "ALL CONFIG OK" in command:
+            output = "ALL CONFIG OK"
+        elif "ENV_KEYS_OK" in command:
+            output = "ENV_KEYS_OK"
+        elif "DB_INTEGRITY_OK" in command:
+            output = "DB_INTEGRITY_OK"
+        elif "SCHEDULER_TRUTH_OK" in command:
+            output = "SCHEDULER_TRUTH_OK coverage=transactional_history+historical_metrics"
+        elif "PERMISSIONS_OK" in command:
+            output = "PERMISSIONS_OK"
+        else:
+            raise AssertionError(command)
+        return None, _FakeStream(output), _FakeStream("")
+
+    ssh = SimpleNamespace(exec_command=exec_command)
+
+    assert verify_deployment(ssh, "/home/ubuntu/mory_assistant") is False
+
+
+def test_deployment_journal_evidence_gap_cannot_pass():
+    from core.deploy_utils import verify_deployment
+
+    def exec_command(command, timeout=15):
+        if "is-active" in command:
+            output, exit_code = "active", 0
+        elif "/api/health" in command:
+            output, exit_code = "200", 0
+        elif "from version import VERSION" in command:
+            from version import VERSION
+            output, exit_code = VERSION, 0
+        elif "SCHEDULER_REGISTRY_OK" in command:
+            output, exit_code = "SCHEDULER_REGISTRY_OK coverage=test", 0
+        elif "journalctl" in command:
+            output, exit_code = "STARTUP_TIMESTAMP_UNAVAILABLE", 2
+        elif "ALL CONFIG OK" in command:
+            output, exit_code = "ALL CONFIG OK", 0
+        elif "ENV_KEYS_OK" in command:
+            output, exit_code = "ENV_KEYS_OK", 0
+        elif "DB_INTEGRITY_OK" in command:
+            output, exit_code = "DB_INTEGRITY_OK", 0
+        elif "SCHEDULER_TRUTH_OK" in command:
+            output, exit_code = "SCHEDULER_TRUTH_OK coverage=test", 0
+        elif "PERMISSIONS_OK" in command:
+            output, exit_code = "PERMISSIONS_OK", 0
+        else:
+            raise AssertionError(command)
+        return None, _FakeStream(output, exit_code), _FakeStream("")
+
+    assert verify_deployment(SimpleNamespace(exec_command=exec_command), "/home/ubuntu/mory_assistant") is False

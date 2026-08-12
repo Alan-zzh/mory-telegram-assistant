@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Mory production-truth evidence collection
+
+[Timer]
+OnCalendar=*-*-* 03:20:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=10m
+Unit=mory-project-audit@production-truth.service
+
+[Install]
+WantedBy=timers.target

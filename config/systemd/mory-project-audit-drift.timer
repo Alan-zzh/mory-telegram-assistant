@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Mory workspace/production drift audit
+
+[Timer]
+OnCalendar=Mon *-*-* 04:10:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=15m
+Unit=mory-project-audit@drift.service
+
+[Install]
+WantedBy=timers.target
