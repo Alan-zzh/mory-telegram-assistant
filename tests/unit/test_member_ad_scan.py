@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """存量成员扫描必须复用当前规则、默认只报告并拒绝零覆盖假绿。"""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -223,3 +224,81 @@ def test_report_fingerprint_detects_tampering():
 
     report["counts"]["checked"] = 10
     assert report["fingerprint"] != _fingerprint(report)
+
+
+def test_profile_fetch_preserves_unknown_state_without_crashing(monkeypatch):
+    import asyncio
+
+    from scripts.scan_group import _fetch_member_profile
+
+    class _Bot:
+        def get_chat(self, _uid):
+            raise RuntimeError("telegram unavailable")
+
+    class _App:
+        async def get_chat(self, _uid):
+            return SimpleNamespace(bio="fallback bio")
+
+    monkeypatch.setattr(
+        "scripts.scan_group._personal_channel_messages",
+        lambda *_args, **_kwargs: _async_value(([], False)),
+    )
+    result = asyncio.run(_fetch_member_profile(_Bot(), _App(), _User()))
+
+    assert result["profile_error"] is True
+    assert result["bio"] == "fallback bio"
+    assert result["personal_channel_requested"] is False
+
+
+def test_report_quality_fails_closed_on_incomplete_profile_coverage():
+    from collections import Counter
+
+    from scripts.scan_group import _assess_report_quality
+
+    counts = Counter(
+        enumerated=100,
+        profile_requests=80,
+        profile_errors=9,
+        checked=80,
+        personal_channel_requests=10,
+        personal_channel_post_errors=0,
+    )
+    result = _assess_report_quality(counts, expected_members=100, limited=False)
+
+    assert result["status"] == "failed"
+    assert result["profile_coverage"] == pytest.approx(71 / 80)
+    assert result["errors"] == ["profile_coverage_below_90_percent:0.8875"]
+
+
+def test_report_quality_reports_each_coverage_dimension():
+    from collections import Counter
+
+    from scripts.scan_group import _assess_report_quality
+
+    counts = Counter(
+        enumerated=95,
+        profile_requests=90,
+        profile_errors=4,
+        checked=90,
+        personal_channel_requests=20,
+        personal_channel_post_errors=1,
+    )
+    result = _assess_report_quality(counts, expected_members=100, limited=False)
+
+    assert result["status"] == "success"
+    assert result["coverage"] == pytest.approx(0.95)
+    assert result["profile_coverage"] == pytest.approx(86 / 90)
+    assert result["evaluation_coverage"] == 1.0
+    assert result["personal_channel_coverage"] == pytest.approx(0.95)
+
+
+def test_apply_path_skips_personal_channel_unknown_before_evaluation():
+    source = Path("scripts/scan_group.py").read_text(encoding="utf-8")
+    unknown_branch = source.index('"reason": "personal_channel_unknown"')
+    evaluation = source.index("decision = evaluator.evaluate(", unknown_branch)
+
+    assert "continue" in source[unknown_branch:evaluation]
+
+
+async def _async_value(value):
+    return value

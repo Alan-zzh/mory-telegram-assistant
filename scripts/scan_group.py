@@ -144,6 +144,99 @@ async def _personal_channel_messages(app, chat_info) -> tuple[list[Any], bool]:
         return [], True
 
 
+async def _fetch_member_profile(bot, app, user, delay: float = 0.0) -> dict[str, Any]:
+    """并发安全地读取一个成员的完整资料；所有未知状态显式返回。"""
+    uid = int(user.id)
+    chat_info = None
+    bio = str(getattr(user, "bio", "") or "")
+    profile_error = False
+    if delay > 0:
+        # 同一批请求按固定间隔起跑，避免有界并发变成瞬时洪峰。
+        await asyncio.sleep(delay)
+    try:
+        chat_info = await asyncio.to_thread(bot.get_chat, uid)
+        bio = str(getattr(chat_info, "bio", "") or bio)
+    except Exception as exc:
+        profile_error = True
+        logger.debug("[全量扫描] get_chat失败 uid=%s err=%s", uid, exc)
+        if not bio:
+            try:
+                full_user = await app.get_chat(uid)
+                bio = str(getattr(full_user, "bio", "") or "")
+            except Exception:
+                pass
+
+    personal_channel_requested = bool(
+        int(getattr(getattr(chat_info, "personal_chat", None), "id", 0) or 0)
+    )
+    personal_messages, channel_error = await _personal_channel_messages(app, chat_info)
+    return {
+        "user": user,
+        "chat_info": chat_info,
+        "bio": bio,
+        "profile_error": profile_error,
+        "personal_messages": personal_messages,
+        "personal_channel_requested": personal_channel_requested,
+        "channel_error": channel_error,
+    }
+
+
+def _assess_report_quality(
+    counts: Counter[str], expected_members: int, limited: bool
+) -> dict[str, Any]:
+    """分别评估枚举、资料读取和资料判定覆盖，禁止局部结果包装成功。"""
+    enumerated = int(counts.get("enumerated", 0))
+    profile_requests = int(counts.get("profile_requests", 0))
+    profile_errors = int(counts.get("profile_errors", 0))
+    checked = int(counts.get("checked", 0))
+    personal_requests = int(counts.get("personal_channel_requests", 0))
+    personal_errors = int(counts.get("personal_channel_post_errors", 0))
+
+    coverage = enumerated / expected_members if expected_members else 0.0
+    profile_coverage = (
+        (profile_requests - profile_errors) / profile_requests if profile_requests else 1.0
+    )
+    evaluation_coverage = checked / profile_requests if profile_requests else 1.0
+    personal_channel_coverage = (
+        (personal_requests - personal_errors) / personal_requests
+        if personal_requests
+        else 1.0
+    )
+
+    status = "success"
+    errors: list[str] = []
+    if enumerated == 0:
+        status = "failed"
+        errors.append("zero_members_enumerated")
+    if expected_members and not limited and coverage < 0.90:
+        status = "failed"
+        errors.append(f"coverage_below_90_percent:{coverage:.4f}")
+    if profile_requests and profile_coverage < 0.90:
+        status = "failed"
+        errors.append(f"profile_coverage_below_90_percent:{profile_coverage:.4f}")
+    if profile_requests and evaluation_coverage < 1.0:
+        status = "failed"
+        errors.append(f"evaluation_coverage_incomplete:{evaluation_coverage:.4f}")
+    if personal_requests and personal_channel_coverage < 0.90:
+        status = "failed"
+        errors.append(
+            "personal_channel_coverage_below_90_percent:"
+            f"{personal_channel_coverage:.4f}"
+        )
+    if limited:
+        status = "partial"
+        errors.append("max_members_limit_active")
+
+    return {
+        "status": status,
+        "errors": errors,
+        "coverage": coverage,
+        "profile_coverage": profile_coverage,
+        "evaluation_coverage": evaluation_coverage,
+        "personal_channel_coverage": personal_channel_coverage,
+    }
+
+
 async def _resolve_group_ref(app, bot, group_id: int):
     chat_info = bot.get_chat(group_id)
     username = str(getattr(chat_info, "username", "") or "")
@@ -172,6 +265,48 @@ async def _report_scan(args) -> dict[str, Any]:
         admin_ids.add(int((await app.get_me()).id))
         exempt_ids = configured_exempt_ids(config)
 
+        pending_profiles: list[Any] = []
+
+        async def consume_profiles() -> None:
+            if not pending_profiles:
+                return
+            profiles = await asyncio.gather(*pending_profiles)
+            pending_profiles.clear()
+            for profile in profiles:
+                user = profile["user"]
+                uid = int(user.id)
+                if profile["profile_error"]:
+                    counts["profile_errors"] += 1
+                if profile["personal_channel_requested"]:
+                    counts["personal_channel_requests"] += 1
+                if profile["channel_error"]:
+                    counts["personal_channel_post_errors"] += 1
+
+                decision = evaluator.evaluate(
+                    user=user,
+                    chat_id=group_id,
+                    chat_info=profile["chat_info"],
+                    bio=profile["bio"],
+                    personal_channel_messages=profile["personal_messages"],
+                    review_avatar=True,
+                    review_avatar_without_weak_signal=bool(args.avatar_all),
+                    message_limit=args.message_limit,
+                )
+                counts["checked"] += 1
+                if decision.get("is_ad"):
+                    counts["high_confidence"] += 1
+                    counts[f"source_{decision.get('source', 'unknown')}"] += 1
+                    candidates.append({"uid": uid, **decision})
+                elif decision.get("weak_signals"):
+                    counts["weak_only"] += 1
+
+            logger.info(
+                "[全量扫描] enumerated=%s checked=%s high_confidence=%s",
+                counts["enumerated"],
+                counts["checked"],
+                counts["high_confidence"],
+            )
+
         async for member in app.get_chat_members(group_ref):
             if args.max_members and counts["enumerated"] >= args.max_members:
                 counts["limited"] = 1
@@ -191,83 +326,43 @@ async def _report_scan(args) -> dict[str, Any]:
             if _is_blacklisted(db, uid):
                 counts["already_blacklisted"] += 1
                 continue
-
-            chat_info = None
-            bio = str(getattr(user, "bio", "") or "")
-            try:
-                chat_info = bot.get_chat(uid)
-                bio = str(getattr(chat_info, "bio", "") or bio)
-            except Exception as exc:
-                counts["profile_errors"] += 1
-                logger.debug("[全量扫描] get_chat失败 uid=%s err=%s", uid, exc)
-                if not bio:
-                    try:
-                        full_user = await app.get_chat(uid)
-                        bio = str(getattr(full_user, "bio", "") or "")
-                    except Exception:
-                        pass
-
-            personal_messages, channel_error = await _personal_channel_messages(app, chat_info)
-            if channel_error:
-                counts["personal_channel_post_errors"] += 1
-
-            decision = evaluator.evaluate(
-                user=user,
-                chat_id=group_id,
-                chat_info=chat_info,
-                bio=bio,
-                personal_channel_messages=personal_messages,
-                review_avatar=True,
-                review_avatar_without_weak_signal=bool(args.avatar_all),
-                message_limit=args.message_limit,
-            )
-            counts["checked"] += 1
-            if decision.get("is_ad"):
-                counts["high_confidence"] += 1
-                counts[f"source_{decision.get('source', 'unknown')}"] += 1
-                candidates.append({"uid": uid, **decision})
-            elif decision.get("weak_signals"):
-                counts["weak_only"] += 1
-
-            if counts["enumerated"] % 200 == 0:
-                logger.info(
-                    "[全量扫描] enumerated=%s checked=%s high_confidence=%s",
-                    counts["enumerated"],
-                    counts["checked"],
-                    counts["high_confidence"],
+            counts["profile_requests"] += 1
+            pending_profiles.append(
+                _fetch_member_profile(
+                    bot,
+                    app,
+                    user,
+                    args.delay * len(pending_profiles),
                 )
-            if args.delay > 0:
-                await asyncio.sleep(args.delay)
+            )
+            if len(pending_profiles) >= args.profile_concurrency:
+                await consume_profiles()
 
-    coverage = counts["enumerated"] / expected_members if expected_members else 0.0
-    status = "success"
-    errors = []
-    if counts["enumerated"] == 0:
-        status = "failed"
-        errors.append("zero_members_enumerated")
-    if expected_members and not args.max_members and coverage < 0.90:
-        status = "failed"
-        errors.append(f"coverage_below_90_percent:{coverage:.4f}")
-    if args.max_members:
-        status = "partial"
-        errors.append("max_members_limit_active")
+        await consume_profiles()
+
+    quality = _assess_report_quality(counts, expected_members, bool(args.max_members))
 
     report = {
         "schema": SCHEMA,
         "mode": "report",
-        "status": status,
+        "status": quality["status"],
         "version": VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_ts": int(time.time()),
         "duration_seconds": int(time.time()) - started,
         "chat_id": group_id,
         "expected_members": expected_members,
-        "coverage": round(coverage, 6),
+        "coverage": round(quality["coverage"], 6),
+        "profile_coverage": round(quality["profile_coverage"], 6),
+        "evaluation_coverage": round(quality["evaluation_coverage"], 6),
+        "personal_channel_coverage": round(
+            quality["personal_channel_coverage"], 6
+        ),
         "external_auxiliary_signals_used": False,
         "avatar_mode": "all" if args.avatar_all else "weak-signal-candidates",
         "message_limit": args.message_limit,
         "counts": dict(counts),
-        "errors": errors,
+        "errors": quality["errors"],
         "candidates": candidates,
     }
     report["fingerprint"] = _fingerprint(report)
@@ -334,6 +429,19 @@ async def _apply_report(args) -> dict[str, Any]:
             personal_messages, channel_error = await _personal_channel_messages(app, chat_info)
             if channel_error:
                 counts["personal_channel_post_errors"] += 1
+                counts["personal_channel_unknown"] += 1
+                receipts.append(
+                    {
+                        "uid": uid,
+                        "status": "skipped",
+                        "reason": "personal_channel_unknown",
+                    }
+                )
+                logger.warning(
+                    "[扫描应用] 个人频道证据不可确认 uid=%s，按未知状态跳过",
+                    uid,
+                )
+                continue
 
             decision = evaluator.evaluate(
                 user=user,
@@ -406,6 +514,7 @@ def _parse_args():
     parser.add_argument("--apply-report", help="复核并应用指定报告中的高置信候选")
     parser.add_argument("--message-limit", type=int, default=20)
     parser.add_argument("--delay", type=float, default=0.05)
+    parser.add_argument("--profile-concurrency", type=int, default=8)
     parser.add_argument("--avatar-all", action="store_true", help="昂贵：复核每个成员头像")
     parser.add_argument("--max-members", type=int, default=0, help="仅调试；启用后报告不可应用")
     return parser.parse_args()
@@ -413,6 +522,8 @@ def _parse_args():
 
 def main() -> int:
     args = _parse_args()
+    if not 1 <= args.profile_concurrency <= 16:
+        raise ValueError("profile_concurrency_must_be_1_to_16")
     if args.apply_report and args.max_members:
         raise ValueError("apply_report_does_not_accept_max_members")
     if args.apply_report:
