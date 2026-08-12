@@ -68,6 +68,7 @@ class _SQLiteDB:
         "新澳门六叔公单子有量，有庄收吗？",
         "新澳六彩盒单子有量找庄合作",
         "女大一枚，有户外露出小癖好,露 Q裙 1093995052 可以约哦 BFG",
+        "Q裙 1102445053 开课｜00后新下海｜自带科室·配合听话 kwPb",
     ],
 )
 def test_production_ad_first_message_persists_unified_enforcement_state_in_sqlite(monkeypatch, text):

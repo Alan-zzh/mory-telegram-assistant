@@ -444,6 +444,9 @@ def test_context_limited_obfuscated_templates_do_not_ban_ambiguous_normal_text(
         "户外露出，可以约，Q裙 1093995052，摄影服装订单号",
         "摄影业务：户外露出，可以约，Q裙 1093995052，服装订单号",
         "户外露出小癖好，可以约，Q裙 109  399 5052",
+        "Q裙 1102445053 开课｜00后新下海｜自带科室·配合听话 kwPb",
+        "q.裙 110 244 5053｜零零后新-下-海｜配 合 听 话",
+        "扣郡号-1O92445O53 新下海，自带科室，配合听话",
     ],
 )
 def test_screenshot_qq_group_contact_variants_trigger_immediate_ban(detector, text):
@@ -470,6 +473,10 @@ def test_screenshot_qq_group_contact_variants_trigger_immediate_ban(detector, te
         "小癖好是户外摄影，可以约周末拍照，Q裙订单号1093995052",
         "户外露肩上衣出售，可以预约时间取货，Q裙 1093995052 是服装订单号",
         "户外露出主题摄影服装，可以约时间取货，Q裙 1093995052 是服装订单号",
+        "班级Q裙 1102445053，Python 课程明晚开课",
+        "Q裙 1102445053 是服装课程订单号，00后学生一起上课",
+        "00后潜水员新下海训练，Q裙 1102445053 报名潜水课",
+        "海训开课通知：配合教练、认真听话，Q裙 1102445053",
     ],
 )
 def test_qq_group_contact_variants_do_not_ban_normal_context(detector, text):

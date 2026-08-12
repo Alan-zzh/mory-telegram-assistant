@@ -321,6 +321,22 @@ _QQ_SKIRT_NORMAL_PHOTO_ORDER_RE = re.compile(
     rf"可{_QQ_SKIRT_NOISE}(?:以{_QQ_SKIRT_NOISE})?约[\s\S]{{0,8}}(?:时间)?取货"
 )
 _QQ_SKIRT_NORMAL_ORDER_SUFFIX_RE = re.compile(r"^\s*[，,]?\s*是\s*服装订单号")
+_QQ_SKIRT_YOUNG_NEW_ENTRY_RE = re.compile(
+    rf"(?:0{_QQ_SKIRT_NOISE}0|零{_QQ_SKIRT_NOISE}零){_QQ_SKIRT_NOISE}后"
+    rf"[\s\S]{{0,8}}新{_QQ_SKIRT_NOISE}下{_QQ_SKIRT_NOISE}海",
+    re.IGNORECASE,
+)
+_QQ_SKIRT_NEW_ENTRY_RE = re.compile(
+    rf"新{_QQ_SKIRT_NOISE}下{_QQ_SKIRT_NOISE}海",
+    re.IGNORECASE,
+)
+_QQ_SKIRT_OBEDIENCE_RE = re.compile(
+    rf"配{_QQ_SKIRT_NOISE}合[\s\S]{{0,6}}听{_QQ_SKIRT_NOISE}话",
+    re.IGNORECASE,
+)
+_QQ_SKIRT_NORMAL_SEA_CONTEXT_RE = re.compile(
+    r"潜水|游泳|海训|救援|航海|海钓|捕鱼|渔业|船员|水下摄影|潜水员"
+)
 
 
 def _is_sexual_qq_skirt_invite(msg: str) -> bool:
@@ -334,6 +350,22 @@ def _is_sexual_qq_skirt_invite(msg: str) -> bool:
             and _QQ_SKIRT_NORMAL_ORDER_SUFFIX_RE.search(msg[marker.end():marker.end() + 24])
         )
         if not _QQ_SKIRT_STRONG_INVITE_RE.search(window) and normal_photo_order:
+            continue
+        return True
+    return False
+
+
+def _is_young_new_entry_qq_skirt_recruit(msg: str) -> bool:
+    """识别“Q裙群号 + 00后新下海/配合听话”成人招揽模板。"""
+    for marker in _QQ_SKIRT_MARKER_RE.finditer(msg):
+        window = msg[max(0, marker.start() - 80):min(len(msg), marker.end() + 80)]
+        young_new_entry = bool(_QQ_SKIRT_YOUNG_NEW_ENTRY_RE.search(window))
+        new_entry = bool(_QQ_SKIRT_NEW_ENTRY_RE.search(window))
+        obedience = bool(_QQ_SKIRT_OBEDIENCE_RE.search(window))
+        if not young_new_entry and not (new_entry and obedience):
+            continue
+        # “下海”也可能是潜水、海训等正常语境；只有额外出现“配合听话”才覆盖豁免。
+        if _QQ_SKIRT_NORMAL_SEA_CONTEXT_RE.search(window) and not obedience:
             continue
         return True
     return False
@@ -903,13 +935,16 @@ class AdDetector:
             total += weight
             hit_dimensions.append(f"灰色产业(+{weight})")
             logger.info("[AD] 彩票交易三要素命中: 权重=+%s, 消息=%s", weight, msg[:80])
-        if _is_sexual_qq_skirt_invite(msg) and not any(
+        if (
+            _is_sexual_qq_skirt_invite(msg)
+            or _is_young_new_entry_qq_skirt_recruit(msg)
+        ) and not any(
             dimension.startswith("联系方式/引流") for dimension in hit_dimensions
         ):
             weight = BUILTIN_KEYWORD_GROUPS["contact_info"]["weight"]
             total += weight
             hit_dimensions.append(f"联系方式/引流(+{weight})")
-            logger.info("[AD] 露出邀约 q裙三要素命中: 权重=+%s, 消息=%s", weight, msg[:80])
+            logger.info("[AD] 色情招揽 q裙组合命中: 权重=+%s, 消息=%s", weight, msg[:80])
         if total > 0:
             logger.info(f"[AD] 内容评分结果: 总分={total}, 命中维度={hit_dimensions}, 消息={msg[:80]}")
         return total, hit_dimensions
