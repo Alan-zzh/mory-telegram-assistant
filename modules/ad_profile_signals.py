@@ -218,7 +218,12 @@ def _detect_personal_channel_ad(parts: list[str]) -> dict:
     return {"is_ad": strong, "anchors": anchors}
 
 
-def _personal_channel_parts(bot, chat_info, user_id: int = 0) -> tuple[list[str], int]:
+def _personal_channel_parts(
+    bot,
+    chat_info,
+    user_id: int = 0,
+    personal_channel_messages=None,
+) -> tuple[list[str], int]:
     """读取 personal_chat 的资料和最近帖子正文/图片 caption。"""
     personal_chat = getattr(chat_info, "personal_chat", None) if chat_info else None
     if not personal_chat:
@@ -243,15 +248,18 @@ def _personal_channel_parts(bot, chat_info, user_id: int = 0) -> tuple[list[str]
 
     # Telegram 资料卡展示的是个人频道最近帖子，而非频道 description。
     # 只读最近 3 条即可覆盖资料卡预览，失败时保留标题/简介证据降级判断。
-    if user_id and bot and hasattr(bot, "get_user_personal_chat_messages"):
+    messages = list(personal_channel_messages or [])
+    if not messages and user_id and bot and hasattr(bot, "get_user_personal_chat_messages"):
         try:
-            for message in bot.get_user_personal_chat_messages(user_id, 3) or []:
-                for attr in ("text", "caption"):
-                    value = str(getattr(message, attr, "") or "").strip()
-                    if value and value not in parts:
-                        parts.append(value[:1500])
+            messages = list(bot.get_user_personal_chat_messages(user_id, 3) or [])
         except Exception as e:
             logger.debug(f"[AD] 获取个人资料关联频道最近帖子失败: uid={user_id} err={e}")
+
+    for message in messages[:3]:
+        for attr in ("text", "caption"):
+            value = str(getattr(message, attr, "") or "").strip()
+            if value and value not in parts:
+                parts.append(value[:1500])
     return parts, channel_id
 
 
@@ -261,6 +269,7 @@ def detect_profile_ad_signal(
     bio: str = "",
     config: dict | None = None,
     chat_info=None,
+    personal_channel_messages=None,
 ) -> dict:
     """
     检测用户资料层广告信号。
@@ -294,7 +303,12 @@ def detect_profile_ad_signal(
         if not bio:
             bio = getattr(chat_info, "bio", "") or ""
 
-    personal_parts, personal_chat_id = _personal_channel_parts(bot, chat_info, int(uid or 0))
+    personal_parts, personal_chat_id = _personal_channel_parts(
+        bot,
+        chat_info,
+        int(uid or 0),
+        personal_channel_messages=personal_channel_messages,
+    )
 
     sticker_texts = _sticker_texts(bot, status_ids)
 

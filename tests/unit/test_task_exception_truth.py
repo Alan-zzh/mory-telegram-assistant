@@ -131,7 +131,7 @@ def test_startup_member_scan_db_lock_is_not_zero_user_success(monkeypatch):
         _ClaimedTransaction,
     )
     task = StartupMemberScanTask(SimpleNamespace(
-        config={"GROUP_ID": -1001},
+        config={"GROUP_ID": -1001, "STARTUP_MEMBER_SCAN_ENABLED": True},
         bot=_StartupBot(),
         db=SimpleNamespace(conn=SimpleNamespace(execute=_locked_error)),
     ))
@@ -170,7 +170,12 @@ def test_startup_member_scan_enforcement_failure_reaches_scheduler(monkeypatch):
             return SimpleNamespace(bio="广告")
 
     task = StartupMemberScanTask(SimpleNamespace(
-        config={"GROUP_ID": -1001, "ADMIN_ID": 1},
+        config={
+            "GROUP_ID": -1001,
+            "ADMIN_ID": 1,
+            "STARTUP_MEMBER_SCAN_ENABLED": True,
+            "STARTUP_MEMBER_SCAN_ENFORCE": True,
+        },
         bot=_Bot(),
         db=SimpleNamespace(conn=_Conn()),
     ))
