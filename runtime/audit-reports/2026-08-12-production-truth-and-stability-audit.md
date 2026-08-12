@@ -63,7 +63,7 @@
 
 ## 发布状态
 
-当前：**v5.38.37 已部署并独立读回验收**。
+当前：**v5.38.38 已部署并独立读回验收**。
 
 - 部署器完成 406/406 个生产文件上传、安全配置合并、死代码删除、权限加固及双服务重启；远端 406 个文件 SHA256 与本地逐一比对，`mismatches=0`。
 - `mory-assistant` PID 3822510、`mory-dashboard` PID 3822511 于 2026-08-12 23:02:38 CST 启动，均 `active/running`、`NRestarts=0`；`/api/health` HTTP 200，启动日志明确为 v5.38.37。
@@ -72,4 +72,4 @@
 - SQLite 保持 WAL，`integrity_check=ok`、`foreign_key_check=[]`；新进程启动后的分钟级任务持续成功，无新 CRITICAL/ERROR/AI 头像解析异常。
 - Dashboard 旧 gevent worker 在切换时仍记录一次 `greenlet is being finalized`，发生于旧 PID 3701665；新 master/worker 正常启动且 health 200。该退出噪声不计为业务故障，但保留为上游运行时观察项。
 
-v5.38.38 发布候选补充：生产实机确认 `/usr/bin/python3` 当前实际加载 requirements.lock 对应的 Gunicorn 21.2.0 / gevent 24.11.1；部署器已改为重启前精确读回版本，缺失、漂移或安装失败均 fail-closed，不再以“能 import”冒充依赖一致。
+v5.38.38 最终验收：生产实机 `/usr/bin/python3` 精确加载 requirements.lock 对应的 Gunicorn 21.2.0 / gevent 24.11.1；新进程 PID 3859617/3859618 于 23:27:49 CST 启动，双服务 active、NRestarts=0、health 200。再次比对 406/406 文件 SHA256 零差异，SQLite 完整，权限未回退；实机 Dashboard 日志经精确过滤后为 `FILTERED_NO_ERRORS`。
