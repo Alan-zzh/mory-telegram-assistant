@@ -12,6 +12,8 @@
 import io
 import json
 import os
+import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -39,6 +41,31 @@ import paramiko
 
 # 项目根目录
 ROOT = Path(__file__).resolve().parent
+
+
+def _locked_dashboard_versions() -> dict:
+    """从唯一依赖锁读取 Dashboard 运行时精确版本。"""
+    lock_text = (ROOT / "requirements.lock").read_text(encoding="utf-8")
+    versions = {}
+    for package in ("gunicorn", "gevent"):
+        match = re.search(rf"(?m)^{package}==([^\s\\]+)", lock_text)
+        if not match:
+            raise RuntimeError(f"requirements.lock 缺少 {package} 精确版本")
+        versions[package] = match.group(1)
+    return versions
+
+
+def _dashboard_runtime_probe_command() -> str:
+    """生成生产运行解释器的依赖锁断言命令。"""
+    expected = _locked_dashboard_versions()
+    code = (
+        "from importlib.metadata import version; "
+        f"expected={expected!r}; "
+        "actual={name:version(name) for name in expected}; "
+        "assert actual == expected, f'LOCK_MISMATCH expected={expected} actual={actual}'; "
+        "print('DASHBOARD_RUNTIME_LOCK_OK', actual)"
+    )
+    return f"cd {shlex.quote(VPS_PATH)} && python3 -c {shlex.quote(code)}"
 
 # 导入部署工具
 sys.path.insert(0, str(ROOT))
@@ -538,24 +565,24 @@ def main() -> bool:
                 except Exception as e:
                     print(f"  ⚠️ {extra} 上传失败：{e}")
 
-        # [v5.31.4 修复] pip 安装改为快速预检 + 非致命
-        # 先判断依赖是否已满足（通过导入检查），跳过慢速网络安装，避免与工具超时竞态
+        # 先验证关键导入与 Dashboard 运行时精确锁版本；漂移时按唯一 lock 同步。
         print("\n  安装/同步 Python 依赖 ...")
         dep_check = (
             f"cd {VPS_PATH} && python3 -c 'import telebot, flask, gevent, gunicorn, apscheduler, "
             "nudenet, onnxruntime, cv2; "
-            'print(\"DEPS_OK\")' "' 2>/dev/null"
+            'print(\"DEPS_IMPORT_OK\")' "' 2>/dev/null && "
+            f"{_dashboard_runtime_probe_command()}"
         )
         try:
             stdin, stdout, stderr = client.exec_command(dep_check, timeout=15)
             dep_out = stdout.read().decode("utf-8", errors="replace").strip()
         except Exception as e:
             dep_out = ""
-            print(f"  ⚠️ 依赖预检异常（非致命）：{e}")
-        if "DEPS_OK" in dep_out:
-            print("  ✅ 依赖已满足，跳过 pip install（避免网络超时）")
+            print(f"  ⚠️ 依赖预检异常：{e}")
+        if "DEPS_IMPORT_OK" in dep_out and "DASHBOARD_RUNTIME_LOCK_OK" in dep_out:
+            print("  ✅ 依赖已满足且 Dashboard 运行时与锁定版本一致")
         else:
-            print("  ⏳ 依赖未满足，执行 pip install（非致命，失败不阻断部署）...")
+            print("  ⏳ 依赖缺失或版本漂移，按 requirements.lock 同步 ...")
             try:
                 install_cmd = (
                     f"cd {VPS_PATH} && "
@@ -569,10 +596,17 @@ def main() -> bool:
                 if exit_code == 0:
                     print("  ✅ requirements.lock 已安装")
                 else:
-                    print(f"  ⚠️ pip install 返回码 {exit_code}（非致命，继续部署）：")
-                    print("\n".join((out + "\n" + err).splitlines()[-20:]))
+                    tail = "\n".join((out + "\n" + err).splitlines()[-20:])
+                    raise RuntimeError(f"requirements.lock 安装失败 rc={exit_code}:\n{tail}")
             except Exception as e:
-                print(f"  ⚠️ pip install 超时/异常（非致命，继续部署）：{e}")
+                raise RuntimeError(f"依赖锁同步失败，拒绝重启到未知运行时：{e}") from e
+
+        stdin, stdout, stderr = client.exec_command(
+            _dashboard_runtime_probe_command(), timeout=20)
+        runtime_out = stdout.read().decode("utf-8", errors="replace").strip()
+        runtime_err = stderr.read().decode("utf-8", errors="replace").strip()
+        if stdout.channel.recv_exit_status() != 0 or "DASHBOARD_RUNTIME_LOCK_OK" not in runtime_out:
+            raise RuntimeError(f"Dashboard 运行时版本读回失败：{runtime_err or runtime_out}")
 
         print("\n  清理远端运行态缓存 ...")
         cleanup_cmd = (
@@ -664,24 +698,7 @@ def main() -> bool:
         except Exception as e:
             print(f"  ⚠️ VPS备份清理跳过：{e}")
 
-        # gunicorn+gevent 检查（已安装则跳过，避免 apt 超时）
-        print("\n  检查 gunicorn + gevent ...")
-        try:
-            stdin, stdout, stderr = client.exec_command(
-                "python3 -c 'import gunicorn, gevent; print(\"already installed\")' 2>&1", timeout=15)
-            g_installed = stdout.read().decode("utf-8", errors="replace").strip()
-            if "already installed" in g_installed:
-                print(f"  ✅ gunicorn+gevent 已就绪")
-            else:
-                print("  ⏳ 安装 gunicorn+gevent ...")
-                stdin, stdout, stderr = client.exec_command(
-                    "sudo apt install -y python3-gunicorn python3-gevent 2>&1", timeout=180)
-                out = stdout.read().decode("utf-8", errors="replace").strip()
-                exit_code = stdout.channel.recv_exit_status()
-                apt_tail = (out or "").splitlines()[-3:] if out else ""
-                print(f"  ✅ gunicorn+gevent 已就绪" if exit_code == 0 else f"  ⚠️ apt安装异常（非致命），输出尾部: {' / '.join(apt_tail)}")
-        except Exception as e:
-            print(f"  ⚠️ gunicorn检查/安装失败（非致命）: {e}")
+        print("\n  ✅ gunicorn + gevent 已由 requirements.lock 精确锁定并读回")
 
         # 6. 启动Bot（systemd）→ 取消保险标记
         print("\n[4/5] 启动Bot服务 ...")

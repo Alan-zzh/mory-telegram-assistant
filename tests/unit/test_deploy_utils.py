@@ -8,6 +8,32 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 
+def test_dashboard_teardown_filter_is_exact_and_preserves_real_errors():
+    from core.deploy_utils import filter_dashboard_teardown_noise
+
+    known_noise = """Aug 12 host python[1]: Exception ignored in: <function _removeHandlerRef at 0x1>\nAug 12 host python[1]: Traceback (most recent call last):\nAug 12 host python[1]:   File \"/usr/lib/python3.10/logging/__init__.py\", line 845, in _removeHandlerRef\nAug 12 host python[1]:   File \"/usr/lib/python3.10/logging/__init__.py\", line 226, in _acquireLock\nAug 12 host python[1]:   File \"/home/ubuntu/.local/lib/python3.10/site-packages/gevent/thread.py\", line 54, in get_ident\nAug 12 host python[1]: RuntimeError: greenlet is being finalized\n"""
+    real_failure = "Aug 12 host python[2]: Worker failed to boot\n"
+    unrelated = """Aug 12 host python[3]: Exception ignored in: <function close at 0x2>\nAug 12 host python[3]: Traceback (most recent call last):\nAug 12 host python[3]: RuntimeError: database close failed\n"""
+
+    filtered = filter_dashboard_teardown_noise(known_noise + real_failure + unrelated)
+
+    assert "greenlet is being finalized" not in filtered
+    assert "Worker failed to boot" in filtered
+    assert "database close failed" in filtered
+
+
+def test_dashboard_runtime_probe_uses_exact_lock_versions():
+    import deploy_vps
+
+    versions = deploy_vps._locked_dashboard_versions()
+    command = deploy_vps._dashboard_runtime_probe_command()
+
+    assert versions == {"gunicorn": "21.2.0", "gevent": "24.11.1"}
+    assert "DASHBOARD_RUNTIME_LOCK_OK" in command
+    assert "gunicorn" in command and "21.2.0" in command
+    assert "gevent" in command and "24.11.1" in command
+
+
 def test_safe_merge_config_keeps_protected_fields_from_vps():
     from core.deploy_utils import safe_merge_config
 

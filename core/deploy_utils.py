@@ -15,6 +15,45 @@ from pathlib import Path
 
 logger = logging.getLogger("deploy_utils")
 
+
+def filter_dashboard_teardown_noise(log_text: str) -> str:
+    """只移除已确认的 logging/gevent 解释器退出栈，保留其他异常。"""
+    lines = log_text.splitlines(keepends=True)
+    kept = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if "Exception ignored in: <function _removeHandlerRef" not in line:
+            kept.append(line)
+            index += 1
+            continue
+
+        end = index
+        while end < min(index + 16, len(lines)):
+            if "RuntimeError: greenlet is being finalized" in lines[end]:
+                break
+            end += 1
+        if end >= len(lines) or "RuntimeError: greenlet is being finalized" not in lines[end]:
+            kept.append(line)
+            index += 1
+            continue
+
+        block = "".join(lines[index:end + 1])
+        exact_teardown = all(anchor in block for anchor in (
+            "logging/__init__.py",
+            "_removeHandlerRef",
+            "_acquireLock",
+            "gevent/thread.py",
+            "get_ident",
+            "greenlet is being finalized",
+        ))
+        if exact_teardown:
+            index = end + 1
+            continue
+        kept.append(line)
+        index += 1
+    return "".join(kept)
+
 PROTECTED_FIELDS = [
     "TOKEN", "API_KEY", "API_KEYS", "ADMIN_ID", "GROUP_ID",
     "DASHBOARD_SECRET", "DASHBOARD_PASSWORD",
@@ -381,8 +420,8 @@ def verify_deployment(ssh, vps_path: str) -> bool:
         # 验证 3：Dashboard health API 返回 200
         ("Health API", "curl -s -o /dev/null -w '%{http_code}' http://localhost:6616/api/health"),
         # 验证 4：只检查 Dashboard 本次进入 active 后的新日志，避免 systemd 停旧进程时的 gevent 退出噪声误报
-        # awk 按整块剔除 gevent 优雅停机噪声（Exception ignored in ... greenlet is being finalized），逐行 grep -v 会漏掉 Traceback 上下文行
-        ("Dashboard日志", """since=$(systemctl show mory-dashboard -p ActiveEnterTimestamp --value); journalctl -u mory-dashboard --since "$since" -n 80 --no-pager 2>/dev/null | awk '/Exception ignored in/{skip=1} /greenlet is being finalized/{skip=0; next} !skip' | grep -Ei 'importerror|modulenotfounderror|failed to find application|worker failed to boot|traceback|exception|error' || echo '✅ 无报错'"""),
+        # 仅过滤已实机确认的 logging._removeHandlerRef/gevent 退出栈；其他析构异常和启动失败必须保留。
+        ("Dashboard日志", f"""since=$(systemctl show mory-dashboard -p ActiveEnterTimestamp --value); cd {vps_path} && journalctl -u mory-dashboard --since "$since" -n 80 --no-pager 2>/dev/null | python3 -c 'import sys; from core.deploy_utils import filter_dashboard_teardown_noise as f; sys.stdout.write(f(sys.stdin.read()))' | grep -Ei 'importerror|modulenotfounderror|failed to find application|worker failed to boot|traceback|exception|error' || echo '✅ 无报错'"""),
         # 配置完整性检查
         ("配置完整性", f"""cd {vps_path} && python3 << 'PYEOF'
 import json

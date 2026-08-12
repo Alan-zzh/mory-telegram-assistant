@@ -51,7 +51,7 @@
 - `check_config_sync.py`：example 与 Dashboard 白名单双向一致。
 - `doc_consistency.py`：136 modules、80 core、33 `_job_`、173 tables、163 routes、9 dispatcher、10 router mappings 全一致。
 - 全仓 flake8 F821：0。
-- 全仓 unit：`1005 passed in 20.33s`；compileall 通过。
+- 全仓 unit：v5.38.37 发布门禁 `1005 passed`；v5.38.38 补丁门禁 `1007 passed in 17.31s`；compileall 通过。
 - CI flake8 通过；mypy 4 个目标文件通过；interrogate `80.2%`，超过 80% 门槛。
 - `check_deploy_ready.py` 5/5 通过，工作树提交时干净；发布提交 `9ad37c0`。
 
@@ -59,7 +59,7 @@
 
 1. `ubuntu` 仍有 `NOPASSWD: ALL`，这是主机 sudoers 的高风险外部边界；本次已消除 Mory root cron 对 ubuntu 可写脚本的依赖，但不擅自改主机管理员授权。
 2. 独立 Docker 容器的 Chromium zombie 与 Mory 无直接所有权证据，需要容器所有者单独治理。
-3. Dashboard gunicorn/gevent worker 回收噪声需在发布后观察窗口复核；没有证据时不把健康 worker 的一次回收等同于服务失败。
+3. Dashboard gunicorn/gevent worker 回收仍会产生解释器 teardown 噪声；已证实不是请求/数据库崩溃。v5.38.38 只精确过滤该栈，其他析构或启动错误继续阻断部署。
 
 ## 发布状态
 
@@ -71,3 +71,5 @@
 - `stats_report.py`、`router_database.py` 在 VPS 已不存在；生产配置遗留 NEWS/空报表键为 0，私有 staging 无残留文件。
 - SQLite 保持 WAL，`integrity_check=ok`、`foreign_key_check=[]`；新进程启动后的分钟级任务持续成功，无新 CRITICAL/ERROR/AI 头像解析异常。
 - Dashboard 旧 gevent worker 在切换时仍记录一次 `greenlet is being finalized`，发生于旧 PID 3701665；新 master/worker 正常启动且 health 200。该退出噪声不计为业务故障，但保留为上游运行时观察项。
+
+v5.38.38 发布候选补充：生产实机确认 `/usr/bin/python3` 当前实际加载 requirements.lock 对应的 Gunicorn 21.2.0 / gevent 24.11.1；部署器已改为重启前精确读回版本，缺失、漂移或安装失败均 fail-closed，不再以“能 import”冒充依赖一致。
