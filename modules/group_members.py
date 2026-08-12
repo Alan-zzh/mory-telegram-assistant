@@ -20,12 +20,15 @@ GROUP_MEMBERS_CONFIG = config.get('GROUP_MEMBERS_CONFIG', {
 
 
 class GroupMembersModule:
+    """Provide group member lookup and moderation actions."""
     def __init__(self):
+        """Initialize module state and runtime adapters."""
         self._db = None
         self._compat = None
 
     async def get_members(self, chat_id: int, offset: int = 0, limit: int = 50,
                           search_query: str = '') -> Dict[str, Any]:
+        """Return members matching optional filters."""
         if not GROUP_MEMBERS_CONFIG.get('enabled', False):
             return {'members': [], 'total': 0}
         try:
@@ -60,6 +63,7 @@ class GroupMembersModule:
             return {'members': [], 'total': 0}
 
     async def get_member_stats(self, chat_id: int) -> Dict[str, Any]:
+        """Summarize member counts for a chat."""
         if not GROUP_MEMBERS_CONFIG.get('enabled', False):
             return {}
         try:
@@ -85,6 +89,7 @@ class GroupMembersModule:
             return {}
 
     async def kick_member(self, chat_id: int, user_id: int, reason: str = '') -> bool:
+        """Kick a member from a chat."""
         if not GROUP_MEMBERS_CONFIG.get('enabled', False):
             return False
         try:
@@ -99,6 +104,7 @@ class GroupMembersModule:
 
     async def ban_member(self, chat_id: int, user_id: int, reason: str = '',
                          until_date: datetime = None) -> bool:
+        """Ban a member from a chat."""
         if not GROUP_MEMBERS_CONFIG.get('enabled', False):
             return False
         try:
@@ -111,6 +117,7 @@ class GroupMembersModule:
             return False
 
     async def unban_member(self, chat_id: int, user_id: int) -> bool:
+        """Unban a member from a chat."""
         if not GROUP_MEMBERS_CONFIG.get('enabled', False):
             return False
         try:
@@ -123,6 +130,7 @@ class GroupMembersModule:
             return False
 
     async def mute_member(self, chat_id: int, user_id: int, duration_seconds: int) -> bool:
+        """Mute a member for a configured duration."""
         if not GROUP_MEMBERS_CONFIG.get('enabled', False):
             return False
         try:
@@ -137,6 +145,7 @@ class GroupMembersModule:
             return False
 
     async def unmute_member(self, chat_id: int, user_id: int) -> bool:
+        """Remove a member's mute."""
         if not GROUP_MEMBERS_CONFIG.get('enabled', False):
             return False
         try:
@@ -149,6 +158,7 @@ class GroupMembersModule:
             return False
 
     def _record_action(self, chat_id: int, user_id: int, action: str, reason: str):
+        """Persist a moderation action."""
         try:
             action_record = {
                 'user_id': user_id,
@@ -175,6 +185,7 @@ class GroupMembersModule:
             logger.error(f"[群组成员] 记录操作失败: {e}")
 
     async def process(self, update):
+        """Handle an update for this module."""
         return None
 
 

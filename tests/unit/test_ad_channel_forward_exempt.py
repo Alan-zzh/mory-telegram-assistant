@@ -316,7 +316,7 @@ def test_lottery_ad_first_message_runs_unified_enforcement(monkeypatch, text):
     assert handled is True
     assert dctx.ctx.bot.deleted == [(-1001, 99)]
     assert len(dctx.ctx.bot.restricted) == 1
-    assert dctx.ctx.db.blacklist
+    assert any("INTO blacklist" in sql for sql, _ in dctx.ctx.db.conn.executed)
     assert any("global_blacklist" in sql for sql, _ in dctx.ctx.db.conn.executed)
     assert detector.get_user_tracking(dctx.uid)["message_count"] == 0
 
@@ -343,7 +343,7 @@ def test_daily_income_o_obfuscation_runs_unified_enforcement(monkeypatch):
     assert handled is True
     assert dctx.ctx.bot.deleted == [(-1001, 99)]
     assert len(dctx.ctx.bot.restricted) == 1
-    assert dctx.ctx.db.blacklist
+    assert any("INTO blacklist" in sql for sql, _ in dctx.ctx.db.conn.executed)
     assert detector.get_user_tracking(dctx.uid)["message_count"] == 0
 
 
@@ -379,5 +379,5 @@ def test_obfuscated_ad_families_run_unified_enforcement(monkeypatch, text):
     assert handled is True
     assert dctx.ctx.bot.deleted == [(-1001, 99)]
     assert len(dctx.ctx.bot.restricted) == 1
-    assert dctx.ctx.db.blacklist
+    assert any("INTO blacklist" in sql for sql, _ in dctx.ctx.db.conn.executed)
     assert detector.get_user_tracking(dctx.uid)["message_count"] == 0

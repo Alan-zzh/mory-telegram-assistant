@@ -18,7 +18,6 @@ from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
 from tasks.support.common import (
     TaskAbort,
-    build_mory_contact_markup,
     retry_task,
     send_greeting,
 )

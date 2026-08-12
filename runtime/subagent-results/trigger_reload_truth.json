@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "output": "修复场景触发器启停热重载、fallback漂移和Dashboard配置校验。",
+  "error": "",
+  "artifacts": ["modules/triggers/base.py", "modules/triggers/cold_group.py", "modules/triggers/night_hint.py", "dashboard/api/config_api.py", "tests/unit/test_trigger_reload_truth.py"],
+  "evidence": ["pytest trigger/startup: 16 passed", "git diff --check: pass"],
+  "metadata": {"agent_type": "execute", "agent_name": "developer", "claimed_actions": ["edit", "test"], "duration_ms": 0, "tool_calls": 0, "fallback_triggered": false}
+}

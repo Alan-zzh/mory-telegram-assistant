@@ -20,13 +20,16 @@ GROUP_TODO_CONFIG = config.get('GROUP_TODO_CONFIG', {
 
 
 class GroupTodoModule:
+    """Manage group todo items and reminders."""
     def __init__(self):
+        """Initialize module state and runtime adapters."""
         self._db = None
         self._compat = None
 
     def add_todo(self, chat_id: int, title: str, description: str = '',
                  priority: str = 'medium', assignee_id: int = None,
                  due_date: str = None) -> int:
+        """Handle this module operation."""
         if not GROUP_TODO_CONFIG.get('enabled', False):
             return 0
         try:
@@ -49,6 +52,7 @@ class GroupTodoModule:
             return 0
 
     def complete_todo(self, chat_id: int, todo_id: int) -> bool:
+        """Handle this module operation."""
         if not GROUP_TODO_CONFIG.get('enabled', False):
             return False
         try:
@@ -66,6 +70,7 @@ class GroupTodoModule:
             return False
 
     def get_todos(self, chat_id: int, status: str = None) -> List[Dict[str, Any]]:
+        """Return todo items for a group."""
         if not GROUP_TODO_CONFIG.get('enabled', False):
             return []
         todos = self._load_todos(chat_id)
@@ -74,10 +79,12 @@ class GroupTodoModule:
         return todos
 
     def get_todo(self, chat_id: int, todo_id: int) -> Optional[Dict[str, Any]]:
+        """Return one todo item by identifier."""
         todos = self.get_todos(chat_id)
         return next((t for t in todos if t.get('id') == todo_id), None)
 
     def delete_todo(self, chat_id: int, todo_id: int) -> bool:
+        """Handle this module operation."""
         if not GROUP_TODO_CONFIG.get('enabled', False):
             return False
         try:
@@ -91,6 +98,7 @@ class GroupTodoModule:
             return False
 
     def get_todo_stats(self, chat_id: int) -> Dict[str, Any]:
+        """Summarize todo completion statistics."""
         if not GROUP_TODO_CONFIG.get('enabled', False):
             return {}
         todos = self._load_todos(chat_id)
@@ -104,6 +112,7 @@ class GroupTodoModule:
         }
 
     async def send_todo_reminder(self, chat_id: int, todo_id: int):
+        """Send a reminder for an open todo item."""
         if not GROUP_TODO_CONFIG.get('enabled', False):
             return
         todo = self.get_todo(chat_id, todo_id)
@@ -119,12 +128,14 @@ class GroupTodoModule:
             logger.error(f"[群组待办] 发送提醒失败: {e}")
 
     def _get_next_id(self, chat_id: int) -> int:
+        """Return the next todo identifier."""
         todos = self._load_todos(chat_id)
         if not todos:
             return 1
         return max(t.get('id', 0) for t in todos) + 1
 
     def _load_todos(self, chat_id: int) -> List[Dict[str, Any]]:
+        """Load persisted todos for a group."""
         try:
             cursor = self._db.conn.execute(
                 'SELECT data FROM group_todo WHERE chat_id = ?',
@@ -138,11 +149,13 @@ class GroupTodoModule:
         return []
 
     def _save_todo(self, chat_id: int, todo: Dict[str, Any]):
+        """Persist one todo item."""
         todos = self._load_todos(chat_id)
         todos.append(todo)
         self._save_todos(chat_id, todos)
 
     def _save_todos(self, chat_id: int, todos: List[Dict[str, Any]]):
+        """Persist all todos for a group."""
         try:
             todos_json = json.dumps(todos, ensure_ascii=False)
             self._db.conn.execute(
@@ -154,6 +167,7 @@ class GroupTodoModule:
             logger.error(f"[群组待办] 保存待办失败: {e}")
 
     async def process(self, update):
+        """Handle an update for this module."""
         return None
 
 

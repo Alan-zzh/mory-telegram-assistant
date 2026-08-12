@@ -378,7 +378,9 @@ def _is_job_disabled_by_config(job_id: str, config) -> bool:
     - greeting_evening  → GREETING_CONFIG.evening_enabled，回退 AUTO_GOODNIGHT / AUTO_GREETING
     - broadcast_*       → SCHEDULED_BROADCASTS 中对应 bc_id 的 enabled 字段
     - mystic_*          → MYSTIC_BROADCAST_CONFIG.enabled
-    - 其他 job（cart_recovery/backup/daily_backup/health_check/sync_*/flush_*）→ 永不禁用（基础设施任务）
+    - cart_recovery     → CART_RECOVERY_CONFIG.enabled
+    - daily_backup      → DAILY_BACKUP_ENABLED
+    - 其他基础设施 job  → 永不禁用
 
     Args:
         job_id: 任务 ID（如 greeting_morning / broadcast_morning_nudge）
@@ -419,8 +421,12 @@ def _is_job_disabled_by_config(job_id: str, config) -> bool:
         if job_id.startswith("mystic_"):
             mystic_cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) if isinstance(config, dict) else {}
             return not bool(isinstance(mystic_cfg, dict) and mystic_cfg.get("enabled", False))
-        # 基础设施任务（backup/cart_recovery/health_check/sync_scheduler_metrics/flush_alert_summary）
-        # 永不通过 config 跳过 — 这些是系统级保障任务
+        if job_id == "cart_recovery":
+            cart_cfg = config.get("CART_RECOVERY_CONFIG", {}) if isinstance(config, dict) else {}
+            return not bool(isinstance(cart_cfg, dict) and cart_cfg.get("enabled", False))
+        if job_id == "daily_backup":
+            return not bool(config.get("DAILY_BACKUP_ENABLED", False))
+        # 无独立开关的基础设施任务永不通过 config 跳过。
         return False
     except Exception:
         return False

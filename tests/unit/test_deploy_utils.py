@@ -35,19 +35,27 @@ def test_safe_merge_config_updates_non_protected_fields_from_local():
     local_cfg = {
         "RELAY_MODE_ENABLED": True,
         "BLIND_BOX_COST": 35,
-        "NEWS_BROADCAST_CONFIG": {"enabled": True, "preferred_source": "real_first"},
+        "MYSTIC_BROADCAST_CONFIG": {"enabled": True, "morning_time": "09:05"},
     }
     vps_cfg = {
         "RELAY_MODE_ENABLED": False,
         "BLIND_BOX_COST": 30,
-        "NEWS_BROADCAST_CONFIG": {"enabled": False, "preferred_source": "trendradar_first"},
+        "MYSTIC_BROADCAST_CONFIG": {"enabled": False, "morning_time": "10:00"},
     }
 
     merged = safe_merge_config(local_cfg, vps_cfg)
 
     assert merged["RELAY_MODE_ENABLED"] is True
     assert merged["BLIND_BOX_COST"] == 35
-    assert merged["NEWS_BROADCAST_CONFIG"]["preferred_source"] == "real_first"
+    assert merged["MYSTIC_BROADCAST_CONFIG"]["morning_time"] == "09:05"
+
+
+def test_safe_merge_config_removes_confirmed_dead_config_fields():
+    from core.deploy_utils import safe_merge_config
+
+    merged = safe_merge_config({}, {"STATS_REPORT_CONFIG": {"enabled": True}})
+
+    assert "STATS_REPORT_CONFIG" not in merged
 
 
 def test_runtime_sync_cannot_restore_legacy_auto_greeting_switches():
@@ -187,3 +195,31 @@ def test_deployment_exit_code_fails_closed():
 
     assert deploy_vps._deployment_exit_code(True) == 0
     assert deploy_vps._deployment_exit_code(False) == 1
+
+
+def test_systemd_install_command_sets_root_owner_and_fixed_mode():
+    import deploy_vps
+
+    command = deploy_vps._service_install_command("mory-assistant.service")
+
+    assert "install -o root -g root -m 0644" in command
+    assert "/.deploy-staging/mory-assistant.service" in command
+    assert "/tmp/mory-assistant.service" not in command
+    assert "/etc/systemd/system/mory-assistant.service" in command
+
+
+def test_runtime_permission_hardening_protects_credentials_and_watchdog():
+    import deploy_vps
+
+    command = deploy_vps._runtime_permission_hardening_command()
+
+    assert "chmod 0600" in command
+    assert ".env" in command
+    assert "config.json" in command
+    assert "install -o root -g root -m 0755" in command
+    assert "/usr/local/lib/mory-assistant/vps_watchdog.py" in command
+    assert "crontab" in command
+    assert "sed '/vps_watchdog\\.py/d'" in command
+    assert "grep -Fxc" in command
+    assert "/tmp/mory-root-cron" not in command
+    assert ".deploy-staging/root-cron.$$$$" in command

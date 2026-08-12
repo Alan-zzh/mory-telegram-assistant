@@ -4,7 +4,10 @@
 """
 
 import os
+import sqlite3
 import sys
+import threading
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -60,17 +63,29 @@ class _FalseDeleteBot(_FakeBot):
         return False
 
 
+class _FalseRestrictBot(_FakeBot):
+    def restrict_chat_member(self, chat_id, uid, **kwargs):
+        self.restricted.append((chat_id, uid, kwargs))
+        return False
+
+
 class _FakeConn:
     def __init__(self):
         self.executed = []
         self.commits = 0
+        self.rollbacks = 0
 
     def execute(self, sql, params=()):
         self.executed.append((sql, params))
-        return []
+        if sql.lstrip().upper().startswith("SELECT COUNT"):
+            return type("Result", (), {"fetchone": lambda self: (0,)})()
+        return type("Result", (), {"fetchone": lambda self: None})()
 
     def commit(self):
         self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
 
 
 class _FakeDB:
@@ -128,7 +143,7 @@ def test_enforce_ad_user_mutes_deletes_and_never_kicks_or_bans():
     assert bot.restricted[0][2]["permissions"]["can_send_paid_media"] is False
     assert bot.ban_calls == []
     assert bot.kick_calls == []
-    assert db.blacklist == [(42, "[Codex] 单测广告")]
+    assert any("INTO blacklist" in sql for sql, _ in db.conn.executed)
     assert any("global_blacklist" in sql for sql, _ in db.conn.executed)
     assert (-1001, 66) in db.marked
     assert (-1001, 60) in db.marked
@@ -167,7 +182,7 @@ def test_enforce_ad_user_deletes_confirmed_ads_when_general_deletion_disabled():
     assert db.ad_marked == [(-1001, 66)]
     assert result["data"]["evidence_persisted"] is True
     assert result["data"]["reactions_cleaned"] is False
-    assert db.blacklist == [(42, "[Codex] 删除关闭")]
+    assert any("INTO blacklist" in sql for sql, _ in db.conn.executed)
     assert bot.ban_calls == []
     assert bot.kick_calls == []
 
@@ -267,7 +282,80 @@ def test_restore_ad_user_removes_blacklists_and_restores_permissions():
     assert permissions["can_send_messages"] is True
     assert permissions["can_react_to_messages"] is True
     assert result["data"]["tracking_cleared"] is True
+    assert result["data"]["persistence_verified"] is True
+    assert result["data"]["permission_verified"] is True
     assert ad_detector.cleared == [42]
+
+
+def test_restore_ad_user_fails_closed_when_telegram_restore_returns_false():
+    from modules.ad_enforcement import restore_ad_user
+
+    result = restore_ad_user(
+        bot=_FalseRestrictBot(),
+        db=_FakeDB(),
+        config={},
+        chat_id=-1001,
+        uid=42,
+        actor_id=99,
+    )
+
+    assert result["code"] == 500
+    assert result["msg"] == "restore_not_verified"
+    assert result["data"]["permission_verified"] is False
+
+
+def test_ad_state_transaction_rolls_back_all_tables_on_partial_failure():
+    from modules.ad_enforcement import _persist_ad_state
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE mute_records (uid INTEGER PRIMARY KEY, chat_id INTEGER, mute_until INTEGER, reason TEXT);
+        CREATE TABLE global_blacklist (user_id INTEGER PRIMARY KEY, reason TEXT, added_by INTEGER, added_at TEXT);
+        CREATE TABLE blacklist (uid INTEGER PRIMARY KEY, reason TEXT, date INTEGER);
+        CREATE TRIGGER reject_local_blacklist BEFORE INSERT ON blacklist
+        BEGIN SELECT RAISE(ABORT, 'forced local blacklist failure'); END;
+        """
+    )
+    db = type("Db", (), {"conn": conn, "lock": threading.RLock()})()
+
+    assert _persist_ad_state(_FakeBot(), db, -1001, 42, "test", muted=True) is False
+    assert conn.execute("SELECT COUNT(*) FROM mute_records").fetchone() == (0,)
+    assert conn.execute("SELECT COUNT(*) FROM global_blacklist").fetchone() == (0,)
+    assert conn.execute("SELECT COUNT(*) FROM blacklist").fetchone() == (0,)
+
+
+def test_ungban_never_falls_back_to_unverified_local_delete(monkeypatch):
+    from modules.global_blacklist import handle_ungban
+
+    class Db:
+        removed = []
+
+        @staticmethod
+        def is_blacklisted(_uid):
+            return True
+
+        @classmethod
+        def blacklist_remove(cls, uid):
+            cls.removed.append(uid)
+
+    bot = _ReplyBot()
+    message = SimpleNamespace(
+        text="/ungban 42",
+        from_user=SimpleNamespace(id=99),
+        chat=SimpleNamespace(id=-1001),
+        reply_to_message=None,
+        entities=[],
+    )
+    monkeypatch.setattr(
+        "modules.ad_enforcement.restore_ad_user",
+        lambda **_kwargs: {"code": 500, "data": {"blacklist_removed": True}},
+    )
+
+    handle_ungban(bot, message, {"ADMIN_ID": 99}, Db())
+
+    assert Db.removed == []
+    assert any("未完全成功" in reply for reply in bot.replies)
 
 
 class _FetchOneResult:
@@ -288,7 +376,7 @@ class _LookupConn(_FakeConn):
             return _FetchOneResult((4242,))
         if "display_name" in sql and params and not str(params[0]).startswith("%"):
             return _FetchOneResult((8383136504, "mmb3695", "萌萌逼"))
-        return _FetchOneResult(None)
+        return super().execute(sql, params)
 
 
 class _LookupDB(_FakeDB):

@@ -334,8 +334,6 @@ def test_natural_admin_toggle_and_time_update_mystic_config():
     )
     message = SimpleNamespace(text="")
     cfg = {
-        "AUTO_NEWS": True,
-        "NEWS_BROADCAST_CONFIG": {"enabled": True},
         "MYSTIC_BROADCAST_CONFIG": {
             "enabled": False,
             "morning_time": "09:05",
@@ -351,8 +349,6 @@ def test_natural_admin_toggle_and_time_update_mystic_config():
         mory_bot=mory_bot,
     )
     assert cfg["MYSTIC_BROADCAST_CONFIG"]["enabled"] is True
-    assert cfg["NEWS_BROADCAST_CONFIG"]["enabled"] is False
-    assert cfg["AUTO_NEWS"] is False
 
     assert _handle_modify_number(
         "把早间黄历时间改成8点",

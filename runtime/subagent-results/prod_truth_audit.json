@@ -1,0 +1,32 @@
+{
+  "success": true,
+  "output": "只读生产审计完成：双服务与health当前正常，但发现unit/watchdog可写权限、配置漂移、调度历史失真/禁用任务误告警、头像AI降级、Dashboard旧worker异常、.env泄露面、351僵尸进程及历史锁/重启事故。未部署、未重启、未改库。",
+  "error": null,
+  "artifacts": [],
+  "evidence": [
+    "systemctl：mory-assistant与mory-dashboard均active/running，NRestarts=0，自2026-08-09 23:01。",
+    "curl localhost:6616/api/health：HTTP 200，status=ok；该端点按设计不返回version。",
+    "远端关键文件SHA与本地一致；远端无.git；版本v5.38.36。",
+    "journal 24,181行：INFO 24,156、WARNING 23、CRITICAL 2、ERROR 0；两个CRITICAL均为已禁用任务未执行。",
+    "scheduler API持久历史119项、累计fail=30；task_execution_history 7d success=69 failed=11 aborted=1。",
+    "远端config.json 271键、本地197键；远端独有74键。",
+    "生产头像AI视觉解析5次list.get失败，最近2026-08-12 18:08:23。",
+    "systemd unit与root cron执行的watchdog均664 ubuntu:ubuntu；.env与config.json均644。",
+    "mory.db integrity_check=ok、foreign_key_check=[]、journal_mode=wal。",
+    "351个僵尸进程均在无关docker scope，不属于mory服务。"
+  ],
+  "findings": [
+    {"severity":"P0","title":"root执行面与敏感文件权限过宽","path":"/etc/systemd/system/*.service；scripts/vps_watchdog.py；.env；config.json","impact":"同机账户可改写服务/root执行脚本或读取凭据配置。","recommendation":"部署器固定root:root 0644并收紧敏感文件权限；sudoers另行受控治理。"},
+    {"severity":"P1","title":"调度健康false-green与禁用任务误告警","path":"core/scheduler_monitor.py；dashboard/api/health_api.py","impact":"历史失败被最后一次成功掩盖，禁用功能制造CRITICAL噪声。","recommendation":"拆分活动注册、历史指标、业务四态；按配置跳过禁用任务。"},
+    {"severity":"P1","title":"头像视觉复核列表响应解析失败","path":"modules/ai_advisor.py；modules/avatar_detector.py","impact":"本地NSFW/OCR仍在，但可能漏掉纯图像营销或二维码。","recommendation":"兼容列表文本块并加入回归探针。"},
+    {"severity":"P1","title":"生产配置显著领先本地运行配置","path":"config.json；config.json.example","impact":"本地审计可能漏生产开关。","recommendation":"只同步非敏感键集合并增加漂移门禁，禁止覆盖生产凭据。"},
+    {"severity":"P2","title":"Dashboard worker回收期greenlet异常","path":"mory-dashboard.service journal","impact":"主服务health与NRestarts看不到worker级异常。","recommendation":"纳入worker级稳定窗口观察。"},
+    {"severity":"P2","title":"无关容器351个僵尸进程造成共享主机压力","path":"docker scope","impact":"间接争用CPU和进程表。","recommendation":"交由容器所属方处理，不在本项目直接杀进程。"}
+  ],
+  "unresolved": [
+    "未获得Bot进程内scheduler.get_jobs()直接快照；36个运行任务类由journal观察，119是持久历史。",
+    "未执行Telegram真实业务写探针。",
+    "ubuntu NOPASSWD ALL属于主机级权限边界，不能在项目部署中擅自收窄。"
+  ],
+  "metadata": {"agent_type":"search","duration_ms":1280000,"tool_calls":34,"fallback_triggered":true}
+}

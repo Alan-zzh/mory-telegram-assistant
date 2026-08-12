@@ -5,6 +5,18 @@ from types import SimpleNamespace
 import pytest
 
 from modules import scheduled_broadcast
+
+
+def test_failed_broadcast_surfaces_original_error_when_lock_release_returns_false(caplog):
+    class _Db:
+        def release_task(self, _task_key):
+            return False
+
+    failure = RuntimeError("send failed")
+    with pytest.raises(RuntimeError, match="send failed"):
+        scheduled_broadcast._release_failed_broadcast(_Db(), "scheduled_x_2026-08-11", failure)
+
+    assert "未删除锁" in caplog.text
 from core.broadcast_formatter import build_greeting_html
 from core.telebot_compat import (
     get_allowed_updates,

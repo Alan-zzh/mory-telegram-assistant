@@ -1,0 +1,29 @@
+{
+  "success": true,
+  "output": "只读代码审计确认8项P1/P2行为缺陷与若干死代码候选。",
+  "error": null,
+  "artifacts": [],
+  "evidence": [
+    "pytest --collect-only：999 tests collected。",
+    "verify_db_methods：199方法通过。",
+    "ruff F821：15个undefined-name，其中6个在可达异常链。",
+    "vulture 80%：18个候选，逐项调用链复核后未直接批量删除。"
+  ],
+  "findings": [
+    {"severity":"P1","title":"定点播报PUT必现NameError","path":"dashboard/api/features_api.py","impact":"更新现有播报稳定500。"},
+    {"severity":"P1","title":"场景触发器热重载不生效","path":"modules/triggers；modules/auto_tasks.py","impact":"UI显示启用但任务未注册。"},
+    {"severity":"P1","title":"双ResourceManager锁域分裂","path":"modules/auto_tasks.py；core/bot_initializer.py","impact":"消息与后台任务互斥失效。"},
+    {"severity":"P1","title":"reload_flag失败仍删除且watcher可重复","path":"core/bot_initializer.py","impact":"配置更新丢失且线程泄漏。"},
+    {"severity":"P1","title":"停机未等待任务就关闭数据库","path":"main.py；tasks/task_scheduler.py","impact":"运行任务出现closed database。"},
+    {"severity":"P1","title":"废弃stats_report启用即吞NameError","path":"modules/stats_report.py","impact":"幽灵开关返回空报表。"},
+    {"severity":"P1","title":"异常处理器自身logger未定义","path":"dashboard/api/models_api.py；stats_api.py；audit.py","impact":"本应降级的异常变成500。"},
+    {"severity":"P1","title":"广播失败释放锁失真","path":"modules/scheduled_broadcast.py；core/db_repos/config_repo.py","impact":"残留锁导致当天不再重试。"},
+    {"severity":"P2","title":"task_log锁表被当执行历史","path":"dashboard/api/models_api.py；health_api.py","impact":"Dashboard状态与真实结果矛盾。"},
+    {"severity":"P2","title":"场景配置fallback三处漂移","path":"config.json.example；triggers；config_api.py","impact":"缺键时UI与运行行为不同。"}
+  ],
+  "unresolved": [
+    "广告处置多表写入仍非单事务，需独立数据库变更设计。",
+    "router_database等仅为静态死代码候选，未证伪外部调用，未删除。"
+  ],
+  "metadata": {"agent_type":"search","duration_ms":180000,"tool_calls":43,"fallback_triggered":false}
+}

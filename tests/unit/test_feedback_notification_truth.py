@@ -55,6 +55,33 @@ def test_private_feedback_does_not_claim_notification_after_send_failure():
     assert "尽快" not in mory.replies[0]
 
 
+def test_private_unban_complaint_never_restores_permissions(monkeypatch):
+    """A user's claim is feedback, not authorization to clear enforcement state."""
+    dctx, bot, mory = _dispatch()
+    dctx.text = "我被封了，帮我解封"
+    dctx.ctx.config["GROUP_ID"] = -1001
+
+    restore_calls = []
+    monkeypatch.setattr(
+        "modules.ad_enforcement.restore_ad_user",
+        lambda *args, **kwargs: restore_calls.append((args, kwargs)),
+    )
+
+    assert _handle_feedback(dctx, {"mode": "feedback"}) is True
+    assert restore_calls == []
+    assert len(bot.sent) == 1
+    assert mory.replies == ["收到，你的解封申请已提交给管理员审核；审核前不会改动封禁状态。"]
+
+
+def test_legacy_feedback_handler_has_no_self_unban_call():
+    """The dormant compatibility handler must not preserve a privilege bypass."""
+    source = (
+        Path(__file__).resolve().parents[2] / "core" / "handlers" / "ai_handlers.py"
+    ).read_text(encoding="utf-8")
+    assert "restore_ad_user(" not in source
+    assert "actor_id=uid" not in source
+
+
 def test_legacy_feedback_handler_contains_no_false_delivery_promises():
     """The retained legacy dispatcher must follow the same truthfulness contract."""
     source = (

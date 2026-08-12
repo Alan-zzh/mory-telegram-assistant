@@ -184,42 +184,10 @@ def test_greeting_endpoint_uses_real_time_fields(monkeypatch):
     assert store["AUTO_GOODNIGHT"] is False
 
 
-def test_news_endpoint_uses_preferred_source_and_time_fields(monkeypatch):
-    import dashboard.api.settings_api as settings_api
-
-    store = {"NEWS_BROADCAST_CONFIG": {"enabled": True, "preferred_source": "real_first", "morning_time": "09:05", "afternoon_time": "13:05", "evening_time": "20:35"}}
-
-    monkeypatch.setattr(settings_api, "read_config", lambda: dict(store))
-
-    def fake_write(cfg):
-        store.clear()
-        store.update(cfg)
-        return True
-
-    monkeypatch.setattr(settings_api, "write_config", fake_write)
-
-    client = _make_client()
-
-    resp = client.post("/api/settings/news", json={
-        "enabled": True,
-        "preferred_source": "trendradar_first",
-        "morning_time": "09:30",
-        "afternoon_time": "13:40",
-        "evening_time": "21:10",
-    })
-
-    assert resp.status_code == 200
-    assert store["NEWS_BROADCAST_CONFIG"]["preferred_source"] == "trendradar_first"
-    assert store["NEWS_BROADCAST_CONFIG"]["morning_time"] == "09:30"
-    assert store["NEWS_HOUR_EVENING"] == 21
-
-
-def test_mystic_endpoint_disables_news_and_saves_three_columns(monkeypatch):
+def test_mystic_endpoint_saves_three_columns(monkeypatch):
     import dashboard.api.settings_api as settings_api
 
     store = {
-        "AUTO_NEWS": True,
-        "NEWS_BROADCAST_CONFIG": {"enabled": True},
         "MYSTIC_BROADCAST_CONFIG": {"enabled": False},
     }
     monkeypatch.setattr(settings_api, "read_config", lambda: dict(store))
@@ -251,8 +219,6 @@ def test_mystic_endpoint_disables_news_and_saves_three_columns(monkeypatch):
     assert store["MYSTIC_BROADCAST_CONFIG"]["afternoon_mode"] == "tarot"
     assert store["MYSTIC_BROADCAST_CONFIG"]["evening_mode"] == "iching"
     assert store["MYSTIC_BROADCAST_CONFIG"]["legacy_targeted_tarot_enabled"] is False
-    assert store["NEWS_BROADCAST_CONFIG"]["enabled"] is False
-    assert store["AUTO_NEWS"] is False
 
 
 def test_antiflood_endpoint_syncs_rate_limit_and_engine_config(monkeypatch):

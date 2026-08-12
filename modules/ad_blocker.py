@@ -24,11 +24,14 @@ AD_BLOCKER_CONFIG = config.get('AD_BLOCKER_CONFIG', {
 
 
 class AdBlockerModule:
+    """Detect and enforce configured advertising blocks."""
     def __init__(self):
+        """Initialize module state and runtime adapters."""
         self._db = None
         self._compat = None
 
     async def check_ad_keywords(self, chat_id: int, user_id: int, text: str) -> Dict[str, Any]:
+        """Check text for configured advertising keywords."""
         if not AD_BLOCKER_CONFIG.get('enabled', False):
             return {'is_ad': False}
         keywords = AD_BLOCKER_CONFIG.get('global_blacklist', [])

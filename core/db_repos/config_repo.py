@@ -222,22 +222,21 @@ class ConfigRepo:
         因为 DB.__getattr__ 抛 AttributeError 被静默吞掉，导致发送失败时
         task_log 残留，后续重试被 claim_task 拦截。
 
-        实现：DELETE FROM task_log WHERE task_key=? AND exec_date=今天
-        与 TaskTransactionManager._release_task 逻辑一致，但走 Repo 层委托。
+        task_log 是锁表而不是执行历史；释放时按 task_key 清掉残留锁，避免
+        任务跨午夜或旧锁遗留时只删“今天”而永远无法重试。
 
         Returns:
             True 表示删除了至少 1 行，False 表示无删除或异常
         """
-        today = datetime.now(_CST).strftime("%Y-%m-%d")
         with self.lock:
             try:
                 cur = self.conn.execute(
-                    "DELETE FROM task_log WHERE task_key=? AND exec_date=?",
-                    (task_key, today)
+                    "DELETE FROM task_log WHERE task_key=?",
+                    (task_key,)
                 )
                 self.conn.commit()
                 deleted = cur.rowcount > 0
-                logger.info(f"📋 [DB] release_task({task_key}, {today}) deleted={cur.rowcount}")
+                logger.info(f"📋 [DB] release_task({task_key}) deleted={cur.rowcount}")
                 return deleted
             except Exception as e:
                 logger.warning(f"📋 [DB] release_task({task_key}) 失败: {e}")

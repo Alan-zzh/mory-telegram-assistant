@@ -9,6 +9,26 @@ logger = get_logger("features_api")
 
 features_bp = Blueprint('features', __name__, url_prefix='/api')
 
+# Telegram 播报载荷的可选字段。PUT 与 POST 必须共享同一白名单，避免
+# PUT 路由引用 POST 局部变量导致线上更新请求直接触发 NameError。
+_BROADCAST_EXTRA_FIELDS = (
+    "title", "footer", "badge", "caption", "parse_mode",
+    "button_text", "button_url", "show_caption_above_media",
+    "disable_preview", "silent", "protect_content", "time",
+    "allow_paid_broadcast", "message_effect_id",
+    "direct_messages_topic_id", "suggested_post_parameters",
+    "rich_message",
+    "question", "options", "poll_type", "poll_kind",
+    "is_anonymous", "allows_multiple_answers", "correct_option_id",
+    "correct_option_ids", "explanation", "explanation_parse_mode",
+    "open_period", "close_date", "is_closed", "media",
+    "description", "description_parse_mode", "allows_changing_answer",
+    "allows_revoting", "country_codes", "members_only",
+    "shuffle_options", "hide_results_until_closes",
+    "allow_adding_options",
+    "business_connection_id", "checklist", "tasks",
+)
+
 
 def _check_admin():
     """检查当前用户是否为管理员，非管理员返回403响应"""
@@ -118,23 +138,6 @@ def api_settings_nightmode():
 @login_required
 def api_settings_broadcasts():
     """定点播报配置"""
-    extra_fields = (
-        "title", "footer", "badge", "caption", "parse_mode",
-        "button_text", "button_url", "show_caption_above_media",
-        "disable_preview", "silent", "protect_content", "time",
-        "allow_paid_broadcast", "message_effect_id",
-        "direct_messages_topic_id", "suggested_post_parameters",
-        "rich_message",
-        "question", "options", "poll_type", "poll_kind",
-        "is_anonymous", "allows_multiple_answers", "correct_option_id",
-        "correct_option_ids", "explanation", "explanation_parse_mode",
-        "open_period", "close_date", "is_closed", "media",
-        "description", "description_parse_mode", "allows_changing_answer",
-        "allows_revoting", "country_codes", "members_only",
-        "shuffle_options", "hide_results_until_closes",
-        "allow_adding_options",
-        "business_connection_id", "checklist", "tasks",
-    )
     if request.method == "GET":
         cfg = read_config()
         broadcasts = cfg.get("SCHEDULED_BROADCASTS", [])
@@ -166,7 +169,7 @@ def api_settings_broadcasts():
             new_item["day_of_week"] = day_of_week
         if day_of_month is not None:
             new_item["day_of_month"] = day_of_month
-        for field in extra_fields:
+        for field in _BROADCAST_EXTRA_FIELDS:
             if field in data:
                 new_item[field] = data.get(field)
         broadcasts.append(new_item)
@@ -218,7 +221,7 @@ def api_broadcast_update(bid):
                 b["day_of_week"] = data["day_of_week"]
             if "day_of_month" in data:
                 b["day_of_month"] = data["day_of_month"]
-            for field in extra_fields:
+            for field in _BROADCAST_EXTRA_FIELDS:
                 if field in data:
                     b[field] = data.get(field)
             updated = True

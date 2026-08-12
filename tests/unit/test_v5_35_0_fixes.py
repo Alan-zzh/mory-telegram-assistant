@@ -104,7 +104,7 @@ _FIXED_MODULES = [
     'group_message_push', 'group_migration', 'group_props', 'group_report',
     'group_safety_center', 'group_todo', 'image_manager', 'invite_link_manager',
     'join_settings', 'language_whitelist', 'message_library', 'new_member_probation',
-    'punishment_center', 'random_drop', 'stats_report', 'super_afool',
+    'punishment_center', 'random_drop', 'super_afool',
     'user_marking', 'valid_speak', 'word_cloud'
 ]
 

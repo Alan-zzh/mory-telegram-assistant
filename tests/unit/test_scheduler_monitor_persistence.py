@@ -183,3 +183,26 @@ def test_unavailable_metrics_raise_instead_of_emitting_false_missing_alert(monke
         monitor.check_critical_jobs_health(config={}, db=db)
 
     assert monitor._alerted_jobs == set()
+
+
+@pytest.mark.parametrize(
+    ("job_id", "config"),
+    [
+        ("cart_recovery", {"CART_RECOVERY_CONFIG": {"enabled": False}}),
+        ("daily_backup", {"DAILY_BACKUP_ENABLED": False}),
+    ],
+)
+def test_explicitly_disabled_critical_job_is_not_monitored(job_id, config):
+    """任务自己不注册时，关键任务监控也必须尊重同一开关。"""
+    assert monitor._is_job_disabled_by_config(job_id, config) is True
+
+
+@pytest.mark.parametrize(
+    ("job_id", "config"),
+    [
+        ("cart_recovery", {"CART_RECOVERY_CONFIG": {"enabled": True}}),
+        ("daily_backup", {"DAILY_BACKUP_ENABLED": True}),
+    ],
+)
+def test_enabled_critical_job_remains_monitored(job_id, config):
+    assert monitor._is_job_disabled_by_config(job_id, config) is False

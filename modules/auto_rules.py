@@ -25,12 +25,15 @@ AUTO_RULES_CONFIG = config.get('AUTO_RULES_CONFIG', {
 
 
 class AutoRulesModule:
+    """Evaluate and apply configurable automatic chat rules."""
     def __init__(self):
+        """Initialize module state and runtime adapters."""
         self._db = None
         self._compat = None
         self._rules: Dict[str, List[Dict[str, Any]]] = {}
 
     async def check_auto_rules(self, chat_id: int, user_id: int, text: str) -> Optional[Dict[str, Any]]:
+        """Evaluate enabled rules against message text."""
         if not AUTO_RULES_CONFIG.get('enabled', False):
             return None
         rules = self._load_rules(chat_id)
@@ -61,6 +64,7 @@ class AutoRulesModule:
         return None
 
     async def _check_auto_warning(self, chat_id: int, user_id: int, text: str, rule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Apply a warning rule when its keywords match."""
         keywords = rule.get('keywords', [])
         for keyword in keywords:
             if keyword.lower() in text.lower():
@@ -71,6 +75,7 @@ class AutoRulesModule:
         return None
 
     async def _check_auto_ban(self, chat_id: int, user_id: int, text: str, rule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Apply a ban rule when its keywords match."""
         keywords = rule.get('keywords', [])
         for keyword in keywords:
             if keyword.lower() in text.lower():
@@ -82,6 +87,7 @@ class AutoRulesModule:
         return None
 
     async def _check_auto_reply(self, chat_id: int, user_id: int, text: str, rule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Send a configured reply when its keywords match."""
         keywords = rule.get('keywords', [])
         reply_text = rule.get('reply_text', '')
         if not reply_text:
@@ -94,6 +100,7 @@ class AutoRulesModule:
         return None
 
     async def _check_auto_delete(self, chat_id: int, user_id: int, text: str, rule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Delete a message when a delete rule matches."""
         keywords = rule.get('keywords', [])
         for keyword in keywords:
             if keyword.lower() in text.lower():
@@ -102,6 +109,7 @@ class AutoRulesModule:
         return None
 
     async def _check_auto_mute(self, chat_id: int, user_id: int, text: str, rule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Mute a user when a mute rule matches."""
         keywords = rule.get('keywords', [])
         mute_duration = rule.get('mute_duration', 3600)
         for keyword in keywords:
@@ -116,6 +124,7 @@ class AutoRulesModule:
 
     def add_rule(self, chat_id: int, rule_type: str, keywords: List[str],
                  enabled: bool = True, **kwargs):
+        """Add and persist an automatic chat rule."""
         if not AUTO_RULES_CONFIG.get('enabled', False):
             return False
         try:
@@ -138,9 +147,11 @@ class AutoRulesModule:
             return False
 
     def get_rules(self, chat_id: int) -> List[Dict[str, Any]]:
+        """Return rules configured for a chat."""
         return self._load_rules(chat_id)
 
     def enable_rule(self, chat_id: int, rule_id: int, enabled: bool):
+        """Enable or disable a chat rule."""
         try:
             rules = self._load_rules(chat_id)
             for rule in rules:
@@ -155,6 +166,7 @@ class AutoRulesModule:
             return False
 
     def delete_rule(self, chat_id: int, rule_id: int) -> bool:
+        """Delete a chat rule by identifier."""
         try:
             rules = self._load_rules(chat_id)
             rules = [r for r in rules if r.get('id') != rule_id]
@@ -166,6 +178,7 @@ class AutoRulesModule:
             return False
 
     def _load_rules(self, chat_id: int) -> List[Dict[str, Any]]:
+        """Load cached or persisted rules for a chat."""
         if str(chat_id) in self._rules:
             return self._rules[str(chat_id)]
         try:
@@ -183,11 +196,13 @@ class AutoRulesModule:
         return []
 
     def _save_rule(self, chat_id: int, rule: Dict[str, Any]):
+        """Append and persist one chat rule."""
         rules = self._load_rules(chat_id)
         rules.append(rule)
         self._save_rules(chat_id, rules)
 
     def _save_rules(self, chat_id: int, rules: List[Dict[str, Any]]):
+        """Persist all rules for a chat."""
         try:
             rules_json = json.dumps(rules, ensure_ascii=False)
             self._db.conn.execute(
@@ -199,6 +214,7 @@ class AutoRulesModule:
             logger.error(f"[自动规则] 保存规则失败: {e}")
 
     async def process(self, update):
+        """Handle an update for this module."""
         return None
 
 

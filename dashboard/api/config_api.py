@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Dashboard配置管理API"""
 import logging
+import math
 
 from flask import Blueprint, request, jsonify
 from dashboard.helpers import (
@@ -12,6 +13,37 @@ from modules.natural_cmd import handle_natural_admin, ALL_CONFIGS
 logger = logging.getLogger(__name__)
 
 config_bp = Blueprint('config', __name__, url_prefix='/api')
+
+# 配置由 Bot 进程每 30 秒检查 reload_flag；API 不应承诺一个不存在的
+# 5-8 秒 SLA。统一复用这条事实说明，避免不同配置页继续传播失真时间。
+CONFIG_RELOAD_NOTICE = "将在下一次配置重载周期内生效（默认约30秒）"
+
+
+def _parse_scene_bool(value):
+    """将 Dashboard JSON/表单布尔值严格转换，拒绝 ``bool('false')`` 陷阱。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value in (0, 1):
+            return bool(value)
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return None
+
+
+_SCENE_NUMERIC_LIMITS = {
+    "INTENT_RULE_THRESHOLD": (0, None),
+    "COLD_GROUP_THRESHOLD_MIN": (1, None),
+    "COLD_GROUP_COOLDOWN_MIN": (1, None),
+    "COLD_GROUP_MAX_PER_RUN": (1, None),
+    "NIGHT_HINT_COOLDOWN_HOURS": (1, None),
+    "NIGHT_HINT_MAX_PER_RUN": (1, None),
+}
 
 # ── 配置更新白名单：只有在此白名单中的字段才允许通过 /config/update 修改 ──
 ALLOWED_CONFIG_FIELDS = {
@@ -38,7 +70,6 @@ ALLOWED_CONFIG_FIELDS = {
     "LINKED_CHANNEL_SYNC_CONFIG",  # 关联频道联动（置顶取消/点赞/评论转化）
     "GREETING_CONFIG",  # 早安/晚安问候播报配置
     "SCHEDULED_BROADCASTS",  # 定时播报列表，UI 编辑播报条目
-    "NEWS_BROADCAST_CONFIG",  # 新闻播报配置
     "BROADCAST_AUTO_DELETE",  # 播报消息自动删除（孤儿/问候链清理）
     "PROACTIVE_ENGAGE_CONFIG",  # 主动互动触发配置
     "RELAY_MODE_ENABLED",  # 中继模式开关
@@ -60,7 +91,8 @@ ALLOWED_CONFIG_FIELDS = {
     # [TRAE SOLO CN] v5.19.0 场景触发引擎
     "INTENT_ROUTING_ENABLED", "INTENT_LLM_ENABLED", "INTENT_RULE_THRESHOLD",
     "COLD_GROUP_TRIGGER_ENABLED", "COLD_GROUP_THRESHOLD_MIN", "COLD_GROUP_COOLDOWN_MIN", "COLD_GROUP_MAX_PER_RUN",
-    "NIGHT_HINT_TRIGGER_ENABLED", "NIGHT_HINT_COOLDOWN_HOURS", "NIGHT_HINT_MAX_PER_RUN",
+    "NIGHT_HINT_TRIGGER_ENABLED", "NIGHT_HINT_NEUTRAL_REMINDER_ENABLED",
+    "NIGHT_HINT_COOLDOWN_HOURS", "NIGHT_HINT_MAX_PER_RUN",
     "FLOOD_MEDiate_TRIGGER_ENABLED",
     # [v5.35.1] 44 个新模块 CONFIG 键纳入白名单（P1-9 修复）
     # v5.34.0 业务模块（6 个）
@@ -74,7 +106,7 @@ ALLOWED_CONFIG_FIELDS = {
     "GROUP_SAFETY_CENTER_CONFIG", "GROUP_MESSAGE_PUSH_CONFIG", "PUNISHMENT_CENTER_CONFIG",
     "ENTERTAINMENT_GAMES_CONFIG",
     "AUTO_RULES_CONFIG", "USER_MARKING_CONFIG", "GROUP_TODO_CONFIG",
-    "STATS_REPORT_CONFIG", "INVITE_LINK_CONFIG", "CHANNEL_LINK_CONFIG",
+    "INVITE_LINK_CONFIG", "CHANNEL_LINK_CONFIG",
     "GROUP_REPORT_CONFIG", "WORD_CLOUD_CONFIG", "LANGUAGE_WHITELIST_CONFIG",
     "FORCE_CHANNEL_CONFIG", "VALID_SPEAK_CONFIG", "CHAT_POINTS_COST_CONFIG",
     "GROUP_MEMBERS_CONFIG", "AD_BLOCKER_CONFIG", "GROUP_MIGRATION_CONFIG",
@@ -131,7 +163,7 @@ def api_config_update():
       - 配置管理
     summary: 更新指定配置项
     description: |
-      更新单个配置项并触发配置热重载（通常 5-8 秒内生效）。
+      更新单个配置项并触发配置热重载（默认约 30 秒内生效）。
       仅允许更新白名单中的配置项，需要管理员权限。
     parameters:
       - name: body
@@ -161,7 +193,7 @@ def api_config_update():
               example: true
             msg:
               type: string
-              example: "配置项 BOT_NAME 已更新（通常 5 到 8 秒内自动生效）"
+              example: "配置项 BOT_NAME 已更新，将在下一次配置重载周期内生效（默认约30秒）"
       400:
         description: 请求参数错误
       403:
@@ -184,7 +216,7 @@ def api_config_update():
     cfg = read_config()
     cfg[key] = value
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": f"配置项 {key} 已更新（通常 5 到 8 秒内自动生效）"})
+        return jsonify({"ok": True, "msg": f"配置项 {key} 已更新，{CONFIG_RELOAD_NOTICE}"})
     return jsonify({"ok": False, "msg": "保存配置失败"}), 500
 
 
@@ -223,7 +255,7 @@ def api_config_natural():
     safe_cfg = {k: v for k, v in cfg.items() if not any(s in k.lower() for s in _sensitive_keys)}
     return jsonify({
         "ok": True,
-        "msg": (proxy.messages[-1] if proxy.messages else "已处理") + "（通常 5 到 8 秒内自动生效）",
+        "msg": (proxy.messages[-1] if proxy.messages else "已处理") + f"，{CONFIG_RELOAD_NOTICE}",
         "data": {"config": safe_cfg},
     })
 
@@ -277,7 +309,7 @@ def api_broadcast_format_config():
         cfg["RICH_MESSAGE_STYLE"] = data["rich_message_style"]
 
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "播报格式配置已更新（5-8秒内生效）"})
+        return jsonify({"ok": True, "msg": f"播报格式配置已更新，{CONFIG_RELOAD_NOTICE}"})
     return jsonify({"ok": False, "msg": "保存配置失败"}), 500
 
 
@@ -310,7 +342,7 @@ def api_button_style_config():
         cfg["BUTTON_COLOR_MAP"] = data["button_color_map"]
 
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "按钮样式配置已更新（5-8秒内生效）"})
+        return jsonify({"ok": True, "msg": f"按钮样式配置已更新，{CONFIG_RELOAD_NOTICE}"})
     return jsonify({"ok": False, "msg": "保存配置失败"}), 500
 
 
@@ -338,7 +370,7 @@ def api_custom_emoji_config():
         cfg["CUSTOM_EMOJI_POOL"] = data["custom_emoji_pool"]
 
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "Custom Emoji 配置已更新（5-8秒内生效）"})
+        return jsonify({"ok": True, "msg": f"Custom Emoji 配置已更新，{CONFIG_RELOAD_NOTICE}"})
     return jsonify({"ok": False, "msg": "保存配置失败"}), 500
 
 
@@ -363,7 +395,7 @@ def api_user_profile_config():
         cfg["USER_PROFILE_ENABLED"] = bool(data["user_profile_enabled"])
 
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "用户画像配置已更新（5-8秒内生效）"})
+        return jsonify({"ok": True, "msg": f"用户画像配置已更新，{CONFIG_RELOAD_NOTICE}"})
     return jsonify({"ok": False, "msg": "保存配置失败"}), 500
 
 
@@ -382,12 +414,13 @@ def api_scene_triggers_config():
                 "intent_llm_enabled": cfg.get("INTENT_LLM_ENABLED", False),
                 "intent_rule_threshold": cfg.get("INTENT_RULE_THRESHOLD", 2.0),
                 "cold_group_trigger_enabled": cfg.get("COLD_GROUP_TRIGGER_ENABLED", False),
-                "cold_group_threshold_min": cfg.get("COLD_GROUP_THRESHOLD_MIN", 30),
-                "cold_group_cooldown_min": cfg.get("COLD_GROUP_COOLDOWN_MIN", 120),
-                "cold_group_max_per_run": cfg.get("COLD_GROUP_MAX_PER_RUN", 3),
+                "cold_group_threshold_min": cfg.get("COLD_GROUP_THRESHOLD_MIN", 45),
+                "cold_group_cooldown_min": cfg.get("COLD_GROUP_COOLDOWN_MIN", 180),
+                "cold_group_max_per_run": cfg.get("COLD_GROUP_MAX_PER_RUN", 1),
                 "night_hint_trigger_enabled": cfg.get("NIGHT_HINT_TRIGGER_ENABLED", False),
-                "night_hint_cooldown_hours": cfg.get("NIGHT_HINT_COOLDOWN_HOURS", 24),
-                "night_hint_max_per_run": cfg.get("NIGHT_HINT_MAX_PER_RUN", 2),
+                "night_hint_neutral_reminder_enabled": cfg.get("NIGHT_HINT_NEUTRAL_REMINDER_ENABLED", False),
+                "night_hint_cooldown_hours": cfg.get("NIGHT_HINT_COOLDOWN_HOURS", 36),
+                "night_hint_max_per_run": cfg.get("NIGHT_HINT_MAX_PER_RUN", 1),
                 "flood_mediate_trigger_enabled": cfg.get("FLOOD_MEDiate_TRIGGER_ENABLED", False),
             }
         })
@@ -399,6 +432,7 @@ def api_scene_triggers_config():
         "intent_llm_enabled": "INTENT_LLM_ENABLED",
         "cold_group_trigger_enabled": "COLD_GROUP_TRIGGER_ENABLED",
         "night_hint_trigger_enabled": "NIGHT_HINT_TRIGGER_ENABLED",
+        "night_hint_neutral_reminder_enabled": "NIGHT_HINT_NEUTRAL_REMINDER_ENABLED",
         "flood_mediate_trigger_enabled": "FLOOD_MEDiate_TRIGGER_ENABLED",
     }
     num_fields = {
@@ -411,14 +445,30 @@ def api_scene_triggers_config():
     }
     for k, cfg_key in bool_fields.items():
         if k in data:
-            cfg[cfg_key] = bool(data[k])
+            parsed = _parse_scene_bool(data[k])
+            if parsed is None:
+                return jsonify({"ok": False, "msg": f"{k} 必须是布尔值"}), 400
+            cfg[cfg_key] = parsed
+    invalid_numeric = []
     for k, (cfg_key, caster) in num_fields.items():
         if k in data:
             try:
-                cfg[cfg_key] = caster(data[k])
+                parsed = caster(data[k])
+                minimum, maximum = _SCENE_NUMERIC_LIMITS[cfg_key]
+                if isinstance(parsed, float) and not math.isfinite(parsed):
+                    raise ValueError("必须是有限数字")
+                if (minimum is not None and parsed < minimum) or (
+                    maximum is not None and parsed > maximum
+                ):
+                    raise ValueError(f"范围应为 {minimum} 到 {maximum or '无上限'}")
+                cfg[cfg_key] = parsed
             except (ValueError, TypeError) as e:
-                logger.debug(f"场景触发数字字段转换失败，保持原值: key={cfg_key} err={e}")
+                invalid_numeric.append(f"{k}: {e}")
+                logger.debug(f"场景触发数字字段转换失败: key={cfg_key} err={e}")
+
+    if invalid_numeric:
+        return jsonify({"ok": False, "msg": "；".join(invalid_numeric)}), 400
 
     if write_config(cfg):
-        return jsonify({"ok": True, "msg": "场景触发配置已更新（5-8秒内生效）"})
+        return jsonify({"ok": True, "msg": f"场景触发配置已更新，{CONFIG_RELOAD_NOTICE}"})
     return jsonify({"ok": False, "msg": "保存配置失败"}), 500

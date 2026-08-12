@@ -152,12 +152,10 @@ def handle_ungban(bot, m, config, db):
             actor_id=int(user_id),
             ad_detector=None,
         )
-        data = (result or {}).get("data") or {}
-        ok = (result or {}).get("code") == 200 or data.get("blacklist_removed")
+        ok = (result or {}).get("code") == 200
     except Exception as e:
         logger.warning(f"/ungban restore_ad_user 失败 uid={target_uid}: {e}")
-        db.blacklist_remove(target_uid)
-        ok = True
+        ok = False
 
     target_name = f"用户{target_uid}"
     try:

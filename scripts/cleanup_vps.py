@@ -113,8 +113,11 @@ def main():
         try:
             sftp.stat(remote_path)
             remaining.append(rel_path)
+        except FileNotFoundError:
+            pass
         except Exception as e:
-            logger.debug(f"操作异常: {e}")
+            print(f"  ⚠️ 无法验证 {rel_path} 是否已删除：{e}")
+            remaining.append(f"{rel_path}（状态未确认）")
     sftp.close()
     client.close()
 

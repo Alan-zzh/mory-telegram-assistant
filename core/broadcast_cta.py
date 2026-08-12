@@ -650,8 +650,8 @@ def is_broadcast_image_enabled(config: dict, section: dict) -> bool:
     """图片卡总闸与分类型分闸的统一判断（全局总闸 AND 类型分闸）。
 
     section 为各播报类型的配置 dict（需含 image_card_enabled 字段），
-    例如 MYSTIC_BROADCAST_CONFIG / GREETING_CONFIG / NEWS_BROADCAST_CONFIG
-    / 定点播报单条配置；全局总闸关闭时任何类型都不出图。
+    例如 MYSTIC_BROADCAST_CONFIG / GREETING_CONFIG / 定点播报单条配置；
+    全局总闸关闭时任何类型都不出图。
     """
     cfg = config or {}
     if not bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False)):

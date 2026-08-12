@@ -81,7 +81,7 @@ def register_callback_handlers(bot, ctx):
                 ad_detector=getattr(ctx, "ad_detector", None),
             )
             ok = result.get("code") == 200
-            text = "已解封并尝试恢复发言权限" if ok else "解封失败，请看日志"
+            text = "已解封，四项状态和发言权限已读回确认" if ok else "解封未完全确认，请看日志"
             bot.answer_callback_query(call.id, text=text, show_alert=True)
             try:
                 bot.edit_message_reply_markup(

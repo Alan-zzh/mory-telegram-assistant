@@ -253,12 +253,10 @@ def retry_task(rm: ResourceManager, task_func, task_name: str, delay_sec: int = 
                 replace_existing=True,
             )
         else:
-            import threading
-            t = threading.Thread(target=_do_retry, args=(rm,), daemon=True, name=f"Retry-{task_name}")
-            t.start()
+            logger.warning(f"跳过 {task_name} 重试：调度器不可用或正在关闭")
+            return False
     except Exception as e:
         logger.error(f"重试任务调度失败: {e}")
-        import threading
-        t = threading.Thread(target=_do_retry, args=(rm,), daemon=True, name=f"Retry-{task_name}")
-        t.start()
+        return False
     logger.info(f"⏰ 已安排{task_name}在{delay_sec}秒后重试")
+    return True

@@ -105,6 +105,53 @@ def _deployment_exit_code(success: bool) -> int:
     """部署未完成或验证失败必须给自动化返回非零。"""
     return 0 if success else 1
 
+
+def _service_staging_path(service_name: str) -> str:
+    """返回项目私有目录下的 unit 暂存路径，避免 world-writable /tmp TOCTOU。"""
+    safe_name = Path(service_name).name
+    if safe_name != service_name or not safe_name.endswith(".service"):
+        raise ValueError(f"非法 service 文件名: {service_name!r}")
+    return f"{VPS_PATH}/.deploy-staging/{safe_name}"
+
+
+def _service_install_command(service_name: str) -> str:
+    """生成固定所有者/权限的 systemd unit 安装命令。"""
+    safe_name = Path(service_name).name
+    if safe_name != service_name or not safe_name.endswith(".service"):
+        raise ValueError(f"非法 service 文件名: {service_name!r}")
+    staging_path = _service_staging_path(safe_name)
+    return (
+        f"sudo install -o root -g root -m 0644 {staging_path} "
+        f"/etc/systemd/system/{safe_name} && rm -f {staging_path}"
+    )
+
+
+def _runtime_permission_hardening_command() -> str:
+    """收紧凭据权限，并让 root cron 只执行 root 拥有的 watchdog 副本。"""
+    secure_watchdog = "/usr/local/lib/mory-assistant/vps_watchdog.py"
+    source_watchdog = f"{VPS_PATH}/scripts/vps_watchdog.py"
+    canonical_cron = (
+        f"*/2 * * * * cd {VPS_PATH} && /usr/bin/python3 -X utf8 {secure_watchdog}"
+    )
+    return " && ".join([
+        "set -eu",
+        f"chmod 0600 {VPS_PATH}/.env {VPS_PATH}/config.json",
+        f"test ! -f {VPS_PATH}/mory.db || chmod 0600 {VPS_PATH}/mory.db",
+        "sudo install -d -o root -g root -m 0755 /usr/local/lib/mory-assistant",
+        f"sudo install -o root -g root -m 0755 {source_watchdog} {secure_watchdog}",
+        "cron_text=\"$(sudo crontab -l 2>/dev/null || true)\"",
+        # 兼容旧绝对/相对路径：先清掉所有旧 watchdog 行，再只写一个规范条目。
+        f"install -d -m 0700 {VPS_PATH}/.deploy-staging",
+        f"cron_stage={VPS_PATH}/.deploy-staging/root-cron.$$$$",
+        "umask 077",
+        "printf '%s\\n' \"$cron_text\" | sed '/vps_watchdog\\.py/d' > \"$cron_stage\"",
+        f"printf '%s\\n' '{canonical_cron}' >> \"$cron_stage\"",
+        "sudo crontab \"$cron_stage\"",
+        "rm -f \"$cron_stage\"",
+        f"test \"$(sudo crontab -l | grep -Fxc '{canonical_cron}')\" = '1'",
+        f"sudo test \"$(stat -c '%U:%G %a' {secure_watchdog})\" = 'root:root 755'",
+    ])
+
 # 绝不上传的文件名（含凭据/运行态/旧备份）。_collect_upload_files 只扫描 .py 文件，
 # 故 .bat/.sh 等非 Python 脚本根本不会被收集，无需在此列举。
 # v5.16.5 曾在此防御已删除的 deploy.bat/start.sh/start_dashboard.bat/docker_deploy.sh，
@@ -136,8 +183,10 @@ DEAD_REMOTE_FILES = [
     "core/monitoring.py",
     "core/rate_limiter.py",
     "core/router_statistics.py",
+    "core/router_database.py",
     "core/trendradar_news.py",
     "modules/predictive_patrol.py",
+    "modules/stats_report.py",
     "docs/review-report-20260621.md",
     # 内部文档（曾误上传至 VPS，现已从 ROOT_FILES 移除；部署时清理远端旧版本，
     # 避免暴露安全策略/踩坑病历/模块清单）
@@ -543,22 +592,27 @@ def main() -> bool:
 
         # 上传systemd服务文件到 /etc/systemd/system/
         print("\n  上传systemd服务文件 ...")
+        stdin, stdout, stderr = client.exec_command(
+            f"install -d -m 0700 {VPS_PATH}/.deploy-staging", timeout=10)
+        if stdout.channel.recv_exit_status() != 0:
+            err = stderr.read().decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"创建私有部署暂存目录失败：{err}")
         for svc_rel in SERVICE_FILES:
             local_svc = ROOT / svc_rel
             if local_svc.exists():
                 svc_name = Path(svc_rel).name
                 try:
-                    sftp.put(str(local_svc), f"/tmp/{svc_name}")
+                    sftp.put(str(local_svc), _service_staging_path(svc_name))
                     stdin, stdout, stderr = client.exec_command(
-                        f"sudo mv /tmp/{svc_name} /etc/systemd/system/{svc_name}", timeout=10)
+                        _service_install_command(svc_name), timeout=10)
                     exit_code = stdout.channel.recv_exit_status()
                     if exit_code == 0:
                         print(f"  ✅ {svc_name} → /etc/systemd/system/")
                     else:
                         err = stderr.read().decode("utf-8", errors="replace").strip()
-                        print(f"  ⚠️ {svc_name} 移动失败：{err}")
+                        raise RuntimeError(f"{svc_name} 安装失败：{err}")
                 except Exception as e:
-                    print(f"  ⚠️ {svc_name} 上传失败：{e}")
+                    raise RuntimeError(f"systemd unit 部署失败：{e}") from e
 
         # daemon-reload + enable dashboard
         stdin, stdout, stderr = client.exec_command(
@@ -583,6 +637,16 @@ def main() -> bool:
                 sync_env_api_key(sftp, VPS_PATH, api_key, token)
             except Exception as e:
                 print(f"  ⚠️ .env同步失败（非致命）：{e}")
+
+        # root 执行面与凭据权限必须在重启前收紧；失败即阻断部署。
+        print("  收紧凭据与 watchdog 权限 ...")
+        stdin, stdout, stderr = client.exec_command(
+            _runtime_permission_hardening_command(), timeout=20)
+        exit_code = stdout.channel.recv_exit_status()
+        if exit_code != 0:
+            err = stderr.read().decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"运行态权限加固失败：{err or 'unknown error'}")
+        print("  ✅ .env/config/db 已最小权限化，root cron 使用 root-owned watchdog")
 
         sftp.close()
 

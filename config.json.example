@@ -1,5 +1,5 @@
 {
-  "_CONFIG_VERSION": "5.38.36",
+  "_CONFIG_VERSION": "5.38.37",
   "_CONFIG_UPDATED": "2026-08-05",
   "_SAFETY_NOTE": "不要手动删除这个文件！所有用户数据在mory.db中，更新代码不会影响本文件。",
   "TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
@@ -626,14 +626,6 @@
     "night_time": "22:30",
     "image_card_enabled": false
   },
-  "NEWS_BROADCAST_CONFIG": {
-    "enabled": false,
-    "preferred_source": "real_first",
-    "morning_time": "09:05",
-    "afternoon_time": "13:05",
-    "evening_time": "20:35",
-    "image_card_enabled": false
-  },
   "MYSTIC_BROADCAST_CONFIG": {
     "enabled": false,
     "cta_enabled": true,
@@ -760,7 +752,7 @@
   "INTENT_ROUTING_ENABLED": true,
   "INTENT_LLM_ENABLED": false,
   "INTENT_RULE_THRESHOLD": 2.0,
-  "COLD_GROUP_TRIGGER_ENABLED": true,
+  "COLD_GROUP_TRIGGER_ENABLED": false,
   "COLD_GROUP_THRESHOLD_MIN": 45,
   "COLD_GROUP_COOLDOWN_MIN": 180,
   "COLD_GROUP_MAX_PER_RUN": 1,
@@ -1157,9 +1149,6 @@
     ]
   },
   "GROUP_TODO_CONFIG": {
-    "enabled": false
-  },
-  "STATS_REPORT_CONFIG": {
     "enabled": false
   },
   "INVITE_LINK_CONFIG": {

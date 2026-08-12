@@ -25,6 +25,25 @@ base_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, base_dir)
 
 
+def _shutdown_scheduler_for_db(timeout: float = 20.0) -> bool:
+    """停止新 job 并有界 drain；未 drain 完成时不得关闭共享数据库。"""
+    logger = logging.getLogger("main")
+    try:
+        from tasks.task_scheduler import get_task_scheduler
+
+        controller = get_task_scheduler()
+        if controller is None:
+            return True
+        controller.shutdown(wait=False)
+        drained = controller.drain(timeout=timeout)
+        if not drained:
+            logger.error("调度任务未在 %.1fs 内结束，保留数据库连接直至进程退出", timeout)
+        return drained
+    except Exception as e:
+        logger.warning(f"关闭调度器失败，保留数据库连接: {e}")
+        return False
+
+
 def main():
     """主入口：初始化 → 注册 → 启动"""
     logger = logging.getLogger("main")
@@ -206,19 +225,17 @@ def main():
             ctx.save_config()
         except Exception as e:
             logging.getLogger("main").warning(f"停机时保存配置失败：{e}")
-        # 【P1-NEW-10】停止 APScheduler，避免 daemon 线程在数据库关闭后仍执行任务
+        scheduler_drained = _shutdown_scheduler_for_db()
         try:
-            from tasks.task_scheduler import get_scheduler_instance
-            scheduler = get_scheduler_instance()
-            if scheduler and scheduler.running:
-                scheduler.shutdown(wait=False)
-                logging.getLogger("main").info("✅ 调度器已关闭")
+            from core.bot_initializer import stop_config_reload_watcher
+            stop_config_reload_watcher()
         except Exception as e:
-            logging.getLogger("main").warning(f"关闭调度器失败: {e}")
-        try:
-            ctx.db.close()
-        except Exception as e:
-            logging.getLogger("main").warning(f"停机时关闭数据库失败：{e}")
+            logging.getLogger("main").warning(f"关闭配置重载 watcher 失败: {e}")
+        if scheduler_drained:
+            try:
+                ctx.db.close()
+            except Exception as e:
+                logging.getLogger("main").warning(f"停机时关闭数据库失败：{e}")
         try:
             shutdown_tracing()
         except Exception as e:

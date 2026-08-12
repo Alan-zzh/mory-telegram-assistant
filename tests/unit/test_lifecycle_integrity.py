@@ -1,0 +1,192 @@
+"""启动、热重载与关停不得在生命周期边界丢失资源一致性。"""
+
+import threading
+from types import SimpleNamespace
+
+
+def test_background_start_reuses_the_same_resource_manager(monkeypatch):
+    """重复启动必须返回同一锁域，不能再创建第二套 ResourceManager。"""
+    from modules import auto_tasks
+
+    monkeypatch.setattr(auto_tasks, "_scheduler_instance", None)
+    monkeypatch.setattr(auto_tasks, "_resource_manager_instance", None)
+
+    started_with = []
+
+    def _start(rm):
+        started_with.append(rm)
+        auto_tasks._scheduler_instance = SimpleNamespace(running=True)
+
+    monkeypatch.setattr(auto_tasks, "_start_with_task_scheduler", _start)
+
+    first = auto_tasks.start_background(object(), {}, object(), object(), lambda: None)
+    second = auto_tasks.start_background(object(), {}, object(), object(), lambda: None)
+
+    assert first is second
+    assert started_with == [first]
+
+
+def test_background_start_preserves_injected_resource_manager(monkeypatch):
+    """BotContext 与任务调度器必须共同持有初始化器创建的同一实例。"""
+    from modules import auto_tasks
+
+    monkeypatch.setattr(auto_tasks, "_scheduler_instance", None)
+    monkeypatch.setattr(auto_tasks, "_resource_manager_instance", None)
+    monkeypatch.setattr(auto_tasks, "_start_with_task_scheduler", lambda _rm: None)
+    injected = SimpleNamespace()
+
+    assert auto_tasks.start_background(
+        object(), {}, object(), object(), lambda: None, resource_manager=injected
+    ) is injected
+
+
+def test_retry_never_falls_back_to_naked_thread_after_scheduler_shutdown(monkeypatch):
+    """调度拒绝时必须丢弃重试，不能绕过 drain 启动裸线程。"""
+    from modules import auto_tasks
+
+    class ClosedScheduler:
+        def add_job(self, *_args, **_kwargs):
+            raise RuntimeError("scheduler closed")
+
+    started = []
+    monkeypatch.setattr(auto_tasks, "_get_scheduler", lambda: ClosedScheduler())
+    monkeypatch.setattr(auto_tasks.threading.Thread, "start", lambda self: started.append(self))
+
+    assert auto_tasks._retry_task(object(), lambda _rm: None, "closed") is False
+    assert started == []
+
+
+def test_common_retry_never_starts_thread_without_scheduler(monkeypatch):
+    """tasks/ 公共重试也必须服从统一调度生命周期。"""
+    from tasks import task_scheduler
+    from tasks.support import common
+
+    monkeypatch.setattr(task_scheduler, "get_scheduler_instance", lambda: None)
+    assert common.retry_task(object(), lambda _rm: None, "closed") is False
+
+
+def test_reload_flag_is_retained_when_reloading_fails(monkeypatch, tmp_path):
+    """损坏配置不可吞掉跨进程信号；修复后下一轮必须还能重试。"""
+    from core import bot_initializer
+
+    flag = tmp_path / "reload_flag"
+    flag.touch()
+    monkeypatch.setattr(bot_initializer, "RELOAD_FLAG", flag)
+    monkeypatch.setattr(bot_initializer, "load_config", lambda: (_ for _ in ()).throw(ValueError("broken")))
+
+    assert bot_initializer._reload_config_from_flag({}) is False
+    assert flag.exists()
+
+
+def test_reload_flag_is_consumed_only_after_success(monkeypatch, tmp_path):
+    from core import bot_initializer
+
+    flag = tmp_path / "reload_flag"
+    flag.touch()
+    monkeypatch.setattr(bot_initializer, "RELOAD_FLAG", flag)
+    monkeypatch.setattr(bot_initializer, "load_config", lambda: {"feature": True})
+    applied = []
+    monkeypatch.setattr(
+        bot_initializer, "_apply_reloaded_config", lambda cfg, new: applied.append((cfg, new))
+    )
+
+    assert bot_initializer._reload_config_from_flag({}) is True
+    assert applied
+    assert not flag.exists()
+
+
+def test_reload_watcher_is_singleton_and_stoppable(monkeypatch):
+    from core import bot_initializer
+
+    bot_initializer.stop_config_reload_watcher(join_timeout=1)
+    first = bot_initializer.start_config_reload_watcher({}, interval=60)
+    second = bot_initializer.start_config_reload_watcher({}, interval=60)
+    try:
+        assert first is second
+        assert first.is_alive()
+    finally:
+        assert bot_initializer.stop_config_reload_watcher(join_timeout=1)
+    assert not first.is_alive()
+
+
+def test_scheduler_shutdown_gates_queued_jobs_and_drains_running_jobs():
+    """wait=False 后排队任务不得再触碰 DB；已开始任务需在有界时间内 drain。"""
+    from tasks.task_scheduler import TaskScheduler
+
+    class _BackgroundScheduler:
+        running = True
+
+        def __init__(self):
+            self.shutdown_calls = []
+
+        def shutdown(self, *, wait):
+            self.shutdown_calls.append(wait)
+            self.running = False
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class _Task:
+        def execute(self, _ctx):
+            started.set()
+            assert release.wait(timeout=2)
+
+    controller = TaskScheduler.__new__(TaskScheduler)
+    controller.scheduler = _BackgroundScheduler()
+    controller._init_lifecycle_state()
+    worker = threading.Thread(target=controller._execute_task, args=(_Task(), {}))
+    worker.start()
+    assert started.wait(timeout=1)
+
+    controller.shutdown(wait=False)
+    assert controller.drain(timeout=0.01) is False
+    release.set()
+    worker.join(timeout=1)
+    assert controller.drain(timeout=0.5) is True
+    assert controller.scheduler.shutdown_calls == [False]
+
+    executed = []
+    controller._execute_task(SimpleNamespace(execute=lambda _ctx: executed.append(True)), {})
+    assert executed == []
+
+
+def test_dynamic_jobs_share_shutdown_gate_and_drain_tracking():
+    """定时删除、重试等动态 job 也不能绕开关停保护。"""
+    from tasks.task_scheduler import TaskScheduler
+
+    class _BackgroundScheduler:
+        running = False
+
+        def __init__(self):
+            self.kwargs = None
+
+        def add_job(self, _func, *args, **kwargs):
+            self.kwargs = kwargs
+            return "scheduled"
+
+    controller = TaskScheduler.__new__(TaskScheduler)
+    controller.scheduler = _BackgroundScheduler()
+    controller._init_lifecycle_state()
+
+    assert controller.add_job(lambda value: value, trigger="date", args=["ok"]) == "scheduled"
+    wrapped = controller.scheduler.kwargs["args"]
+    assert wrapped[0]("ok") == "ok"
+    assert wrapped[1] == ("ok",)
+
+    controller.shutdown(wait=False)
+    assert controller._execute_callable(lambda: (_ for _ in ()).throw(AssertionError()), (), {}, "dynamic") is None
+
+
+def test_main_shutdown_helper_requires_scheduler_drain(monkeypatch):
+    import main
+    from tasks import task_scheduler
+
+    calls = []
+    controller = SimpleNamespace(
+        shutdown=lambda *, wait: calls.append(("shutdown", wait)),
+        drain=lambda *, timeout: calls.append(("drain", timeout)) or False,
+    )
+    monkeypatch.setattr(task_scheduler, "get_task_scheduler", lambda: controller)
+
+    assert main._shutdown_scheduler_for_db(timeout=0.01) is False
+    assert calls == [("shutdown", False), ("drain", 0.01)]

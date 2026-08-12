@@ -30,7 +30,7 @@ def test_normalize_runtime_config_syncs_enable_enabled_pairs():
     assert normalized["SHOP_CONFIG"]["enabled"] is True
 
 
-def test_normalize_runtime_config_syncs_greeting_and_news_legacy_keys():
+def test_normalize_runtime_config_syncs_greeting_legacy_keys():
     from core.config_compat import normalize_runtime_config
 
     cfg = {
@@ -42,13 +42,6 @@ def test_normalize_runtime_config_syncs_greeting_and_news_legacy_keys():
             "afternoon_time": "12:44",
             "evening_time": "23:21",
         },
-        "NEWS_BROADCAST_CONFIG": {
-            "enabled": True,
-            "preferred_source": "real_first",
-            "morning_time": "09:09",
-            "afternoon_time": "13:13",
-            "evening_time": "20:29",
-        },
     }
 
     normalized = normalize_runtime_config(cfg)
@@ -58,16 +51,12 @@ def test_normalize_runtime_config_syncs_greeting_and_news_legacy_keys():
     assert normalized["GREETING_HOUR"] == "08:11"
     assert normalized["AFTERNOON_GREETING_HOUR"] == "12:44"
     assert normalized["GOODNIGHT_HOUR"] == "23:21"
-    assert normalized["AUTO_NEWS"] is True
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["enabled"] is False
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["cta_enabled"] is False
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["private_reply_enabled"] is False
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["morning_mode"] == "almanac"
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["afternoon_mode"] == "tarot"
     assert normalized["MYSTIC_BROADCAST_CONFIG"]["evening_mode"] == "iching"
-    assert normalized["NEWS_HOUR_MORNING"] == "09:09"
-    assert normalized["NEWS_HOUR_AFTERNOON"] == "13:13"
-    assert normalized["NEWS_HOUR_EVENING"] == "20:29"
 
 
 def test_normalize_runtime_config_syncs_anti_raid_window_alias():

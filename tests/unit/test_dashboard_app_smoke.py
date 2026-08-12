@@ -79,7 +79,7 @@ def test_metrics_endpoint_requires_login_and_allows_admin():
         assert auth.status_code == 501
 
 
-def test_scheduler_api_falls_back_to_scheduler_metrics(monkeypatch, tmp_path):
+def test_scheduler_api_does_not_present_scheduler_metrics_as_registry(monkeypatch, tmp_path):
     db_path = tmp_path / "mory.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -116,11 +116,15 @@ def test_scheduler_api_falls_back_to_scheduler_metrics(monkeypatch, tmp_path):
     jobs = client.get("/api/scheduler/jobs")
     assert jobs.status_code == 200
     jobs_json = jobs.get_json()
-    assert jobs_json["source"] == "scheduler_metrics"
-    assert jobs_json["count"] == 1
+    assert jobs_json["source"] == "unavailable"
+    assert jobs_json["registry_available"] is False
+    assert jobs_json["count"] == 0
+    assert jobs_json["historical_metrics_count"] == 1
 
     stats = client.get("/api/scheduler/stats")
     assert stats.status_code == 200
     stats_json = stats.get_json()
-    assert stats_json["data"]["source"] == "scheduler_metrics"
-    assert stats_json["data"]["job_count"] == 1
+    assert stats_json["data"]["source"] == "scheduler_metrics_history"
+    assert stats_json["data"]["registry_available"] is False
+    assert stats_json["data"]["job_count"] is None
+    assert stats_json["data"]["historical_job_count"] == 1

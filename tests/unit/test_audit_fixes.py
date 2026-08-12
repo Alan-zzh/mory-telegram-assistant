@@ -449,20 +449,27 @@ class TestCriticalJobsConsistency:
         ) is True
         assert _is_job_disabled_by_config("mystic_afternoon", {}) is True
 
-    def test_is_job_disabled_by_config_infrastructure_never_skipped(self):
-        """_is_job_disabled_by_config：基础设施任务（backup/cart_recovery 等）永不被 config 跳过"""
+    def test_is_job_disabled_by_config_respects_feature_switches(self):
+        """有独立开关的任务按配置监控，其余基础设施任务始终监控。"""
         from core.scheduler_monitor import _is_job_disabled_by_config
-        infra_jobs = [
-            "cart_recovery", "backup", "daily_backup", "health_check",
+        assert _is_job_disabled_by_config("cart_recovery", {}) is True
+        assert _is_job_disabled_by_config("daily_backup", {}) is True
+        assert _is_job_disabled_by_config(
+            "cart_recovery", {"CART_RECOVERY_CONFIG": {"enabled": True}}
+        ) is False
+        assert _is_job_disabled_by_config(
+            "daily_backup", {"DAILY_BACKUP_ENABLED": True}
+        ) is False
+
+        always_monitored = [
+            "backup", "health_check",
             "sync_scheduler_metrics", "flush_alert_summary",
         ]
-        # 即使 config 完全为空，基础设施任务也不应跳过
-        for jid in infra_jobs:
+        for jid in always_monitored:
             assert _is_job_disabled_by_config(jid, {}) is False, (
                 f"{jid} 是基础设施任务，不应被 config 跳过"
             )
-        # config=None 时也不跳过
-        for jid in infra_jobs:
+        for jid in ["cart_recovery", "daily_backup", *always_monitored]:
             assert _is_job_disabled_by_config(jid, None) is False
 
 

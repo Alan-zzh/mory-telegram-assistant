@@ -24,6 +24,23 @@ from core.logging_util import get_logger
 logger = get_logger("ai_advisor")
 
 
+def _coerce_response_text(raw) -> str:
+    """Normalize plain or OpenAI-compatible typed content into text."""
+    if isinstance(raw, str):
+        return raw.strip()
+    if not isinstance(raw, list):
+        return ""
+    text_parts = []
+    for part in raw:
+        if isinstance(part, dict):
+            value = part.get("text")
+            if isinstance(value, str) and value.strip():
+                text_parts.append(value.strip())
+        elif isinstance(part, str) and part.strip():
+            text_parts.append(part.strip())
+    return "\n".join(text_parts).strip()
+
+
 # ──────────────────────────────────────────────────────
 # 1. 边界评分 AI 复核
 # ──────────────────────────────────────────────────────
@@ -101,7 +118,9 @@ def review_borderline_ad(
             return {"is_ad": False, "confidence": 0.0, "reason": "AI无响应", "used_ai": False}
 
         # 解析 JSON
-        raw_stripped = raw.strip()
+        raw_stripped = _coerce_response_text(raw)
+        if not raw_stripped:
+            return {"is_ad": False, "confidence": 0.0, "reason": "AI响应格式错误", "used_ai": False}
         # 兼容模型可能包裹 markdown 代码块
         if raw_stripped.startswith("```"):
             raw_stripped = raw_stripped.strip("`")
@@ -322,7 +341,9 @@ def review_avatar_with_vision(
         if not raw:
             return {"is_ad": False, "type": "unknown", "confidence": 0.0, "desc": "AI无响应", "used_ai": False}
 
-        raw_stripped = raw.strip()
+        raw_stripped = _coerce_response_text(raw)
+        if not raw_stripped:
+            return {"is_ad": False, "type": "unknown", "confidence": 0.0, "desc": "AI响应格式错误", "used_ai": False}
         if raw_stripped.startswith("```"):
             raw_stripped = raw_stripped.strip("`")
             if raw_stripped.lower().startswith("json"):

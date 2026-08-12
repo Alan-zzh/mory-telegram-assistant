@@ -10,6 +10,10 @@
 import os
 from pathlib import Path
 
+from core.logging_util import get_logger
+
+logger = get_logger("vps_config")
+
 # 自动加载 .env 文件（如果存在）
 _env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
 if os.path.exists(_env_file):

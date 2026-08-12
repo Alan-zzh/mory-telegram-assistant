@@ -7,7 +7,7 @@
 ║    各任务互不干扰，解决了「一个任务卡住导致整点新闻漏发」的问题。      ║
 ║                                                                        ║
 ║  功能清单：                                                            ║
-║    1. 新闻播报（9:00/13:00/20:30）                                    ║
+║    1. 新闻播报执行链已删除（不保留幽灵开关）                           ║
 ║    2. 早/午/晚安问候（[Codex] 读取 GREETING_CONFIG 配置时间）          ║
 ║    3. 叫醒服务（每分钟检查）                                           ║
 ║    4. 阅后即焚探测（每3分钟一次）                                      ║
@@ -34,7 +34,7 @@ import json
 import copy
 import threading
 import html
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from datetime import datetime, timedelta, timezone
 from core.broadcast_formatter import build_greeting_html, build_rich_greeting_html
 from core.helpers import can_delete_message, can_orphan_cleanup, get_broadcast_auto_delete_config
@@ -59,7 +59,6 @@ class _TaskAbort(Exception):
 # 尝试导入 APScheduler（可选依赖，未安装则回退到旧版 while True）
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
-    from apscheduler.triggers.cron import CronTrigger
     HAS_APSCHEDULER = True
 except ImportError:
     HAS_APSCHEDULER = False
@@ -72,6 +71,7 @@ _last_task_run = {}
 _task_lock = threading.Lock()
 
 _scheduler_instance = None
+_resource_manager_instance = None
 _startup_maintenance_thread = None
 
 # 【v5.11.0 可靠性框架】注册任务清单 + abort 历史
@@ -724,8 +724,10 @@ def _handle_task_abort(task_name: str, abort: _TaskAbort, time_desc: str = ""):
 
 
 def _get_scheduler():
-    """获取全局APScheduler实例（供_schedule_auto_delete和_retry_task使用）"""
-    return _scheduler_instance
+    """获取受关停闸门保护的全局调度器。"""
+    from tasks.task_scheduler import get_scheduler_instance
+
+    return get_scheduler_instance()
 
 def _try_claim_task(task_name: str, min_interval_sec: int = 7200) -> bool:
     """
@@ -880,13 +882,13 @@ def _retry_task(rm, task_func, task_name: str, delay_sec: int = 300):
                 replace_existing=True,
             )
         else:
-            t = threading.Thread(target=_do_retry, args=(rm,), daemon=True, name=f"Retry-{task_name}")
-            t.start()
+            logger.warning(f"跳过 {task_name} 重试：调度器不可用或正在关闭")
+            return False
     except Exception as e:
         logger.error(f"重试任务调度失败: {e}")
-        t = threading.Thread(target=_do_retry, args=(rm,), daemon=True, name=f"Retry-{task_name}")
-        t.start()
+        return False
     logger.info(f"⏰ 已安排{task_name}在{delay_sec}秒后重试")
+    return True
 
 
 def _notify_admin_failure(rm, task_name: str, error_msg: str):
@@ -3905,24 +3907,51 @@ def _job_sync_user_lifecycle_buckets(rm):
         logger.error(f"用户生命周期同步失败：{e}")
 
 
-def start_background(bot, config: Dict[str, Any], db, ai, save_config_fn):
-    """启动后台任务引擎（v5.31.x 重构后使用 TaskScheduler）"""
+def start_background(
+    bot,
+    config: Dict[str, Any],
+    db,
+    ai,
+    save_config_fn,
+    resource_manager: Optional[ResourceManager] = None,
+):
+    """启动后台任务引擎并返回全局唯一的 ResourceManager。
+
+    调度器任务与消息分发必须共享同一把资源锁。调用方可以传入初始化阶段
+    已创建的实例；重复启动则返回正在服务的实例，绝不另建锁域。
+    """
     # 【v4.9.3】防重入保护：避免重复启动导致多个scheduler实例并发调度
-    global _scheduler_instance
+    global _scheduler_instance, _resource_manager_instance
     if _scheduler_instance is not None and getattr(_scheduler_instance, 'running', False):
         logger.warning("⚠️ 后台任务引擎已在运行，跳过重复启动")
-        return
+        if _resource_manager_instance is None:
+            raise RuntimeError("后台调度器运行中但缺少共享 ResourceManager")
+        return _resource_manager_instance
 
-    rm = ResourceManager(bot=bot, ai=ai, db=db, config=config, save_config_fn=save_config_fn)
+    rm = resource_manager or ResourceManager(
+        bot=bot,
+        ai=ai,
+        db=db,
+        config=config,
+        save_config_fn=save_config_fn,
+    )
+    _resource_manager_instance = rm
     TaskTransactionManager.bind(rm)
     _task_guard.bind(rm)
     _fault_reporter.bind(rm)
 
-    if HAS_APSCHEDULER:
-        _start_with_task_scheduler(rm)
-    else:
-        # APScheduler 是必装依赖（requirements.lock），此分支永远不会执行
-        raise RuntimeError("APScheduler 未安装，请运行 pip install apscheduler")
+    try:
+        if HAS_APSCHEDULER:
+            _start_with_task_scheduler(rm)
+        else:
+            # APScheduler 是必装依赖（requirements.lock），此分支永远不会执行
+            raise RuntimeError("APScheduler 未安装，请运行 pip install apscheduler")
+    except Exception:
+        # 启动未完成时不保留半初始化锁域；下一次启动可重新创建。
+        if _scheduler_instance is None or not getattr(_scheduler_instance, 'running', False):
+            _resource_manager_instance = None
+        raise
+    return rm
 
 
 def _start_with_task_scheduler(rm):
@@ -3931,17 +3960,23 @@ def _start_with_task_scheduler(rm):
     from tasks.task_scheduler import create_scheduler
 
     scheduler = create_scheduler(rm)
-    _scheduler_instance = scheduler.scheduler
+    # 对外统一暴露带生命周期闸门的控制器；抽奖、签到、场景触发器与动态
+    # auto-delete/retry 不得绕过 active-job 计数后在关库阶段继续访问 SQLite。
+    _scheduler_instance = scheduler
 
-    # 场景化触发器注册（默认关闭，需 config 开启）
+    # 场景化触发器注册（与热重载共用同一幂等入口）
+    from modules.triggers.base import refresh_trigger_jobs
     from modules.triggers.cold_group import ColdGroupTrigger
     from modules.triggers.night_hint import NightHintTrigger
-    ColdGroupTrigger().register(_scheduler_instance, rm)
-    NightHintTrigger().register(_scheduler_instance, rm)
+    refresh_trigger_jobs(
+        _scheduler_instance,
+        rm,
+        (ColdGroupTrigger, NightHintTrigger),
+    )
 
     # 附加调度监控（监听 EXECUTED/ERROR/MISSED 事件）
     from core.scheduler_monitor import attach_to_scheduler
-    attach_to_scheduler(_scheduler_instance, db=rm.db)
+    attach_to_scheduler(scheduler.scheduler, db=rm.db)
 
     # 注册/监控均成功后才启动并落跨进程心跳，再异步执行耗时的全员扫描。
     # 否则数千人的 Telegram API 调用会在 scheduler.start() 前阻塞数分钟，

@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.36**：生产真相审计闭环配置热重载、关键调度监控、任务四态监测、报表真实数据源与外部看门狗；资料审核复用 Telegram 查询，减少限流风险。
+当前版本 **v5.38.37**：封堵私聊自助复权，纠正健康/调度假绿灯，修复头像审查、热重载与停机竞态，并清除新闻和空报表幽灵入口。
 
 ## 快速开始
 
@@ -115,9 +115,9 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 > 普通用户命令见 `/help`；管理员在私聊触发 `/help` 会额外附带上述清单。
 
 ## 目录结构
-- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（82 个业务 `.py`）。
-- `modules/`：135 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等 v5.34.0+ 默认关闭）。
-- `dashboard/`：运营后台（`app` + `api`，164 路由，含人工审核风格样本 API）。
+- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（80 个业务 `.py`）。
+- `modules/`：136 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等默认关闭能力）。
+- `dashboard/`：运营后台（`app` + `api`，163 路由，含人工审核风格样本 API）。
 - `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
 - `scripts/`：工具脚本（含 `doc_consistency.py` 自检）。
 - `tests/`：单元测试。
@@ -127,7 +127,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `config/`：systemd 服务文件。
 
 ## 客观指标（2026-08-09 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 137，core 业务 `.py` = 81，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 164，消息分发函数 = 9，model_router 映射 = 10。
+modules 业务 `.py` = 136，core 业务 `.py` = 80，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 163，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）
@@ -143,7 +143,6 @@ modules 业务 `.py` = 137，core 业务 `.py` = 81，`_job_` = 33，DB 表 = 17
   - `MYSTIC_BROADCAST_CONFIG.image_card_enabled`：黄历/塔罗/易经共用一个开关
   - `GREETING_CONFIG.image_card_enabled`：问候播报（生产关闭）
   - `SCHEDULED_BROADCASTS[].image_card_enabled`：每个定点播报单独配（生产全关）
-  - `NEWS_BROADCAST_CONFIG.image_card_enabled`：新闻（已下线，保留开关防恢复）
 - `BROADCAST_THEME_ENABLED`：主题色开关
 - `BUTTON_STYLE_ENABLED`：Inline Keyboard 彩色按钮样式
 - `RICH_MESSAGE_STYLE`：回退链路样式

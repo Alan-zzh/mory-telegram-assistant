@@ -46,7 +46,6 @@ LOCK_FILE = LOGS_DIR / ".puzan_loop_monitor.lock"
 DEBUG_HISTORY = PROJECT_ROOT / "AI_DEBUG_HISTORY.md"
 HEALTH_URL = "http://localhost:6616/api/health"
 MORY_DB = "/home/ubuntu/mory_assistant/mory.db"
-ROUTER_DB = "/home/ubuntu/mory_assistant/data/router_usage.db"
 
 # ============ .env 加载 ============
 _env = dotenv_values(ENV_PATH)
@@ -362,8 +361,7 @@ def l4_biz_check(client):
     """schema 参考 core/database.py + AI_DEBUG_HISTORY.md Loop 13/6：
       - task_execution_history: running/success/failed/aborted 四态，任务执行事实真相源
       - task_log: 临时 claim/防重锁，不得用于执行量或成功率统计
-      - token_usage（router_usage.db）: timestamp(TEXT, datetime isoformat) - 非 created_at
-      - llm_cost_logs（mory.db）: timestamp(REAL/INTEGER, 秒级 Unix 时间)，成本熔断器刷盘日志
+      - llm_cost_logs（mory.db）: timestamp(REAL/INTEGER, 秒级 Unix 时间)，LLM 调用与成本真相源
       - conversion_events: ts(REAL, 毫秒)
       - orphan_cleanup_log: run_at(INTEGER, 秒) - 非 ts
     """
@@ -400,38 +398,34 @@ def l4_biz_check(client):
             status = "ERROR"
             details["_crit"] = "task_execution_history_query_failed"
 
-        # router_usage.db: token_usage（timestamp 列为带 +08:00 的 ISO 字符串）。
-        # 用 strftime('%s', timestamp) 统一转 UTC epoch，避免 CST/UTC 字符串互比错位。
+        # 旧 router_usage.db 自 4 月后无写入入口，已删除；LLM 次数/成本统一读
+        # 实际由 LLMCostGuard 持续刷盘的 mory.db.llm_cost_logs。
         tu, et = sqlite_query(
-            client, ROUTER_DB,
-            "SELECT COUNT(*) FROM token_usage WHERE CAST(strftime('%s', timestamp) AS INTEGER) >= CAST(strftime('%s', 'now', '-1 hour') AS INTEGER);",
+            client, MORY_DB,
+            "SELECT COUNT(*) FROM llm_cost_logs WHERE timestamp >= strftime('%s', datetime('now', '-1 hour'));",
         )
         details["token_usage_1h"] = tu.strip() if not et else f"ERR: {et}"
 
         tu5, et5 = sqlite_query(
-            client, ROUTER_DB,
-            "SELECT COUNT(*) FROM token_usage WHERE CAST(strftime('%s', timestamp) AS INTEGER) >= CAST(strftime('%s', 'now', '-5 minutes') AS INTEGER);",
+            client, MORY_DB,
+            "SELECT COUNT(*) FROM llm_cost_logs WHERE timestamp >= strftime('%s', datetime('now', '-5 minutes'));",
         )
         details["token_usage_5min"] = tu5.strip() if not et5 else f"ERR: {et5}"
 
-        # LLM 请求用量成本：router_usage.db.token_usage.cost
+        # LLM 请求成本：mory.db.llm_cost_logs.estimated_cost
         lc, el = sqlite_query(
-            client, ROUTER_DB,
-            "SELECT COALESCE(SUM(cost),0) FROM token_usage WHERE CAST(strftime('%s', timestamp) AS INTEGER) >= CAST(strftime('%s', 'now', '-1 hour') AS INTEGER);",
-        )
-        details["token_cost_1h_sum"] = lc.strip() if not el else f"ERR: {el}"
-
-        # 成本熔断器刷盘成本：mory.db.llm_cost_logs.estimated_cost
-        guard_cost, guard_err = sqlite_query(
             client, MORY_DB,
             "SELECT COALESCE(SUM(estimated_cost),0) FROM llm_cost_logs WHERE timestamp >= strftime('%s', datetime('now', '-1 hour'));",
         )
-        details["guard_cost_1h_sum"] = guard_cost.strip() if not guard_err else f"ERR: {guard_err}"
-        lce, _ = sqlite_query(
+        details["token_cost_1h_sum"] = lc.strip() if not el else f"ERR: {el}"
+        lce, lce_err = sqlite_query(
             client, MORY_DB,
             "SELECT COUNT(*) FROM llm_cost_logs;",
         )
-        details["llm_cost_logs_count"] = lce.strip() if lce.strip() else "0"
+        details["llm_cost_logs_count"] = lce.strip() if not lce_err else f"ERR: {lce_err}"
+        if et or et5 or el or lce_err:
+            status = "ERROR"
+            details["_crit"] = "llm_cost_logs_query_failed"
 
         # conversion_events（ts 毫秒）
         cv, ec = sqlite_query(
@@ -756,7 +750,6 @@ def run_single_round(round_no, total_rounds, log_file):
         line4 = (f"[L4 BIZ] task_1h={d4.get('task_1h','?')} | task_5min={d4.get('task_5min','?')} | "
                  f"token_1h={d4.get('token_usage_1h','?')} | token_5min={d4.get('token_usage_5min','?')} | "
                  f"token_cost_1h={d4.get('token_cost_1h_sum','?')} | "
-                 f"guard_cost_1h={d4.get('guard_cost_1h_sum','?')} | "
                  f"conversion_1h={d4.get('conversion_1h','?')} | orphan_1h={d4.get('orphan_1h','?')}")
         print(line4); lines.append(line4)
         if s4 == "ERROR":

@@ -83,6 +83,7 @@ def test_scheduler_starts_before_startup_maintenance(monkeypatch):
 
     auto_tasks._start_with_task_scheduler(SimpleNamespace(db=SimpleNamespace()))
 
+    assert auto_tasks._scheduler_instance is fake
     assert events.index("scheduler_started") < events.index("heartbeat_persisted")
     assert events.index("heartbeat_persisted") < events.index("watchdog_started")
     assert events.index("watchdog_started") < events.index("maintenance_started")

@@ -80,7 +80,9 @@ class NightHintTrigger(TriggerBase):
             return False
 
         candidates = []
-        cooldown_hours = rm.config.get("NIGHT_HINT_COOLDOWN_HOURS", 24)
+        # fallback 与 config.json.example 保持一致；生产 config.json 的显式值
+        # 仍优先，缺键时宁可采用更保守的 36 小时冷却。
+        cooldown_hours = rm.config.get("NIGHT_HINT_COOLDOWN_HOURS", 36)
         cooldown_cutoff = int(time.time()) - cooldown_hours * 3600
         for row in rows:
             uid = row[0]
@@ -114,7 +116,7 @@ class NightHintTrigger(TriggerBase):
         users = getattr(self, "_pending_users", [])
         if not users:
             return
-        max_per_run = rm.config.get("NIGHT_HINT_MAX_PER_RUN", 2)  # 单次最多 2 个用户
+        max_per_run = rm.config.get("NIGHT_HINT_MAX_PER_RUN", 1)  # 单次最多 1 个用户
         for uid in users[:max_per_run]:
             try:
                 # 获取用户画像，传给 AI 做个性化

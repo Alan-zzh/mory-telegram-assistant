@@ -18,7 +18,11 @@ class _Bot:
 
 
 class _Conn:
-    def execute(self, *_args, **_kwargs):
+    def __init__(self):
+        self.executed = []
+
+    def execute(self, *args, **_kwargs):
+        self.executed.append(args)
         return []
 
     def commit(self):
@@ -88,7 +92,7 @@ def test_unambiguous_legacy_keyword_uses_unified_deletion_even_with_general_gate
     assert result is True
     assert bot.deleted == [(-1001, 88)]
     assert db.ad_marked == [(-1001, 88)]
-    assert db.blacklisted
+    assert any("INTO blacklist" in args[0] for args in db.conn.executed)
 
 
 def test_keyword_in_display_name_blocks_account_without_falsifying_normal_message():
@@ -106,4 +110,4 @@ def test_keyword_in_display_name_blocks_account_without_falsifying_normal_messag
     assert result is True
     assert bot.deleted == [(-1001, 88)]
     assert db.ad_marked == []
-    assert db.blacklisted
+    assert any("INTO blacklist" in args[0] for args in db.conn.executed)

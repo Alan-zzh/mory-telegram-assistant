@@ -1087,8 +1087,6 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None
         if alias in feature:
             if key == "MYSTIC_BROADCAST_ENABLED":
                 config.setdefault("MYSTIC_BROADCAST_CONFIG", {})["enabled"] = is_enable
-                config.setdefault("NEWS_BROADCAST_CONFIG", {})["enabled"] = False
-                config["AUTO_NEWS"] = False
             else:
                 config[key] = is_enable
             save_config_fn()
@@ -1101,8 +1099,6 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None
         if info["type"] == "boolean" and info["name"].replace("功能", "") in feature:
             if key == "MYSTIC_BROADCAST_ENABLED":
                 config.setdefault("MYSTIC_BROADCAST_CONFIG", {})["enabled"] = is_enable
-                config.setdefault("NEWS_BROADCAST_CONFIG", {})["enabled"] = False
-                config["AUTO_NEWS"] = False
             else:
                 config[key] = is_enable
             save_config_fn()
@@ -1651,8 +1647,6 @@ def _handle_task_control(msg: str, config: dict, bot, m, save_config_fn, mory_bo
         if alias in msg:
             if key == "MYSTIC_BROADCAST_ENABLED":
                 config.setdefault("MYSTIC_BROADCAST_CONFIG", {})["enabled"] = is_enable
-                config.setdefault("NEWS_BROADCAST_CONFIG", {})["enabled"] = False
-                config["AUTO_NEWS"] = False
             else:
                 config[key] = is_enable
             save_config_fn()

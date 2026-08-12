@@ -7,7 +7,7 @@ tasks/base_task.py - 任务基类与执行上下文
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional
 
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager

@@ -37,6 +37,28 @@ def test_avatar_label_parser_blocks_only_high_confidence(monkeypatch):
         assert result["type"] == ad_type
 
 
+def test_avatar_parser_accepts_openai_multimodal_content_parts(monkeypatch):
+    """Some compatible vision APIs return message.content as typed parts."""
+    from core import ai_engine
+    from modules.ai_advisor import review_avatar_with_vision
+
+    monkeypatch.setattr(
+        ai_engine,
+        "analyze_image",
+        lambda *args, **kwargs: [{"type": "text", "text": "QR_HIGH"}],
+    )
+
+    result = review_avatar_with_vision(
+        b"image",
+        {"AD_AVATAR_AI_REVIEW_ENABLED": True},
+        user_id=42,
+    )
+
+    assert result["used_ai"] is True
+    assert result["is_ad"] is True
+    assert result["type"] == "qr"
+
+
 def test_local_nsfw_model_uses_only_explicit_high_confidence_classes(monkeypatch):
     from modules import avatar_detector
 

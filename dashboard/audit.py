@@ -23,6 +23,7 @@
 import os
 import time
 import json
+import logging
 import sqlite3
 from functools import wraps
 from flask import g, jsonify, session, request

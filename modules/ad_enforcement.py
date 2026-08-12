@@ -3,6 +3,8 @@
 广告账号统一处置：不踢人，只永久禁言、删消息、双黑名单。
 """
 
+import time
+
 from core.helpers import format_user_mention
 from core.logging_util import get_logger
 from core.telebot_compat import delete_all_message_reactions_compat, restrict_chat_member_compat
@@ -65,7 +67,7 @@ def delete_confirmed_ad_message(bot, db, chat_id: int, msg_id: int) -> dict:
 
 
 def _mute_forever(bot, db, chat_id: int, uid: int, reason: str = "广告检测") -> bool:
-    """永久禁言广告账号，不踢出群。同步写入 mute_records 表。"""
+    """永久禁言广告账号，不踢出群；持久态由统一事务写入。"""
     try:
         restriction_result = restrict_chat_member_compat(
             bot,
@@ -89,63 +91,81 @@ def _mute_forever(bot, db, chat_id: int, uid: int, reason: str = "广告检测")
         if restriction_result is False:
             logger.warning(f"永久禁言广告账号返回失败: chat={chat_id} uid={uid}")
             return False
-        # 【v5.31.6 修复】禁封时写入 mute_records，与解封时清理 mute_records 对称
-        if db is not None:
-            try:
-                db.conn.execute(
-                    "INSERT OR REPLACE INTO mute_records "
-                    "(uid, chat_id, mute_until, reason) VALUES (?,?,?,?)",
-                    (uid, chat_id, 0, reason),
-                )
-                db.conn.commit()
-            except Exception as me:
-                logger.debug(f"写入 mute_records 失败（不影响禁言）: uid={uid} err={me}")
         return True
     except Exception as e:
         logger.warning(f"永久禁言广告账号失败: chat={chat_id} uid={uid} err={e}")
         return False
 
 
-def _write_blacklists(bot, db, uid: int, reason: str) -> bool:
-    """同步写入 global_blacklist 和本地 blacklist。"""
-    ok = True
+def _persist_ad_state(bot, db, chat_id: int, uid: int, reason: str, muted: bool) -> bool:
+    """在一个 SQLite 事务内写入广告处置持久态，避免半黑名单。"""
+    if db is None or not getattr(db, "conn", None):
+        logger.error(f"广告处置缺少数据库，无法固化状态: uid={uid}")
+        return False
     actor_id = 0
     try:
         actor_id = bot.get_me().id
     except Exception:
         actor_id = 0
+    lock = getattr(db, "lock", None)
     try:
+        if lock:
+            lock.acquire()
+        if muted:
+            db.conn.execute(
+                "INSERT OR REPLACE INTO mute_records "
+                "(uid, chat_id, mute_until, reason) VALUES (?,?,?,?)",
+                (uid, chat_id, 0, reason),
+            )
         db.conn.execute(
-            "INSERT OR IGNORE INTO global_blacklist "
+            "INSERT OR REPLACE INTO global_blacklist "
             "(user_id, reason, added_by, added_at) VALUES (?,?,?,datetime('now'))",
             (uid, reason, actor_id),
         )
+        # 旧部署曾只有 uid/reason 两列，后续 schema 才加入 date；事务路径需兼容两者。
+        try:
+            blacklist_columns = [
+                str(row[1]) for row in db.conn.execute("PRAGMA table_info(blacklist)").fetchall()
+            ]
+        except Exception:
+            blacklist_columns = ["uid", "reason", "date"]
+        if "date" in blacklist_columns:
+            db.conn.execute(
+                "INSERT OR REPLACE INTO blacklist (uid, reason, date) VALUES (?,?,?)",
+                (uid, reason, int(time.time())),
+            )
+        elif "timestamp" in blacklist_columns:
+            db.conn.execute(
+                "INSERT OR REPLACE INTO blacklist (uid, reason, timestamp) VALUES (?,?,?)",
+                (uid, reason, int(time.time())),
+            )
+        elif len(blacklist_columns) >= 3:
+            db.conn.execute("INSERT OR REPLACE INTO blacklist VALUES (?,?,?)", (uid, reason, int(time.time())))
+        else:
+            db.conn.execute(
+                "INSERT OR REPLACE INTO blacklist (uid, reason) VALUES (?,?)",
+                (uid, reason),
+            )
         db.conn.commit()
+        return True
     except Exception as e:
-        ok = False
-        logger.warning(f"写入global_blacklist失败: uid={uid} err={e}")
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
+        logger.warning(f"广告处置持久态事务失败并已回滚: uid={uid} err={e}")
         try:
             from modules.auto_tasks import report_fault
-            report_fault("广告处置失败", f"写入global_blacklist失败 uid={uid}: {e}", "🚨")
+            report_fault("广告处置失败", f"持久态事务失败 uid={uid}: {e}", "🚨")
         except Exception as e2:
-            # 【v5.31.2 修复】告警链断裂会导致管理员无法感知广告号未被封禁
-            logger.error(f"广告处置告警上报失败(global_blacklist): {e2}")
-    try:
-        if hasattr(db, "blacklist_add"):
-            local_result = db.blacklist_add(uid, reason)
-            if local_result is False:
-                ok = False
-                logger.warning(f"写入本地blacklist返回失败: uid={uid}")
-    except Exception as e:
-        ok = False
-        logger.warning(f"写入blacklist失败: uid={uid} err={e}")
-        try:
-            from modules.auto_tasks import report_fault
-            report_fault("广告处置失败", f"写入blacklist失败 uid={uid}: {e}", "🚨")
-        except Exception as e2:
-            # 【v5.31.2 修复】告警链断裂会导致管理员无法感知广告号未被封禁
-            logger.error(f"广告处置告警上报失败(blacklist): {e2}")
-    return ok
+            logger.error(f"广告处置告警上报失败(persist_state): {e2}")
+        return False
+    finally:
+        if lock:
+            try:
+                lock.release()
+            except Exception:
+                pass
 
 
 def _remove_blacklists(db, uid: int) -> bool:
@@ -162,6 +182,10 @@ def _remove_blacklists(db, uid: int) -> bool:
         db.conn.execute("DELETE FROM ad_suspicious_users WHERE user_id=?", (uid,))
         db.conn.commit()
     except Exception as e:
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
         ok = False
         logger.warning(f"移除广告黑名单失败: uid={uid} err={e}")
     finally:
@@ -178,7 +202,7 @@ def _restore_chat_permissions(bot, chat_id: int, uid: int) -> bool:
     if not chat_id:
         return False
     try:
-        restrict_chat_member_compat(
+        result = restrict_chat_member_compat(
             bot,
             chat_id,
             uid,
@@ -197,9 +221,53 @@ def _restore_chat_permissions(bot, chat_id: int, uid: int) -> bool:
                 "can_react_to_messages": True,
             },
         )
+        if result is False:
+            logger.warning(f"恢复用户发言权限返回失败: chat={chat_id} uid={uid}")
+            return False
         return True
     except Exception as e:
         logger.warning(f"恢复用户发言权限失败: chat={chat_id} uid={uid} err={e}")
+        return False
+
+
+def _verify_persistent_state_cleared(db, uid: int) -> tuple[bool, dict]:
+    """读回四项广告持久态；任何查询失败都按未确认处理。"""
+    checks = {
+        "blacklist": ("SELECT COUNT(*) FROM blacklist WHERE uid=?", uid),
+        "global_blacklist": ("SELECT COUNT(*) FROM global_blacklist WHERE user_id=?", uid),
+        "mute_records": ("SELECT COUNT(*) FROM mute_records WHERE uid=?", uid),
+        "ad_suspicious_users": ("SELECT COUNT(*) FROM ad_suspicious_users WHERE user_id=?", uid),
+    }
+    counts = {}
+    lock = getattr(db, "lock", None)
+    try:
+        if lock:
+            lock.acquire()
+        for name, (sql, value) in checks.items():
+            row = db.conn.execute(sql, (value,)).fetchone()
+            counts[name] = int(row[0]) if row else -1
+    except Exception as e:
+        logger.warning(f"解封持久态读回失败: uid={uid} err={e}")
+        return False, counts
+    finally:
+        if lock:
+            try:
+                lock.release()
+            except Exception:
+                pass
+    return all(count == 0 for count in counts.values()), counts
+
+
+def _verify_chat_permissions_restored(bot, chat_id: int, uid: int) -> bool:
+    """通过 Bot API 读回成员状态，禁止用 restrict 调用未报错冒充成功。"""
+    try:
+        member = bot.get_chat_member(chat_id, uid)
+        status = str(getattr(member, "status", "") or "").lower()
+        if status in {"creator", "administrator", "member"}:
+            return True
+        return status == "restricted" and getattr(member, "can_send_messages", None) is True
+    except Exception as e:
+        logger.warning(f"解封权限读回失败: chat={chat_id} uid={uid} err={e}")
         return False
 
 
@@ -221,9 +289,13 @@ def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int
     removed = _remove_blacklists(db, uid)
     restored = _restore_chat_permissions(bot, chat_id, uid)
     tracking_cleared = _clear_ad_tracking(ad_detector, uid)
+    persistence_verified, persistence_counts = _verify_persistent_state_cleared(db, uid)
+    permission_verified = restored and _verify_chat_permissions_restored(bot, chat_id, uid)
+    confirmed = removed and persistence_verified and permission_verified
     logger.warning(
-        f"广告误封解封完成: uid={uid} chat={chat_id} "
-        f"removed={removed} restored={restored} tracking_cleared={tracking_cleared} actor={actor_id}"
+        f"广告误封解封核验: uid={uid} chat={chat_id} confirmed={confirmed} "
+        f"removed={removed} persistence_verified={persistence_verified} "
+        f"permission_verified={permission_verified} tracking_cleared={tracking_cleared} actor={actor_id}"
     )
     # 【v5.31.7】解封后通知管理员（卡片化），与禁封通知对称
     try:
@@ -233,14 +305,15 @@ def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int
             body = (
                 f"👤 用户：{format_user_mention(uid, str(uid))}\n"
                 f"📋 操作：移除黑名单 + 恢复权限 + 清理追踪\n"
-                f"🔓 权限恢复：{'成功' if restored else '失败'}\n"
+                f"🗄 四项持久态读回：{'已清空' if persistence_verified else '未确认'}\n"
+                f"🔓 权限读回：{'已恢复' if permission_verified else '未确认'}\n"
                 f"🧹 追踪清理：{'成功' if tracking_cleared else '失败'}\n"
                 f"👨‍⚖️ 操作者：{actor_id}"
             )
             card = build_alert_card_html(
-                title="广告误封已解封",
+                title="广告误封已解封" if confirmed else "广告解封未完全确认",
                 body=body,
-                level="success",
+                level="success" if confirmed else "warning",
                 footer=f"chat_id={chat_id} uid={uid}",
             )
             bot.send_message(admin_id, card, parse_mode="HTML")
@@ -249,7 +322,7 @@ def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int
     # 【v5.31.7】Ephemeral Messages 接入：给被解封用户发群内私密通知（Bot API 10.2）
     # 默认关闭，开启 EPHEMERAL_MESSAGE_ENABLED 后生效。被禁言用户可见性官方未明示，
     # 仅在已解封（restored=True）后发送，确保用户已恢复发言权限。
-    if (config or {}).get("EPHEMERAL_MESSAGE_ENABLED", False) and restored and chat_id:
+    if (config or {}).get("EPHEMERAL_MESSAGE_ENABLED", False) and confirmed and chat_id:
         try:
             from core.telebot_compat import send_ephemeral_message_compat
             from core.broadcast_formatter import build_alert_card_html
@@ -263,19 +336,20 @@ def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int
             )
         except Exception as e:
             logger.debug(f"解封 Ephemeral 通知用户失败: uid={uid} err={e}")
-    # 【v5.31.6 修复】返回码以 removed（黑名单移除）为核心判断，
-    # restored 和 tracking_cleared 是辅助操作，失败在 data 中反映但不影响主返回码
     return {
-        "code": 200 if removed else 500,
+        "code": 200 if confirmed else 500,
         "data": {
             "uid": uid,
             "chat_id": chat_id,
             "blacklist_removed": removed,
             "permissions_restored": restored,
+            "persistence_verified": persistence_verified,
+            "persistence_counts": persistence_counts,
+            "permission_verified": permission_verified,
             "tracking_cleared": tracking_cleared,
             "actor_id": actor_id,
         },
-        "msg": "success" if removed else "remove_blacklist_failed",
+        "msg": "success" if confirmed else "restore_not_verified",
     }
 
 
@@ -501,8 +575,8 @@ def handle_unban_command(bot, message, config: dict, db, ad_detector=None) -> bo
     if result.get("code") == 200:
         text = (
             f"已解封 {label or uid}。\n"
-            f"已清理：本地黑名单 / 全局黑名单 / 禁言记录。\n"
-            f"已尝试恢复群内发言权限；广告追踪记录：{'已清理' if data.get('tracking_cleared') else '无记录或无需清理'}。"
+            f"已读回确认清理：本地黑名单 / 全局黑名单 / 禁言记录 / 可疑追踪。\n"
+            f"已通过 Bot API 确认群内发言权限恢复；内存追踪：{'已清理' if data.get('tracking_cleared') else '无记录或无需清理'}。"
         )
     else:
         text = f"解封 {label or uid} 失败，黑名单记录没有完全清掉，请看后台日志。"
@@ -571,7 +645,18 @@ def _build_unban_markup(uid: int, chat_id: int):
         return None
 
 
-def _notify_admin(bot, config: dict, chat_id: int, uid: int, uname: str, reason: str, deleted_count: int, muted: bool, reactions_cleaned: bool = False):
+def _notify_admin(
+    bot,
+    config: dict,
+    chat_id: int,
+    uid: int,
+    uname: str,
+    reason: str,
+    deleted_count: int,
+    muted: bool,
+    blacklisted: bool = False,
+    reactions_cleaned: bool = False,
+):
     """通知管理员广告处置结果（v5.31.7 卡片化）。"""
     admin_id = config.get("ADMIN_ID", 0)
     if not admin_id:
@@ -584,12 +669,14 @@ def _notify_admin(bot, config: dict, chat_id: int, uid: int, uname: str, reason:
             f"🗑 删除消息：{deleted_count}条\n"
             f"🧹 清理反应：{'已尝试' if reactions_cleaned else '未执行/不支持'}\n"
             f"🔇 永久禁言：{'成功' if muted else '失败'}\n"
+            f"🗄 黑名单事务：{'成功' if blacklisted else '失败'}\n"
             f"🎯 原因：{reason[:200]}"
         )
+        completed = muted and blacklisted
         card = build_alert_card_html(
-            title="广告账号已处理",
+            title="广告账号已处理" if completed else "广告处置未完全成功",
             body=body,
-            level="danger",
+            level="danger" if completed else "warning",
             footer=f"chat_id={chat_id} uid={uid}",
         )
         bot.send_message(
@@ -656,7 +743,10 @@ def enforce_ad_user(
         if current_message_is_ad:
             evidence_persisted = _mark_current_message_ad(db, chat_id, current_msg_id)
         if notify_admin:
-            _notify_admin(bot, config or {}, chat_id, uid, uname or str(uid), reason, 0, False)
+            _notify_admin(
+                bot, config or {}, chat_id, uid, uname or str(uid), reason, 0, False,
+                blacklisted=False,
+            )
         logger.warning(
             f"广告检测命中但群管身份查询失败，跳过惩罚等待人工复核: uid={uid} chat={chat_id} "
             f"reason={reason} evidence_persisted={evidence_persisted}"
@@ -668,9 +758,20 @@ def enforce_ad_user(
     deleted_count = _cleanup_user_messages(bot, db, config or {}, uid, chat_id, current_msg_id)
     muted = _mute_forever(bot, db, chat_id, uid, reason)
     reactions_cleaned = _cleanup_user_reactions(bot, config or {}, uid, chat_id)
-    blacklisted = _write_blacklists(bot, db, uid, reason)
+    blacklisted = _persist_ad_state(bot, db, chat_id, uid, reason, muted)
     if notify_admin:
-        _notify_admin(bot, config or {}, chat_id, uid, uname or str(uid), reason, deleted_count, muted, reactions_cleaned)
+        _notify_admin(
+            bot,
+            config or {},
+            chat_id,
+            uid,
+            uname or str(uid),
+            reason,
+            deleted_count,
+            muted,
+            blacklisted=blacklisted,
+            reactions_cleaned=reactions_cleaned,
+        )
     logger.warning(
         f"广告账号处置完成: uid={uid} chat={chat_id} "
         f"muted={muted} blacklisted={blacklisted} deleted={deleted_count} reactions_cleaned={reactions_cleaned}"
@@ -692,7 +793,7 @@ def enforce_ad_user(
             logger.debug(f"群内说明发送失败（不影响处置）: uid={uid} err={e}")
 
     return {
-        "code": 200,
+        "code": 200 if muted and blacklisted else 500,
         "data": {
             "uid": uid,
             "chat_id": chat_id,
@@ -702,5 +803,5 @@ def enforce_ad_user(
             "evidence_persisted": evidence_persisted,
             "reactions_cleaned": reactions_cleaned,
         },
-        "msg": "success",
+        "msg": "success" if muted and blacklisted else "enforcement_incomplete",
     }

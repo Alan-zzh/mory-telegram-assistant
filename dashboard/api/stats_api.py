@@ -7,8 +7,10 @@ from flask import Blueprint, request, jsonify, Response, session
 from dashboard.helpers import (
     login_required, get_db, read_config, get_vps_status, _CST
 )
+from core.logging_util import get_logger
 
 stats_bp = Blueprint('stats', __name__, url_prefix='/api')
+logger = get_logger("stats_api")
 
 
 @stats_bp.route("/stats/overview")

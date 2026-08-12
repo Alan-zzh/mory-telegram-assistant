@@ -5,7 +5,7 @@ dashboard/api/health_api.py · Dashboard 健康度面板
 【v5.11.0】提供 4 个端点：
   GET /api/health/score    - 健康度评分（0-100）+ 5 维度明细
   GET /api/health/aborts   - abort 历史（最近 10 条）
-  GET /api/health/jobs     - scheduler 注册任务清单
+  GET /api/health/jobs     - 近 7 日事务任务审计聚合（非 scheduler 注册表）
   GET /api/health/audit    - 最近一次预防性自审计报告
 """
 import json
@@ -27,6 +27,100 @@ logger = logging.getLogger(__name__)
 health_bp = Blueprint("health", __name__, url_prefix="/api")
 
 
+def _get_task_history_stats(conn, cutoff_ts: int) -> dict:
+    """统计有 TaskTransactionManager 审计覆盖的任务四态。
+
+    task_execution_history 不是 APScheduler 全量注册表，因此调用方必须明确
+    标注 coverage=transactional_tasks，不能把它包装成全部调度任务的健康率。
+    """
+    rows = conn.execute(
+        "SELECT status, COUNT(*) AS cnt FROM task_execution_history "
+        "WHERE start_ts >= ? GROUP BY status",
+        (int(cutoff_ts),),
+    ).fetchall()
+    counts = {str(row[0]): int(row[1]) for row in rows}
+    success = counts.get("success", 0)
+    failed = counts.get("failed", 0)
+    aborted = counts.get("aborted", 0)
+    running = counts.get("running", 0)
+    total = success + failed + aborted + running
+    denom = success + failed + running
+    return {
+        "total": total,
+        "success": success,
+        "failed": failed,
+        "aborted": aborted,
+        "running": running,
+        "rate": round(success * 100.0 / denom, 2) if denom else None,
+    }
+
+
+def _get_recent_task_outcomes(conn, statuses, limit: int = 10) -> dict:
+    """返回真实失败/中止记录；状态值由服务端白名单控制。"""
+    allowed = [status for status in ("failed", "aborted") if status in set(statuses)]
+    if not allowed:
+        return {"total": 0, "by_task": {}, "recent": []}
+    placeholders = ",".join("?" for _ in allowed)
+    total = int(conn.execute(
+        f"SELECT COUNT(*) FROM task_execution_history WHERE status IN ({placeholders})",
+        allowed,
+    ).fetchone()[0] or 0)
+    grouped = conn.execute(
+        f"SELECT task_key, COUNT(*) FROM task_execution_history "
+        f"WHERE status IN ({placeholders}) GROUP BY task_key ORDER BY task_key",
+        allowed,
+    ).fetchall()
+    rows = conn.execute(
+        f"SELECT task_key,status,start_ts,end_ts,error_msg,duration_ms "
+        f"FROM task_execution_history WHERE status IN ({placeholders}) "
+        "ORDER BY start_ts DESC, id DESC LIMIT ?",
+        [*allowed, max(1, min(int(limit), 100))],
+    ).fetchall()
+    recent = [{
+        "task_key": str(row[0]),
+        "status": str(row[1]),
+        "start_ts": int(row[2] or 0),
+        "end_ts": int(row[3] or 0),
+        "error_msg": str(row[4] or "")[:160],
+        "duration_ms": int(row[5] or 0),
+    } for row in rows]
+    return {
+        "total": total,
+        "by_task": {str(row[0]): int(row[1]) for row in grouped},
+        "recent": recent,
+    }
+
+
+def _get_task_history_jobs(conn, cutoff_ts: int) -> list:
+    """按任务聚合事务审计历史；这不是 scheduler 当前注册清单。"""
+    rows = conn.execute(
+        "SELECT task_key, COUNT(*) AS total, "
+        "SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS success, "
+        "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
+        "SUM(CASE WHEN status='aborted' THEN 1 ELSE 0 END) AS aborted, "
+        "SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running, "
+        "MAX(start_ts) AS last_ts "
+        "FROM task_execution_history WHERE start_ts >= ? "
+        "GROUP BY task_key ORDER BY last_ts DESC",
+        (int(cutoff_ts),),
+    ).fetchall()
+    jobs = []
+    for row in rows:
+        success, failed, aborted, running = (int(row[i] or 0) for i in range(2, 6))
+        denom = success + failed + running
+        jobs.append({
+            "name": str(row[0]),
+            "executions_7d": int(row[1] or 0),
+            "success": success,
+            "failed": failed,
+            "aborted": aborted,
+            "running": running,
+            "success_rate": round(success * 100.0 / denom, 2) if denom else None,
+            "last_ts": int(row[6] or 0),
+        })
+    return jobs
+
+
 @health_bp.route("/health", methods=["GET"])
 def api_health_check():
     """[TRAE SOLO CN] 健康检查端点（无需认证，供监控/负载均衡探测）
@@ -34,26 +128,29 @@ def api_health_check():
     【v5.38.9 安全修复】不再返回 version 字段,避免攻击者据此匹配 CVE。
     探活只需要 status=ok,版本号如需展示在前端应走已登录的 /api/bot/status。
 
-    【v5.39.0 实质检查】增加 SQLite 连通性 + Bot 心跳新鲜度检查，
+    增加 SQLite 连通性 + Bot 心跳新鲜度检查，
     避免 DB 故障或 Bot 卡死时仍返回 ok。
     """
     try:
         conn = get_db()
         conn.execute("SELECT 1").fetchone()
-        # 检查 Bot 心跳（system_states 表的 last_heartbeat）
+        # 检查 Bot 心跳（system_states 表的 last_heartbeat）。缺表/缺行不是
+        # 健康证据，必须 fail closed，避免 Dashboard 单进程存活冒充 Bot 正常。
         try:
             row = conn.execute(
                 "SELECT value FROM system_states WHERE key='last_heartbeat'"
             ).fetchone()
-            if row:
-                try:
-                    last_hb = int(row[0])
-                except (TypeError, ValueError):
-                    last_hb = 0
-                if time.time() - last_hb > 120:
-                    return jsonify({"status": "degraded", "msg": "bot heartbeat stale"}), 503
-        except sqlite3.Error:
-            pass  # system_states 表不存在或无心跳记录，不阻塞健康检查
+            if not row:
+                return jsonify({"status": "degraded", "msg": "bot heartbeat missing"}), 503
+            try:
+                last_hb = int(row[0])
+            except (TypeError, ValueError):
+                last_hb = 0
+            if time.time() - last_hb > 120:
+                return jsonify({"status": "degraded", "msg": "bot heartbeat stale"}), 503
+        except sqlite3.Error as e:
+            logger.warning(f"health heartbeat 查询失败：{e}")
+            return jsonify({"status": "degraded", "msg": "bot heartbeat unavailable"}), 503
         return jsonify({"status": "ok"})
     except Exception as e:
         logger.debug(f"health root 异常：{e}")
@@ -71,28 +168,51 @@ def api_health_score():
         try:
             conn = get_db()
             cutoff = int((datetime.now(_CST) - timedelta(hours=24)).timestamp())
-            # task_log 表只有 id/task_key/exec_date/exec_ts，无 status 列
-            # 语义：task_log 只记录成功执行的任务，失败任务不写入，故 success=total
-            rows = conn.execute(
-                "SELECT task_key, COUNT(*) FROM task_log WHERE exec_ts >= ? GROUP BY task_key",
-                (cutoff,)
-            ).fetchall()
-            total = sum(c for _, c in rows)
-            if total > 0:
-                scores["tasks"] = {"score": 100, "weight": 30, "detail": f"{total} 次执行（{len(rows)} 个任务）"}
+            stats = _get_task_history_stats(conn, cutoff)
+            if stats["rate"] is None:
+                scores["tasks"] = {
+                    "score": None,
+                    "weight": 30,
+                    "known": False,
+                    "detail": "24h 无事务任务审计记录，状态未知（不计为成功）",
+                    "coverage": "transactional_tasks",
+                }
             else:
-                scores["tasks"] = {"score": 100, "weight": 30, "detail": "无任务记录"}
+                scores["tasks"] = {
+                    "score": int(round(stats["rate"])),
+                    "weight": 30,
+                    "detail": (
+                        f"事务任务审计 {stats['success']}/{stats['total']}，"
+                        f"失败 {stats['failed']}、中止 {stats['aborted']}、运行中 {stats['running']}"
+                    ),
+                    "coverage": "transactional_tasks",
+                }
         except Exception as e:
             logger.debug(f"health score tasks 检查异常：{e}")
-            scores["tasks"] = {"score": 80, "weight": 30, "detail": "检查失败（详情见服务器日志）"}
+            scores["tasks"] = {
+                "score": None,
+                "weight": 30,
+                "known": False,
+                "detail": "检查失败，状态未知（详情见服务器日志）",
+            }
 
-        # 2. AI 引擎可用性（基础探测）
+        # 2. AI 引擎可用性：Dashboard 分进程，未探测就不能编造分数。
         try:
-            cfg = read_config()
-            scores["ai"] = {"score": 75, "weight": 25, "detail": "未实时 ping（AI 在 bot 进程内）"}
+            read_config()
+            scores["ai"] = {
+                "score": None,
+                "weight": 25,
+                "known": False,
+                "detail": "未实时探测（AI 在Bot进程内），状态未知",
+            }
         except Exception as e:
             logger.debug(f"health score AI 配置读取异常：{e}")
-            scores["ai"] = {"score": 70, "weight": 25, "detail": "配置读取失败（详情见服务器日志）"}
+            scores["ai"] = {
+                "score": None,
+                "weight": 25,
+                "known": False,
+                "detail": "AI状态不可用（详情见服务器日志）",
+            }
 
         # 3. 数据库完整性
         try:
@@ -102,10 +222,10 @@ def api_health_score():
                 scores["db"] = {"score": 100, "weight": 20, "detail": "PRAGMA integrity_check = ok"}
             else:
                 logger.warning(f"DB integrity check 异常：{r}")
-                scores["db"] = {"score": 70, "weight": 20, "detail": "完整性检查异常（详情见服务器日志）"}
+                scores["db"] = {"score": 0, "weight": 20, "detail": "完整性检查异常（详情见服务器日志）"}
         except Exception as e:
             logger.debug(f"health score DB integrity 异常：{e}")
-            scores["db"] = {"score": 70, "weight": 20, "detail": "完整性检查失败（详情见服务器日志）"}
+            scores["db"] = {"score": 0, "weight": 20, "detail": "完整性检查失败（详情见服务器日志）"}
 
         # 4. 配置一致性
         try:
@@ -120,10 +240,10 @@ def api_health_score():
                 else:
                     scores["config"] = {"score": max(0, 100 - len(missing) * 5), "weight": 15, "detail": f"缺失 {len(missing)} 键"}
             else:
-                scores["config"] = {"score": 80, "weight": 15, "detail": "无 example 文件"}
+                scores["config"] = {"score": 0, "weight": 15, "detail": "无 example 文件"}
         except Exception as e:
             logger.debug(f"health score config 检查异常：{e}")
-            scores["config"] = {"score": 70, "weight": 15, "detail": "配置检查失败（详情见服务器日志）"}
+            scores["config"] = {"score": 0, "weight": 15, "detail": "配置检查失败（详情见服务器日志）"}
 
         # 5. 磁盘空间
         try:
@@ -137,14 +257,21 @@ def api_health_score():
                 scores["disk"] = {"score": 30, "weight": 10, "detail": f"不足 {free_pct:.1f}%"}
         except Exception as e:
             logger.debug(f"health score disk 检查异常：{e}")
-            scores["disk"] = {"score": 80, "weight": 10, "detail": "磁盘检查失败（详情见服务器日志）"}
+            scores["disk"] = {"score": 0, "weight": 10, "detail": "磁盘检查失败（详情见服务器日志）"}
 
-        # 计算总分
-        total_score = sum(s["score"] * s["weight"] / 100 for s in scores.values())
-        total_score = int(total_score)
+        # 只计算已知维度；任一维度未知时不返回貌似完整的总分。
+        known = [s for s in scores.values() if s.get("score") is not None]
+        known_weight = sum(s["weight"] for s in known)
+        partial_score = int(round(
+            sum(s["score"] * s["weight"] for s in known) / known_weight
+        )) if known_weight else None
+        has_unknown = any(s.get("score") is None for s in scores.values())
+        total_score = None if has_unknown else partial_score
 
         # 健康度等级
-        if total_score >= 90:
+        if total_score is None:
+            level = "⚪ 未知"
+        elif total_score >= 90:
             level = "🟢 优秀"
         elif total_score >= 75:
             level = "🟡 良好"
@@ -156,6 +283,8 @@ def api_health_score():
         return jsonify({
             "ok": True,
             "score": total_score,
+            "partial_score": partial_score,
+            "known_weight": known_weight,
             "level": level,
             "dimensions": scores,
             "ts": int(time.time()),
@@ -167,17 +296,14 @@ def api_health_score():
 @health_bp.route("/health/aborts")
 @login_required
 def api_health_aborts():
-    """abort 历史：task_log 表无 status 列，失败任务不写入，返回空列表"""
+    """真实失败与中止历史（事务任务审计表）。"""
     try:
-        # task_log 表只有 id/task_key/exec_date/exec_ts，无 status/error_msg 列
-        # 失败任务不会写入 task_log，故无 abort 历史可返回
-        # 如需失败历史，应查 llm_cost_logs 表的 success=0 记录或 report_fault 日志
+        data = _get_recent_task_outcomes(get_db(), {"failed", "aborted"}, limit=10)
         return jsonify({
             "ok": True,
-            "total": 0,
-            "by_task": {},
-            "recent": [],
-            "note": "task_log 表无 status 列，失败任务不写入；如需失败历史请查 llm_cost_logs",
+            **data,
+            "coverage": "transactional_tasks",
+            "note": "仅包含进入 TaskTransactionManager 的任务，不代表全部 APScheduler 作业",
         })
     except Exception as e:
         logger.debug(f"health aborts 异常：{e}")
@@ -187,27 +313,19 @@ def api_health_aborts():
 @health_bp.route("/health/jobs")
 @login_required
 def api_health_jobs():
-    """scheduler 注册任务清单（从 task_log 历史推断）"""
+    """兼容端点：返回近7日事务任务审计聚合，不冒充scheduler注册清单。"""
     try:
         conn = get_db()
         cutoff = int((datetime.now(_CST) - timedelta(days=7)).timestamp())
-        # task_log 表只有 id/task_key/exec_date/exec_ts，无 status/task_name 列
-        # 语义：task_log 只记录成功执行的任务，故 success_rate=100%
-        rows = conn.execute(
-            "SELECT task_key, COUNT(*) as cnt, MAX(exec_ts) as last_ts "
-            "FROM task_log WHERE exec_ts >= ? GROUP BY task_key ORDER BY cnt DESC",
-            (cutoff,)
-        ).fetchall()
-        jobs = []
-        for r in rows:
-            name, cnt, last_ts = r
-            jobs.append({
-                "name": name,
-                "executions_7d": cnt,
-                "success_rate": 100.0,  # task_log 只记录成功执行
-                "last_ts": last_ts,
-            })
-        return jsonify({"ok": True, "jobs": jobs, "total": len(jobs)})
+        jobs = _get_task_history_jobs(conn, cutoff)
+        return jsonify({
+            "ok": True,
+            "jobs": jobs,
+            "total": len(jobs),
+            "source": "task_execution_history",
+            "is_scheduler_registry": False,
+            "note": "当前注册任务请查Bot进程内scheduler；本端点仅为事务任务执行历史",
+        })
     except Exception as e:
         logger.debug(f"health jobs 异常：{e}")
         return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500
@@ -261,17 +379,17 @@ def api_health_audit():
         try:
             conn = get_db()
             cutoff = int((datetime.now(_CST) - timedelta(hours=24)).timestamp())
-            # task_log 表只有 id/task_key/exec_date/exec_ts，无 status 列
-            # 语义：task_log 只记录成功执行的任务，故 succ=total
-            r = conn.execute(
-                "SELECT COUNT(*) FROM task_log WHERE exec_ts >= ?",
-                (cutoff,)
-            ).fetchone()
-            total = r[0] or 0
-            rate = 100.0  # task_log 只记录成功执行
+            stats = _get_task_history_stats(conn, cutoff)
+            rate = stats["rate"]
             audit["checks"]["task_rate_24h"] = {
-                "ok": total > 0,
-                "detail": f"24h 执行 {total} 次（task_log 只记录成功执行，成功率 100%）",
+                "ok": rate is not None and stats["failed"] == 0 and stats["running"] == 0,
+                "detail": (
+                    "24h 无事务任务审计记录，状态未知"
+                    if rate is None else
+                    f"事务任务成功率 {rate:.2f}%（成功 {stats['success']} / 失败 {stats['failed']} / "
+                    f"中止 {stats['aborted']} / 运行中 {stats['running']}）"
+                ),
+                "coverage": "transactional_tasks",
             }
         except Exception as e:
             audit["checks"]["task_rate_24h"] = {"ok": False, "detail": "任务执行率检查失败"}
@@ -302,53 +420,25 @@ def api_health_task_success_rate():
     SQL 参考 task_exec_history_repo.py 的 get_success_rate 实现。
     """
     try:
-        from urllib.parse import parse_qs
         from flask import request
         # 默认 7 天,允许 1-90 天范围
         days = 7
-        qs = parse_qs(request.query_string.decode("utf-8")) if request.query_string else {}
-        if qs.get("days"):
-            try:
-                days = int(qs["days"][0])
-            except (ValueError, IndexError):
-                days = 7
+        try:
+            days = int(request.args.get("days", 7))
+        except (TypeError, ValueError):
+            days = 7
         days = max(1, min(int(days or 7), 90))
         conn = get_db()
-        # 直接用原生 sqlite3 查询,绕过 Repo 委托(get_db 返回原生 Connection)
-        cutoff_date = (datetime.now(_CST) - timedelta(days=days)).strftime("%Y-%m-%d")
-        try:
-            rows = conn.execute(
-                "SELECT status, COUNT(*) as cnt FROM task_execution_history "
-                "WHERE exec_date >= ? GROUP BY status",
-                (cutoff_date,)
-            ).fetchall()
-        except Exception:
-            # 表可能不存在(Dashboard 直连未初始化),返回空统计
-            rows = []
-        counts = {row[0]: int(row[1]) for row in rows}
-        success = counts.get("success", 0)
-        failed = counts.get("failed", 0)
-        aborted = counts.get("aborted", 0)
-        running = counts.get("running", 0)
-        total = success + failed + aborted + running
-        # 成功率 = success / (success + failed + running),aborted 是主动中止不计入分母
-        denom = success + failed + running
-        rate = round(success * 100.0 / denom, 2) if denom > 0 else 0.0
-        stats = {
-            "total": total,
-            "success": success,
-            "failed": failed,
-            "aborted": aborted,
-            "running": running,
-            "rate": rate,
-            "days": days,
-        }
+        cutoff = int((datetime.now(_CST) - timedelta(days=days)).timestamp())
+        stats = _get_task_history_stats(conn, cutoff)
+        stats["days"] = days
         return jsonify({
             "ok": True,
             "ts": int(time.time()),
             "stats": stats,
-            "note": "基于 task_execution_history 真实四态统计,替代旧 task_log 100% 失真",
+            "coverage": "transactional_tasks",
+            "note": "真实四态统计；仅覆盖进入TaskTransactionManager的任务，不代表全部APScheduler作业",
         })
     except Exception as e:
         logger.debug(f"health task_success_rate 异常：{e}")
-        return jsonify({"ok": False, "error": "内部错误，请稍后重试"}), 500
+        return jsonify({"ok": False, "error": "任务审计数据不可用"}), 503

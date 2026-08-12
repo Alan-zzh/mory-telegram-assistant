@@ -85,6 +85,6 @@ def test_check_blacklist_uses_unified_enforcement_without_deleting_unproven_hist
     assert check_blacklist(dctx) is True
     assert bot.deleted == [(-1001, 99)]
     assert len(bot.restricted) == 1
-    assert db.blacklist == [(42, "黑名单拦截:广告号")]
+    assert any("INTO blacklist" in sql for sql, _ in db.conn.executed)
     assert (-1001, 99) in db.marked
     assert any("global_blacklist" in sql for sql, _ in db.conn.executed)

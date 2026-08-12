@@ -190,9 +190,8 @@ def handle_feedback(dctx, analysis: dict) -> bool:
         )
         mory_bot.reply_and_track(m, feedback_reply)
     else:
-        # 私聊：尝试自助解封
         if _handle_private_feedback(dctx, analysis):
-            pass  # 已处理
+            pass  # 解封申请已进入管理员审核，不修改封禁状态
         else:
             # 私聊普通反馈：只有真实通知成功才能说“已提交”，不承诺处理时效。
             admin_notified = False
@@ -222,11 +221,10 @@ def handle_feedback(dctx, analysis: dict) -> bool:
 
 
 def _handle_private_feedback(dctx, analysis: dict) -> bool:
-    """私聊反馈处理（含自助解封逻辑），返回 True 表示已处理"""
+    """把私聊解封自述转为管理员审核请求，不直接修改治理状态。"""
     bot = dctx.ctx.bot
     m = dctx.msg
     CONFIG = dctx.ctx.config
-    db = dctx.ctx.db
     mory_bot = dctx.ctx.mory_bot
     msg = dctx.text
     uid = dctx.uid
@@ -235,54 +233,26 @@ def _handle_private_feedback(dctx, analysis: dict) -> bool:
     if not ("解封" in msg or "解禁" in msg or "被封" in msg or "封了" in msg or "禁言" in msg):
         return False
 
-    gid = CONFIG.get("GROUP_ID", 0)
-    unban_success = False
-    tracking_cleared = False
-    if gid:
+    admin_notified = False
+    admin_id = CONFIG.get("ADMIN_ID", 0)
+    if admin_id:
         try:
-            from modules.ad_enforcement import restore_ad_user
-            result = restore_ad_user(
-                bot=bot,
-                db=db,
-                config=CONFIG,
-                chat_id=gid,
-                uid=uid,
-                actor_id=uid,
-                ad_detector=getattr(dctx.ctx, "ad_detector", None),
+            bot.send_message(
+                admin_id,
+                f"🚨 用户申请解封审核\n"
+                f"👤 {format_user_mention(uid, uname)}\n"
+                f"💬 消息：{msg[:150]}\n"
+                f"💡 请核对广告证据后再决定是否解封",
+                parse_mode="HTML",
             )
-            unban_success = result.get("code") == 200
-            tracking_cleared = bool(result.get("data", {}).get("tracking_cleared"))
-            logger.info(f"✅ 私聊自助解封成功: {uname}({uid})")
+            admin_notified = True
         except Exception as e:
-            logger.warning(f"私聊自助解封失败: {e}")
-
-    if unban_success:
-        blame = random.choice([
-            "这次是系统误判，真的不好意思。",
-            "刚才的封禁不该发生，已经帮你处理好了。",
-            "抱歉让你受影响了，我已经把封禁状态撤掉了。",
-        ])
-        tracking_note = "可疑追踪记录也一起清掉了。" if tracking_cleared else "没有发现额外的可疑追踪记录。"
-        feedback_reply = f"已经帮你解封了。{blame}现在可以回群里正常发言，{tracking_note}"
-    else:
-        admin_notified = False
-        admin_id = CONFIG.get("ADMIN_ID", 0)
-        if admin_id:
-            try:
-                bot.send_message(admin_id,
-                    f"🚨 用户自助解封失败\n"
-                    f"👤 {format_user_mention(uid, uname)}\n"
-                    f"💬 消息：{msg[:150]}\n"
-                    f"💡 请手动解封",
-                    parse_mode="HTML")
-                admin_notified = True
-            except Exception as e:
-                logger.warning(f"解封失败通知发送失败: {e}")
-        feedback_reply = (
-            "自动解封没有成功，已经提交给管理员；具体处理结果以实际回复为准。"
-            if admin_notified
-            else "自动解封没有成功，我已记录；目前不能确认人工通知是否送达。"
-        )
+            logger.warning(f"解封审核通知发送失败: {e}")
+    feedback_reply = (
+        "收到，你的解封申请已提交给管理员审核；审核前不会改动封禁状态。"
+        if admin_notified
+        else "收到，我先记录你的解封申请；目前不能确认通知是否送达，封禁状态没有改动。"
+    )
     mory_bot.reply_and_track(m, feedback_reply)
     return True
 

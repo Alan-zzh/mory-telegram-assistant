@@ -96,17 +96,6 @@ def normalize_runtime_config(cfg: dict | None) -> dict:
     cfg["AFTERNOON_GREETING_HOUR"] = greeting_cfg["afternoon_time"]
     cfg["GOODNIGHT_HOUR"] = greeting_cfg["evening_time"]
 
-    news_cfg = _ensure_dict(cfg, "NEWS_BROADCAST_CONFIG")
-    news_cfg["enabled"] = bool(news_cfg.get("enabled", cfg.get("AUTO_NEWS", False)))
-    news_cfg["preferred_source"] = news_cfg.get("preferred_source", "real_first")
-    news_cfg["morning_time"] = news_cfg.get("morning_time", cfg.get("NEWS_HOUR_MORNING", "09:05"))
-    news_cfg["afternoon_time"] = news_cfg.get("afternoon_time", cfg.get("NEWS_HOUR_AFTERNOON", "13:05"))
-    news_cfg["evening_time"] = news_cfg.get("evening_time", cfg.get("NEWS_HOUR_EVENING", "20:35"))
-    cfg["AUTO_NEWS"] = bool(news_cfg["enabled"])
-    cfg["NEWS_HOUR_MORNING"] = news_cfg["morning_time"]
-    cfg["NEWS_HOUR_AFTERNOON"] = news_cfg["afternoon_time"]
-    cfg["NEWS_HOUR_EVENING"] = news_cfg["evening_time"]
-
     mystic_cfg = _ensure_dict(cfg, "MYSTIC_BROADCAST_CONFIG")
     mystic_cfg["enabled"] = bool(mystic_cfg.get("enabled", False))
     mystic_cfg["cta_enabled"] = bool(mystic_cfg.get("cta_enabled", False))

@@ -15,7 +15,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类、46 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`core/handlers/*` | L0–L4 五层；资料层读取显示名/username/Bio/Premium/个人关联频道，关联频道以平台暗语、拉群动作、商业招揽、频道载体的三锚点识别拆字与扩写；头像只作明确文字/二维码或相似证据；短句命中资料强证据时在 AI 前统一禁言、黑名单与删除当前消息；群管及配置白名单前置豁免，网络查询 unknown 不处罚；历史追溯只删逐条显式证据 |
-| 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 135 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；签到开关与连续奖励兼容Dashboard新键和历史键 |
+| 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 136 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
 | 多群托管 | 默认关闭 | `modules/managed_groups.py` | 代运营/套餐管理/功能矩阵，`MANAGED_GROUPS_CONFIG.enabled` |
@@ -24,7 +24,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 网编会员 | 默认关闭 | `modules/membership.py` | 付费等级/订阅管理/权益体系，`MEMBERSHIP_CONFIG.enabled` |
 | 孤儿清理 | 在用 | `dashboard/api/orphan_api.py`、`tasks/maintenance/burn_orphan_task.py` | 端到端串联 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
-| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 164 个路由，端口 6616；传统文化页配置三档时间、单 CTA 轮换和私聊零 Token 占卜开关，栏目身份固定不可串台 |
+| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 173 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史，生产迁移表已验证存在 |
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本和内部治理文档，部署前备份、失败保险恢复双服务；v5.38.22 新增 `scripts/check_config_sync.py` 三处同步差集断言（example ↔ 代码默认 ↔ ALLOWED_CONFIG_FIELDS），白名单补 MYSTIC/GREETING/SCHEDULED/NEWS/PROACTIVE 等 10 个业务键；历史（v5.38.16-21）：MAX_UPLOAD_FILE_SIZE/SKIP_PATH_FRAGMENTS/EXCLUDE_NAMES/ALLOWED_CONFIG_FIELDS 补项见 CHANGELOG |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
@@ -33,26 +33,26 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 泛问候/定点播报 | 生产关闭 | `tasks/broadcast/greeting_task.py`、`tasks/maintenance/scheduled_broadcast_task.py` | 早午晚泛问候与 4 档定点播报全部关闭，避免与内容栏目重叠；若未来人工开启，问候模型失败直接跳过，不用固定套话，图片卡只渲染同源正文 |
 | 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 生产唯一主动栏目：09:05 黄历、13:05 塔罗、20:35 易经；三档语义各异、间隔至少 4 小时，图片卡保留；新闻执行链已删除 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token；自动回复卡片 conversion_target=none 禁止按钮，仅未声明键才随机入口；opt_out 跳过关键词销售路由 |
-| 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目每卡至多一个配置化入口；非活跃/购物车/每周轻互动默认关闭，离群默认只记录 |
+| 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目允许 1-2 个同目标不重复入口；新闻执行链和配置入口已删除 |
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.36（2026-08-09）· 生产真相审计与运行闭环加固
+v5.38.37（2026-08-12）· 全链路真相治理发布候选
 
-生产状态：**v5.38.36 已部署并验收**。双服务 active、NRestarts=0、health 200，VPS 代码与配置版本均一致；无操作热重载后仍为 40 个任务且只注册三档传统文化用户栏目，L4/L5 真实四态监控均为 OK，看门狗真实健康探针退出 0、失败计数归零。
+生产状态：**v5.38.36 当前运行；v5.38.37 待部署门禁**。当前双服务 active、health 200；生产仍存在本次已修但未发布的头像解析、禁用任务误告警与权限问题，未部署前不得称已解决。
 
 ## 最近 3 条大事
-1. 2026-08-09 v5.38.36：调度热重载、任务四态监控、报表真相源与看门狗完成加固。
-2. 2026-08-09 v5.38.35：个人资料关联频道纳入广告检测，覆盖拆字、改写和长段扩写。
-3. 2026-08-09 v5.38.34：自有频道可信联动与广告首条/媒体检测链已部署验收。
+1. 2026-08-12 v5.38.37：自助复权、假绿灯、热重载/停机竞态与部署权限完成代码修复。
+2. 2026-08-12：删除无运行入口的新闻配置面和空报表模块，能力矩阵改为真相索引。
+3. 2026-08-09 v5.38.36：调度四态监控、报表真相源与看门狗完成加固。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
-modules_py=137
-core_py=81
+modules_py=136
+core_py=80
 job_count=33
 db_tables=173
-dashboard_routes=164
+dashboard_routes=163
 dispatch_funcs=9
 model_router_mappings=10
 <!-- METRICS:END -->

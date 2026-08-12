@@ -23,7 +23,7 @@ from core.helpers import can_delete_message, format_user_mention
 from core.bot_initializer import BotContext
 from core.i18n import set_user_language, _
 from core.logging_util import get_logger, set_logging_context, clear_logging_context
-from core.tracing import start_span, add_span_event, is_tracing_enabled
+from core.tracing import is_tracing_enabled
 from core.handlers.command_handlers import (
     _handle_welcome_fed_commands, _handle_admin_feature_commands,
     _handle_feature_keywords, _handle_group_admin_commands,
@@ -1683,52 +1683,15 @@ def _handle_feedback(dctx: DispatchContext, analysis: dict) -> bool:
         )
         mory_bot.reply_and_track(m, feedback_reply)
     else:
-        # 私聊：尝试自助解封（走 restore_ad_user 四项持久态全清，避免 P1 再封循环）
+        # 用户自述只能创建审核请求，不能作为清黑名单/恢复权限的证据。
+        # 真正解封继续复用 handle_unban_command / ad_unban 回调的管理员鉴权链。
         if "解封" in msg or "解禁" in msg or "被封" in msg or "封了" in msg or "禁言" in msg:
-            gid = CONFIG.get("GROUP_ID", 0)
-            unban_success = False
-            if gid:
-                try:
-                    from modules.ad_enforcement import restore_ad_user
-                    result = restore_ad_user(
-                        bot=bot,
-                        db=db,
-                        config=CONFIG,
-                        chat_id=int(gid),
-                        uid=int(uid),
-                        actor_id=int(uid),
-                        ad_detector=getattr(ctx, "ad_detector", None),
-                    )
-                    data = (result or {}).get("data") or {}
-                    unban_success = bool(
-                        (result or {}).get("code") == 200
-                        or data.get("blacklist_removed")
-                        or data.get("permissions_restored")
-                    )
-                    if unban_success:
-                        logger.info(f"✅ 私聊自助解封成功: {uname}({uid}) result={result}")
-                    else:
-                        logger.warning(f"私聊自助解封未完全成功: {uname}({uid}) result={result}")
-                except Exception as e:
-                    logger.warning(f"私聊自助解封失败: {e}")
-                    unban_success = False
-
-            if unban_success:
-                blame = random.choice([
-                    "这该死的阿福又误判了！真不好意思啊～",
-                    "阿福那个笨蛋又抽风了，害你被封，抱歉抱歉～",
-                    "又是阿福的锅！它最近老犯傻，我替它道歉～",
-                    "阿福出bug了，把你误封了，真的对不起呀～",
-                    "那个笨阿福又搞事了！害你受委屈了～",
-                ])
-                feedback_reply = f"已经帮你解封啦～{blame}现在可以回群里正常发言了！以后有任何问题都可以私聊我哦～"
-            else:
-                notified = _send_feedback_admin_notification(dctx, analysis, unban_failure=True)
-                feedback_reply = (
-                    "暂时没能自动解封，已提交给管理员查看。"
-                    if notified else
-                    "暂时没能自动解封，我先把情况记下来了；目前不能确认通知是否送达。"
-                )
+            notified = _send_feedback_admin_notification(dctx, analysis, unban_failure=True)
+            feedback_reply = (
+                "收到，你的解封申请已提交给管理员审核；审核前不会改动封禁状态。"
+                if notified else
+                "收到，我先记录你的解封申请；目前不能确认通知是否送达，封禁状态没有改动。"
+            )
         else:
             notified = _send_feedback_admin_notification(dctx, analysis)
             feedback_reply = (

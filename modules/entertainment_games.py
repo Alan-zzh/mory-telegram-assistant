@@ -34,10 +34,13 @@ ENTERTAINMENT_GAMES_CONFIG = config.get('ENTERTAINMENT_GAMES_CONFIG', {
 
 
 class EntertainmentGamesModule:
+    """Provide lightweight chat entertainment games."""
     def __init__(self):
+        """Initialize module state and runtime adapters."""
         self._compat = None
 
     async def play_basketball(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a basketball round and return its result."""
         if not self._is_game_enabled('basketball'):
             return {'result': 'disabled', 'message': '🏀 篮球游戏未开启'}
         points = random.randint(0, 100)
@@ -47,6 +50,7 @@ class EntertainmentGamesModule:
                                        f'🏀 投篮得分: {points}! {"🎉 命中！" if win else "😅 未命中"}')
 
     async def play_slot_machine(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a slot-machine round and return its result."""
         if not self._is_game_enabled('slot_machine'):
             return {'result': 'disabled', 'message': '🎰 老虎机未开启'}
         symbols = ['🍎', '🍊', '🍋', '🍇', '🍉', '⭐']
@@ -64,6 +68,7 @@ class EntertainmentGamesModule:
                                        f'🎰 [{reel1}][{reel2}][{reel3}]')
 
     async def play_poker(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a poker round and return its result."""
         if not self._is_game_enabled('poker'):
             return {'result': 'disabled', 'message': '🃏 炸金花未开启'}
         cards = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
@@ -77,6 +82,7 @@ class EntertainmentGamesModule:
                                        f'🃏 你的牌: {hand_str}')
 
     async def play_football(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a football round and return its result."""
         if not self._is_game_enabled('football'):
             return {'result': 'disabled', 'message': '⚽ 足球游戏未开启'}
         goals = random.randint(0, 5)
@@ -86,6 +92,7 @@ class EntertainmentGamesModule:
                                        f'⚽ 进球数: {goals}个!')
 
     async def play_darts(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a darts round and return its result."""
         if not self._is_game_enabled('darts'):
             return {'result': 'disabled', 'message': '🎯 飞镖游戏未开启'}
         score = random.randint(1, 180)
@@ -95,6 +102,7 @@ class EntertainmentGamesModule:
                                        f'🎯 得分: {score}分!')
 
     async def play_bowling(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a bowling round and return its result."""
         if not self._is_game_enabled('bowling'):
             return {'result': 'disabled', 'message': '🎳 保龄球未开启'}
         pins = random.randint(0, 10)
@@ -104,6 +112,7 @@ class EntertainmentGamesModule:
                                        f'🎳 击倒: {pins}个瓶子! {"🎯 全中！" if win else ""}')
 
     async def play_niuniu(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a niuniu round and return its result."""
         if not self._is_game_enabled('niuniu'):
             return {'result': 'disabled', 'message': '🐮 牛牛游戏未开启'}
         cards = [random.randint(1, 13) for _ in range(5)]
@@ -115,6 +124,7 @@ class EntertainmentGamesModule:
                                        f'🐮 点数: {"牛牛！" if is_niuniu else total}')
 
     async def play_dice_quick(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a quick-dice round and return its result."""
         if not self._is_game_enabled('dice_quick'):
             return {'result': 'disabled', 'message': '🎲 骰子快三未开启'}
         dice1, dice2, dice3 = random.randint(1, 6), random.randint(1, 6), random.randint(1, 6)
@@ -125,6 +135,7 @@ class EntertainmentGamesModule:
                                        f'🎲 [{dice1}][{dice2}][{dice3}] = {total}')
 
     async def play_horse_racing(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a horse-racing round and return its result."""
         if not self._is_game_enabled('horse_racing'):
             return {'result': 'disabled', 'message': '🐎 赛马未开启'}
         horses = ['🐴1号', '🐴2号', '🐴3号', '🐴4号', '🐴5号']
@@ -135,6 +146,7 @@ class EntertainmentGamesModule:
                                        f'🐎 获胜者: {winner}!')
 
     async def play_baccarat(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a baccarat round and return its result."""
         if not self._is_game_enabled('baccarat'):
             return {'result': 'disabled', 'message': '🎲 百家乐未开启'}
         player = random.randint(0, 9)
@@ -145,6 +157,7 @@ class EntertainmentGamesModule:
                                        f'🎲 玩家: {player} - 庄家: {banker}')
 
     async def play_blackjack(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a blackjack round and return its result."""
         if not self._is_game_enabled('blackjack'):
             return {'result': 'disabled', 'message': '🃏 21点未开启'}
         player_score = random.randint(12, 22)
@@ -155,6 +168,7 @@ class EntertainmentGamesModule:
                                        f'🃏 你的: {player_score} - 庄家: {dealer_score}')
 
     async def play_single_dice(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play a single-dice round and return its result."""
         if not self._is_game_enabled('single_dice'):
             return {'result': 'disabled', 'message': '🎲 单骰未开启'}
         result = random.randint(1, 6)
@@ -164,6 +178,7 @@ class EntertainmentGamesModule:
                                        f'🎲 点数: {result}')
 
     async def play_emoji_race(self, chat_id: int, user_id: int, bet: int = 1) -> Dict[str, Any]:
+        """Play an emoji-race round and return its result."""
         if not self._is_game_enabled('emoji_race'):
             return {'result': 'disabled', 'message': '🏁 Emoji比赛未开启'}
         racers = ['🐢', '🐇', '🐘', '🦘', '🦋']
@@ -174,11 +189,13 @@ class EntertainmentGamesModule:
                                        f'🏁 冠军: {winner}!')
 
     def _is_game_enabled(self, game_name: str) -> bool:
+        """Check whether a game is enabled by configuration."""
         return ENTERTAINMENT_GAMES_CONFIG.get('enabled', False) and \
                ENTERTAINMENT_GAMES_CONFIG.get('games', {}).get(game_name, {}).get('enabled', False)
 
     def _format_game_result(self, game_name: str, chat_id: int, user_id: int,
                             bet: int, win: bool, multiplier: int, message: str) -> Dict[str, Any]:
+        """Format a game outcome for chat display."""
         amount = bet * multiplier
         return {
             'result': 'win' if win else 'lose',
@@ -189,6 +206,7 @@ class EntertainmentGamesModule:
         }
 
     def _evaluate_poker_hand(self, hand) -> int:
+        """Evaluate a poker hand and return its ranking."""
         values = [c[0] for c in hand]
         suits = [c[1] for c in hand]
         value_counts = {v: values.count(v) for v in set(values)}
@@ -206,6 +224,7 @@ class EntertainmentGamesModule:
         return 0
 
     async def process(self, update):
+        """Handle an update for this module."""
         return None
 
 

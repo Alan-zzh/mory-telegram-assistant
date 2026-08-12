@@ -46,24 +46,6 @@ def _get_greeting_config(cfg: dict) -> dict:
     return raw
 
 
-def _get_news_config(cfg: dict) -> dict:
-    """读取新闻播报配置，兼容旧键。"""
-    raw = dict(cfg.get("NEWS_BROADCAST_CONFIG", {}) or {})
-    raw.setdefault("enabled", bool(cfg.get("AUTO_NEWS", False)))
-    raw.setdefault("preferred_source", "real_first")
-    raw.setdefault("morning_time", _normalize_hhmm(cfg.get("NEWS_HOUR_MORNING", "09:05"), "09:05"))
-    raw.setdefault("afternoon_time", _normalize_hhmm(cfg.get("NEWS_HOUR_AFTERNOON", "13:05"), "13:05"))
-    raw.setdefault("evening_time", _normalize_hhmm(cfg.get("NEWS_HOUR_EVENING", "20:35"), "20:35"))
-    raw.setdefault("image_card_enabled", False)
-    raw["broadcast_image_card_enabled"] = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
-    raw["morning_time"] = _normalize_hhmm(raw.get("morning_time"), "09:05")
-    raw["afternoon_time"] = _normalize_hhmm(raw.get("afternoon_time"), "13:05")
-    raw["evening_time"] = _normalize_hhmm(raw.get("evening_time"), "20:35")
-    if raw.get("preferred_source") not in {"real_first", "trendradar_first"}:
-        raw["preferred_source"] = "real_first"
-    return raw
-
-
 def _get_mystic_config(cfg: dict) -> dict:
     """读取三时段传统文化栏目；产品身份固定，新能力默认关闭。"""
     raw = dict(cfg.get("MYSTIC_BROADCAST_CONFIG", {}) or {})
@@ -834,45 +816,6 @@ def api_settings_greeting():
     return jsonify({"ok": False, "msg": "保存失败"}), 500
 
 
-@settings_bp.route("/settings/news", methods=["GET", "POST"])
-@login_required
-def api_settings_news():
-    """新闻播报配置"""
-    if request.method == "GET":
-        cfg = read_config()
-        return jsonify({"ok": True, "data": _get_news_config(cfg)})
-    _adm = _check_admin()
-    if _adm:
-        return _adm
-    data = request.get_json() or {}
-    cfg = read_config()
-    news_cfg = _get_news_config(cfg)
-    if "enabled" in data:
-        news_cfg["enabled"] = bool(data["enabled"])
-    if "preferred_source" in data:
-        news_cfg["preferred_source"] = str(data["preferred_source"]).strip().lower()
-    if "morning_time" in data:
-        news_cfg["morning_time"] = _normalize_hhmm(data["morning_time"], news_cfg["morning_time"])
-    if "afternoon_time" in data:
-        news_cfg["afternoon_time"] = _normalize_hhmm(data["afternoon_time"], news_cfg["afternoon_time"])
-    if "evening_time" in data:
-        news_cfg["evening_time"] = _normalize_hhmm(data["evening_time"], news_cfg["evening_time"])
-    if "image_card_enabled" in data:
-        news_cfg["image_card_enabled"] = bool(data["image_card_enabled"])
-    if "broadcast_image_card_enabled" in data:
-        cfg["BROADCAST_IMAGE_CARD_ENABLED"] = bool(data["broadcast_image_card_enabled"])
-    if news_cfg["preferred_source"] not in {"real_first", "trendradar_first"}:
-        news_cfg["preferred_source"] = "real_first"
-    cfg["NEWS_BROADCAST_CONFIG"] = news_cfg
-    cfg["AUTO_NEWS"] = bool(news_cfg["enabled"])
-    cfg["NEWS_HOUR_MORNING"] = int(news_cfg["morning_time"].split(":", 1)[0])
-    cfg["NEWS_HOUR_AFTERNOON"] = int(news_cfg["afternoon_time"].split(":", 1)[0])
-    cfg["NEWS_HOUR_EVENING"] = int(news_cfg["evening_time"].split(":", 1)[0])
-    if write_config(cfg):
-        return jsonify({"ok": True, "msg": "新闻播报配置已保存"})
-    return jsonify({"ok": False, "msg": "保存失败"}), 500
-
-
 @settings_bp.route("/settings/mystic", methods=["GET", "POST"])
 @login_required
 def api_settings_mystic():
@@ -910,11 +853,6 @@ def api_settings_mystic():
     # 旧定向“哥哥～”塔罗不从新栏目页面重新开启。
     mystic_cfg["legacy_targeted_tarot_enabled"] = False
     cfg["MYSTIC_BROADCAST_CONFIG"] = mystic_cfg
-    cfg["NEWS_BROADCAST_CONFIG"] = {
-        **dict(cfg.get("NEWS_BROADCAST_CONFIG", {}) or {}),
-        "enabled": False,
-    }
-    cfg["AUTO_NEWS"] = False
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "黄历塔罗易经播报配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500

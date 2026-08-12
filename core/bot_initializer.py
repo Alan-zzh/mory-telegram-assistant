@@ -399,12 +399,20 @@ def _load_dynamic_states(cfg: dict, db_instance=None):
 
 
 def _refresh_scheduled_tasks():
-    """让 schedule() 依赖配置开关的任务在热重载后真实增删。"""
+    """让统一任务与场景触发器在热重载后真实增删。"""
     from tasks.task_scheduler import get_task_scheduler
 
     task_scheduler = get_task_scheduler()
     if task_scheduler is not None:
         task_scheduler.refresh_tasks()
+        from modules.triggers.base import refresh_trigger_jobs
+        from modules.triggers.cold_group import ColdGroupTrigger
+        from modules.triggers.night_hint import NightHintTrigger
+        refresh_trigger_jobs(
+            task_scheduler,
+            task_scheduler.rm,
+            (ColdGroupTrigger, NightHintTrigger),
+        )
 
 
 def _apply_reloaded_config(cfg: dict, new_cfg: dict):
@@ -450,6 +458,58 @@ def _check_config_hot_reload(cfg: dict):
 
 
 RELOAD_FLAG = Path(base_dir) / 'reload_flag'
+_reload_watcher_lock = Lock()
+_reload_watcher_thread: Optional[threading.Thread] = None
+_reload_watcher_stop_event: Optional[threading.Event] = None
+
+
+def _reload_config_from_flag(cfg: dict) -> bool:
+    """消费 reload_flag；仅完整重载成功后才删除信号。
+
+    配置损坏或调度重编排失败时保留 flag，修复后 watcher 会继续重试，避免
+    Dashboard 已显示新配置而 Bot 永远没有再次同步的静默分裂。
+    """
+    logger = _get_logger()
+    if not RELOAD_FLAG.exists():
+        return False
+    logger.info("[配置重载] 检测到reload_flag信号，开始重载...")
+    try:
+        new_cfg = load_config()
+        _apply_reloaded_config(cfg, new_cfg)
+        if hasattr(_check_config_hot_reload, "_mtime"):
+            try:
+                _check_config_hot_reload._mtime = os.path.getmtime(CONFIG_FILE)
+            except OSError as e:
+                logger.debug(f"[配置重载] mtime同步失败，不影响已完成重载: {e}")
+        RELOAD_FLAG.unlink(missing_ok=True)
+        logger.info("[配置重载] Dashboard配置已同步到Bot内存与调度器")
+        return True
+    except json.JSONDecodeError as e:
+        logger.error(f"[配置重载] config.json格式损坏，保留信号等待修复: {e}")
+    except Exception as e:
+        logger.error(f"[配置重载] 失败，保留信号等待重试: {e}")
+    return False
+
+
+def stop_config_reload_watcher(join_timeout: float = 5.0) -> bool:
+    """停止唯一 watcher，供受控关停与测试复用。"""
+    global _reload_watcher_thread, _reload_watcher_stop_event
+    with _reload_watcher_lock:
+        thread = _reload_watcher_thread
+        stop_event = _reload_watcher_stop_event
+        if thread is None:
+            return False
+        if stop_event is not None:
+            stop_event.set()
+    thread.join(timeout=max(0.0, join_timeout))
+    if thread.is_alive():
+        _get_logger().warning("[配置重载] watcher 未在限定时间内退出")
+        return False
+    with _reload_watcher_lock:
+        if _reload_watcher_thread is thread:
+            _reload_watcher_thread = None
+            _reload_watcher_stop_event = None
+    return True
 
 
 def start_config_reload_watcher(cfg: dict, interval: int = 30):
@@ -459,37 +519,29 @@ def start_config_reload_watcher(cfg: dict, interval: int = 30):
     本线程检测到信号后读取最新配置并原地更新cfg字典，
     所有引用同一cfg对象的模块自动获得新配置。
     """
+    global _reload_watcher_thread, _reload_watcher_stop_event
     logger = _get_logger()
+    interval = max(1, int(interval))
+
+    with _reload_watcher_lock:
+        if _reload_watcher_thread is not None and _reload_watcher_thread.is_alive():
+            logger.warning("[配置重载] watcher 已在运行，跳过重复启动")
+            return _reload_watcher_thread
+        stop_event = threading.Event()
 
     def _watcher_loop():
-        while True:
+        while not stop_event.wait(interval):
             try:
-                time.sleep(interval)
-                if RELOAD_FLAG.exists():
-                    logger.info("[配置重载] 检测到reload_flag信号，开始重载...")
-                    try:
-                        new_cfg = load_config()
-                        _apply_reloaded_config(cfg, new_cfg)
-                        if hasattr(_check_config_hot_reload, "_mtime"):
-                            try:
-                                _check_config_hot_reload._mtime = os.path.getmtime(CONFIG_FILE)
-                            except Exception as e:
-                                logger.debug(f"操作异常: {e}")
-                        logger.info("[配置重载] Dashboard配置已同步到Bot内存与调度器")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"[配置重载] config.json格式损坏，跳过本次重载: {e}")
-                    except Exception as e:
-                        logger.error(f"[配置重载] 失败: {e}")
-                    finally:
-                        try:
-                            RELOAD_FLAG.unlink(missing_ok=True)
-                        except Exception as e:
-                            logger.debug(f"操作异常: {e}")
+                _reload_config_from_flag(cfg)
             except Exception as e:
                 logger.debug(f"操作异常: {e}")
     t = threading.Thread(target=_watcher_loop, daemon=True, name="config_reload_watcher")
+    with _reload_watcher_lock:
+        _reload_watcher_thread = t
+        _reload_watcher_stop_event = stop_event
     t.start()
     logger.info(f"[配置重载] reload_flag监听已启动（间隔{interval}秒）")
+    return t
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -554,7 +606,7 @@ def initialize_bot() -> BotContext:
     _load_env()
 
     # 2. 配置日志
-    from core.logging_util import configure_logging, get_logger as _gl
+    from core.logging_util import configure_logging
     configure_logging(
         level=logging.INFO,
         log_file=os.path.join(base_dir, "mory.log"),
@@ -650,20 +702,31 @@ def initialize_bot() -> BotContext:
     # 15. 初始化默认关键词触发规则
     _init_keyword_triggers(db)
 
-    # 16. 启动后台自动任务
+    # 16. 创建唯一资源锁域后启动后台任务。BotContext 与 TaskScheduler 必须
+    # 持有同一 ResourceManager，否则共享 bot/ai/db 会各自加锁而产生并发裂缝。
+    from core.resource_manager import ResourceManager
     from modules.auto_tasks import start_background
-    # 构建save_config闭包
     _save_cfg = lambda: save_config(cfg, db)
-    start_background(bot, cfg, db, ai, _save_cfg)
+    resource_manager = ResourceManager(
+        bot=bot,
+        ai=ai,
+        db=db,
+        config=cfg,
+        save_config_fn=_save_cfg,
+    )
+    resource_manager = start_background(
+        bot,
+        cfg,
+        db,
+        ai,
+        _save_cfg,
+        resource_manager=resource_manager,
+    )
 
     # 17. 创建MoryBot封装层
     from core.mory_bot import MoryBot
     mory_bot = MoryBot(bot, db, cfg)
     bot._mory_bot_instance = mory_bot
-
-    # 18. 创建ResourceManager
-    from core.resource_manager import ResourceManager
-    resource_manager = ResourceManager(bot=bot, ai=ai, db=db, config=cfg, save_config_fn=_save_cfg)
 
     # 19. 创建KeywordTrigger
     from modules.keyword_trigger import KeywordTrigger

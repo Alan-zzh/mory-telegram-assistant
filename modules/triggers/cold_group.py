@@ -28,8 +28,10 @@ class ColdGroupTrigger(TriggerBase):
 
     def should_fire(self, rm) -> bool:
         """检查是否有冷场群组（超过阈值时间无人发言）。"""
-        threshold_min = rm.config.get("COLD_GROUP_THRESHOLD_MIN", 30)
-        cooldown_min = rm.config.get("COLD_GROUP_COOLDOWN_MIN", 120)  # 2 小时冷却
+        # fallback 与 config.json.example 保持一致；生产 config.json 的显式值
+        # 仍优先，避免缺键时意外采用更激进的旧默认值。
+        threshold_min = rm.config.get("COLD_GROUP_THRESHOLD_MIN", 45)
+        cooldown_min = rm.config.get("COLD_GROUP_COOLDOWN_MIN", 180)  # 3 小时冷却
         now = int(time.time())
         cutoff = now - threshold_min * 60
         cooldown_cutoff = now - cooldown_min * 60
@@ -74,7 +76,7 @@ class ColdGroupTrigger(TriggerBase):
         chats = getattr(self, "_pending_chats", [])
         if not chats:
             return
-        max_per_run = rm.config.get("COLD_GROUP_MAX_PER_RUN", 3)  # 单次最多破冰 3 个群
+        max_per_run = rm.config.get("COLD_GROUP_MAX_PER_RUN", 1)  # 单次最多破冰 1 个群
         for chat_id, _last_ts in chats[:max_per_run]:
             try:
                 # 调 AI 生成破冰语（走 llm_light 池，低成本）

@@ -7,6 +7,7 @@ tasks/task_scheduler.py - 统一任务调度器
 import importlib
 import inspect
 import pkgutil
+import threading
 from typing import Any, Dict, Optional
 
 from core.logging_util import get_logger
@@ -29,10 +30,8 @@ _scheduler_instance: Optional["TaskScheduler"] = None
 
 
 def get_scheduler_instance() -> Optional[Any]:
-    """返回当前调度器的 BackgroundScheduler 实例（无则返回 None）。"""
-    if _scheduler_instance is None:
-        return None
-    return _scheduler_instance.scheduler
+    """返回受生命周期闸门保护的调度控制器（无则返回 None）。"""
+    return _scheduler_instance
 
 
 def get_task_scheduler() -> Optional["TaskScheduler"]:
@@ -55,7 +54,72 @@ class TaskScheduler:
         self.tasks: Dict[str, BaseTask] = {}
         self.scheduler = self._create_scheduler(max_workers)
         self._registered_job_ids: set[str] = set()
+        self._init_lifecycle_state()
         self._discover_and_load_tasks()
+
+    def __getattr__(self, name: str) -> Any:
+        """保留 BackgroundScheduler 的只读/监听兼容面；add_job 由本类接管。"""
+        scheduler = self.__dict__.get("scheduler")
+        if scheduler is None:
+            raise AttributeError(name)
+        return getattr(scheduler, name)
+
+    def _init_lifecycle_state(self):
+        """建立 job 入口闸门与运行计数，保障关库前可以安全 drain。"""
+        self._lifecycle_lock = threading.Condition(threading.RLock())
+        self._accepting_tasks = True
+        self._active_task_count = 0
+
+    def _execute_callable(
+        self,
+        func: Any,
+        args: tuple[Any, ...],
+        kwargs: Dict[str, Any],
+        label: str,
+    ):
+        """所有 APScheduler job 的唯一入口；关停后拒绝尚未开始的任务。"""
+        with self._lifecycle_lock:
+            if not self._accepting_tasks:
+                logger.info("调度器正在关闭，跳过未开始任务: %s", label)
+                return
+            self._active_task_count += 1
+        try:
+            return func(*args, **kwargs)
+        finally:
+            with self._lifecycle_lock:
+                self._active_task_count -= 1
+                self._lifecycle_lock.notify_all()
+
+    def _execute_task(self, task: BaseTask, ctx: Any):
+        return self._execute_callable(
+            task.execute,
+            (ctx,),
+            {},
+            getattr(task, "task_id", task.__class__.__name__),
+        )
+
+    def add_job(self, func: Any, *positional_args: Any, **job_kwargs: Any):
+        """兼容动态 job 注册，同时使其接受关停闸门与 drain 统计。"""
+        args = tuple(job_kwargs.pop("args", ()) or ())
+        kwargs = dict(job_kwargs.pop("kwargs", {}) or {})
+        label = getattr(func, "__name__", func.__class__.__name__)
+        return self.scheduler.add_job(
+            self._execute_callable,
+            *positional_args,
+            args=[func, args, kwargs, label],
+            **job_kwargs,
+        )
+
+    def drain(self, timeout: float = 20.0) -> bool:
+        """等待已开始任务完成；超时则让调用方保持数据库连接。"""
+        timeout = max(0.0, timeout)
+        with self._lifecycle_lock:
+            if self._active_task_count == 0:
+                return True
+            return self._lifecycle_lock.wait_for(
+                lambda: self._active_task_count == 0,
+                timeout=timeout,
+            )
 
     @staticmethod
     def _create_scheduler(max_workers: int):
@@ -191,9 +255,9 @@ class TaskScheduler:
                 ctx = task.create_context(params)
                 try:
                     self.scheduler.add_job(
-                        task.execute,
+                        self._execute_task,
                         trigger=trigger,
-                        args=[ctx],
+                        args=[task, ctx],
                         id=job_id,
                         replace_existing=replace_existing,
                         **trigger_kwargs,
@@ -236,6 +300,8 @@ class TaskScheduler:
 
     def shutdown(self, wait: bool = True):
         """关闭调度器。"""
+        with self._lifecycle_lock:
+            self._accepting_tasks = False
         if self.scheduler and self.scheduler.running:
             self.scheduler.shutdown(wait=wait)
             logger.info("任务调度器已关闭")

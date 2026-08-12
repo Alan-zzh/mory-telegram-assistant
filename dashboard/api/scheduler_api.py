@@ -11,7 +11,7 @@ scheduler_bp = Blueprint("scheduler_monitor", __name__)
 
 
 def _scheduler_stats_from_db() -> dict:
-    """Dashboard 与 Bot 分进程部署时，从 scheduler_metrics 表读取落盘指标。"""
+    """读取持久历史指标；scheduler_metrics 不是当前注册任务表。"""
     db = get_db()
     rows = db.execute(
         """
@@ -42,9 +42,11 @@ def _scheduler_stats_from_db() -> dict:
         "total_success": total_success,
         "total_fail": total_fail,
         "total_miss": total_miss,
-        "job_count": len(jobs),
+        "job_count": None,
+        "historical_job_count": len(jobs),
         "jobs": jobs,
-        "source": "scheduler_metrics",
+        "source": "scheduler_metrics_history",
+        "registry_available": False,
     }
 
 
@@ -81,7 +83,7 @@ def _scheduler_jobs_from_db() -> list:
 @scheduler_bp.route("/api/scheduler/stats", methods=["GET"])
 @login_required
 def api_scheduler_stats():
-    """获取调度器统计指标（登录用户可看）"""
+    """获取调度指标；分进程时明确返回历史覆盖而非当前注册数。"""
     try:
         from core.scheduler_monitor import get_scheduler_stats
         stats = get_scheduler_stats()
@@ -103,9 +105,23 @@ def api_scheduler_jobs():
         jobs = get_job_list(_scheduler_instance) if _scheduler_instance else []
         source = "memory"
         if not jobs:
-            jobs = _scheduler_jobs_from_db()
-            source = "scheduler_metrics"
-        return jsonify({"ok": True, "data": jobs, "count": len(jobs), "source": source})
+            historical = _scheduler_jobs_from_db()
+            return jsonify({
+                "ok": True,
+                "data": [],
+                "count": 0,
+                "source": "unavailable",
+                "registry_available": False,
+                "historical_metrics_count": len(historical),
+                "note": "Dashboard与Bot分进程，scheduler_metrics仅为历史，不能冒充当前注册任务",
+            })
+        return jsonify({
+            "ok": True,
+            "data": jobs,
+            "count": len(jobs),
+            "source": source,
+            "registry_available": True,
+        })
     except Exception as e:
         logger.exception(f"[scheduler_api] api_scheduler_jobs 失败: {e}")
         return jsonify({"ok": False, "msg": "internal_error"}), 500

@@ -54,6 +54,16 @@ LOCAL_AUTHORITATIVE_DEPLOY_FIELDS = {
     "AUTO_GOODNIGHT",
 }
 
+# 已确认没有运行入口的废弃配置；安全合并时也从生产配置移除，避免幽灵开关。
+REMOVED_CONFIG_FIELDS = {
+    "STATS_REPORT_CONFIG",
+    "NEWS_BROADCAST_CONFIG",
+    "AUTO_NEWS",
+    "NEWS_HOUR_MORNING",
+    "NEWS_HOUR_AFTERNOON",
+    "NEWS_HOUR_EVENING",
+}
+
 
 def safe_merge_config(local_cfg: dict, vps_cfg: dict) -> dict:
     """
@@ -77,6 +87,9 @@ def safe_merge_config(local_cfg: dict, vps_cfg: dict) -> dict:
         elif field in merged and not merged.get(field):
             if field in local_cfg:
                 merged[field] = local_cfg[field]
+
+    for field in REMOVED_CONFIG_FIELDS:
+        merged.pop(field, None)
 
     return merged
 

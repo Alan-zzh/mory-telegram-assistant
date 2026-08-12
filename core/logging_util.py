@@ -287,6 +287,7 @@ def cleanup_old_logs(log_dir: str, retention_days: int = 30) -> int:
 
     cutoff_time = time.time() - (retention_days * 86400)
     removed_count = 0
+    cleanup_logger = get_logger("logging_cleanup")
 
     try:
         for filename in os.listdir(log_dir):
@@ -304,11 +305,11 @@ def cleanup_old_logs(log_dir: str, retention_days: int = 30) -> int:
                     removed_count += 1
             except Exception as e:
                 # 单个文件删除失败不影响其他文件
-                logger.debug(f"日志文件删除失败: {filepath} - {e}")
+                cleanup_logger.debug(f"日志文件删除失败: {filepath} - {e}")
 
     except Exception as e:
         # 目录读取失败
-        logger.debug(f"日志目录读取失败: {log_dir} - {e}")
+        cleanup_logger.debug(f"日志目录读取失败: {log_dir} - {e}")
 
     return removed_count
 

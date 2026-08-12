@@ -164,9 +164,13 @@ def _release_failed_broadcast(db, task_key: str, failure: Exception) -> None:
     """发送终态失败时尽力释放防重锁，并把原始失败上浮给调度器。"""
     if db and task_key:
         try:
-            db.release_task(task_key)
+            released = db.release_task(task_key)
+            if not released:
+                logger.critical(
+                    f"release_task 未删除锁 task_key={task_key}; 原始发送失败仍上抛"
+                )
         except Exception as release_err:
-            logger.error(f"release_task 失败 task_key={task_key}: {release_err}")
+            logger.critical(f"release_task 失败 task_key={task_key}: {release_err}")
     raise failure
 
 
