@@ -43,7 +43,7 @@
 - 351 个 zombie 全部属于独立 Docker 容器内 Chromium 的 root node 父进程，不属于 Mory cgroup；只构成共享主机负载/进程表压力，本次不越权重启或清理。
 - 生产配置包含本地运行配置未覆盖的键，但与 `config.json.example` 的能力集合更接近；部署继续采用远端保护字段 + 本地权威字段安全合并，不覆盖数据库和凭据。
 
-## 本地验证（部署前候选）
+## 本地验证与发布门禁
 
 - 初始基线：965 unit 通过。
 - 修复定向：广告治理 44 通过；生命周期/健康/触发器 37 通过；Dashboard/部署/AI/播报等定向回归均已通过。
@@ -51,7 +51,9 @@
 - `check_config_sync.py`：example 与 Dashboard 白名单双向一致。
 - `doc_consistency.py`：136 modules、80 core、33 `_job_`、173 tables、163 routes、9 dispatcher、10 router mappings 全一致。
 - 全仓 flake8 F821：0。
-- 全仓 unit、compileall、CI flake8/mypy/docstring、部署预检与生产验证结果在最终发布段补录。
+- 全仓 unit：`1005 passed in 20.33s`；compileall 通过。
+- CI flake8 通过；mypy 4 个目标文件通过；interrogate `80.2%`，超过 80% 门槛。
+- `check_deploy_ready.py` 5/5 通过，工作树提交时干净；发布提交 `9ad37c0`。
 
 ## 不属于本次代码发布可闭环的风险
 
@@ -61,4 +63,11 @@
 
 ## 发布状态
 
-当前：**候选修复，尚未部署**。只有全门禁通过、提交完成、生产双服务 active、health 200、远端版本/关键 hash 与本地一致、DB/日志/权限读回全部通过后，才能改为“已部署”。
+当前：**v5.38.37 已部署并独立读回验收**。
+
+- 部署器完成 406/406 个生产文件上传、安全配置合并、死代码删除、权限加固及双服务重启；远端 406 个文件 SHA256 与本地逐一比对，`mismatches=0`。
+- `mory-assistant` PID 3822510、`mory-dashboard` PID 3822511 于 2026-08-12 23:02:38 CST 启动，均 `active/running`、`NRestarts=0`；`/api/health` HTTP 200，启动日志明确为 v5.38.37。
+- `mory-*.service` 均为 `root:root 0644`；root cron 执行 `/usr/local/lib/mory-assistant/vps_watchdog.py`，该文件为 `root:root 0755`；`.env`、`config.json`、`mory.db` 均为 0600。
+- `stats_report.py`、`router_database.py` 在 VPS 已不存在；生产配置遗留 NEWS/空报表键为 0，私有 staging 无残留文件。
+- SQLite 保持 WAL，`integrity_check=ok`、`foreign_key_check=[]`；新进程启动后的分钟级任务持续成功，无新 CRITICAL/ERROR/AI 头像解析异常。
+- Dashboard 旧 gevent worker 在切换时仍记录一次 `greenlet is being finalized`，发生于旧 PID 3701665；新 master/worker 正常启动且 health 200。该退出噪声不计为业务故障，但保留为上游运行时观察项。

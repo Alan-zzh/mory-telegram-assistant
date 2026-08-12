@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-09。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-12。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -26,7 +26,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 173 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史，生产迁移表已验证存在 |
-| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；动态发布排除同步冲突副本和内部治理文档，部署前备份、失败保险恢复双服务；v5.38.22 新增 `scripts/check_config_sync.py` 三处同步差集断言（example ↔ 代码默认 ↔ ALLOWED_CONFIG_FIELDS），白名单补 MYSTIC/GREETING/SCHEDULED/NEWS/PROACTIVE 等 10 个业务键；历史（v5.38.16-21）：MAX_UPLOAD_FILE_SIZE/SKIP_PATH_FRAGMENTS/EXCLUDE_NAMES/ALLOWED_CONFIG_FIELDS 补项见 CHANGELOG |
+| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署前备份、失败保险恢复双服务；systemd 单元由 root 持有，root cron 只执行 root-owned watchdog；配置 example 与 Dashboard 白名单由 `scripts/check_config_sync.py` 机械校验 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
 | Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py`、`core/broadcast_image_card.py`、`core/broadcast_image_payload.py`、`core/broadcast_cta.py` | v5.38.16：黄历/塔罗/易经公共 helper 去重 170 行；CTA label↔image_label 强绑定 + 清理全部 24 条 mystic contact/preview/subscribe img_label 遗留“· 点击头像”后缀；新增 greeting/scheduled × afternoon/night 四套时段 CTA 池；font() LRU(128)；11 处 PIL Image.close()；单 block 异常隔离占位；失败自动回退 Rich/HTML；字体兜底 Windows→Linux→仓库；README 新增图片卡章节；20 smoke 单测。v5.38.22：CTA 收敛为统一单一真相源（删旧 CTA 池/get_random_cta/cta_pool 死参/mystic 第二套 CTA，发送层统一生成回填）、四路开关收敛 `is_broadcast_image_enabled`、视觉常量对齐（CTA 圆角 18/标签 8）、缓存存在性短路 + 原子写、`_stable_seed` 改 md5 确定性 |
@@ -37,9 +37,9 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.37（2026-08-12）· 全链路真相治理发布候选
+v5.38.37（2026-08-12）· 全链路真相治理已发布
 
-生产状态：**v5.38.36 当前运行；v5.38.37 待部署门禁**。当前双服务 active、health 200；生产仍存在本次已修但未发布的头像解析、禁用任务误告警与权限问题，未部署前不得称已解决。
+生产状态：**v5.38.37 已部署**。2026-08-12 23:02 CST 双服务以新 PID 启动且 active、NRestarts=0，health 200；406/406 个发布文件 SHA256 与本地一致，数据库完整，权限与安全 cron 已读回确认。
 
 ## 最近 3 条大事
 1. 2026-08-12 v5.38.37：自助复权、假绿灯、热重载/停机竞态与部署权限完成代码修复。
