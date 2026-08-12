@@ -111,7 +111,6 @@ class MemberAdEvaluator:
         message_limit: int = 20,
     ) -> dict[str, Any]:
         uid = int(getattr(user, "id", 0) or 0)
-        display = _display_name(user)
         bio = str(bio or getattr(chat_info, "bio", "") or "")[:1000]
         weak_signals: list[str] = []
 
@@ -138,29 +137,9 @@ class MemberAdEvaluator:
                 f"profile:{profile_result.get('reason', 'weak')} score={profile_score}"
             )
 
-        # 使用与在线消息入口相同的最新本地规则，覆盖显示名和 Bio 的组合。
-        local_profile = self.detector.detect(
-            username=display,
-            msg="",
-            user_id=None,
-            bot=None,
-            bio=bio,
-            chat_id=None,
-        )
-        local_profile_score = int(local_profile.get("score", 0) or 0)
-        if local_profile.get("is_ad") and local_profile.get("action") == "ban":
-            return _decision(
-                is_ad=True,
-                source="profile_rules",
-                reason=str(local_profile.get("reason") or "显示名/Bio规则命中"),
-                score=max(3, local_profile_score),
-            )
-        if local_profile_score > 0:
-            weak_signals.append(
-                f"profile_rules:{local_profile.get('reason', 'weak')} score={local_profile_score}"
-            )
-
         # 重新跑已保存的最近消息，让发布后新增的确定性规则能清理历史漏网账号。
+        # username/Bio 必须留空：AdDetector 的这两个入参是在线组合评分的一部分，
+        # 不能让资料弱信号冒充“这条历史消息本身是广告”并触发删除。
         max_message_score = 0
         for row in self._stored_messages(uid, chat_id, max(1, int(message_limit))):
             if bool(row.get("deleted")):
@@ -169,11 +148,11 @@ class MemberAdEvaluator:
             if not text:
                 continue
             result = self.detector.detect(
-                username=display,
+                username="",
                 msg=text,
                 user_id=None,
                 bot=None,
-                bio=bio,
+                bio="",
                 chat_id=None,
             )
             score = int(result.get("score", 0) or 0)
@@ -190,7 +169,7 @@ class MemberAdEvaluator:
         if max_message_score > 0:
             weak_signals.append(f"message_rules:score={max_message_score}")
 
-        weak_score = max(profile_score, local_profile_score, max_message_score)
+        weak_score = max(profile_score, max_message_score)
         should_review_avatar = bool(
             review_avatar
             and (review_avatar_without_weak_signal or weak_score > 0)
