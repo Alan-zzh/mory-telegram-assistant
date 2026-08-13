@@ -572,6 +572,7 @@ class BotContext:
     proactive_engage: Any = None       # [v5.14.0] ProactiveEngage 商业搭讪
     intent_router: Any = None          # [v5.19.0] IntentRouter 意图路由
     profile_learner: Any = None        # [v5.19.0] ProfileLearner 画像学习器
+    private_preset_media: Any = None   # 私聊审核照片路由（本地静态素材，零 Token）
     bot_id: int = 0                    # BOT_ID
     bot_username: str = ""             # BOT_USERNAME
     save_config: Callable = None       # 保存配置函数
@@ -730,7 +731,15 @@ def initialize_bot() -> BotContext:
 
     # 19. 创建KeywordTrigger
     from modules.keyword_trigger import KeywordTrigger
-    keyword_trigger = KeywordTrigger(db, mory_bot, ai, cfg)
+    from modules.private_preset_media import PrivatePresetMediaService
+    private_preset_media = PrivatePresetMediaService(db)
+    keyword_trigger = KeywordTrigger(
+        db,
+        mory_bot,
+        ai,
+        cfg,
+        private_preset_media=private_preset_media,
+    )
 
     # 19.1 创建KeywordManager（统一关键词与静态数据管理）
     from core.keyword_manager import KeywordManager
@@ -788,6 +797,7 @@ def initialize_bot() -> BotContext:
         proactive_engage=proactive_engage,  # [v5.14.0]
         intent_router=intent_router,        # [v5.19.0]
         profile_learner=profile_learner,    # [v5.19.0]
+        private_preset_media=private_preset_media,
         bot_id=bot_id,
         bot_username=bot_username,
         save_config=_save_cfg,

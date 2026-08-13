@@ -1,0 +1,98 @@
+{
+  "schema": "mory_conversation_regression_v1",
+  "cases": [
+    {
+      "id": "private-photo-visible",
+      "surface": "private",
+      "input": "发张照片",
+      "exact_failure_evidence": {
+        "date": "2026-08-14",
+        "text": "旧预设只回复去 @moryselect 看预览，没有发送聊天内可见照片。"
+      },
+      "normal_counterexample": {
+        "input": "照片挺好看",
+        "expected": "作为反馈正常对话，不自动发照片。"
+      },
+      "must_include": ["Telegram photo", "@moryselect"],
+      "must_not_include": ["send_document", "@MorychannelBot"],
+      "cta_state": "preview",
+      "trace": [
+        "message_dispatcher.P6.6",
+        "KeywordTrigger.handle_message",
+        "PrivatePresetMediaService.send_for_request",
+        "MoryBot.reply_photo_and_track"
+      ],
+      "local_regression": {"passed": true, "tests": 19},
+      "production_probe_required": false
+    },
+    {
+      "id": "private-original-taste",
+      "surface": "private",
+      "input": "原味定制有什么规则",
+      "exact_failure_evidence": {
+        "date": "2026-08-14",
+        "text": "旧链只发送定制规则文字，没有固定追加原味清单图。"
+      },
+      "normal_counterexample": {
+        "input": "不要原味",
+        "expected": "不发图并继续正常对话。"
+      },
+      "must_include": ["原有预设文字", "original_taste_menu.png"],
+      "must_not_include": ["随机照片", "send_document"],
+      "cta_state": "none",
+      "trace": [
+        "KeywordTrigger._match_special_rule",
+        "KeywordTrigger._append_private_media_after_text",
+        "PrivatePresetMediaService.original_taste"
+      ],
+      "local_regression": {"passed": true, "tests": 19},
+      "production_probe_required": false
+    },
+    {
+      "id": "private-benefit-text-then-photo",
+      "surface": "private",
+      "input": "有什么福利",
+      "exact_failure_evidence": {
+        "date": "2026-08-14",
+        "text": "旧链只发送已有福利文字，没有按文字之后追加随机照片。"
+      },
+      "normal_counterexample": {
+        "input": "群聊里说有什么福利",
+        "expected": "群聊只保留原回复，不触发私聊照片路由。"
+      },
+      "must_include": ["原有福利文字", "captionless photo"],
+      "must_not_include": ["双入口", "图片说明"],
+      "cta_state": "preview",
+      "trace": [
+        "KeywordTrigger._handle_special_rule",
+        "KeywordTrigger._append_private_media_after_text",
+        "PrivatePresetMediaService.photo_random"
+      ],
+      "local_regression": {"passed": true, "tests": 19},
+      "production_probe_required": false
+    },
+    {
+      "id": "private-cancel-stale-delayed-reply",
+      "surface": "private",
+      "input": "新消息到达",
+      "exact_failure_evidence": {
+        "date": "2026-08-14",
+        "text": "旧 threading.Timer 没有用户级登记，新消息无法取消上一轮待发回复。"
+      },
+      "normal_counterexample": {
+        "input": "同一轮拆成两段的正常回复",
+        "expected": "没有新消息时，两段仍按原计划发送。"
+      },
+      "must_include": ["cancel pending timer"],
+      "must_not_include": ["旧回复晚到"],
+      "cta_state": "none",
+      "trace": [
+        "message_dispatcher._do_dispatch_inner",
+        "message_dispatcher._cancel_pending_private_replies",
+        "message_dispatcher._delayed_reply"
+      ],
+      "local_regression": {"passed": true, "tests": 19},
+      "production_probe_required": false
+    }
+  ]
+}

@@ -74,6 +74,40 @@ _CONV_TIMEOUT = 300  # 5分钟无对话则计数清零
 _conv_last_cleanup = 0  # 上次清理时间戳
 _MAX_CONV_ENTRIES = 1000  # 最大条目数限制
 
+# ── 私聊延迟回复代际管理 ────────────────────────────────────────────────
+# 新的用户消息必须取消该用户上一轮尚未发出的延迟回复，避免旧内容晚到串台。
+_pending_private_reply_lock = Lock()
+_pending_private_reply_timers: dict[int, dict[threading.Timer, threading.Event]] = {}
+
+
+def _cancel_pending_private_replies(uid: int) -> int:
+    """取消用户上一轮尚未送达的私聊回复，并返回取消数量。"""
+    with _pending_private_reply_lock:
+        pending = _pending_private_reply_timers.pop(int(uid), {})
+    for timer, stop_event in pending.items():
+        stop_event.set()
+        timer.cancel()
+    return len(pending)
+
+
+def _register_private_reply_timer(
+    uid: int,
+    timer: threading.Timer,
+    stop_event: threading.Event,
+) -> None:
+    with _pending_private_reply_lock:
+        _pending_private_reply_timers.setdefault(int(uid), {})[timer] = stop_event
+
+
+def _forget_private_reply_timer(uid: int, timer: threading.Timer) -> None:
+    with _pending_private_reply_lock:
+        pending = _pending_private_reply_timers.get(int(uid))
+        if not pending:
+            return
+        pending.pop(timer, None)
+        if not pending:
+            _pending_private_reply_timers.pop(int(uid), None)
+
 # ── 视奸雷达冷却机制（内存字典 + 线程安全）────────────────────────
 # 防止同一用户频繁触发导致管理员被刷屏
 _radar_cooldown = {}  # key=uid, value=上次触发时间戳
@@ -197,8 +231,16 @@ def _delayed_reply(
     后台线程每5秒续一次typing状态直到消息发出。
     群聊消息发送后自动添加反馈按钮。
     """
+    private_uid = int(
+        getattr(getattr(reply_to_msg, "from_user", None), "id", 0) or 0
+    ) if is_priv else 0
+    stop_event = threading.Event()
+    timer = None
+
     def _do_send():
         try:
+            if stop_event.is_set():
+                return
             send_kwargs = {"reply_markup": reply_markup} if reply_markup is not None else {}
             sent = mory_bot.reply_and_track(reply_to_msg, text, **send_kwargs)
             if sent and not is_priv and reply_markup is None:
@@ -214,21 +256,28 @@ def _delayed_reply(
                     logger.debug(f"操作异常: {e}")
         except Exception as e:
             logger.warning(f"延迟发送失败: {e}")
+        finally:
+            stop_event.set()
+            if private_uid and timer is not None:
+                _forget_private_reply_timer(private_uid, timer)
 
     bot.send_chat_action(chat_id, "typing")
 
     timer = threading.Timer(delay_seconds, _do_send)
     timer.daemon = True
+    if private_uid:
+        _register_private_reply_timer(private_uid, timer, stop_event)
     timer.start()
 
     if delay_seconds > 4:
         def _keep_typing():
             remaining = delay_seconds
-            while remaining > 0:
+            while remaining > 0 and not stop_event.is_set():
                 sleep_time = min(5.0, remaining)
-                time.sleep(sleep_time)
+                if stop_event.wait(sleep_time):
+                    break
                 remaining -= sleep_time
-                if remaining > 0:
+                if remaining > 0 and not stop_event.is_set():
                     try:
                         bot.send_chat_action(chat_id, "typing")
                     except Exception:
@@ -534,6 +583,15 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     chat_id   = m.chat.id
     is_priv   = m.chat.type == "private"
     is_group  = m.chat.type in ("group", "supergroup")
+
+    if is_priv:
+        cancelled = _cancel_pending_private_replies(uid)
+        if cancelled:
+            logger.info(
+                "私聊新消息已取消旧延迟回复 uid=%s count=%s",
+                uid,
+                cancelled,
+            )
 
     # ── i18n: 根据用户 language_code 设置当前会话语言 ──
     # Telegram 用户的 language_code 属性（如 "zh-hans", "en"）会被自动规范化

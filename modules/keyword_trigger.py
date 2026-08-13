@@ -324,11 +324,19 @@ class KeywordTrigger:
     关键词触发回复管理器
     """
 
-    def __init__(self, db, mory_bot=None, ai=None, config=None):
+    def __init__(
+        self,
+        db,
+        mory_bot=None,
+        ai=None,
+        config=None,
+        private_preset_media=None,
+    ):
         self.db = db
         self.mory_bot = mory_bot
         self.ai = ai
         self.config = config or {}
+        self.private_preset_media = private_preset_media
         # 需要管理员权限才能触发的动作类型
         self._admin_actions = {"deploy", "restart", "backup", "restore", "sync"}
 
@@ -361,12 +369,41 @@ class KeywordTrigger:
             if self._handle_private_mystic(text, chat_id, message, bot):
                 return True
 
+            explicit_media_scene = None
+            if not is_admin:
+                explicit_media_scene = self._detect_private_media_scene(
+                    text,
+                    chat_id,
+                    message,
+                )
+
             special_rule = self._match_special_rule(
                 text,
                 conversation_history=conversation_history,
             )
             if special_rule:
-                return self._handle_special_rule(special_rule, chat_id, message, bot)
+                handled = self._handle_special_rule(
+                    special_rule,
+                    chat_id,
+                    message,
+                    bot,
+                )
+                if handled and not is_admin:
+                    self._append_private_media_after_text(
+                        special_rule,
+                        message,
+                        explicit_scene=explicit_media_scene,
+                    )
+                return handled
+
+            if explicit_media_scene:
+                # 明确索图由本地素材直接承接，零 Token；即使外部发送失败，
+                # 也不能掉进 AI 再生成一段突兀文字或重复触发照片。
+                return self._send_private_media(
+                    message,
+                    scene=explicit_media_scene,
+                    include_caption=True,
+                ) in {"sent", "duplicate", "failed"}
 
             matched_triggers = self.db.match_keyword_trigger(text)
             if not matched_triggers:
@@ -447,6 +484,56 @@ class KeywordTrigger:
         except Exception as e:
             logger.error(f"🔮 私聊本地占卜回复失败: {e}")
             return False
+
+    def _detect_private_media_scene(self, text: str, chat_id: int, message):
+        service = self.private_preset_media
+        if service is None:
+            return None
+        chat = getattr(message, "chat", None)
+        chat_type = str(getattr(chat, "type", "") or "")
+        is_private = chat_type == "private" or (not chat_type and int(chat_id or 0) > 0)
+        if not is_private:
+            return None
+        return service.detect_scene(text)
+
+    def _send_private_media(
+        self,
+        message,
+        *,
+        scene: str,
+        include_caption: bool,
+    ) -> str:
+        if self.private_preset_media is None or self.mory_bot is None:
+            return "not_applicable"
+        try:
+            return self.private_preset_media.send_for_request(
+                message,
+                self.mory_bot,
+                scene=scene,
+                include_caption=include_caption,
+            )
+        except Exception as exc:
+            logger.error("🔑 私聊预设媒体发送异常 scene=%s: %s", scene, exc)
+            return "failed"
+
+    def _append_private_media_after_text(
+        self,
+        rule,
+        message,
+        *,
+        explicit_scene: str | None,
+    ) -> str:
+        """预设文字送达后再发图；图片不带 caption，避免重复文案和双入口。"""
+        if self.private_preset_media is None:
+            return "not_applicable"
+        scene = explicit_scene or self.private_preset_media.scene_for_rule(rule)
+        if not scene:
+            return "not_applicable"
+        return self._send_private_media(
+            message,
+            scene=scene,
+            include_caption=False,
+        )
 
     def _match_special_rule(self, text: str, conversation_history=None):
         """匹配特定词规则；配置可覆盖或关闭同名内置规则。"""

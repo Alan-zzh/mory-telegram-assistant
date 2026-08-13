@@ -29,7 +29,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前备份、失败保险恢复双服务；项目巡检由 `project_audit_control.py` 只读取证并以 0/2/3 回执，三条 systemd timer 已安装启用 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_image_card.py`、`core/broadcast_cta.py`、`core/start_welcome_card.py` | 普通用户私聊 `/start` 与每人每群首次精确 @ 共用六套本地随机欢迎卡、随机文案和双入口；姓名/北京时间运行时绘制且零模型调用，群聊图片纳入孤儿清理追踪 |
+| Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_image_card.py`、`core/start_welcome_card.py`、`modules/private_preset_media.py` | `/start` 与群首次精确 @ 共用六套欢迎卡；普通用户私聊索图使用审核静态照片，原味/本人/普通照片分流，福利内容先文字后随机图；群聊与管理员不触发私聊媒体 |
 | 泛问候/定点播报 | 生产关闭 | `tasks/broadcast/greeting_task.py`、`tasks/maintenance/scheduled_broadcast_task.py` | 早午晚泛问候与 4 档定点播报全部关闭，避免与内容栏目重叠；若未来人工开启，问候模型失败直接跳过，不用固定套话，图片卡只渲染同源正文 |
 | 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 生产唯一主动栏目：09:05 黄历、13:05 塔罗、20:35 易经；三档语义各异、间隔至少 4 小时，图片卡保留；新闻执行链已删除 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | VPN/梯子与积分、兑换未进群、全享三群、VIP权益、定制规则、联系Mory等已审核问答在 LLM 前零 Token 命中；30分钟同用户/聊天内短追问绑定原问答族；none/preview/subscribe 单目标；明确购买交给主成交链；私聊玄学走本地引擎并记 0 Token |
@@ -37,18 +37,18 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.54（2026-08-14）· 新增零 Token 业务问答族与同会话短追问
+v5.38.55（2026-08-14）· 新增私聊审核照片路由与旧延迟回复取消
 
-生产状态：**v5.38.54 已部署；受影响运行文件哈希一致，双服务 active/running、NRestarts=0、health 200，启动日志门禁通过；生产配置隔离回放 9 个主问题、3 个同会话追问和 1 个反例均命中，LLM_CALLS=0，重启后仍成立**。
+生产状态：**v5.38.54 已部署；v5.38.55 已完成本地实现与 1140 项 unit 回归，等待生产发布、真实私聊照片回执及重启后幂等复核**。
 
 ## 最近 3 条大事
-1. 2026-08-14 v5.38.54：新增七个零 Token 业务问答族，短追问绑定同一主题且修复“怎么约Mory”乱答。
-2. 2026-08-14 v5.38.53：每人每群首次精确 @ 与私聊 /start 同源，六卡与双入口随机且零模型调用。
-3. 2026-08-14 v5.38.52：群聊精确 @ 支持随机图片卡；具体问题直接进入处理链。
+1. 2026-08-14 v5.38.55：私聊按原味/本人/普通索图发送审核照片，福利内容先文字后图片，并取消旧延迟回复。
+2. 2026-08-14 v5.38.54：新增七个零 Token 业务问答族，短追问绑定同一主题且修复“怎么约Mory”乱答。
+3. 2026-08-14 v5.38.53：每人每群首次精确 @ 与私聊 /start 同源，六卡与双入口随机且零模型调用。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
-modules_py=137
+modules_py=138
 core_py=81
 job_count=33
 db_tables=174
