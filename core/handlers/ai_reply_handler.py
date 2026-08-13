@@ -384,6 +384,41 @@ def _build_sales_reply_markup(
     return None
 
 
+def _notify_mory_for_unresolved(dctx: DispatchContext) -> bool:
+    """把私聊中确实无法处理的问题转达给管理员，并返回真实送达结果。"""
+    config = dctx.ctx.config
+    admin_id = config.get("ADMIN_ID", 0)
+    if not admin_id or dctx.uid == admin_id:
+        return False
+
+    safe_msg = str(dctx.text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")[:500]
+    try:
+        dctx.ctx.bot.send_message(
+            admin_id,
+            "📌 小助理待确认事项\n"
+            f"👤 {format_user_mention(dctx.uid, dctx.uname)}\n"
+            f"💬 {safe_msg}\n"
+            "请确认后直接回复该用户。",
+            parse_mode="HTML",
+        )
+        return True
+    except Exception as error:
+        logger.warning("未解决事项转达失败 uid=%s: %s", dctx.uid, error)
+        return False
+
+
+def _build_unresolved_handoff_reply(prefix: str, *, is_priv: bool, delivered: bool) -> str:
+    """按真实送达状态生成交接回执，绝不把尝试包装成成功。"""
+    leading = str(prefix or "").strip()
+    if leading and leading[-1] not in "。！？!?～~\n":
+        leading += "。"
+    if not is_priv:
+        return f"{leading}这个问题我也不太确定，你可以直接问 Mory：@Moryfansbot"
+    if delivered:
+        return f"{leading}这个问题我暂时处理不了，已经转达给 Mory；后续以她实际回复为准。"
+    return f"{leading}这个问题我暂时处理不了，这次没能送达 Mory。你可以直接联系 @Moryfansbot。"
+
+
 def _recent_order_cta_sent(history) -> bool:
     """近期助手已给过下单入口时，本轮不再机械重复。"""
     for item in list(history or [])[-6:]:
@@ -1014,6 +1049,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         is_priv=is_priv,
         user_msg=msg,
     )
+    handoff_delivered = False
     if needs_handoff:
         conversion_target = "none"
         conversion_reason = "unresolved_handoff"
@@ -1022,12 +1058,13 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             conversion_target=conversion_target,
             conversion_reason=conversion_reason,
         )
-        if "@moryfansbot" not in str(resp or "").lower():
-            prefix = str(resp or "").strip()
-            if prefix and prefix[-1] not in "。！？!?～~\n":
-                prefix += "。"
-            # [方案3] 优化 handoff 文案，让它更自然
-            resp = f"{prefix}这个问题我也不太确定，要不你直接问问 Mory？@Moryfansbot"
+        if is_priv:
+            handoff_delivered = _notify_mory_for_unresolved(dctx)
+        resp = _build_unresolved_handoff_reply(
+            resp or "",
+            is_priv=is_priv,
+            delivered=handoff_delivered,
+        )
 
     # 直接入口/人工交接会改写最终目标，短期上下文必须以最终结果为准。
     dctx.conversion_target = conversion_target
@@ -1120,7 +1157,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
                 reply_markup=handoff_markup,
             )
 
-        if is_priv:
+        if is_priv and not needs_handoff:
             try:
                 admin_id = CONFIG.get("ADMIN_ID", 0)
                 if admin_id and uid != admin_id:

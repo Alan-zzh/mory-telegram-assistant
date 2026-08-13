@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.49**：VPN/梯子及衍生咨询只返回老板指定的免费体验链接，不夹带群置顶或成交入口。
+当前版本 **v5.38.50**：普通用户私聊 `/start` 使用随机横版姓名日期欢迎卡，以办事和咨询承接取代陪聊式开场，并提供免费预览与自助订阅入口。
 
 ## 快速开始
 
@@ -58,7 +58,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 
 | 命令 | 参数 | 用途 |
 | --- | --- | --- |
-| `/start` | — | 新用户引导：普通用户私聊进入自然 AI 对话，管理员私聊返回群管理清单，群聊返回简短引导 |
+| `/start` | — | 新用户引导：普通用户私聊返回随机姓名日期欢迎卡与双入口；管理员私聊返回群管理清单；群聊返回简短引导 |
 | `/help` | — | 帮助命令：私聊返回用户命令清单，管理员额外附带管理员清单；群聊主动私聊完整帮助 |
 
 ### 广告 / 封禁
@@ -115,7 +115,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 > 普通用户命令见 `/help`；管理员在私聊触发 `/help` 会额外附带上述清单。
 
 ## 目录结构
-- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（80 个业务 `.py`）。
+- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（81 个业务 `.py`）。
 - `modules/`：137 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等默认关闭能力）。
 - `dashboard/`：运营后台（`app` + `api`，163 路由，含人工审核风格样本 API）。
 - `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
@@ -127,7 +127,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `config/`：systemd 服务文件。
 
 ## 客观指标（2026-08-09 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 137，core 业务 `.py` = 80，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 163，消息分发函数 = 9，model_router 映射 = 10。
+modules 业务 `.py` = 137，core 业务 `.py` = 81，`_job_` = 33，DB 表 = 173，Dashboard 路由 = 163，消息分发函数 = 9，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）

@@ -3,6 +3,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.message_dispatcher import _handle_feedback
+from core.handlers.ai_reply_handler import (
+    _build_unresolved_handoff_reply,
+    _notify_mory_for_unresolved,
+)
 
 
 class _Bot:
@@ -105,3 +109,25 @@ def test_complaint_prompt_never_claims_unverified_admin_delivery():
     ).read_text(encoding="utf-8")
     assert "承诺转达 Mory" not in source
     assert "不要声称已转达、已通知或承诺处理时效" in source
+
+
+def test_unresolved_handoff_reports_success_only_after_real_send():
+    dctx, bot, _mory = _dispatch()
+
+    assert _notify_mory_for_unresolved(dctx) is True
+    assert len(bot.sent) == 1
+    reply = _build_unresolved_handoff_reply("", is_priv=True, delivered=True)
+    assert "已经转达给 Mory" in reply
+    assert "实际回复为准" in reply
+    assert "直接联系" not in reply
+
+
+def test_unresolved_handoff_reports_failure_and_real_contact_path():
+    dctx, bot, _mory = _dispatch(fail=True)
+
+    assert _notify_mory_for_unresolved(dctx) is False
+    assert bot.sent == []
+    reply = _build_unresolved_handoff_reply("", is_priv=True, delivered=False)
+    assert "没能送达 Mory" in reply
+    assert "@Moryfansbot" in reply
+    assert "已经转达" not in reply

@@ -1,14 +1,8 @@
 # -*- coding: utf-8 -*-
 """用户入口命令 /start 与 /help 处理器。
 
-新增背景：挑刺报告发现 Bot 缺少 /start 与 /help，新用户进群或私聊 Bot
-完全不知道能干什么；本模块提供私聊完整功能清单 / 群聊简短引导两种形态，
-并在管理员发起 /help 时附带管理员命令清单（与 README「管理员命令清单」一致）。
-
-约束：
-- 仅新增，不改动任何现有 handler。
-- 回复一律使用纯文本（不使用 HTML / MarkdownV2），避免注入风险。
-- 中文注释、英文变量名。
+普通用户私聊 ``/start`` 使用独立的 Mory 小助理业务欢迎卡，不进入普通 AI
+对话，避免把明确的办事入口生成成陪聊式开场。管理员和群聊继续保留各自入口。
 """
 
 from core.logging_util import get_logger
@@ -129,7 +123,7 @@ _HELP_ADMIN_TEXT = (
 def handle_start_command(bot, message, ctx):
     """/start 命令处理器。
 
-    - 普通用户私聊：恢复原有主分发器，进入自然 AI 首次对话。
+    - 普通用户私聊：随机横版欢迎卡 + 业务助理文案 + 两个自助入口。
     - 管理员私聊：返回群管理功能清单。
     - 群聊：只回简短引导，避免刷屏。
     """
@@ -141,11 +135,46 @@ def handle_start_command(bot, message, ctx):
                 bot.send_message(message.chat.id, _START_ADMIN_PRIVATE_TEXT)
                 return
 
-            # /start 曾经由主分发器进入 AI 首次私聊；显式命令 handler 后来无条件
-            # 抢占了这条路径，导致普通用户看到“给我管理员权限”的群主管理说明。
-            from core.message_dispatcher import master_handler
+            from core.start_welcome_card import (
+                build_start_welcome_caption,
+                build_start_welcome_card,
+                build_start_welcome_markup,
+                normalize_display_name,
+            )
+            from core.telebot_compat import send_photo_compat
 
-            master_handler(message, ctx)
+            user = getattr(message, "from_user", None)
+            first_name = getattr(user, "first_name", "") or ""
+            last_name = getattr(user, "last_name", "") or ""
+            display_name = normalize_display_name(f"{first_name} {last_name}")
+            caption = build_start_welcome_caption(display_name)
+            markup = build_start_welcome_markup(config)
+
+            try:
+                card = build_start_welcome_card(display_name)
+                try:
+                    send_photo_compat(
+                        bot,
+                        message.chat.id,
+                        card.stream,
+                        caption=caption,
+                        reply_markup=markup,
+                    )
+                finally:
+                    card.stream.close()
+                logger.info(
+                    "/start 普通用户欢迎卡已发送 uid=%s asset=%s",
+                    uid,
+                    card.asset_name,
+                )
+            except Exception as image_error:
+                # 图片渲染/上传失败时仍保证办事入口可用，并明确记录 degraded 原因。
+                logger.warning(
+                    "/start 欢迎卡降级为文本 uid=%s reason=%s",
+                    uid,
+                    image_error,
+                )
+                bot.send_message(message.chat.id, caption, reply_markup=markup)
         else:
             # 群里只回简短引导，避免刷屏
             bot.reply_to(message, _START_GROUP_TEXT)

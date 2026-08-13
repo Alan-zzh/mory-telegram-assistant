@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-13。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-14。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -29,7 +29,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前备份、失败保险恢复双服务；项目巡检由 `project_audit_control.py` 只读取证并以 0/2/3 回执，三条 systemd timer 已安装启用 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py`、`core/broadcast_image_card.py`、`core/broadcast_image_payload.py`、`core/broadcast_cta.py` | v5.38.16：黄历/塔罗/易经公共 helper 去重 170 行；CTA label↔image_label 强绑定 + 清理全部 24 条 mystic contact/preview/subscribe img_label 遗留“· 点击头像”后缀；新增 greeting/scheduled × afternoon/night 四套时段 CTA 池；font() LRU(128)；11 处 PIL Image.close()；单 block 异常隔离占位；失败自动回退 Rich/HTML；字体兜底 Windows→Linux→仓库；README 新增图片卡章节；20 smoke 单测。v5.38.22：CTA 收敛为统一单一真相源（删旧 CTA 池/get_random_cta/cta_pool 死参/mystic 第二套 CTA，发送层统一生成回填）、四路开关收敛 `is_broadcast_image_enabled`、视觉常量对齐（CTA 圆角 18/标签 8）、缓存存在性短路 + 原子写、`_stable_seed` 改 md5 确定性 |
+| Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_image_card.py`、`core/broadcast_cta.py`、`core/start_welcome_card.py` | 播报卡统一 CTA/字体/失败回退；普通用户私聊 `/start` 独立渲染六款随机横版底图、姓名和北京时间日期，图片失败降级文本并保留双入口 |
 | 泛问候/定点播报 | 生产关闭 | `tasks/broadcast/greeting_task.py`、`tasks/maintenance/scheduled_broadcast_task.py` | 早午晚泛问候与 4 档定点播报全部关闭，避免与内容栏目重叠；若未来人工开启，问候模型失败直接跳过，不用固定套话，图片卡只渲染同源正文 |
 | 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 生产唯一主动栏目：09:05 黄历、13:05 塔罗、20:35 易经；三档语义各异、间隔至少 4 小时，图片卡保留；新闻执行链已删除 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | VPN/梯子及衍生咨询在 LLM 前统一返回群置顶与免费体验链接，短追问按同一会话承接；助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token；自动回复卡片 conversion_target=none 禁止按钮，仅未声明键才随机入口；opt_out 跳过关键词销售路由 |
@@ -37,19 +37,19 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.49（2026-08-13）· VPN/梯子回复收敛为老板指定单一体验链接
+v5.38.50（2026-08-14）· 普通用户 `/start` 改为随机业务助理欢迎卡与真实交接回执
 
-生产状态：**v5.38.49 已部署；412/412 部署文件零漂移，SM 姓名、VPN 唯一链接、普通用户 `/start` 正反探针均通过**。
+生产状态：**v5.38.49 已部署；v5.38.50 已完成本地实现与回归，等待部署门禁和生产业务探针**。
 
 ## 最近 3 条大事
-1. 2026-08-13 v5.38.49：VPN/梯子回复只保留老板指定免费体验链接。
-2. 2026-08-13 v5.38.48：普通用户 `/start` 恢复自然 AI 私聊，管理入门仅管理员可见。
-3. 2026-08-13 v5.38.47：VPN/梯子咨询改为链接推荐并承接短追问。
+1. 2026-08-14 v5.38.50：`/start` 使用随机姓名日期欢迎卡，办事优先并提供双入口。
+2. 2026-08-13 v5.38.49：VPN/梯子回复只保留老板指定免费体验链接。
+3. 2026-08-13 v5.38.48：普通用户 `/start` 与管理员群管入口完成身份隔离。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=137
-core_py=80
+core_py=81
 job_count=33
 db_tables=173
 dashboard_routes=163
