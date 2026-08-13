@@ -344,5 +344,13 @@ def test_apply_path_skips_bot_transport_unknown_before_evaluation():
     assert "continue" in source[unknown_branch:evaluation]
 
 
+def test_apply_path_skips_personal_channel_unknown_before_evaluation():
+    source = Path("scripts/scan_group.py").read_text(encoding="utf-8")
+    unknown_branch = source.index('"reason": "personal_channel_unknown"')
+    evaluation = source.index("decision = evaluator.evaluate(", unknown_branch)
+
+    assert "continue" in source[unknown_branch:evaluation]
+
+
 async def _async_value(value):
     return value

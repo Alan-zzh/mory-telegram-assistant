@@ -513,6 +513,19 @@ async def _apply_report(args) -> dict[str, Any]:
                 counts["bot_profile_unavailable"] += 1
             if profile["channel_error"]:
                 counts["personal_channel_post_errors"] += 1
+                counts["personal_channel_unknown"] += 1
+                receipts.append(
+                    {
+                        "uid": uid,
+                        "status": "skipped",
+                        "reason": "personal_channel_unknown",
+                    }
+                )
+                logger.warning(
+                    "[扫描应用] 个人频道帖子不可确认 uid=%s，按未知状态跳过",
+                    uid,
+                )
+                continue
 
             decision = evaluator.evaluate(
                 user=user,
