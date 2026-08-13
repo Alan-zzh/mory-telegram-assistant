@@ -4,16 +4,16 @@ handoff_id: "hof_107a2f2ea51bb58ca0da"
 task_fingerprint: "fp_721cce742771eeedb0229628"
 project_id: "prj_4b071279531a6f2bf65f"
 project_name: "mory_assistant"
-status: "active"
-task_state: "verification_running"
+status: "completed"
+task_state: "verified"
 trigger_reasons: ["long_task"]
 target_files: ["core/start_welcome_card.py", "tests/unit/test_start_help_handler.py"]
 host_refs: ["unknown/unknown", "codex/desktop"]
 created_at: "2026-08-14T00:49:00+08:00"
-updated_at: "2026-08-14T00:50:38+08:00"
-revision: 2
+updated_at: "2026-08-14T00:55:57+08:00"
+revision: 4
 generation: 1
-last_receipt_id: null
+last_receipt_id: "cr_c34de48a13c41a437ed8795d"
 redaction_schema: "puzan-redact/v1"
 ---
 
@@ -29,13 +29,16 @@ redaction_schema: "puzan-redact/v1"
 - ImageGen 生成并筛选三款同系列全幅连贯底图，人物右置、左侧低细节文字区，无硬分割/相框/拼贴
 - 重构卡片层级为品牌、助理定位、姓名、日期、能力说明，并以左侧柔光融入背景
 - 双按钮改为四组成对随机文案，预览/订阅目标链接保持固定
+- v5.38.51 已部署，代码与三款新底图 5/5 VPS 哈希一致
+- 双服务于 2026-08-14 00:53:44 CST 切换为新 PID，active/running、NRestarts=0、health 200、启动日志 clean
+- Telegram 真实卡片 message_id=3461-3464 均为 960x480，底图/正文随机且出现两组不同按钮文案，链接固定
+- v5.38.51 已在生产把 Mory /start 欢迎卡优化为全幅连贯视觉、人物右置分层排版，并实现正文、底图和成对按钮文案随机
 
 ## Current Step
-- 本地实现和全仓回归完成，准备发布
+- 任务已完成并保留历史回执。
 
 ## Pending
-- 按当前目标继续执行；尚未验证的工作不得写入 Completed。
-- records-autopilot、提交、部署门禁与生产 Telegram 多次 /start 随机回执
+- 无；任务由 receipt cr_c34de48a13c41a437ed8795d 关闭。
 
 ## Decisions
 - 建立稳定活动 handoff；后续同任务命中后更新本文件，不重复创建。
@@ -50,9 +53,11 @@ redaction_schema: "puzan-redact/v1"
 - Telegram 比例模拟样张已目视通过
 - pytest tests/unit -q: 1105 passed
 - doc_consistency.py: all checks passed
+- 生产 Telegram 四次 /start 回执通过
+- receipt cr_c34de48a13c41a437ed8795d evidence=5 status=verified
 
 ## Next Action
-- 运行记录双回执、提交和 check_deploy_ready 后部署 v5.38.51
+- 按需查询历史；无需重复执行。
 
 ## Suggested Skills
 - verification-before-completion
@@ -60,7 +65,10 @@ redaction_schema: "puzan-redact/v1"
 
 ## Completion History
 - 尚无根任务完成回执。
+- 2026-08-14T00:55:57+08:00 cr_c34de48a13c41a437ed8795d status=verified
 
 ## Revision Log
 - 2026-08-14T00:49:00+08:00 r1 created triggers=long_task
 - 2026-08-14T00:50:38+08:00 r2 matched existing continuity record and updated in place
+- 2026-08-14T00:55:30+08:00 r3 matched existing continuity record and updated in place
+- 2026-08-14T00:55:57+08:00 r4 completion receipt cr_c34de48a13c41a437ed8795d finalized status=verified
