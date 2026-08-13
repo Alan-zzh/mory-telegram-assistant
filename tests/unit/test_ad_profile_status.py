@@ -612,6 +612,20 @@ def test_bio_sm交友_link_pattern():
     assert result["score"] == 3
 
 
+def test_bio_smith_followed_by_social_text_is_not_sm_adult_evidence():
+    """Smith 中的 Sm 不是独立缩写，后接普通交友文字也不能冒充色情证据。"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="Kimberly Smith", status_id=""),
+        bio="Smith交友",
+    )
+
+    assert result["is_ad"] is False
+    assert result["score"] == 0
+
+
 def test_adult_keyword_sm_in_text():
     """回归：消息含 SM 必须被消息层识别"""
     from modules.ad_detector import AdDetector

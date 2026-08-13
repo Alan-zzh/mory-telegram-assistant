@@ -421,6 +421,46 @@ def test_context_limited_obfuscated_templates_do_not_ban_ambiguous_normal_text(
 
 
 @pytest.mark.parametrize(
+    "display_name",
+    [
+        "KimberlySmith",
+        "RobertSmith",
+        "AliceSmith",
+        "SmartPlayer",
+        "SmileEveryDay",
+        "Cosmos",
+        "SM",
+    ],
+)
+def test_sm_substring_or_standalone_abbreviation_is_not_ad_evidence(
+    detector, display_name
+):
+    """普通英文姓名/单词中的 sm，以及无语境的 SM，都不能单独触发永久禁言。"""
+    result = detector.detect(username=display_name, msg="")
+
+    assert result["is_ad"] is False
+    assert result["action"] != "ban"
+    assert "色情引流" not in result["reason"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SM交友，私聊了解",
+        "SM 全套服务，私聊了解",
+        "提供调教 SM 资源",
+    ],
+)
+def test_bounded_sm_with_explicit_adult_solicitation_remains_ad(detector, text):
+    """SM 仅在独立表达并与明确色情/招揽语义组合时保留高置信命中。"""
+    result = detector.detect(username="普通昵称", msg=text)
+
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert "色情引流" in result["reason"]
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "性格安静，不粘人、不查岗，长期稳定关系q裙：1092048570 QDPt",

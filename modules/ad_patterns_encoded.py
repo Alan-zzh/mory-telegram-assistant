@@ -160,8 +160,11 @@ ADULT_PATTERNS = [
     r"\u6d17\u6d74[\s\S]{0,5}[\u5168\u5957\u4e0a\u95e8\u7279\u670d]",  # 洗浴+全套/上门/特服
     r"[Kk][Tt][Vv][\s\S]{0,3}[\u5c0f\u59d0\u7279\u670d\u5168\u5957]",  # KTV+小姐/特服/全套（缩短间距防误判）
     r"\u8db3\u6d74[\s\S]{0,5}[\u5c0f\u59d0\u7279\u670d\u5168\u5957]",  # 足浴+小姐/特服/全套
-    # [Puzan-OS] v5.28.3 新增：BDSM/SM相关色情引流关键词
-    r"[Ss][Mm]",  # SM（BDSM缩写，色情引流高频词）
+    # SM 只有作为独立缩写且邻近明确色情/招揽语义时才是证据；不得命中 Smith/Smart/Cosmos。
+    r"(?<![A-Za-z0-9])[Ss][Mm](?![A-Za-z0-9])[\s\S]{0,8}"
+    r"(?:\u4ea4\u53cb|\u6bcd\u72d7|\u8c03\u6559|\u5168\u5957|\u7279\u670d|\u6027\u5974|\u670d\u52a1)",
+    r"(?:\u4ea4\u53cb|\u6bcd\u72d7|\u8c03\u6559|\u5168\u5957|\u7279\u670d|\u6027\u5974)"
+    r"[\s\S]{0,8}(?<![A-Za-z0-9])[Ss][Mm](?![A-Za-z0-9])",
     r"\u6bcd\u72d7",  # 母狗（BDSM/色情引流）
     r"\u6deb\u7d20",  # 淫素（淫秽变体）
     r"\u6deb\u79fd",  # 淫秽
@@ -714,9 +717,9 @@ BIO_PATTERNS = [
     # 4. 付出+保X（低门槛+承诺组合）
     r"\u80af\u4ed8\u51fa[\s\S]{0,5}\u4fdd[\s\S]{0,3}[0-9\u5343\u767e\u4e07\u4e01\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341]+",  # 肯付出保X数字
     r"\u4ed8\u51fa[\s\S]{0,5}\u4fdd[\s\S]{0,3}[0-9\u5343\u767e\u4e07\u4e01\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341]+",  # 付出保X数字
-    # [Puzan-OS] v5.28.3 新增：BDSM/SM相关色情引流Bio检测
-    r"[Ss][Mm][\s\S]{0,5}\u4ea4\u53cb",  # SM+交友
-    r"[Ss][Mm][\s\S]{0,5}\u6bcd\u72d7",  # SM+母狗
+    # SM 必须是独立缩写并与明确成人语义组合；英文姓名中的 sm 子串不得命中。
+    r"(?<![A-Za-z0-9])[Ss][Mm](?![A-Za-z0-9])[\s\S]{0,5}\u4ea4\u53cb",  # SM+交友
+    r"(?<![A-Za-z0-9])[Ss][Mm](?![A-Za-z0-9])[\s\S]{0,5}\u6bcd\u72d7",  # SM+母狗
     r"\u6bcd\u72d7[\s\S]{0,5}\u4ea4\u53cb",  # 母狗+交友
     r"\u6bcd\u72d7[\s\S]{0,5}\u8054\u7cfb",  # 母狗+联系
     r"\u6deb\u7d20[\s\S]{0,5}\u4ea4\u53cb",  # 淫素+交友

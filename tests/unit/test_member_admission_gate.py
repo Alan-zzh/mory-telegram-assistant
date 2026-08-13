@@ -122,6 +122,44 @@ def test_name_bio_and_premium_icon_hits_share_unified_enforcement(monkeypatch):
     assert len(enforced) == 3
 
 
+def test_verify_release_does_not_enforce_normal_smith_name(monkeypatch):
+    """截图回归：验证码放行后的真实入口不得把 Smith 中的 Sm 当色情引流。"""
+    from core.handlers import member_handlers
+    from modules.ad_detector import AdDetector
+
+    bot = _Bot(bio="")
+    db = _DB()
+    user = _User("Kimberly", uid=8719901106, username=None)
+    user.last_name = "Smith"
+    update = SimpleNamespace(
+        chat=SimpleNamespace(id=-1003004701688),
+        old_chat_member=SimpleNamespace(status="restricted", user=user),
+        new_chat_member=SimpleNamespace(status="member", user=user),
+    )
+    detector = AdDetector({"AD_ENABLED": True})
+    monkeypatch.setattr(detector, "_check_cas", lambda _uid: (False, ""))
+    monkeypatch.setattr(detector, "_check_spb", lambda _uid: (0.0, False))
+    enforced = []
+    avatar_calls = []
+    monkeypatch.setattr(
+        member_handlers,
+        "_enforce_member_ad",
+        lambda *args, **kwargs: enforced.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        member_handlers,
+        "_review_member_avatar",
+        lambda *args, **kwargs: avatar_calls.append(True) or False,
+    )
+
+    member_handlers._handle_chat_member_update(
+        bot, update, {}, db, ctx=SimpleNamespace(ad_detector=detector)
+    )
+
+    assert enforced == []
+    assert avatar_calls == [True]
+
+
 def test_new_member_profile_block_stops_before_avatar_captcha_and_welcome(monkeypatch):
     from core.handlers import member_handlers
     from modules import anti_raid, emoji_mask_detector, federation, spam_watch, welcome_customization

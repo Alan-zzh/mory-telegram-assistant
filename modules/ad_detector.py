@@ -1231,13 +1231,17 @@ class AdDetector:
         if not is_ad:
             adult_combo_patterns = [
                 # 出+年龄+色情词（核心模式）
-                r"\u51fa[\s\S]{0,3}[0-9]+\u5c81[\s\S]{0,5}[\u6deb\u8272\u60c5\u7ea6\u670d\u52a1\u6bcd\u72d7SM]",
+                r"\u51fa[\s\S]{0,3}[0-9]+\u5c81[\s\S]{0,5}"
+                r"(?:\u6deb|\u8272\u60c5|\u7ea6|\u670d\u52a1|\u6bcd\u72d7|"
+                r"(?<![A-Za-z0-9])[Ss][Mm](?![A-Za-z0-9]))",
                 # 年龄+可以+过夜/约
                 r"[0-9]+\u5c81[\s\S]{0,5}\u53ef\u4ee5[\s\S]{0,3}[\u8fc7\u591c\u7ea6\u670d\u52a1]",
                 # 出+年龄+过夜
                 r"\u51fa[\s\S]{0,3}[0-9]+\u5c81[\s\S]{0,5}\u8fc7\u591c",
                 # 色情词+交友信息+链接
-                r"[\u6deb\u8272\u60c5\u7ea6\u670d\u52a1\u6bcd\u72d7SM][\s\S]{0,10}\u4ea4\u53cb[\s\S]{0,5}https?://",
+                r"(?:\u6deb|\u8272\u60c5|\u7ea6|\u670d\u52a1|\u6bcd\u72d7|"
+                r"(?<![A-Za-z0-9])[Ss][Mm](?![A-Za-z0-9]))"
+                r"[\s\S]{0,10}\u4ea4\u53cb[\s\S]{0,5}https?://",
             ]
             for pat in adult_combo_patterns:
                 if re.search(pat, msg_clean, re.IGNORECASE):
