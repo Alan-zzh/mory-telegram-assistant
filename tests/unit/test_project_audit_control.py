@@ -193,6 +193,30 @@ def test_deployed_runtime_uses_local_read_only_client(monkeypatch):
     assert isinstance(control._default_client_factory(), control._LocalReadOnlyClient)
 
 
+def test_local_read_only_client_accepts_get_pty(monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts import project_audit_control as control
+
+    calls = []
+    monkeypatch.setattr(
+        control.subprocess,
+        "run",
+        lambda *args, **kwargs: calls.append((args, kwargs))
+        or SimpleNamespace(returncode=0, stdout="ok\n", stderr=""),
+    )
+
+    _stdin, stdout, stderr = control._LocalReadOnlyClient().exec_command(
+        "printf ok",
+        timeout=7,
+        get_pty=True,
+    )
+
+    assert stdout.read() == b"ok\n"
+    assert stderr.channel.recv_exit_status() == 0
+    assert calls[0][1]["timeout"] == 7
+
+
 def test_conflicting_legacy_health_and_auto_rollback_are_retired():
     import deploy_vps
 
