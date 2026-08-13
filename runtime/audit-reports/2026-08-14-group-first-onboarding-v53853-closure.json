@@ -1,0 +1,47 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production Telegram main group",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "44a9c529edc013d5a72a46a8d37f5659ecf7db61",
+  "deployment_performed": true,
+  "artifact_hash": "44a9c529edc013d5a72a46a8d37f5659ecf7db61",
+  "backup": {
+    "verified": true,
+    "path": "backups/code_deploy_1786644670.tar.gz + backups/mory_pre_v53853_1786645373.db",
+    "rollback_command": "restore the verified code tar snapshot and database snapshot, then restart mory-assistant and mory-dashboard"
+  },
+  "technical_checks": [
+    {
+      "name": "local unit regression",
+      "passed": true,
+      "receipt": "1116 passed"
+    },
+    {
+      "name": "schema migration",
+      "passed": true,
+      "receipt": "alembic 0006_onboarding_deliveries; table and index re-read"
+    },
+    {
+      "name": "production runtime",
+      "passed": true,
+      "receipt": "v5.38.53; both systemd services active; health HTTP 200; 12 affected file hashes matched"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "first group mention common welcome path",
+      "passed": true,
+      "receipt": "source 66613 produced tracked photo reply 66614 with randomized preview and subscription buttons; delivery status delivered; LLM cost row count stayed 0"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "receipt": "after service restart the same uid/chat returned handled=false, kept delivery status delivered, and retained reply/photo tracking rows"
+  },
+  "deployment_note": "The standard deployment runner timed out locally after remote code replacement. Live inspection found services healthy but seven new artifacts missing; the stalled local process was stopped, exact missing artifacts were uploaded with SHA-256 verification, the backed-up migration was applied, and both services were restarted before business verification.",
+  "result": "verified"
+}

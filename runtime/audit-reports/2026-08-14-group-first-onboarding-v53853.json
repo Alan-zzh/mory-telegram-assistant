@@ -1,0 +1,58 @@
+{
+  "schema": "mory_conversation_regression_v1",
+  "cases": [
+    {
+      "id": "group-first-mention-matches-private-start",
+      "surface": "production Telegram main group",
+      "input": "首次精确 @Mory小助理",
+      "exact_failure_evidence": {
+        "date": "2026-08-14",
+        "text": "旧行为只发群聊简版图片卡，不带私聊 /start 的双入口；带问题还会直接进入 AI。"
+      },
+      "normal_counterexample": {
+        "input": "同一成员在同一群再次精确 @Mory小助理并提出问题",
+        "expected": "不重复欢迎卡，进入正常问题处理链。"
+      },
+      "must_include": [
+        "Mory 小助理",
+        "直接把情况发给我",
+        "预览入口",
+        "自助订阅入口"
+      ],
+      "must_not_include": [
+        "想聊什么",
+        "陪聊",
+        "首次路径模型调用"
+      ],
+      "cta_state": "subscribe",
+      "trace": [
+        "message_dispatcher P3.55 first-mention gate",
+        "start_welcome_card shared local sender"
+      ],
+      "local_regression": {
+        "passed": true,
+        "receipt": "27 targeted tests and 1116 full unit tests passed"
+      },
+      "production_probe_required": true,
+      "production_business_probe": {
+        "passed": true,
+        "source_message_id": 66613,
+        "reply_message_id": 66614,
+        "reply_type": "photo",
+        "buttons": [
+          {
+            "text": "免费预览随机文案",
+            "url": "https://t.me/moryselect"
+          },
+          {
+            "text": "自助订阅随机文案",
+            "url": "https://t.me/MorychannelBot"
+          }
+        ],
+        "delivery_state": "delivered",
+        "llm_cost_rows_before": 0,
+        "llm_cost_rows_after": 0
+      }
+    }
+  ]
+}
