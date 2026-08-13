@@ -1,0 +1,41 @@
+{
+  "project_root": "D:\\Documents\\Syncdisk\\Work\\project\\mory_assistant",
+  "handoff_id": "hof_ce0d0f76f92c2d4bd765",
+  "request": "群里有人精确 @ Mory 小助理时，也使用随机自动回应；保持办事助手定位。",
+  "goal": "群聊纯点名随机发无销售按钮图片卡，带问题直接处理，回复消息继续承接，并完成生产真实回执。",
+  "host": "codex",
+  "surface": "desktop",
+  "status": "verified",
+  "summary": "v5.38.52 已部署：群聊纯点名随机回复欢迎图片卡且无销售按钮，带具体问题剥离 bot username 后进入处理链。",
+  "scope": "root",
+  "workflow_contract_sha256": "e0ac5c2dccb66039601932b3af46213fb72330b4bf616132c16ecb365a54bab4",
+  "verification_report_ref": "runtime/audit-reports/2026-08-14-group-mention-v53852.json",
+  "idempotency_key": "mory-group-mention-v5.38.52-b85abf8",
+  "changes": [
+    "精确大小写无关的群聊 @ 边界识别",
+    "纯点名随机图片卡并纳入双追踪链",
+    "具体问题继续意图与 AI 处理"
+  ],
+  "evidence": [
+    {
+      "kind": "truth_surface",
+      "ref": "runtime/audit-reports/2026-08-14-group-mention-v53852.json",
+      "result": "production Telegram main group pass"
+    },
+    {
+      "kind": "success_receipt",
+      "ref": "telegram:main-group:66595",
+      "result": "source 66594 produced photo reply 66595"
+    },
+    {
+      "kind": "persistence_check",
+      "ref": "runtime/audit-reports/2026-08-14-group-mention-v53852.json",
+      "result": "tracking rows re-read after restart"
+    },
+    {
+      "kind": "records_consistency",
+      "ref": "project_snapshot.md",
+      "result": "records-autopilot strict aligned"
+    }
+  ]
+}
