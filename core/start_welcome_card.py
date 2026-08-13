@@ -24,7 +24,7 @@ from core.broadcast_image_card import font
 _CST = timezone(timedelta(hours=8))
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSET_DIR = _ROOT / "assets" / "start_welcome"
-_ASSET_PATTERN = "mory_start_*.jpg"
+_ASSET_PATTERN = "mory_start_v2_*.jpg"
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 
 _WELCOME_COPY = (
@@ -40,6 +40,13 @@ _WELCOME_COPY = (
     "你好，{name}，欢迎来到 Mory 小助理。\n"
     "办事、咨询、遇到问题，都可以直接把情况发给我。\n"
     "我会先处理；确实需要 Mory 的，会尝试转达，并当场告诉你有没有送达。",
+)
+
+_BUTTON_LABEL_PAIRS = (
+    ("👀 免费预览", "🛒 自助订阅"),
+    ("👀 先看预览", "🛒 查看订阅"),
+    ("🎁 看免费内容", "💎 订阅选项"),
+    ("✨ 免费看看", "🔓 自助开通"),
 )
 
 
@@ -67,19 +74,21 @@ def build_start_welcome_caption(display_name: object, *, rng=None) -> str:
     return chooser.choice(_WELCOME_COPY).format(name=name)
 
 
-def build_start_welcome_markup(config: Optional[dict] = None):
-    """构造老板指定的双入口：免费预览在前，自助订阅在后。"""
+def build_start_welcome_markup(config: Optional[dict] = None, *, rng=None):
+    """随机轮换双入口显示文案；预览/订阅语义与链接始终固定。"""
+    chooser = rng or random.SystemRandom()
+    preview_label, subscribe_label = chooser.choice(_BUTTON_LABEL_PAIRS)
     combo = {
         "buttons": [
             {
                 "target": "preview",
-                "label": "👀 免费预览",
+                "label": preview_label,
                 "url": "https://t.me/moryselect",
                 "style": "primary",
             },
             {
                 "target": "subscribe",
-                "label": "🛒 自助订阅",
+                "label": subscribe_label,
                 "url": "https://t.me/MorychannelBot",
                 "style": "success",
             },
@@ -120,14 +129,13 @@ def build_start_welcome_card(
 
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     layer = ImageDraw.Draw(overlay)
-    layer.rounded_rectangle(
-        (38, 34, 508, 446),
-        radius=30,
-        fill=(255, 250, 247, 222),
-        outline=(210, 153, 159, 92),
-        width=2,
-    )
-    layer.rounded_rectangle((64, 64, 75, 416), radius=6, fill=(193, 106, 121, 220))
+    # 只铺柔和的左侧阅读光，不再画独立白卡或人物相框；让背景、人物和文字
+    # 保持在同一张画面的景深与光影里。
+    for x in range(0, 590):
+        ratio = x / 590
+        alpha = int(118 * (1 - ratio) ** 1.7)
+        layer.line((x, 0, x, 480), fill=(255, 250, 247, alpha))
+    layer.rounded_rectangle((54, 54, 61, 423), radius=4, fill=(193, 106, 121, 210))
     canvas = Image.alpha_composite(canvas, overlay)
     draw = ImageDraw.Draw(canvas)
 
@@ -136,20 +144,20 @@ def build_start_welcome_card(
     soft = (111, 86, 91, 255)
     pale = (238, 220, 219, 255)
 
-    draw.text((98, 65), "Mory", font=font(58, "kai"), fill=rose)
-    draw.text((100, 132), "MORY PERSONAL ASSISTANT", font=font(17, "hei"), fill=soft)
-    draw.line((100, 174, 451, 174), fill=pale, width=2)
+    draw.text((88, 54), "Mory", font=font(66, "kai"), fill=rose)
+    draw.text((91, 126), "PERSONAL ASSISTANT", font=font(16, "hei"), fill=soft)
+    draw.line((90, 167, 440, 167), fill=pale, width=2)
 
-    draw.text((100, 205), "你好，", font=font(28, "hei"), fill=soft)
-    name_font = _fit_font(draw, name, max_width=350, start=48, minimum=30)
-    draw.text((98, 244), name, font=name_font, fill=ink)
+    draw.text((90, 194), "你好，今天由我协助你", font=font(24, "hei"), fill=soft)
+    name_font = _fit_font(draw, name, max_width=360, start=50, minimum=30)
+    draw.text((88, 233), name, font=name_font, fill=ink)
 
     date_font = font(20, "hei")
     date_bbox = draw.textbbox((0, 0), date_text, font=date_font)
     date_width = date_bbox[2] - date_bbox[0]
-    draw.rounded_rectangle((98, 320, 122 + date_width, 360), radius=18, fill=(244, 226, 226, 255))
-    draw.text((110, 328), date_text, font=date_font, fill=rose)
-    draw.text((99, 388), "处理事情  ·  解答咨询  ·  转达 Mory", font=font(19, "hei"), fill=soft)
+    draw.rounded_rectangle((89, 318, 119 + date_width, 359), radius=20, fill=(244, 226, 226, 224))
+    draw.text((104, 327), date_text, font=date_font, fill=rose)
+    draw.text((90, 387), "处理事情   /   解答咨询   /   转达 Mory", font=font(18, "hei"), fill=soft)
 
     stream = io.BytesIO()
     canvas.convert("RGB").save(stream, format="JPEG", quality=89, optimize=True, progressive=True)

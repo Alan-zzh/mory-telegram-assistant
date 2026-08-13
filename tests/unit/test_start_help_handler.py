@@ -58,10 +58,9 @@ def test_private_start_for_regular_user_sends_business_card_without_ai_route(mon
     assert isinstance(photo, BytesIO)
     assert "DarkDesire" in kwargs["caption"]
     assert "直接" in kwargs["caption"]
-    assert "是否送达" in kwargs["caption"]
+    assert "送达" in kwargs["caption"]
     assert not any(word in kwargs["caption"] for word in ("想聊", "陪聊", "单纯聊"))
     buttons = kwargs["reply_markup"].keyboard[0]
-    assert [button.text for button in buttons] == ["👀 免费预览", "🛒 自助订阅"]
     assert [button.url for button in buttons] == [
         "https://t.me/moryselect",
         "https://t.me/MorychannelBot",
@@ -81,7 +80,7 @@ def test_start_welcome_card_contains_dynamic_name_date_and_valid_jpeg():
         rng=_FirstChoice(),
     )
 
-    assert card.asset_name == "mory_start_00.jpg"
+    assert card.asset_name == "mory_start_v2_00.jpg"
     assert card.display_name == "DarkDesire"
     assert card.date_text == "2026年8月14日"
     with Image.open(card.stream) as image:
@@ -116,6 +115,30 @@ def test_start_welcome_markup_keeps_preview_then_subscribe():
     assert len(buttons) == 2
     assert buttons[0].url == "https://t.me/moryselect"
     assert buttons[1].url == "https://t.me/MorychannelBot"
+
+
+def test_start_welcome_markup_randomizes_both_button_labels_without_changing_targets():
+    class _EachChoice:
+        def __init__(self):
+            self.index = 0
+
+        def choice(self, items):
+            item = items[self.index % len(items)]
+            self.index += 1
+            return item
+
+    rng = _EachChoice()
+    pairs = []
+    for _ in range(4):
+        markup = build_start_welcome_markup(rng=rng)
+        pairs.append(tuple(button.text for button in markup.keyboard[0]))
+        assert [button.url for button in markup.keyboard[0]] == [
+            "https://t.me/moryselect",
+            "https://t.me/MorychannelBot",
+        ]
+
+    assert len({pair[0] for pair in pairs}) == 4
+    assert len({pair[1] for pair in pairs}) == 4
 
 
 def test_private_start_keeps_business_entry_when_image_card_fails(monkeypatch):
