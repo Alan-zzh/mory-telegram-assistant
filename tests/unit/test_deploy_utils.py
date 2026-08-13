@@ -232,6 +232,19 @@ def test_deployment_exit_code_fails_closed():
     assert deploy_vps._deployment_exit_code(False) == 1
 
 
+def test_deploy_source_gate_fails_closed_on_stale_branch(monkeypatch):
+    import deploy_vps
+
+    monkeypatch.setattr(deploy_vps, "check_git_clean", lambda: (True, "clean"))
+    monkeypatch.setattr(
+        deploy_vps,
+        "check_head_contains_main",
+        lambda: (False, "stale branch"),
+    )
+
+    assert deploy_vps._deploy_source_gate() == (False, "stale branch")
+
+
 def test_systemd_install_command_sets_root_owner_and_fixed_mode():
     import deploy_vps
 

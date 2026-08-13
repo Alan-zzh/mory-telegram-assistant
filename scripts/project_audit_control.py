@@ -15,7 +15,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -55,7 +54,8 @@ class _LocalStream:
 class _LocalReadOnlyClient:
     """SSHClient-compatible local executor for the deployed VPS checkout."""
 
-    def exec_command(self, command: str, timeout: int = 30):
+    def exec_command(self, command: str, timeout: int = 30, get_pty: bool = False):
+        del get_pty  # SSH 兼容参数；本机只读执行不分配伪终端。
         completed = subprocess.run(
             ["/bin/bash", "-lc", command],
             cwd=PROJECT_ROOT,

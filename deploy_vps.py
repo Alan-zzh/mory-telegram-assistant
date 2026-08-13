@@ -71,6 +71,16 @@ def _dashboard_runtime_probe_command() -> str:
 sys.path.insert(0, str(ROOT))
 from core.deploy_utils import safe_upload_config, upload_files, verify_deployment, sync_runtime_fields_from_vps, sync_env_api_key, ensure_remote_dir
 from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_KEY_FILES, VPS_PATH, ssh_connect
+from scripts.check_deploy_ready import check_git_clean, check_head_contains_main
+
+
+def _deploy_source_gate() -> tuple[bool, str]:
+    """阻断脏工作树或不含当前主线的全目录部署。"""
+    for check in (check_git_clean, check_head_contains_main):
+        ok, detail = check()
+        if not ok:
+            return False, detail
+    return True, "工作树干净且部署源包含当前 main"
 
 
 def _open_deploy_connection():
@@ -423,6 +433,12 @@ def main() -> bool:
     print("=" * 60)
     print("  Mory小助理 · 一键部署到VPS")
     print("=" * 60)
+
+    source_ok, source_detail = _deploy_source_gate()
+    if not source_ok:
+        print(f"❌ 部署源门禁阻断：{source_detail}")
+        return False
+    print(f"  ✅ 部署源门禁：{source_detail}")
 
     # [v5.31.4 修复] 注册信号兜底：工具超时(SIGTERM)等外部中断时，先拉起服务再退出
     try:
