@@ -23,7 +23,11 @@
         "MoryBot.reply_photo_and_track"
       ],
       "local_regression": {"passed": true, "tests": 19},
-      "production_probe_required": false
+      "production_probe_required": true,
+      "production_business_probe": {
+        "passed": true,
+        "evidence": "管理员测试私聊收到 text 3480 后 photo 3481；均已删除。"
+      }
     },
     {
       "id": "private-original-taste",
@@ -46,7 +50,11 @@
         "PrivatePresetMediaService.original_taste"
       ],
       "local_regression": {"passed": true, "tests": 19},
-      "production_probe_required": false
+      "production_probe_required": true,
+      "production_business_probe": {
+        "passed": true,
+        "evidence": "管理员测试私聊收到定制规则 text 3483 后固定原味 photo 3484；均已删除。"
+      }
     },
     {
       "id": "private-benefit-text-then-photo",
@@ -69,7 +77,11 @@
         "PrivatePresetMediaService.photo_random"
       ],
       "local_regression": {"passed": true, "tests": 19},
-      "production_probe_required": false
+      "production_probe_required": true,
+      "production_business_probe": {
+        "passed": true,
+        "evidence": "福利预设原文字先送达，随后 captionless Telegram photo；探针链未注入 AI。"
+      }
     },
     {
       "id": "private-cancel-stale-delayed-reply",
@@ -92,7 +104,11 @@
         "message_dispatcher._delayed_reply"
       ],
       "local_regression": {"passed": true, "tests": 19},
-      "production_probe_required": false
+      "production_probe_required": true,
+      "production_business_probe": {
+        "passed": true,
+        "evidence": "首次媒体状态 sent；重启 mory-assistant 后同 message_id 返回 duplicate，外部发送函数未调用；临时状态清零。"
+      }
     }
   ]
 }

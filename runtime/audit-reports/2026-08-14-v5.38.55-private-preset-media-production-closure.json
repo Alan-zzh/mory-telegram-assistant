@@ -1,0 +1,57 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production VPS /home/ubuntu/mory_assistant and administrator Telegram private chat",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "70061da3c010",
+  "deployment_performed": true,
+  "backup": {
+    "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1786661000.tar.gz",
+    "sha256": "d746b3d9798d7fba946b70656068d0070e1ea90dd1b309deb5cd6a7c2d332b87",
+    "verified": true,
+    "rollback_command": "stop the two mory systemd services, restore the verified tar snapshot, then restart and re-run the production truth profile"
+  },
+  "artifact_hash": "faa269e55441ed80c9b63d5c1f6797382ea6d80533781f9e684c823a59832815",
+  "technical_checks": [
+    {
+      "name": "local_unit_suite",
+      "passed": true,
+      "evidence": "1140 passed"
+    },
+    {
+      "name": "remote_version_and_hashes",
+      "passed": true,
+      "evidence": "v5.38.55; 14 affected code and media files matched SHA-256"
+    },
+    {
+      "name": "systemd_health_and_logs",
+      "passed": true,
+      "evidence": "both services active/running, NRestarts=0, health=200, error-priority journal empty"
+    },
+    {
+      "name": "production_truth_profile",
+      "passed": true,
+      "evidence": "17 pass, 0 evidence_gap, 0 failed"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "benefit_text_then_visible_photo",
+      "passed": true,
+      "evidence": "administrator private chat received text 3480 then Telegram photo 3481; LLM calls=0; messages deleted"
+    },
+    {
+      "name": "original_taste_text_then_fixed_photo",
+      "passed": true,
+      "evidence": "administrator private chat received text 3483 then Telegram photo 3484; messages deleted"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "state was sent for message 3485; after mory-assistant restart the same message returned duplicate without external send; temporary messages and states were removed"
+  },
+  "result": "verified"
+}
