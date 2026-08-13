@@ -193,10 +193,10 @@ def test_vpn_and_ladder_questions_use_clickable_confirmed_referral_without_llm()
     reply_text, kwargs = recorder.replies[0]
     assert reply_text == (
         "可以试试这个，免费用，不好用删掉就行。\n"
-        '<a href="https://t.me/morychat/64104">点击看群置顶</a>\n'
         '体验地址 ➡️ <a href="https://getsapp.net/tQtX3e">'
         "https://getsapp.net/tQtX3e</a>"
     )
+    assert "t.me/morychat" not in reply_text
     assert kwargs == {"parse_mode": "HTML", "disable_web_page_preview": True}
     assert db.telemetry[0][3] == "VPN/梯子推荐"
     assert db.business_context[0][1]["conversion_target"] == "none"

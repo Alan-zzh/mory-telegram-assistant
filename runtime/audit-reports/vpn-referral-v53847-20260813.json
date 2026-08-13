@@ -13,8 +13,8 @@
         "input": "今天去机场接人",
         "expected": "不命中 VPN/梯子推荐规则"
       },
-      "must_include": ["可以试试这个", "免费用", "不好用删掉就行", "点击看群置顶", "https://t.me/morychat/64104", "https://getsapp.net/tQtX3e"],
-      "must_not_include": ["不敢乱推荐", "网络安全和合规问题", "@moryselect", "@MorychannelBot"],
+      "must_include": ["可以试试这个", "免费用", "不好用删掉就行", "https://getsapp.net/tQtX3e"],
+      "must_not_include": ["不敢乱推荐", "网络安全和合规问题", "t.me/morychat", "@moryselect", "@MorychannelBot"],
       "cta_state": "none",
       "trace": ["modules/keyword_trigger.py:_match_special_rule", "modules/keyword_trigger.py:_send_special_reply", "core/message_dispatcher.py:P6.6"],
       "local_regression": {"passed": true},
@@ -32,8 +32,8 @@
         "input": "代理型号 X1 的售后问题",
         "expected": "不命中 VPN/梯子推荐规则"
       },
-      "must_include": ["可以试试这个", "免费用", "不好用删掉就行", "点击看群置顶", "https://t.me/morychat/64104", "https://getsapp.net/tQtX3e"],
-      "must_not_include": ["不敢乱推荐", "担待不起", "别让我为难", "@MorychannelBot"],
+      "must_include": ["可以试试这个", "免费用", "不好用删掉就行", "https://getsapp.net/tQtX3e"],
+      "must_not_include": ["不敢乱推荐", "担待不起", "别让我为难", "t.me/morychat", "@MorychannelBot"],
       "cta_state": "none",
       "trace": ["core/growth_optimizer.py:load_recent_conversation", "modules/keyword_trigger.py:_is_contextual_followup", "modules/keyword_trigger.py:_send_special_reply"],
       "local_regression": {"passed": true},

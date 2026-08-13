@@ -58,7 +58,6 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "remember_context": True,
         "base_reply": (
             "可以试试这个，免费用，不好用删掉就行。\n"
-            '<a href="https://t.me/morychat/64104">点击看群置顶</a>\n'
             '体验地址 ➡️ <a href="https://getsapp.net/tQtX3e">'
             "https://getsapp.net/tQtX3e</a>"
         ),
