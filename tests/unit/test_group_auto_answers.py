@@ -315,6 +315,159 @@ def test_builtin_points_answer_uses_preview_and_custom_concept_is_not_static_ord
     assert len(recorder.replies) == 1
 
 
+def test_preset_question_families_answer_new_points_questions_without_llm():
+    from modules.keyword_trigger import KeywordTrigger
+
+    class _FailIfCalledAi:
+        def ask(self, *_args, **_kwargs):
+            raise AssertionError("预设问答族必须零 Token 确定性回复")
+
+    db = _QuestionDb()
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(
+        db,
+        mory_bot=recorder,
+        ai=_FailIfCalledAi(),
+        config={"SPECIAL_AUTO_REPLIES": [{
+            "name": "旧积分咨询",
+            "topic": "积分",
+            "enabled": True,
+            "keywords": ["积分"],
+            "conversion_target": "none",
+            "base_reply": "旧的泛化回答",
+        }]},
+    )
+
+    text = "积分怎么使用"
+    assert trigger.handle_message(text, -1001, _message(text), object())
+    reply = recorder.replies[-1][0]
+    assert "14900" in reply
+    assert "积分商城" in reply
+    assert "至臻精选会员" in reply
+    assert "旧的泛化回答" not in reply
+    assert "@moryselect" not in reply.lower()
+    assert "@morychannelbot" not in reply.lower()
+    assert db.business_context[-1][1]["conversion_target"] == "none"
+
+
+def test_preset_question_family_followups_stay_bound_to_previous_topic():
+    from modules.keyword_trigger import KeywordTrigger
+
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(
+        _QuestionDb(),
+        mory_bot=recorder,
+        ai=_NoReplyAi(),
+        config={},
+    )
+    points_history = [
+        {"role": "user", "content": "积分怎么使用", "intent": "积分兑换"},
+        {"role": "assistant", "content": "积分可以兑换至臻精选会员。", "intent": "积分兑换"},
+    ]
+
+    followup = _message("门槛多少？")
+    assert trigger.handle_message(
+        followup.text,
+        followup.chat.id,
+        followup,
+        object(),
+        conversation_history=points_history,
+    )
+    assert recorder.replies[-1][0].startswith("当前门槛是 14900 积分")
+
+    rule = trigger._match_special_rule("门槛多少？", conversation_history=points_history)
+    assert rule["name"] == "积分兑换说明"
+    assert rule["base_reply"].startswith("当前门槛是 14900 积分")
+    assert trigger._match_special_rule("门槛多少？", conversation_history=[]) is None
+
+
+def test_meet_mory_question_and_followups_use_social_unlock_not_chatbot_rejection():
+    from modules.keyword_trigger import KeywordTrigger
+
+    class _FailIfCalledAi:
+        def ask(self, *_args, **_kwargs):
+            raise AssertionError("怎么约 Mory 必须先命中预设，不得交给模型乱答")
+
+    db = _QuestionDb()
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(db, mory_bot=recorder, ai=_FailIfCalledAi(), config={})
+
+    for text in ("怎么约你", "怎么约mory"):
+        assert trigger.handle_message(text, -1001, _message(text), object())
+        reply = recorder.replies[-1][0]
+        assert "@MorychannelBot" in reply
+        assert "Mory 最终确认" in reply
+        assert "只能在这里陪你聊天" not in reply
+        assert "没有线下见面的安排" not in reply
+
+    history = [
+        {"role": "user", "content": "怎么联系Mory", "intent": "联系Mory"},
+        {"role": "assistant", "content": recorder.replies[-1][0], "intent": "联系Mory"},
+    ]
+    followup = _message("线下呢？")
+    assert trigger.handle_message(
+        followup.text,
+        followup.chat.id,
+        followup,
+        object(),
+        conversation_history=history,
+    )
+    reply = recorder.replies[-1][0]
+    assert "城市、事项和期望时间" in reply
+    assert "是否安排由 Mory 最终确认" in reply
+    assert not trigger._match_special_rule("怎么约朋友出去吃饭")
+
+
+def test_new_business_presets_keep_each_problem_on_its_own_answer():
+    from modules.keyword_trigger import KeywordTrigger
+
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(
+        _QuestionDb(),
+        mory_bot=recorder,
+        ai=_NoReplyAi(),
+        config={},
+    )
+    cases = {
+        "至臻全享三个群分别是什么": ("至臻精选、至臻全享、精选图集", "14900"),
+        "兑换成功但没进群": ("订单号文字和成功凭证截图", "三个群"),
+        "VIP订阅具体权益": ("最想要什么", "订单号"),
+        "原味/视频定制规则": ("需求、预算和边界", "14900"),
+        "官方联系方式": ("普通咨询直接在这里发", "积分商城"),
+    }
+
+    for text, (required, forbidden) in cases.items():
+        assert trigger.handle_message(text, -1001, _message(text), object())
+        reply = recorder.replies[-1][0]
+        assert required in reply
+        assert forbidden not in reply
+
+
+def test_new_preset_question_families_keep_single_conversion_target():
+    from modules.keyword_trigger import _DEFAULT_SPECIAL_AUTO_REPLIES
+
+    names = {
+        "积分兑换说明", "签到九十天兑换", "会员兑换未进群",
+        "至臻全享群说明", "VIP订阅权益说明", "定制规则说明",
+        "联系与社交解锁",
+    }
+    rules = [rule for rule in _DEFAULT_SPECIAL_AUTO_REPLIES if rule["name"] in names]
+    assert {rule["name"] for rule in rules} == names
+
+    for rule in rules:
+        texts = [rule["base_reply"]]
+        texts.extend(item["base_reply"] for item in rule.get("followup_replies", []))
+        for text in texts:
+            target = rule["conversion_target"]
+            if target == "preview":
+                assert "@morychannelbot" not in text.lower()
+            elif target == "subscribe":
+                assert "@moryselect" not in text.lower()
+            else:
+                assert "@moryselect" not in text.lower()
+                assert "@morychannelbot" not in text.lower()
+
+
 def test_static_early_rules_do_not_intercept_explicit_purchase():
     from modules.keyword_trigger import KeywordTrigger
 

@@ -340,6 +340,12 @@ def test_conversion_target_matrix_keeps_funnel_order_and_context():
     assert resolve_conversion_target("定制舞是什么？介绍一下", mode="convert") == (
         "none", "custom_information_only"
     )
+    assert resolve_conversion_target("至臻全享三个群分别是什么", mode="convert") == (
+        "preview", "plan_question_needs_preview"
+    )
+    assert resolve_conversion_target("积分能兑换什么", mode="normal") == (
+        "none", "no_conversion_signal"
+    )
     assert resolve_conversion_target("订阅一个月有多少视频", mode="convert")[0] == "preview"
     assert resolve_conversion_target("价格和权益有什么区别", mode="convert")[0] == "preview"
     assert resolve_conversion_target("我要下单", mode="convert")[0] == "subscribe"

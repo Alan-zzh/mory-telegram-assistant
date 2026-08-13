@@ -101,6 +101,221 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "forbidden_terms": ["现金", "返现", "保证", "免费"],
         "base_reply": "当前可用内容和福利以 @moryselect 的预览为准，你先看一眼再判断。",
     },
+    {
+        "name": "积分兑换说明",
+        "topic": "积分兑换",
+        "enabled": True,
+        "priority": 100,
+        "keywords": [
+            "积分怎么使用", "积分怎么用", "积分能兑换什么", "积分可以兑换什么",
+            "积分换什么", "积分兑换什么", "多少积分能兑换", "兑换会员要多少积分",
+        ],
+        "contextual_followups": [
+            "门槛多少", "多少积分", "怎么兑换", "在哪里兑换", "换什么",
+            "90天能换吗", "签到90天可以吗", "多久能换",
+        ],
+        "followup_replies": [
+            {
+                "keywords": ["门槛多少", "多少积分", "兑换会员要多少"],
+                "base_reply": "当前门槛是 14900 积分，可兑换 1 个月至臻精选会员；活动有时效，以群内当期积分商城展示为准。",
+            },
+            {
+                "keywords": ["90天能换吗", "签到90天可以吗", "多久能换"],
+                "base_reply": "连续签到约 90 天通常能攒到兑换门槛；是否正好够 14900 积分，要以你当时的积分余额和当期活动为准。",
+            },
+            {
+                "keywords": ["怎么兑换", "在哪里兑换", "换什么"],
+                "base_reply": "在群里发送“积分商城”，进入商城后按提示用 14900 积分兑换 1 个月至臻精选会员。",
+            },
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "none",
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "积分可以兑换至臻精选会员：在群里发送“积分商城”按提示操作，当前门槛是 14900 积分，可兑换 1 个月；活动有时效，以当期商城展示为准。",
+    },
+    {
+        "name": "签到九十天兑换",
+        "topic": "签到兑换",
+        "enabled": True,
+        "priority": 110,
+        "keywords": [
+            "签到90天能否兑换会员", "签到90天能兑换会员吗", "签到90天可以兑换会员吗",
+            "签到九十天能兑换会员吗", "连续签到90天能换会员吗",
+        ],
+        "contextual_followups": ["我已经90天了", "已经90天", "够90天了", "接下来怎么办"],
+        "followup_replies": [
+            {
+                "keywords": ["我已经90天了", "已经90天", "够90天了", "接下来怎么办"],
+                "base_reply": "你先看积分余额是否达到 14900；达到后在群里发送“积分商城”兑换。若商城没有对应商品，把余额和签到记录发来，我帮你登记给 Mory 确认。",
+            },
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "none",
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "可以兑换 1 个月至臻精选会员，但活动有时效。先确认积分达到 14900，再在群里发送“积分商城”操作；如果你已连续签到 90 天却无法兑换，把情况发来，我帮你登记给 Mory 确认。",
+    },
+    {
+        "name": "会员兑换未进群",
+        "topic": "兑换未到账",
+        "enabled": True,
+        "priority": 120,
+        "keywords": [
+            "兑换成功但没进群", "兑换成功没有进群", "积分兑换了没进群",
+            "兑换会员后没进群", "兑换成功了怎么没进群",
+        ],
+        "contextual_followups": ["要发什么", "订单号在哪", "怎么复制订单号", "凭证怎么发", "然后呢"],
+        "followup_replies": [
+            {
+                "keywords": ["要发什么", "凭证怎么发", "然后呢"],
+                "base_reply": "请发两样：购买或兑换成功的凭证截图，以及订单号文字。涉及支付信息时只保留核验所需部分，别发密码、验证码或完整账户资料。",
+            },
+            {
+                "keywords": ["订单号在哪", "怎么复制订单号"],
+                "base_reply": "回到你完成购买或兑换的机器人里找到对应订单，点击订单号即可复制；把订单号文字和凭证截图一起发来。",
+            },
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "none",
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "先回到你完成购买或兑换的机器人，找到订单并点击订单号复制；再把订单号文字和成功凭证截图发来，我帮你登记给 Mory 核对。不要发送密码、验证码或完整账户资料。",
+    },
+    {
+        "name": "至臻全享群说明",
+        "topic": "至臻全享",
+        "enabled": True,
+        "priority": 100,
+        "keywords": [
+            "至臻全享三个群分别是什么", "至臻全享是哪三个群", "全享三个群是什么",
+            "三个群分别是什么", "全享包含哪些群", "至臻全享包括什么群",
+        ],
+        "contextual_followups": ["都是一年吗", "有效期多久", "时间多久", "能下载吗", "有水印吗", "分别有什么"],
+        "followup_replies": [
+            {
+                "keywords": ["都是一年吗", "有效期多久", "时间多久"],
+                "base_reply": "至臻全享当前是年付，三个群的对应权益按 1 年计算；最终以当前档位页面说明为准。",
+            },
+            {
+                "keywords": ["能下载吗", "有水印吗"],
+                "base_reply": "可收藏、可下载及水印版本的具体范围，以当前档位说明和入群后的实际内容为准，我不替页面多承诺。",
+            },
+            {
+                "keywords": ["分别有什么"],
+                "base_reply": "三个群分别对应至臻精选、至臻全享和精选图集；内容差异先看 @moryselect 预览，当前完整权益以档位页面说明为准。",
+            },
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "preview",
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "至臻全享当前包含 3 个群：至臻精选、至臻全享、精选图集，按年计算。内容差异先看 @moryselect 预览，完整权益以当前档位页面说明为准。",
+    },
+    {
+        "name": "VIP订阅权益说明",
+        "topic": "VIP权益",
+        "enabled": True,
+        "priority": 100,
+        "keywords": [
+            "VIP订阅具体权益", "vip具体权益", "订阅具体权益", "会员具体权益",
+            "VIP有什么权益", "订阅到底有什么", "会员包含什么",
+        ],
+        "contextual_followups": ["能聊天吗", "能加好友吗", "能线下吗", "哪个适合我", "看不明白"],
+        "followup_replies": [
+            {
+                "keywords": ["能聊天吗", "能加好友吗"],
+                "base_reply": "是否包含 Telegram 日常沟通、定制或其他权限，要看你选择的具体档位；先对照当前权益，仍不清楚就把想要的能力直接告诉我。",
+            },
+            {
+                "keywords": ["能线下吗"],
+                "base_reply": "线下类资格不能由小助理直接承诺，要以当前档位说明和 Mory 最终确认为准。你可以先说所在城市和想咨询的事项，我帮你整理。",
+            },
+            {
+                "keywords": ["哪个适合我", "看不明白"],
+                "base_reply": "你只要告诉我最想要哪一类：看完整版、下载图集、定制，还是沟通权限。我会按这个目标帮你对应档位，不让你自己猜。",
+            },
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "preview",
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "VIP/订阅分不同档位，完整版、图集下载、定制和沟通权限并不完全相同。先看 @moryselect 判断内容风格；你再告诉我最想要什么，我会按目标帮你对应，当前完整权益以档位页面为准。",
+    },
+    {
+        "name": "定制规则说明",
+        "topic": "定制规则",
+        "enabled": True,
+        "priority": 100,
+        "keywords": [
+            "原味视频定制规则", "原味和视频定制规则", "原味/视频定制规则",
+            "视频定制有什么规则", "原味定制有什么规则", "定制流程是什么",
+        ],
+        "contextual_followups": ["怎么留言", "需要说什么", "多久能好", "会露脸吗", "能做什么"],
+        "followup_replies": [
+            {
+                "keywords": ["怎么留言", "需要说什么"],
+                "base_reply": "留言时写清类型、预算、期望内容和不能接受的边界；小助理只负责记录，是否可接、价格和交付时间都要由 Mory 最终确认。",
+            },
+            {
+                "keywords": ["多久能好"],
+                "base_reply": "交付时间要结合当前排期和具体要求，由 Mory 确认后才算数；小助理不会先替她承诺日期。",
+            },
+            {
+                "keywords": ["会露脸吗", "能做什么"],
+                "base_reply": "能否露脸、可做范围和边界都以当前说明及 Mory 最终确认为准；你先把具体需求发来，我帮你拆成可确认的项目。",
+            },
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "none",
+        "allow_custom_information": True,
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "原味或视频定制先把类型、具体需求、预算和边界发给我。我会整理并转给 Mory；是否可接、价格和交付时间以她最终确认为准。",
+    },
+    {
+        "name": "联系与社交解锁",
+        "topic": "联系Mory",
+        "enabled": True,
+        "priority": 120,
+        "keywords": [
+            "官方联系方式", "如何添加好友", "怎么添加好友", "怎么加好友",
+            "怎么约你", "如何约你", "想约你", "怎么约mory", "如何约mory",
+            "想约mory", "怎么联系mory", "如何联系mory", "怎么联系你",
+        ],
+        "contextual_followups": ["微信呢", "线下呢", "怎么约", "那怎么联系", "必须先订阅吗", "只是聊聊呢"],
+        "followup_replies": [
+            {
+                "keywords": ["微信呢"],
+                "base_reply": "私人联系方式不能由小助理直接发。相关资格以 @MorychannelBot 当前社交解锁说明和 Mory 最终确认为准。",
+            },
+            {
+                "keywords": ["线下呢", "怎么约"],
+                "base_reply": "如果你问的是线下相关，先看 @MorychannelBot 当前社交解锁说明，再把城市、事项和期望时间发来；小助理只负责整理转达，是否安排由 Mory 最终确认。",
+            },
+            {
+                "keywords": ["必须先订阅吗"],
+                "base_reply": "不同沟通或社交权限的前置条件不一样，以 @MorychannelBot 当前说明为准；你告诉我具体想解锁哪种方式，我帮你对应。",
+            },
+            {
+                "keywords": ["只是聊聊呢", "那怎么联系"],
+                "base_reply": "普通咨询直接在这里发就行，我能处理就直接答；需要 Mory 确认的，我会整理后转达。涉及私人联系方式或社交权限，再按 @MorychannelBot 当前说明操作。",
+            },
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "subscribe",
+        "ignore_conversion_target": True,
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "如果你问的是怎么联系或约 Mory：普通咨询直接在这里发；涉及私人联系方式、线上或线下社交权限，先看 @MorychannelBot 当前社交解锁说明，再把具体事项发来。我会整理转达，是否安排由 Mory 最终确认。",
+    },
 )
 
 
@@ -245,17 +460,23 @@ class KeywordTrigger:
         except Exception as exc:
             logger.debug("关键词早路由转化判定跳过: %s", exc)
             conversion_target, conversion_reason = "none", ""
-        # 泛定制/概念解释不能被静态规则截走；必须交给主链按上下文承接。
-        if conversion_target == "subscribe" or conversion_reason == "custom_information_only":
+        # 明确购买必须交给主成交链；概念咨询只有命中已审核的精确预设时
+        # 才会在下方承接，未命中仍自然落回 P10。
+        if conversion_target == "subscribe":
             return None
 
         text_lower = text.lower()
         best_rule = None
-        best_len = -1
+        best_score = (-1, -1)
         for rule in rules:
             if not isinstance(rule, dict):
                 continue
             if not rule.get("enabled", True):
+                continue
+            if (
+                conversion_reason == "custom_information_only"
+                and not rule.get("allow_custom_information", False)
+            ):
                 continue
             excluded_keywords = rule.get("excluded_keywords", [])
             if isinstance(excluded_keywords, str):
@@ -293,46 +514,84 @@ class KeywordTrigger:
                 if keyword_lower in text_lower:
                     matched_len = max(matched_len, len(keyword_lower))
 
-            if matched_len < 0 and self._is_contextual_followup(
-                rule,
-                text_lower,
-                conversation_history,
-            ):
-                matched_len = max(
-                    len(str(marker))
-                    for marker in rule.get("contextual_followups", [])
-                    if marker and str(marker).lower() in text_lower
+            resolved_rule = rule
+            if matched_len < 0:
+                followup = self._resolve_contextual_followup(
+                    rule,
+                    text_lower,
+                    conversation_history,
                 )
+                if followup:
+                    matched_len, resolved_rule = followup
 
-            if matched_len > best_len:
-                best_rule = rule
-                best_len = matched_len
+            priority = int(rule.get("priority", 0) or 0)
+            score = (matched_len, priority)
+            if matched_len >= 0 and score > best_score:
+                best_rule = resolved_rule
+                best_score = score
         return best_rule
 
-    @staticmethod
-    def _is_contextual_followup(rule, text_lower: str, conversation_history) -> bool:
-        """仅在最近同一会话明确提过本规则关键词时承接短追问。"""
+    @classmethod
+    def _resolve_contextual_followup(cls, rule, text_lower: str, conversation_history):
+        """把短追问绑定到最近同一问答族，并切换到对应子答案。"""
         followups = rule.get("contextual_followups", [])
         if isinstance(followups, str):
             followups = [followups]
-        if not any(
-            str(marker).lower() in text_lower
+        matched_followups = [
+            str(marker)
             for marker in followups
-            if marker
-        ):
-            return False
+            if marker and str(marker).lower() in text_lower
+        ]
+        if not matched_followups:
+            return None
 
         keywords = rule.get("keywords", [])
         if isinstance(keywords, str):
             keywords = [keywords]
+        context_anchors = list(keywords)
+        context_anchors.extend(rule.get("context_anchors", []) or [])
+        context_anchors.append(str(rule.get("topic", "")))
         recent = list(conversation_history or [])[-4:]
+        has_context = False
         for item in recent:
             if not isinstance(item, dict):
                 continue
             content = str(item.get("content", "")).lower()
-            if any(str(keyword).lower() in content for keyword in keywords if keyword):
-                return True
-        return False
+            intent = str(item.get("intent", "")).lower()
+            if any(
+                str(anchor).lower() in content or str(anchor).lower() == intent
+                for anchor in context_anchors
+                if anchor
+            ):
+                has_context = True
+                break
+        if not has_context:
+            return None
+
+        resolved = dict(rule)
+        followup_text = max(matched_followups, key=len)
+        for item in rule.get("followup_replies", []) or []:
+            if not isinstance(item, dict):
+                continue
+            markers = item.get("keywords", [])
+            if isinstance(markers, str):
+                markers = [markers]
+            if not any(str(marker).lower() in text_lower for marker in markers if marker):
+                continue
+            for key in (
+                "base_reply", "conversion_target", "required_terms",
+                "forbidden_terms", "parse_mode", "disable_web_page_preview",
+            ):
+                if key in item:
+                    resolved[key] = item[key]
+            break
+        resolved["_matched_keyword"] = followup_text
+        return len(followup_text), resolved
+
+    @classmethod
+    def _is_contextual_followup(cls, rule, text_lower: str, conversation_history) -> bool:
+        """兼容旧调用：仅返回是否命中上下文追问。"""
+        return bool(cls._resolve_contextual_followup(rule, text_lower, conversation_history))
 
     def _effective_special_rules(self):
         """合并项目内置规则和配置规则，保留 Dashboard 的同名覆盖能力。"""
@@ -508,6 +767,8 @@ class KeywordTrigger:
     @staticmethod
     def _get_matched_keyword(rule, user_text: str) -> str:
         """返回实际命中的最长关键词，供提示词与统计使用。"""
+        if rule.get("_matched_keyword"):
+            return str(rule["_matched_keyword"])
         keywords = rule.get("keywords", [])
         if isinstance(keywords, str):
             keywords = [keywords]
@@ -585,8 +846,8 @@ class KeywordTrigger:
                         str(getattr(message, "text", "") or "")[:500],
                         str(reply_text or "")[:500],
                         intent=topic,
-                        conversion_target="none",
-                        conversion_reason="special_rule",
+                        conversion_target=str(rule.get("conversion_target", "none")),
+                        conversion_reason="preset_question_family",
                     )
             except Exception as e:
                 logger.warning(f"🔑 特定词短期上下文写入失败: {e}")

@@ -50,6 +50,11 @@ _DIRECT_CUSTOM_ORDER_MARKERS = (
 
 _CUSTOM_INFORMATION_MARKERS = (
     "是什么", "什么意思", "怎么理解", "介绍一下", "科普一下", "你知道",
+    "规则", "流程", "怎么定制", "如何定制",
+)
+
+_CUSTOM_INFORMATION_OBJECT_MARKERS = (
+    "定制", "订制", "专属视频", "专属写真", "私人内容",
 )
 
 _CUSTOM_THIRD_PARTY_MARKERS = (
@@ -102,7 +107,10 @@ _OPT_OUT_MARKERS = (
     "别发入口", "不要发入口", "退订提醒", "别提醒", "不要提醒",
 )
 
-_SUBSCRIPTION_PLAN_MARKERS = ("包月", "包季", "包年", "月付", "季付", "年付")
+_SUBSCRIPTION_PLAN_MARKERS = (
+    "包月", "包季", "包年", "月付", "季付", "年付",
+    "至臻精选", "至臻全享", "精选图集",
+)
 
 _PREVIEW_SEEN_MARKERS = (
     "看过预览", "看了预览", "预览看了", "预览看过", "看完预览", "预览看完",
@@ -239,9 +247,18 @@ def is_direct_custom_order_request(text: str) -> bool:
     return (
         bool(compact)
         and not is_convert_rejection_message(compact)
-        and not any(marker in compact for marker in _CUSTOM_INFORMATION_MARKERS)
+        and not _is_custom_information_request(compact)
         and not any(marker in compact for marker in _CUSTOM_THIRD_PARTY_MARKERS)
         and any(marker in compact for marker in _DIRECT_CUSTOM_ORDER_MARKERS)
+    )
+
+
+def _is_custom_information_request(text: str) -> bool:
+    """只有同时提到定制对象的概念问法，才属于定制概念咨询。"""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    return (
+        any(marker in compact for marker in _CUSTOM_INFORMATION_MARKERS)
+        and any(marker in compact for marker in _CUSTOM_INFORMATION_OBJECT_MARKERS)
     )
 
 
@@ -367,7 +384,7 @@ def resolve_conversion_target(
             return CONVERSION_TARGET_NONE, "recent_order_cta_suppressed"
         return CONVERSION_TARGET_SUBSCRIBE, "preview_confirmed"
 
-    if any(marker in compact for marker in _CUSTOM_INFORMATION_MARKERS):
+    if _is_custom_information_request(compact):
         return CONVERSION_TARGET_NONE, "custom_information_only"
     if is_direct_custom_order_request(compact):
         if recent_order_cta:
