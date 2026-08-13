@@ -1,0 +1,53 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production VPS /home/ubuntu/mory_assistant",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "e027ca3cd1ee33d4b0933d1cf8904cbc3c91e542",
+  "deployment_performed": true,
+  "backup": {
+    "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1786656132.tar.gz",
+    "sha256": "c7bd158af923fca27a002e507e7f224e496fa402459d68bd7707a0554fff6323",
+    "verified": true,
+    "rollback_command": "cd /home/ubuntu/mory_assistant && sudo systemctl stop mory-assistant mory-dashboard && tar -xzf backups/code_deploy_1786656132.tar.gz -C /home/ubuntu/mory_assistant && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "artifact_hash": "15c60c5f8527e8c372dcec3f107a517604d22ce6e017b2760caebdbb4e6601d0",
+  "technical_checks": [
+    {
+      "name": "local_unit_suite",
+      "passed": true,
+      "evidence": "1121 passed in 23.84s"
+    },
+    {
+      "name": "remote_version_and_hashes",
+      "passed": true,
+      "evidence": "v5.38.54; growth_optimizer.py, keyword_trigger.py and version.py SHA-256 match local"
+    },
+    {
+      "name": "systemd_and_health",
+      "passed": true,
+      "evidence": "mory-assistant PID 2165703 and mory-dashboard PID 2165704 active/running, NRestarts=0, health HTTP 200"
+    },
+    {
+      "name": "startup_logs",
+      "passed": true,
+      "evidence": "Bot startup log clean; Dashboard teardown noise filtered by deployed verifier and remaining startup log clean"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "production_preset_question_matrix",
+      "passed": true,
+      "evidence": "Production code/config passed 9 primary questions, 3 contextual follow-ups and 1 negative case; FailIfAiCalled remained untouched, LLM_CALLS=0"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "Both services restarted at 2026-08-14 05:27:21 CST, then a fresh production process reloaded config/code and passed the full preset matrix"
+  },
+  "recovery_note": "The original deploy process timed out locally after upload and remained blocked with only an SFTP session. Remote hashes were verified, the exact stuck local PIDs were stopped, and the documented dual-service restart plus full deployment verification completed without a second upload.",
+  "result": "verified"
+}
