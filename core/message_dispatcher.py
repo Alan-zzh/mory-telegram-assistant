@@ -1518,7 +1518,14 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
             conversion_state = getattr(dctx, "conversion_state", None) or {}
             if conversion_state.get("opt_out") and not is_admin:
                 logger.debug("🔑 转化 opt_out，跳过关键词销售路由 uid=%s", uid)
-            elif ctx.keyword_trigger.handle_message(msg, chat_id, m, bot, is_admin=is_admin):
+            elif ctx.keyword_trigger.handle_message(
+                msg,
+                chat_id,
+                m,
+                bot,
+                is_admin=is_admin,
+                conversation_history=getattr(dctx, "conversation_history", []),
+            ):
                 logger.info(f"🔑 关键词触发回复成功 uid={uid} msg={msg[:30]}")
                 clear_logging_context()
                 return True

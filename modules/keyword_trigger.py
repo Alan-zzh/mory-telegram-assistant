@@ -36,6 +36,30 @@ _UNUSABLE_POLISH_MARKERS = (
 
 _DEFAULT_SPECIAL_AUTO_REPLIES = (
     {
+        "name": "VPN/梯子推荐",
+        "topic": "VPN/梯子推荐",
+        "enabled": True,
+        "keywords": ["vpn", "梯子", "翻墙", "科学上网"],
+        "contextual_followups": [
+            "群友有没有", "还有没有", "还有吗", "有吗", "链接呢", "地址呢",
+            "在哪里", "在哪", "怎么用", "怎么下载",
+        ],
+        "excluded_keywords": ["不用了", "不需要", "不想要", "不要推荐", "已经有", "有了"],
+        "ai_polish": False,
+        "ai_mode": "normal",
+        "conversion_target": "none",
+        "ignore_conversion_target": True,
+        "card_enabled": False,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "remember_context": True,
+        "base_reply": (
+            "可以试试这个，免费用，不好用删掉就行。\n"
+            '体验地址 ➡️ <a href="https://getsapp.net/tQtX3e">'
+            "https://getsapp.net/tQtX3e</a>"
+        ),
+    },
+    {
         "name": "助理唤醒",
         "topic": "助理唤醒",
         "enabled": True,
@@ -90,7 +114,15 @@ class KeywordTrigger:
         # 需要管理员权限才能触发的动作类型
         self._admin_actions = {"deploy", "restart", "backup", "restore", "sync"}
 
-    def handle_message(self, text: str, chat_id: int, message, bot, is_admin: bool = False) -> bool:
+    def handle_message(
+        self,
+        text: str,
+        chat_id: int,
+        message,
+        bot,
+        is_admin: bool = False,
+        conversation_history=None,
+    ) -> bool:
         """
         处理消息，匹配关键词
 
@@ -111,7 +143,10 @@ class KeywordTrigger:
             if self._handle_private_mystic(text, chat_id, message, bot):
                 return True
 
-            special_rule = self._match_special_rule(text)
+            special_rule = self._match_special_rule(
+                text,
+                conversation_history=conversation_history,
+            )
             if special_rule:
                 return self._handle_special_rule(special_rule, chat_id, message, bot)
 
@@ -195,7 +230,7 @@ class KeywordTrigger:
             logger.error(f"🔮 私聊本地占卜回复失败: {e}")
             return False
 
-    def _match_special_rule(self, text: str):
+    def _match_special_rule(self, text: str, conversation_history=None):
         """匹配特定词规则；配置可覆盖或关闭同名内置规则。"""
         rules = self._effective_special_rules()
 
@@ -219,6 +254,15 @@ class KeywordTrigger:
                 continue
             if not rule.get("enabled", True):
                 continue
+            excluded_keywords = rule.get("excluded_keywords", [])
+            if isinstance(excluded_keywords, str):
+                excluded_keywords = [excluded_keywords]
+            if any(
+                str(keyword).lower() in text_lower
+                for keyword in excluded_keywords
+                if keyword
+            ):
+                continue
             rule_target = str(rule.get("conversion_target", "none")).strip().lower()
             # 价格、内容、福利这类“了解型”静态问法可安全收敛到预览；
             # 但明确购买必须完整交给主成交链，其他 target 严格一致。
@@ -227,21 +271,65 @@ class KeywordTrigger:
                 and conversion_target == "none"
                 and bool(rule.get("allow_preview_from_none", True))
             )
-            if rule_target != conversion_target and not allow_preview_from_none:
+            if (
+                not rule.get("ignore_conversion_target", False)
+                and rule_target != conversion_target
+                and not allow_preview_from_none
+            ):
                 continue
 
             keywords = rule.get("keywords", [])
             if isinstance(keywords, str):
                 keywords = [keywords]
 
+            matched_len = -1
             for keyword in keywords:
                 if not keyword:
                     continue
                 keyword_lower = str(keyword).lower()
-                if keyword_lower in text_lower and len(keyword_lower) > best_len:
-                    best_rule = rule
-                    best_len = len(keyword_lower)
+                if keyword_lower in text_lower:
+                    matched_len = max(matched_len, len(keyword_lower))
+
+            if matched_len < 0 and self._is_contextual_followup(
+                rule,
+                text_lower,
+                conversation_history,
+            ):
+                matched_len = max(
+                    len(str(marker))
+                    for marker in rule.get("contextual_followups", [])
+                    if marker and str(marker).lower() in text_lower
+                )
+
+            if matched_len > best_len:
+                best_rule = rule
+                best_len = matched_len
         return best_rule
+
+    @staticmethod
+    def _is_contextual_followup(rule, text_lower: str, conversation_history) -> bool:
+        """仅在最近同一会话明确提过本规则关键词时承接短追问。"""
+        followups = rule.get("contextual_followups", [])
+        if isinstance(followups, str):
+            followups = [followups]
+        if not any(
+            str(marker).lower() in text_lower
+            for marker in followups
+            if marker
+        ):
+            return False
+
+        keywords = rule.get("keywords", [])
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        recent = list(conversation_history or [])[-4:]
+        for item in recent:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content", "")).lower()
+            if any(str(keyword).lower() in content for keyword in keywords if keyword):
+                return True
+        return False
 
     def _effective_special_rules(self):
         """合并项目内置规则和配置规则，保留 Dashboard 的同名覆盖能力。"""
@@ -307,6 +395,7 @@ class KeywordTrigger:
                 chat_id,
                 matched_keyword,
                 was_polished,
+                final_reply,
             )
             logger.info(f"🔑 特定词自动回复成功: {rule.get('name', '未命名规则')}")
             return True
@@ -326,10 +415,20 @@ class KeywordTrigger:
             is_rich_message_enabled,
         )
 
-        if not is_auto_reply_card_enabled(self.config):
+        direct_kwargs = self._direct_reply_kwargs(rule)
+        if (
+            not is_auto_reply_card_enabled(self.config)
+            or not rule.get("card_enabled", True)
+        ):
             if self.mory_bot:
-                return bool(self.mory_bot.reply_and_track(message, final_reply))
-            return bool(bot.reply_to(message, final_reply))
+                return bool(
+                    self.mory_bot.reply_and_track(
+                        message,
+                        final_reply,
+                        **direct_kwargs,
+                    )
+                )
+            return bool(bot.reply_to(message, final_reply, **direct_kwargs))
 
         try:
             card = build_auto_reply_card(rule, final_reply, chat_id, self.config)
@@ -393,6 +492,17 @@ class KeywordTrigger:
         return bool(sent)
 
     @staticmethod
+    def _direct_reply_kwargs(rule) -> dict:
+        """只放行 Telegram 支持的确定性格式参数，避免配置注入任意发送参数。"""
+        kwargs = {}
+        parse_mode = str(rule.get("parse_mode", "") or "").strip()
+        if parse_mode in {"HTML", "Markdown", "MarkdownV2"}:
+            kwargs["parse_mode"] = parse_mode
+        if rule.get("disable_web_page_preview", False):
+            kwargs["disable_web_page_preview"] = True
+        return kwargs
+
+    @staticmethod
     def _get_matched_keyword(rule, user_text: str) -> str:
         """返回实际命中的最长关键词，供提示词与统计使用。"""
         keywords = rule.get("keywords", [])
@@ -434,17 +544,18 @@ class KeywordTrigger:
         chat_id: int,
         matched_keyword: str,
         was_polished: bool,
+        reply_text: str = "",
     ):
         """用现有 telemetry_events 记录关键话题，不保存用户原文。"""
+        user = getattr(message, "from_user", None)
+        user_id = int(getattr(user, "id", 0) or 0)
+        topic = str(
+            rule.get("topic")
+            or matched_keyword
+            or rule.get("name")
+            or "未分类"
+        ).strip()[:64]
         try:
-            user = getattr(message, "from_user", None)
-            user_id = int(getattr(user, "id", 0) or 0)
-            topic = str(
-                rule.get("topic")
-                or matched_keyword
-                or rule.get("name")
-                or "未分类"
-            ).strip()[:64]
             self.db.log_telemetry(
                 user_id,
                 int(chat_id or 0),
@@ -460,6 +571,22 @@ class KeywordTrigger:
             )
         except Exception as e:
             logger.warning(f"🔑 关键话题统计写入失败: {e}")
+
+        if rule.get("remember_context", False):
+            try:
+                recorder = getattr(self.db, "record_business_context", None)
+                if callable(recorder):
+                    recorder(
+                        user_id,
+                        int(chat_id or 0),
+                        str(getattr(message, "text", "") or "")[:500],
+                        str(reply_text or "")[:500],
+                        intent=topic,
+                        conversion_target="none",
+                        conversion_reason="special_rule",
+                    )
+            except Exception as e:
+                logger.warning(f"🔑 特定词短期上下文写入失败: {e}")
 
     def _handle_static(self, trigger, chat_id, message, bot):
         reply_text = trigger["reply_text"]

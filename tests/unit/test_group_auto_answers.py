@@ -22,6 +22,7 @@ class _QuestionDb:
     def __init__(self):
         self.telemetry = []
         self.faq_hits = []
+        self.business_context = []
 
     def match_keyword_trigger(self, _text):
         return []
@@ -39,6 +40,10 @@ class _QuestionDb:
 
     def increment_faq_hit(self, faq_id):
         self.faq_hits.append(faq_id)
+
+    def record_business_context(self, *args, **kwargs):
+        self.business_context.append((args, kwargs))
+        return True
 
 
 class _ReplyRecorder:
@@ -160,6 +165,64 @@ def test_builtin_persona_wakeup_replies_without_conversion_entry():
     assert "@MorychannelBot" not in recorder.replies[0][0]
     assert "@Moryfansbot" not in recorder.replies[0][0]
     assert db.telemetry[0][3] == "助理唤醒"
+
+
+def test_vpn_and_ladder_questions_use_clickable_confirmed_referral_without_llm():
+    from modules.keyword_trigger import KeywordTrigger
+
+    class _FailIfCalledAi:
+        def ask(self, *_args, **_kwargs):
+            raise AssertionError("VPN/梯子推荐必须在进入 LLM 前确定性承接")
+
+    db = _QuestionDb()
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(db, mory_bot=recorder, ai=_FailIfCalledAi(), config={})
+
+    for text in ("有没有VPN推荐？", "有没有好用的梯子", "科学上网怎么弄", "翻墙工具推荐"):
+        assert trigger.handle_message(text, -1001, _message(text), object())
+
+    reply_text, kwargs = recorder.replies[0]
+    assert reply_text == (
+        "可以试试这个，免费用，不好用删掉就行。\n"
+        '体验地址 ➡️ <a href="https://getsapp.net/tQtX3e">'
+        "https://getsapp.net/tQtX3e</a>"
+    )
+    assert kwargs == {"parse_mode": "HTML", "disable_web_page_preview": True}
+    assert db.telemetry[0][3] == "VPN/梯子推荐"
+    assert db.business_context[0][1]["conversion_target"] == "none"
+
+
+def test_vpn_context_followup_is_handled_but_normal_and_opt_out_phrases_are_not():
+    from modules.keyword_trigger import KeywordTrigger
+
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(
+        _QuestionDb(),
+        mory_bot=recorder,
+        ai=_NoReplyAi(),
+        config={},
+    )
+    history = [
+        {"role": "user", "content": "有没有VPN推荐？"},
+        {"role": "assistant", "content": "可以试试这个，免费用。"},
+    ]
+
+    followup = _message("群友有没有？😁")
+    assert trigger.handle_message(
+        followup.text,
+        followup.chat.id,
+        followup,
+        object(),
+        conversation_history=history,
+    )
+    assert "https://getsapp.net/tQtX3e" in recorder.replies[0][0]
+    assert trigger._match_special_rule(
+        "群友有没有？😁",
+        conversation_history=history,
+    )["name"] == "VPN/梯子推荐"
+    assert trigger._match_special_rule("今天去机场接人") is None
+    assert trigger._match_special_rule("代理型号 X1 的售后问题") is None
+    assert trigger._match_special_rule("VPN我不用了") is None
 
 
 def test_private_mystic_reply_short_circuits_ai_with_zero_token():
