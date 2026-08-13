@@ -95,6 +95,49 @@ def test_profile_bio_group_invite_link_blocks_on_join():
     assert "资料文字命中广告规则" in result["reason"]
 
 
+def test_profile_bio_bare_personal_link_is_not_ad():
+    """纯个人链接没有广告说明时只是资料，不得授权处置。"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="摄影记录", status_id=""),
+        "https://t.me/my_daily_album",
+        {},
+    )
+
+    assert result["is_ad"] is False
+    assert result["score"] == 0
+
+
+def test_profile_bio_explicit_promotion_with_link_is_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="业务推广", status_id=""),
+        "广告引流：https://t.me/example_ads",
+        {},
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+
+
+def test_profile_bio_adult_resource_keywords_with_link_are_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="普通昵称", status_id=""),
+        "同城母狗资源，包实战落地：https://t.me/example",
+        {},
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+
+
 class _FakePersonalChannelBot:
     def __init__(self, title, description="", username="channel_name", posts=None):
         self.posts = list(posts or [])
@@ -136,6 +179,22 @@ class _FakePersonalChannelBot:
             type("ChannelMessage", (), {"text": "", "caption": caption})()
             for caption in self.posts[:limit]
         ]
+
+
+def test_plain_bound_personal_channel_is_not_ad():
+    """只绑定普通个人频道，即使带频道 username，也不能直接封禁。"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(
+        "我的摄影日记",
+        "记录旅行、家人和日常照片",
+        "my_daily_album",
+    )
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is False
+    assert result["score"] == 0
+    assert result["personal_chat_id"] == -1004432682202
 
 
 def test_personal_channel_exact_production_variant_is_ad():
@@ -312,6 +371,12 @@ class _FakeAdDetector:
     def clear_user_tracking(self, uid):
         self.cleared.append(uid)
 
+    def detect(self, **_kwargs):
+        return {"is_ad": False, "score": 0, "matched_rules": []}
+
+    def check_consecutive_patterns(self, *_args, **_kwargs):
+        return {"is_spam": False, "score": 0, "messages": []}
+
 
 class _FakeShortMessage:
     content_type = "text"
@@ -393,6 +458,48 @@ def test_personal_channel_ad_blocks_short_probe_before_ai_reply():
     assert check_ad_detection(dctx) is True
     assert bot.deleted == [(-1001, 88)]
     assert bot.restricted[0][0:2] == (-1001, 42)
+
+
+def test_bare_link_bio_and_plain_channel_do_not_block_short_message():
+    """真实回复入口反例：裸链接+普通频道不能删消息、禁言或截断回复。"""
+    from core.handlers.security_handlers import check_ad_detection
+
+    bot = _FakePersonalChannelBot(
+        "我的摄影日记",
+        "记录旅行和生活",
+        "my_daily_album",
+    )
+    bot.user_chat.bio = "https://t.me/my_daily_album"
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.text = "在吗"
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": _FakeDB(),
+        "config": {"ENABLE_MESSAGE_DELETION": True},
+        "ad_detector": _FakeAdDetector(),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": "在吗",
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": "摄影记录",
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is False
+    assert bot.deleted == []
+    assert bot.restricted == []
+    assert ctx.db.blacklist == []
 
 
 def test_profile_status_ad_does_not_block_whitelisted_user():

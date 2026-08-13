@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；合同模式屏蔽旧毒舌/敷衍桶，FAQ/缓存/模型结果统一走动作旁白和敌意发送前门禁。普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类、46 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 实时与存量扫描共用显示名/username/Bio/Premium/个人频道/历史消息/高置信头像规则；Q裙成人招揽首条处置；1小时同文至少3次只删重复组、不标广告或封禁；全量扫描默认只报告，覆盖率不足、管理员/白名单或状态未知均不处罚，应用时重新取证并走统一处置链 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 实时与存量扫描共用资料/消息规则；裸链接或普通绑定频道不是广告证据，必须再命中明确广告语义；Q裙成人招揽首条处置；1小时同文至少3次只删重复组；全量扫描默认只报告，覆盖不足或状态未知均不处罚，应用时重新取证并走统一处置链 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 137 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
@@ -37,14 +37,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.44（2026-08-13）· 审计控制面恢复与旧分叉部署阻断
+v5.38.45（2026-08-13）· 资料链接与个人频道广告证据门禁
 
-生产状态：**v5.38.44 已部署；成员扫描处置保持已验证，审计 all profile 与三条 timer 实跑均 pass，持久回执无 gap/failed**。
+生产状态：**v5.38.45 已部署；裸链接/普通绑定频道正反探针通过，63 个裸链接误封对象权限与四项持久态已恢复，1 个当前强广告保留**。
 
 ## 最近 3 条大事
-1. 2026-08-13 v5.38.44：恢复审计控制面并阻断旧分叉全目录部署。
-2. 2026-08-13 v5.38.43：全量扫描处置 74 人，5 个个人频道 unknown 安全跳过。
-3. 2026-08-13 v5.38.42：Profile 取证与 Bot API 增强不可用/传输异常分层。
+1. 2026-08-13 v5.38.45：裸链接或普通绑定频道不再单独授权广告处置。
+2. 2026-08-13 v5.38.44：恢复审计控制面并阻断旧分叉全目录部署。
+3. 2026-08-13 v5.38.43：全量扫描处置 74 人，5 个个人频道 unknown 安全跳过。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

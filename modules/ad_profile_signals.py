@@ -149,11 +149,12 @@ def _ocr_sticker_texts(bot, status_ids: list, config: dict | None = None) -> lis
     return results
 
 
-def _match_ad_patterns(text: str) -> str:
+def _match_ad_patterns(text: str, patterns=None) -> str:
     """返回命中的广告规则片段，未命中返回空。"""
     if not text:
         return ""
-    for pattern in USERNAME_PATTERNS + BIO_PATTERNS:
+    selected_patterns = USERNAME_PATTERNS + BIO_PATTERNS if patterns is None else patterns
+    for pattern in selected_patterns:
         try:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
@@ -312,10 +313,13 @@ def detect_profile_ad_signal(
 
     sticker_texts = _sticker_texts(bot, status_ids)
 
-    profile_parts = [display, username, bio or ""]
     status_text = " ".join(sticker_texts)
 
-    profile_hit = _match_ad_patterns(" ".join(profile_parts))
+    # 字段证据隔离：姓名/username 只跑账号名规则，Bio 只跑 Bio 规则。
+    # 禁止把一个字段里的普通文字与另一个字段里的裸链接拼成广告证据。
+    profile_hit = _match_ad_patterns(" ".join((display, username)), USERNAME_PATTERNS)
+    if not profile_hit:
+        profile_hit = _match_ad_patterns(bio or "", BIO_PATTERNS)
     if profile_hit:
         return {
             "is_ad": True,
