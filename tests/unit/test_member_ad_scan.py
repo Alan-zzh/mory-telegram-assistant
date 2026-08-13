@@ -245,7 +245,9 @@ def test_profile_fetch_preserves_unknown_state_without_crashing(monkeypatch):
     )
     result = asyncio.run(_fetch_member_profile(_Bot(), _App(), _User()))
 
-    assert result["profile_error"] is True
+    assert result["profile_error"] is False
+    assert result["bot_profile_error"] is True
+    assert result["bot_profile_unavailable"] is False
     assert result["bio"] == "fallback bio"
     assert result["personal_channel_requested"] is False
 
@@ -290,11 +292,53 @@ def test_report_quality_reports_each_coverage_dimension():
     assert result["profile_coverage"] == pytest.approx(86 / 90)
     assert result["evaluation_coverage"] == 1.0
     assert result["personal_channel_coverage"] == pytest.approx(0.95)
+    assert result["bot_profile_transport_coverage"] == 1.0
 
 
-def test_apply_path_skips_personal_channel_unknown_before_evaluation():
+def test_report_quality_allows_explicit_botapi_400_unavailability():
+    from collections import Counter
+
+    from scripts.scan_group import _assess_report_quality
+
+    counts = Counter(
+        enumerated=100,
+        profile_requests=100,
+        profile_errors=0,
+        checked=100,
+        bot_profile_unavailable=90,
+    )
+    result = _assess_report_quality(counts, expected_members=100, limited=False)
+
+    assert result["status"] == "success"
+    assert result["profile_coverage"] == 1.0
+    assert result["bot_profile_transport_coverage"] == 1.0
+    assert result["bot_profile_enrichment_coverage"] == pytest.approx(0.1)
+    assert result["warnings"] == ["bot_profile_enrichment_limited:0.1000"]
+
+
+def test_report_quality_fails_on_botapi_transport_errors():
+    from collections import Counter
+
+    from scripts.scan_group import _assess_report_quality
+
+    counts = Counter(
+        enumerated=100,
+        profile_requests=100,
+        profile_errors=0,
+        checked=100,
+        bot_profile_errors=11,
+    )
+    result = _assess_report_quality(counts, expected_members=100, limited=False)
+
+    assert result["status"] == "failed"
+    assert result["errors"] == [
+        "bot_profile_transport_coverage_below_90_percent:0.8900"
+    ]
+
+
+def test_apply_path_skips_bot_transport_unknown_before_evaluation():
     source = Path("scripts/scan_group.py").read_text(encoding="utf-8")
-    unknown_branch = source.index('"reason": "personal_channel_unknown"')
+    unknown_branch = source.index('"reason": "bot_profile_transport_unknown"')
     evaluation = source.index("decision = evaluator.evaluate(", unknown_branch)
 
     assert "continue" in source[unknown_branch:evaluation]

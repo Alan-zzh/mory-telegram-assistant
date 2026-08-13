@@ -147,24 +147,46 @@ async def _personal_channel_messages(app, chat_info) -> tuple[list[Any], bool]:
 async def _fetch_member_profile(bot, app, user, delay: float = 0.0) -> dict[str, Any]:
     """并发安全地读取一个成员的完整资料；所有未知状态显式返回。"""
     uid = int(user.id)
-    chat_info = None
     bio = str(getattr(user, "bio", "") or "")
-    profile_error = False
     if delay > 0:
         # 同一批请求按固定间隔起跑，避免有界并发变成瞬时洪峰。
         await asyncio.sleep(delay)
-    try:
-        chat_info = await asyncio.to_thread(bot.get_chat, uid)
-        bio = str(getattr(chat_info, "bio", "") or bio)
-    except Exception as exc:
-        profile_error = True
-        logger.debug("[全量扫描] get_chat失败 uid=%s err=%s", uid, exc)
-        if not bio:
-            try:
-                full_user = await app.get_chat(uid)
-                bio = str(getattr(full_user, "bio", "") or "")
-            except Exception:
-                pass
+
+    async def fetch_bot_profile():
+        try:
+            return await asyncio.to_thread(bot.get_chat, uid), None
+        except Exception as exc:
+            return None, exc
+
+    async def fetch_mtproto_profile():
+        try:
+            return await app.get_chat(uid), None
+        except Exception as exc:
+            return None, exc
+
+    (bot_chat_info, bot_error), (mtproto_chat_info, mtproto_error) = await asyncio.gather(
+        fetch_bot_profile(), fetch_mtproto_profile()
+    )
+    chat_info = bot_chat_info or mtproto_chat_info
+    for source in (bot_chat_info, mtproto_chat_info):
+        value = str(getattr(source, "bio", "") or "")
+        if value:
+            bio = value
+            break
+
+    bot_error_code = int(getattr(bot_error, "error_code", 0) or 0) if bot_error else 0
+    bot_profile_unavailable = bool(bot_error and bot_error_code == 400)
+    bot_profile_error = bool(bot_error and not bot_profile_unavailable)
+    profile_error = bool(bot_chat_info is None and mtproto_chat_info is None)
+    if bot_error:
+        logger.debug(
+            "[全量扫描] Bot API资料增强不可用 uid=%s code=%s err=%s",
+            uid,
+            bot_error_code,
+            bot_error,
+        )
+    if mtproto_error:
+        logger.debug("[全量扫描] MTProto资料失败 uid=%s err=%s", uid, mtproto_error)
 
     personal_channel_requested = bool(
         int(getattr(getattr(chat_info, "personal_chat", None), "id", 0) or 0)
@@ -175,6 +197,8 @@ async def _fetch_member_profile(bot, app, user, delay: float = 0.0) -> dict[str,
         "chat_info": chat_info,
         "bio": bio,
         "profile_error": profile_error,
+        "bot_profile_error": bot_profile_error,
+        "bot_profile_unavailable": bot_profile_unavailable,
         "personal_messages": personal_messages,
         "personal_channel_requested": personal_channel_requested,
         "channel_error": channel_error,
@@ -188,6 +212,8 @@ def _assess_report_quality(
     enumerated = int(counts.get("enumerated", 0))
     profile_requests = int(counts.get("profile_requests", 0))
     profile_errors = int(counts.get("profile_errors", 0))
+    bot_profile_errors = int(counts.get("bot_profile_errors", 0))
+    bot_profile_unavailable = int(counts.get("bot_profile_unavailable", 0))
     checked = int(counts.get("checked", 0))
     personal_requests = int(counts.get("personal_channel_requests", 0))
     personal_errors = int(counts.get("personal_channel_post_errors", 0))
@@ -202,9 +228,20 @@ def _assess_report_quality(
         if personal_requests
         else 1.0
     )
+    bot_profile_transport_coverage = (
+        (profile_requests - bot_profile_errors) / profile_requests
+        if profile_requests
+        else 1.0
+    )
+    bot_profile_enrichment_coverage = (
+        (profile_requests - bot_profile_errors - bot_profile_unavailable) / profile_requests
+        if profile_requests
+        else 1.0
+    )
 
     status = "success"
     errors: list[str] = []
+    warnings: list[str] = []
     if enumerated == 0:
         status = "failed"
         errors.append("zero_members_enumerated")
@@ -217,10 +254,20 @@ def _assess_report_quality(
     if profile_requests and evaluation_coverage < 1.0:
         status = "failed"
         errors.append(f"evaluation_coverage_incomplete:{evaluation_coverage:.4f}")
-    if personal_requests and personal_channel_coverage < 0.90:
+    if profile_requests and bot_profile_transport_coverage < 0.90:
         status = "failed"
         errors.append(
-            "personal_channel_coverage_below_90_percent:"
+            "bot_profile_transport_coverage_below_90_percent:"
+            f"{bot_profile_transport_coverage:.4f}"
+        )
+    if profile_requests and bot_profile_enrichment_coverage < 0.90:
+        warnings.append(
+            "bot_profile_enrichment_limited:"
+            f"{bot_profile_enrichment_coverage:.4f}"
+        )
+    if personal_requests and personal_channel_coverage < 0.90:
+        warnings.append(
+            "personal_channel_post_coverage_limited:"
             f"{personal_channel_coverage:.4f}"
         )
     if limited:
@@ -230,10 +277,13 @@ def _assess_report_quality(
     return {
         "status": status,
         "errors": errors,
+        "warnings": warnings,
         "coverage": coverage,
         "profile_coverage": profile_coverage,
         "evaluation_coverage": evaluation_coverage,
         "personal_channel_coverage": personal_channel_coverage,
+        "bot_profile_transport_coverage": bot_profile_transport_coverage,
+        "bot_profile_enrichment_coverage": bot_profile_enrichment_coverage,
     }
 
 
@@ -277,6 +327,10 @@ async def _report_scan(args) -> dict[str, Any]:
                 uid = int(user.id)
                 if profile["profile_error"]:
                     counts["profile_errors"] += 1
+                if profile["bot_profile_error"]:
+                    counts["bot_profile_errors"] += 1
+                if profile["bot_profile_unavailable"]:
+                    counts["bot_profile_unavailable"] += 1
                 if profile["personal_channel_requested"]:
                     counts["personal_channel_requests"] += 1
                 if profile["channel_error"]:
@@ -358,11 +412,18 @@ async def _report_scan(args) -> dict[str, Any]:
         "personal_channel_coverage": round(
             quality["personal_channel_coverage"], 6
         ),
+        "bot_profile_transport_coverage": round(
+            quality["bot_profile_transport_coverage"], 6
+        ),
+        "bot_profile_enrichment_coverage": round(
+            quality["bot_profile_enrichment_coverage"], 6
+        ),
         "external_auxiliary_signals_used": False,
         "avatar_mode": "all" if args.avatar_all else "weak-signal-candidates",
         "message_limit": args.message_limit,
         "counts": dict(counts),
         "errors": quality["errors"],
+        "warnings": quality["warnings"],
         "candidates": candidates,
     }
     report["fingerprint"] = _fingerprint(report)
@@ -393,6 +454,17 @@ async def _apply_report(args) -> dict[str, Any]:
             admin_ids.add(int(member.user.id))
         admin_ids.add(int((await app.get_me()).id))
 
+        candidate_ids = {
+            int(item.get("uid", 0) or 0)
+            for item in source_report.get("candidates", [])
+            if int(item.get("uid", 0) or 0)
+        }
+        current_users = {}
+        async for member in app.get_chat_members(group_ref):
+            uid = int(member.user.id)
+            if uid in candidate_ids:
+                current_users[uid] = member.user
+
         for candidate in source_report.get("candidates", []):
             uid = int(candidate.get("uid", 0) or 0)
             if not uid:
@@ -410,45 +482,44 @@ async def _apply_report(args) -> dict[str, Any]:
                 if str(getattr(member, "status", "")) in ("left", "kicked"):
                     counts["left"] += 1
                     continue
-                user = member.user
+                user = current_users.get(uid) or member.user
             except Exception as exc:
                 counts["membership_unknown"] += 1
                 receipts.append({"uid": uid, "status": "skipped", "reason": "membership_unknown"})
                 logger.warning("[扫描应用] 成员身份不可确认 uid=%s err=%s", uid, exc)
                 continue
 
-            try:
-                chat_info = bot.get_chat(uid)
-                bio = str(getattr(chat_info, "bio", "") or "")
-            except Exception as exc:
+            profile = await _fetch_member_profile(bot, app, user)
+            if profile["profile_error"]:
                 counts["profile_unknown"] += 1
                 receipts.append({"uid": uid, "status": "skipped", "reason": "profile_unknown"})
-                logger.warning("[扫描应用] 资料不可确认 uid=%s err=%s", uid, exc)
+                logger.warning("[扫描应用] 资料不可确认 uid=%s", uid)
                 continue
-
-            personal_messages, channel_error = await _personal_channel_messages(app, chat_info)
-            if channel_error:
-                counts["personal_channel_post_errors"] += 1
-                counts["personal_channel_unknown"] += 1
+            if profile["bot_profile_error"]:
+                counts["bot_profile_transport_unknown"] += 1
                 receipts.append(
                     {
                         "uid": uid,
                         "status": "skipped",
-                        "reason": "personal_channel_unknown",
+                        "reason": "bot_profile_transport_unknown",
                     }
                 )
                 logger.warning(
-                    "[扫描应用] 个人频道证据不可确认 uid=%s，按未知状态跳过",
+                    "[扫描应用] Bot API资料增强发生传输异常 uid=%s，按未知状态跳过",
                     uid,
                 )
                 continue
+            if profile["bot_profile_unavailable"]:
+                counts["bot_profile_unavailable"] += 1
+            if profile["channel_error"]:
+                counts["personal_channel_post_errors"] += 1
 
             decision = evaluator.evaluate(
                 user=user,
                 chat_id=group_id,
-                chat_info=chat_info,
-                bio=bio,
-                personal_channel_messages=personal_messages,
+                chat_info=profile["chat_info"],
+                bio=profile["bio"],
+                personal_channel_messages=profile["personal_messages"],
                 review_avatar=True,
                 review_avatar_without_weak_signal=source_report.get("avatar_mode") == "all",
                 message_limit=int(source_report.get("message_limit", 20) or 20),
