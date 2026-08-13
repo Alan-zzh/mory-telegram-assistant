@@ -79,6 +79,65 @@ class ConfigRepo:
                 _safe = type(_v).__name__
             logger.debug(f"📌 系统状态更新: {key}=<{_safe}>")
 
+    def has_onboarding_delivery(self, uid: int, chat_id: int, surface: str) -> bool:
+        """查询某用户在某聊天表面的欢迎卡是否已真实送达。"""
+        with self.lock:
+            row = self.conn.execute(
+                """SELECT 1 FROM onboarding_deliveries
+                   WHERE uid=? AND chat_id=? AND surface=? AND status='delivered'
+                   LIMIT 1""",
+                (int(uid), int(chat_id), str(surface)),
+            ).fetchone()
+            return row is not None
+
+    def claim_onboarding_delivery(self, uid: int, chat_id: int, surface: str) -> bool:
+        """原子抢占欢迎卡发送权；两分钟无完成的 pending 允许恢复重试。"""
+        now = int(time.time())
+        stale_before = now - 120
+        with self.lock:
+            cur = self.conn.execute(
+                """INSERT OR IGNORE INTO onboarding_deliveries
+                   (uid, chat_id, surface, status, claimed_at, delivered_at)
+                   VALUES (?, ?, ?, 'pending', ?, NULL)""",
+                (int(uid), int(chat_id), str(surface), now),
+            )
+            if cur.rowcount > 0:
+                self.conn.commit()
+                return True
+            cur = self.conn.execute(
+                """UPDATE onboarding_deliveries
+                   SET claimed_at=?
+                   WHERE uid=? AND chat_id=? AND surface=?
+                     AND status='pending' AND claimed_at<?""",
+                (now, int(uid), int(chat_id), str(surface), stale_before),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+
+    def complete_onboarding_delivery(self, uid: int, chat_id: int, surface: str) -> bool:
+        """仅在 Telegram 返回消息回执后把首次欢迎标为 delivered。"""
+        now = int(time.time())
+        with self.lock:
+            cur = self.conn.execute(
+                """UPDATE onboarding_deliveries
+                   SET status='delivered', delivered_at=?
+                   WHERE uid=? AND chat_id=? AND surface=? AND status='pending'""",
+                (now, int(uid), int(chat_id), str(surface)),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+
+    def release_onboarding_delivery(self, uid: int, chat_id: int, surface: str) -> bool:
+        """发送未成功时释放 pending，使下一次 @ 可以重新尝试。"""
+        with self.lock:
+            cur = self.conn.execute(
+                """DELETE FROM onboarding_deliveries
+                   WHERE uid=? AND chat_id=? AND surface=? AND status='pending'""",
+                (int(uid), int(chat_id), str(surface)),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+
     # ═══════════════════════════════════════════════════════════════════════════
     # 【v4.4.9新增】关键词自动回复系统
     # ═══════════════════════════════════════════════════════════════════════════

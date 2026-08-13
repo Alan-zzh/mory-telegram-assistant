@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""普通用户私聊 ``/start`` 的 Mory 小助理欢迎图片卡。
+"""私聊 ``/start`` 与群聊首次 ``@小助理`` 共用的欢迎图片卡。
 
 这条入口不调用大模型，避免把明确的业务接待开场随机生成成“陪聊机器人”。
 随机性只用于轮换已审核的横版底图和等义文案；姓名与日期在发送前本地绘制。
@@ -24,7 +24,7 @@ from core.broadcast_image_card import font
 _CST = timezone(timedelta(hours=8))
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSET_DIR = _ROOT / "assets" / "start_welcome"
-_ASSET_PATTERN = "mory_start_v2_*.jpg"
+_ASSET_PATTERN = "mory_start_v3_*.jpg"
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 
 _WELCOME_COPY = (
@@ -40,13 +40,6 @@ _WELCOME_COPY = (
     "你好，{name}，欢迎来到 Mory 小助理。\n"
     "办事、咨询、遇到问题，都可以直接把情况发给我。\n"
     "我会先处理；确实需要 Mory 的，会尝试转达，并当场告诉你有没有送达。",
-)
-
-_GROUP_MENTION_COPY = (
-    "{name}，我在。要处理的事情、问题或咨询直接发出来，我先帮你解决；需要 Mory 确认的，我会尝试转达。",
-    "收到，{name}。把具体情况直接告诉我就好，我能处理的马上处理；超出范围的会尝试转给 Mory。",
-    "{name}，这里是 Mory 小助理。事情、问题和咨询都可以直接说，不用先寒暄，我会接着处理。",
-    "我在，{name}。你把要办的事或遇到的问题发来；需要 Mory 本人确认时，我会如实告诉你转达结果。",
 )
 
 _BUTTON_LABEL_PAIRS = (
@@ -65,6 +58,17 @@ class StartWelcomeCard:
     asset_name: str
     display_name: str
     date_text: str
+
+
+@dataclass(frozen=True)
+class StartWelcomeDelivery:
+    """同源欢迎卡发送结果，用于私聊与群首次 @ 的统一验收。"""
+
+    delivered: bool
+    asset_name: str
+    display_name: str
+    caption: str
+    degraded_to_text: bool = False
 
 
 def normalize_display_name(value: object) -> str:
@@ -102,13 +106,6 @@ def build_start_welcome_markup(config: Optional[dict] = None, *, rng=None):
         ]
     }
     return build_cta_markup_combo(combo, config=config or {})
-
-
-def build_group_mention_caption(display_name: object, *, rng=None) -> str:
-    """群聊纯点名的随机办事式回应，不附带销售入口。"""
-    chooser = rng or random.SystemRandom()
-    name = normalize_display_name(display_name)
-    return chooser.choice(_GROUP_MENTION_COPY).format(name=name)
 
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, *, max_width: int, start: int, minimum: int):
@@ -185,11 +182,84 @@ def build_start_welcome_card(
     )
 
 
+def send_start_welcome(
+    bot,
+    message,
+    config: Optional[dict] = None,
+    *,
+    mory_bot=None,
+    rng=None,
+) -> StartWelcomeDelivery:
+    """发送私聊/群聊完全同款欢迎卡，运行时只读本地模板并用 Pillow 合成。
+
+    ``mory_bot`` 仅在群聊传入，用于把图片或降级文本写入既有清理追踪链。
+    本函数不接收 AI 实例，也没有任何模型调用路径。
+    """
+    user = getattr(message, "from_user", None)
+    first_name = getattr(user, "first_name", "") or ""
+    last_name = getattr(user, "last_name", "") or ""
+    display_name = normalize_display_name(f"{first_name} {last_name}")
+    caption = build_start_welcome_caption(display_name, rng=rng)
+    markup = build_start_welcome_markup(config or {}, rng=rng)
+    is_group = getattr(getattr(message, "chat", None), "type", "") in {
+        "group",
+        "supergroup",
+    }
+    card = None
+    try:
+        card = build_start_welcome_card(display_name, rng=rng)
+        if is_group:
+            if mory_bot is None:
+                raise RuntimeError("群聊欢迎卡缺少 MoryBot 追踪器")
+            sent = mory_bot.reply_photo_and_track(
+                message,
+                card.stream,
+                caption=caption,
+                reply_markup=markup,
+            )
+        else:
+            from core.telebot_compat import send_photo_compat
+
+            sent = send_photo_compat(
+                bot,
+                message.chat.id,
+                card.stream,
+                caption=caption,
+                reply_markup=markup,
+            )
+        if is_group and not sent:
+            raise RuntimeError("Telegram 未返回群聊图片消息回执")
+        return StartWelcomeDelivery(
+            delivered=True,
+            asset_name=card.asset_name,
+            display_name=display_name,
+            caption=caption,
+        )
+    except Exception:
+        if is_group:
+            sent = mory_bot.reply_and_track(message, caption, reply_markup=markup)
+            if not sent:
+                raise RuntimeError("群聊欢迎卡图片和文本降级均未送达")
+        else:
+            sent = bot.send_message(message.chat.id, caption, reply_markup=markup)
+        return StartWelcomeDelivery(
+            delivered=True,
+            asset_name=card.asset_name if card else "",
+            display_name=display_name,
+            caption=caption,
+            degraded_to_text=True,
+        )
+    finally:
+        if card is not None:
+            card.stream.close()
+
+
 __all__ = [
     "StartWelcomeCard",
+    "StartWelcomeDelivery",
     "build_start_welcome_caption",
     "build_start_welcome_card",
     "build_start_welcome_markup",
-    "build_group_mention_caption",
     "normalize_display_name",
+    "send_start_welcome",
 ]

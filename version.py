@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """项目版本单一代码入口；历史变更只写 CHANGELOG 与归档。"""
 
-VERSION = "v5.38.52"
-CONFIG_VERSION = "5.38.52"
+VERSION = "v5.38.53"
+CONFIG_VERSION = "5.38.53"
 __version__ = VERSION

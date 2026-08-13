@@ -637,12 +637,28 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     except Exception as e:
         logger.debug(f"update_last_active 失败 uid={uid}: {e}")
 
+    # 群聊首次精确 @ 的欢迎链必须是确定性零 TOKEN 路径。先只读判断是否已欢迎，
+    # 未欢迎时仍记录消息，但跳过可能触发 LLM 的异步记忆摘要；安全/广告门禁照常执行。
+    skip_memory_summary = False
+    if is_group and dctx.bot_mentioned:
+        try:
+            skip_memory_summary = not db.has_onboarding_delivery(
+                uid=uid,
+                chat_id=chat_id,
+                surface="group_mention",
+            )
+        except Exception as e:
+            # 状态未知时按首次候选处理，宁可少做一次摘要，也不能让欢迎链暗耗 TOKEN。
+            skip_memory_summary = True
+            logger.warning(f"首次@状态预检失败，跳过记忆摘要 uid={uid} chat={chat_id}: {e}")
+
     # [TRAE SOLO CN v5.24.0 阶段3-A] 混合记忆：记录 user 消息 + 检查触发
-    # 每条 user 消息都入缓冲，达到 15 轮阈值则异步摘要
+    # 每条 user 消息都入缓冲；非首次欢迎消息达到 15 轮阈值时才允许异步摘要。
     try:
         from core.memory_summarizer import record_message, check_and_trigger
         record_message(uid, "user", msg_text)
-        check_and_trigger(uid, db)
+        if not skip_memory_summary:
+            check_and_trigger(uid, db)
     except Exception as e:
         logger.debug(f"记忆触发检查失败 uid={uid}: {e}")
 
@@ -723,6 +739,10 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     if _dispatch_p3_5_ad_detection(dctx):
         return
 
+    # ── P3.55：群聊首次精确 @ 欢迎（确定性本地模板，必须早于意图路由/AI）──
+    if _dispatch_first_group_mention_onboarding(dctx):
+        return
+
     # ── P3.6：意图路由（v5.19.0 新增，分类后写入 dctx.intent 供 P10 使用）──
     _dispatch_p3_6_intent_routing(dctx)
 
@@ -740,6 +760,77 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
 
     # ── P10：AI回复 ──
     _dispatch_p10_ai(dctx)
+
+
+def _dispatch_first_group_mention_onboarding(dctx: DispatchContext) -> bool:
+    """每个用户在每个群首次精确 @ 时发送与私聊 /start 完全同款欢迎卡。
+
+    该路由位于意图分类和 P10 之前，运行时只访问 SQLite、本地 JPEG、Pillow
+    与 Telegram Bot API，不存在 AI/LLM 调用，因此模型 Token 固定为 0。
+    """
+    if not dctx.is_group or not dctx.bot_mentioned:
+        return False
+
+    db = dctx.ctx.db
+    surface = "group_mention"
+    try:
+        if db.has_onboarding_delivery(dctx.uid, dctx.chat_id, surface):
+            return False
+        if not db.claim_onboarding_delivery(dctx.uid, dctx.chat_id, surface):
+            # 同一用户的并发更新已有一个发送者，当前消息必须停止，避免双卡。
+            logger.info(
+                "群聊首次@已有并发发送 uid=%s chat=%s",
+                dctx.uid,
+                dctx.chat_id,
+            )
+            clear_logging_context()
+            return True
+    except Exception as e:
+        # 首次状态未知时不能冒险进入可能消耗 Token 的普通 AI 链。
+        logger.error(
+            "群聊首次@状态读取失败，已阻断AI uid=%s chat=%s reason=%s",
+            dctx.uid,
+            dctx.chat_id,
+            e,
+        )
+        clear_logging_context()
+        return True
+
+    try:
+        from core.start_welcome_card import send_start_welcome
+
+        delivery = send_start_welcome(
+            dctx.ctx.bot,
+            dctx.msg,
+            dctx.ctx.config,
+            mory_bot=dctx.ctx.mory_bot,
+        )
+        if not db.complete_onboarding_delivery(dctx.uid, dctx.chat_id, surface):
+            raise RuntimeError("欢迎卡已送达但首次状态未能持久化")
+        logger.info(
+            "🖼️ 群聊首次@欢迎卡已发送 uid=%s asset=%s degraded=%s",
+            dctx.uid,
+            delivery.asset_name,
+            delivery.degraded_to_text,
+        )
+    except Exception as e:
+        try:
+            db.release_onboarding_delivery(dctx.uid, dctx.chat_id, surface)
+        except Exception as release_error:
+            logger.error(
+                "群聊首次@释放失败 uid=%s chat=%s reason=%s",
+                dctx.uid,
+                dctx.chat_id,
+                release_error,
+            )
+        logger.error(
+            "群聊首次@欢迎卡未完成 uid=%s chat=%s reason=%s",
+            dctx.uid,
+            dctx.chat_id,
+            e,
+        )
+    clear_logging_context()
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -80,7 +80,7 @@ def test_start_welcome_card_contains_dynamic_name_date_and_valid_jpeg():
         rng=_FirstChoice(),
     )
 
-    assert card.asset_name == "mory_start_v2_00.jpg"
+    assert card.asset_name == "mory_start_v3_00.jpg"
     assert card.display_name == "DarkDesire"
     assert card.date_text == "2026年8月14日"
     with Image.open(card.stream) as image:
@@ -139,6 +139,15 @@ def test_start_welcome_markup_randomizes_both_button_labels_without_changing_tar
 
     assert len({pair[0] for pair in pairs}) == 4
     assert len({pair[1] for pair in pairs}) == 4
+
+
+def test_start_welcome_uses_exactly_six_local_templates():
+    from core import start_welcome_card
+
+    assets = sorted(start_welcome_card._ASSET_DIR.glob(start_welcome_card._ASSET_PATTERN))
+    assert [item.name for item in assets] == [
+        f"mory_start_v3_{index:02d}.jpg" for index in range(6)
+    ]
 
 
 def test_private_start_keeps_business_entry_when_image_card_fails(monkeypatch):

@@ -507,6 +507,19 @@ class DB:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_task_exec_key_date ON task_execution_history(task_key, exec_date)")
 
+            # 私聊 /start 与群聊首次 @ 的一次性欢迎状态。仅真实送达后标记 delivered；
+            # pending 由原子抢占创建，失败时释放，进程中断后可超时恢复。
+            c.execute("""CREATE TABLE IF NOT EXISTS onboarding_deliveries (
+                uid INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                surface TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                claimed_at INTEGER NOT NULL,
+                delivered_at INTEGER,
+                PRIMARY KEY (uid, chat_id, surface)
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_onboarding_status ON onboarding_deliveries(status, claimed_at)")
+
             # [v5.14.0新增] 商业搭讪事件表 - 记录 Bot 主动搭讪用户的完整链路
             # 用于 Dashboard /api/engage/* 可视化、转化追踪、运营复盘
             c.execute("""CREATE TABLE IF NOT EXISTS proactive_engage_log (
@@ -2074,6 +2087,10 @@ class DB:
         'get_engaged_stats': 'tracking',
         # config_repo
         'get_system_state': 'config', 'set_system_state': 'config',
+        'has_onboarding_delivery': 'config',
+        'claim_onboarding_delivery': 'config',
+        'complete_onboarding_delivery': 'config',
+        'release_onboarding_delivery': 'config',
         'add_keyword_trigger': 'config', 'get_all_keyword_triggers': 'config',
         'delete_keyword_trigger': 'config', 'update_keyword_trigger': 'config',
         'match_keyword_trigger': 'config',

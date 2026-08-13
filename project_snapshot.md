@@ -25,11 +25,11 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 孤儿清理 | 在用 | `dashboard/api/orphan_api.py`、`tasks/maintenance/burn_orphan_task.py` | 端到端串联 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
-| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 173 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史，生产迁移表已验证存在 |
+| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 174 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史；0006=首次欢迎送达状态 |
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前备份、失败保险恢复双服务；项目巡检由 `project_audit_control.py` 只读取证并以 0/2/3 回执，三条 systemd timer 已安装启用 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
-| Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_image_card.py`、`core/broadcast_cta.py`、`core/start_welcome_card.py` | 普通用户私聊 `/start` 随机三款欢迎卡与双入口；群聊精确 @ 时纯点名返回无销售按钮的随机图片卡，带问题直接处理；群聊图片纳入孤儿清理追踪 |
+| Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_image_card.py`、`core/broadcast_cta.py`、`core/start_welcome_card.py` | 普通用户私聊 `/start` 与每人每群首次精确 @ 共用六套本地随机欢迎卡、随机文案和双入口；姓名/北京时间运行时绘制且零模型调用，群聊图片纳入孤儿清理追踪 |
 | 泛问候/定点播报 | 生产关闭 | `tasks/broadcast/greeting_task.py`、`tasks/maintenance/scheduled_broadcast_task.py` | 早午晚泛问候与 4 档定点播报全部关闭，避免与内容栏目重叠；若未来人工开启，问候模型失败直接跳过，不用固定套话，图片卡只渲染同源正文 |
 | 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 生产唯一主动栏目：09:05 黄历、13:05 塔罗、20:35 易经；三档语义各异、间隔至少 4 小时，图片卡保留；新闻执行链已删除 |
 | 关键话题回复 | 在用 | `modules/keyword_trigger.py` | VPN/梯子及衍生咨询在 LLM 前统一返回群置顶与免费体验链接，短追问按同一会话承接；助理唤醒无 CTA；价格/内容/福利早路由只给预览；明确购买交给主成交链；私聊风水/塔罗/算卦请求在 LLM 前走本地日期稳定随机回复并记 0 Token；自动回复卡片 conversion_target=none 禁止按钮，仅未声明键才随机入口；opt_out 跳过关键词销售路由 |
@@ -37,21 +37,21 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.52（2026-08-14）· 群聊精确 @ 小助理支持随机图片卡与直接问题处理
+v5.38.53（2026-08-14）· 群成员首次精确 @ 完整复用私聊 /start 的确定性欢迎链
 
-生产状态：**v5.38.52 已部署；五个关键文件哈希一致，双服务 active、health 200、启动后无错误；真实主群点名消息 66594 返回图片 66595，reply_tracking 与 photo 类型 channel_tracking 均已持久记录**。
+生产状态：**v5.38.52 仍在运行；v5.38.53 本地门禁与生产部署待完成，不以本地结果冒充线上生效**。
 
 ## 最近 3 条大事
-1. 2026-08-14 v5.38.52：群聊精确 @ 支持随机图片卡；具体问题直接进入处理链。
-2. 2026-08-14 v5.38.51：欢迎卡改为人物右置、信息左置的全幅连贯画面，双按钮文案随机。
-3. 2026-08-14 v5.38.50：`/start` 使用随机姓名日期欢迎卡，办事优先并提供双入口。
+1. 2026-08-14 v5.38.53：每人每群首次精确 @ 与私聊 /start 同源，六卡与双入口随机且零模型调用。
+2. 2026-08-14 v5.38.52：群聊精确 @ 支持随机图片卡；具体问题直接进入处理链。
+3. 2026-08-14 v5.38.51：欢迎卡改为人物右置、信息左置的全幅连贯画面，双按钮文案随机。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=137
 core_py=81
 job_count=33
-db_tables=173
+db_tables=174
 dashboard_routes=163
 dispatch_funcs=9
 model_router_mappings=10

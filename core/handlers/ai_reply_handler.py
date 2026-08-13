@@ -740,38 +740,6 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     reply_user = getattr(getattr(m, "reply_to_message", None), "from_user", None)
     is_reply = bool(reply_user and reply_user.id == ctx.bot_id)
 
-    # 群里只点名/简单招呼时，直接回随机图片卡，明确“有事直接说”。
-    # 具体问题继续走下方意图与 AI 链，避免图片卡打断用户办事。
-    direct_summon_text = msg.strip(" ，,。.!！?？~～")
-    direct_summon = is_group and is_at and direct_summon_text.casefold() in {
-        "", "在吗", "你好", "您好", "嗨", "哈喽", "小助理", "hi", "hello",
-    }
-    if direct_summon:
-        try:
-            from core.start_welcome_card import (
-                build_group_mention_caption,
-                build_start_welcome_card,
-            )
-            card = build_start_welcome_card(uname)
-            sent = mory_bot.reply_photo_and_track(
-                m,
-                card.stream,
-                caption=build_group_mention_caption(uname),
-            )
-            if sent:
-                logger.info(
-                    "🖼️ 群聊点名欢迎卡已发送 uid=%s asset=%s",
-                    uid,
-                    card.asset_name,
-                )
-                clear_logging_context()
-                return
-        except Exception as e:
-            logger.warning("群聊点名欢迎卡发送失败 uid=%s，降级文字回复：%s", uid, e)
-        from core.start_welcome_card import build_group_mention_caption
-        mory_bot.reply_and_track(m, build_group_mention_caption(uname))
-        clear_logging_context()
-        return
     conversation_history = getattr(dctx, "conversation_history", [])
     from core.growth_optimizer import (
         get_conversion_state,

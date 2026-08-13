@@ -135,46 +135,17 @@ def handle_start_command(bot, message, ctx):
                 bot.send_message(message.chat.id, _START_ADMIN_PRIVATE_TEXT)
                 return
 
-            from core.start_welcome_card import (
-                build_start_welcome_caption,
-                build_start_welcome_card,
-                build_start_welcome_markup,
-                normalize_display_name,
-            )
-            from core.telebot_compat import send_photo_compat
-
-            user = getattr(message, "from_user", None)
-            first_name = getattr(user, "first_name", "") or ""
-            last_name = getattr(user, "last_name", "") or ""
-            display_name = normalize_display_name(f"{first_name} {last_name}")
-            caption = build_start_welcome_caption(display_name)
-            markup = build_start_welcome_markup(config)
+            from core.start_welcome_card import send_start_welcome
 
             try:
-                card = build_start_welcome_card(display_name)
-                try:
-                    send_photo_compat(
-                        bot,
-                        message.chat.id,
-                        card.stream,
-                        caption=caption,
-                        reply_markup=markup,
-                    )
-                finally:
-                    card.stream.close()
+                delivery = send_start_welcome(bot, message, config)
                 logger.info(
                     "/start 普通用户欢迎卡已发送 uid=%s asset=%s",
                     uid,
-                    card.asset_name,
+                    delivery.asset_name,
                 )
             except Exception as image_error:
-                # 图片渲染/上传失败时仍保证办事入口可用，并明确记录 degraded 原因。
-                logger.warning(
-                    "/start 欢迎卡降级为文本 uid=%s reason=%s",
-                    uid,
-                    image_error,
-                )
-                bot.send_message(message.chat.id, caption, reply_markup=markup)
+                logger.error("/start 欢迎卡未送达 uid=%s reason=%s", uid, image_error)
         else:
             # 群里只回简短引导，避免刷屏
             bot.reply_to(message, _START_GROUP_TEXT)
