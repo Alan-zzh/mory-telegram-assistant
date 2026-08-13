@@ -33,9 +33,9 @@ def _get_admin_ids(config: dict) -> set:
     return admin_ids
 
 
-# ── /start 文案 ────────────────────────────────────────────────────────
+# ── /start 管理员 / 群聊文案 ──────────────────────────────────────────
 
-_START_PRIVATE_TEXT = (
+_START_ADMIN_PRIVATE_TEXT = (
     "👋 你好，我是 Mory 小助理， Telegram 群组助手。\n"
     "━━━━━━━━━━━━━━━━━━━━\n"
     "🎯 我能在群里帮你做这些事：\n"
@@ -129,12 +129,23 @@ _HELP_ADMIN_TEXT = (
 def handle_start_command(bot, message, ctx):
     """/start 命令处理器。
 
-    - 私聊：返回完整功能清单（从 README 提炼）。
+    - 普通用户私聊：恢复原有主分发器，进入自然 AI 首次对话。
+    - 管理员私聊：返回群管理功能清单。
     - 群聊：只回简短引导，避免刷屏。
     """
     try:
         if _is_private(message):
-            bot.send_message(message.chat.id, _START_PRIVATE_TEXT)
+            config = getattr(ctx, "config", {}) or {}
+            uid = getattr(getattr(message, "from_user", None), "id", 0) or 0
+            if uid in _get_admin_ids(config):
+                bot.send_message(message.chat.id, _START_ADMIN_PRIVATE_TEXT)
+                return
+
+            # /start 曾经由主分发器进入 AI 首次私聊；显式命令 handler 后来无条件
+            # 抢占了这条路径，导致普通用户看到“给我管理员权限”的群主管理说明。
+            from core.message_dispatcher import master_handler
+
+            master_handler(message, ctx)
         else:
             # 群里只回简短引导，避免刷屏
             bot.reply_to(message, _START_GROUP_TEXT)
