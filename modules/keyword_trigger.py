@@ -39,7 +39,10 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "name": "VPN/梯子推荐",
         "topic": "VPN/梯子推荐",
         "enabled": True,
-        "keywords": ["vpn", "梯子", "翻墙", "科学上网"],
+        "keywords": [
+            "vpn", "梯子", "翻墙", "科学上网", "代理软件", "网络代理",
+            "外网加速器", "机场推荐", "节点推荐",
+        ],
         "contextual_followups": [
             "群友有没有", "还有没有", "还有吗", "有吗", "链接呢", "地址呢",
             "在哪里", "在哪", "怎么用", "怎么下载",
@@ -55,6 +58,7 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "remember_context": True,
         "base_reply": (
             "可以试试这个，免费用，不好用删掉就行。\n"
+            '<a href="https://t.me/morychat/64104">点击看群置顶</a>\n'
             '体验地址 ➡️ <a href="https://getsapp.net/tQtX3e">'
             "https://getsapp.net/tQtX3e</a>"
         ),

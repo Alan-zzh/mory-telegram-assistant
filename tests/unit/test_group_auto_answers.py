@@ -178,12 +178,22 @@ def test_vpn_and_ladder_questions_use_clickable_confirmed_referral_without_llm()
     recorder = _ReplyRecorder()
     trigger = KeywordTrigger(db, mory_bot=recorder, ai=_FailIfCalledAi(), config={})
 
-    for text in ("有没有VPN推荐？", "有没有好用的梯子", "科学上网怎么弄", "翻墙工具推荐"):
+    for text in (
+        "有没有VPN推荐？",
+        "有没有好用的梯子",
+        "科学上网怎么弄",
+        "翻墙工具推荐",
+        "代理软件推荐一下",
+        "有外网加速器吗",
+        "有机场推荐吗",
+        "节点推荐一下",
+    ):
         assert trigger.handle_message(text, -1001, _message(text), object())
 
     reply_text, kwargs = recorder.replies[0]
     assert reply_text == (
         "可以试试这个，免费用，不好用删掉就行。\n"
+        '<a href="https://t.me/morychat/64104">点击看群置顶</a>\n'
         '体验地址 ➡️ <a href="https://getsapp.net/tQtX3e">'
         "https://getsapp.net/tQtX3e</a>"
     )
