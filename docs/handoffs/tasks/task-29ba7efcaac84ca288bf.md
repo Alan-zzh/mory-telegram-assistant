@@ -1,0 +1,57 @@
+---
+schema: "puzan.active-handoff/v2"
+handoff_id: "hof_29ba7efcaac84ca288bf"
+task_fingerprint: "fp_f418176f85b3817f21066e7d"
+project_id: "prj_4b071279531a6f2bf65f"
+project_name: "mory_assistant-audit-control-recovery"
+status: "active"
+task_state: "not_started"
+trigger_reasons: ["long_task"]
+target_files: []
+host_refs: ["unknown/unknown"]
+created_at: "2026-08-13T09:55:54+08:00"
+updated_at: "2026-08-13T09:55:54+08:00"
+revision: 1
+generation: 1
+last_receipt_id: null
+redaction_schema: "puzan-redact/v1"
+---
+
+# Handoff
+
+## Goal
+- 恢复生产 project_audit_control 全部 profile 与三条 systemd timer 的真实成功回执，并阻断旧分叉全目录部署再次回退主线文件
+
+## Constraints
+- 保留无关用户改动；凭据和私人内容不得写入 handoff。
+
+## Completed
+- 尚未完成可验证事项。
+
+## Current Step
+- 已建立活动 handoff，等待执行。
+
+## Pending
+- 按当前目标继续执行；尚未验证的工作不得写入 Completed。
+
+## Decisions
+- 建立稳定活动 handoff；后续同任务命中后更新本文件，不重复创建。
+
+## Files
+- 尚未冻结目标文件。
+
+## Verification
+- 尚未运行验证；完成前必须补充真实命令、结果和退出码。
+
+## Next Action
+- 执行当前计划的第一项未完成工作，并补充真实验证。
+
+## Suggested Skills
+- verification-before-completion
+- auto-update-records
+
+## Completion History
+- 尚无根任务完成回执。
+
+## Revision Log
+- 2026-08-13T09:55:54+08:00 r1 created triggers=long_task

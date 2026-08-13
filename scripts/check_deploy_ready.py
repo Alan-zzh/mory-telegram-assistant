@@ -46,6 +46,46 @@ def check_git_clean() -> tuple[bool, str]:
     return True, "工作树干净"
 
 
+def check_head_contains_main() -> tuple[bool, str]:
+    """全量部署必须包含当前本地主线，避免旧分叉覆盖已上线修复。"""
+    main_ref = "refs/heads/main"
+    main = subprocess.run(
+        ["git", "rev-parse", "--verify", main_ref],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if main.returncode != 0:
+        return False, "本地 main 引用不可用，无法证明部署源包含当前主线"
+
+    head = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if head.returncode != 0:
+        return False, "HEAD 不可用，无法冻结部署源"
+
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", main_ref, "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if ancestor.returncode == 0:
+        return True, f"HEAD 包含当前 main {main.stdout.strip()[:12]}"
+    if ancestor.returncode == 1:
+        return False, (
+            f"HEAD {head.stdout.strip()[:12]} 不包含当前 main "
+            f"{main.stdout.strip()[:12]}；全目录部署会回退主线文件"
+        )
+    return False, "git merge-base 执行失败，无法证明部署源完整"
+
+
 def check_version_alignment() -> tuple[bool, str]:
     version_py = ""
     match = re.search(
@@ -72,6 +112,7 @@ def check_version_alignment() -> tuple[bool, str]:
 def main() -> int:
     checks = [
         ("Git 工作树干净", check_git_clean),
+        ("部署源包含当前 main", check_head_contains_main),
         ("版本一致（version.py == VERSION.md）", check_version_alignment),
         (
             "配置三处同步（check_config_sync）",

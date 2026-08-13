@@ -26,7 +26,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 173 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史，生产迁移表已验证存在 |
-| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署前备份、失败保险恢复双服务；systemd 单元由 root 持有，root cron 只执行 root-owned watchdog；项目巡检由 `project_audit_control.py` 只读取证并以 0/2/3 回执，timer 定义尚未安装 |
+| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前备份、失败保险恢复双服务；项目巡检由 `project_audit_control.py` 只读取证并以 0/2/3 回执，三条 systemd timer 已安装启用 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
 | Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_formatter.py`、`core/broadcast_image_card.py`、`core/broadcast_image_payload.py`、`core/broadcast_cta.py` | v5.38.16：黄历/塔罗/易经公共 helper 去重 170 行；CTA label↔image_label 强绑定 + 清理全部 24 条 mystic contact/preview/subscribe img_label 遗留“· 点击头像”后缀；新增 greeting/scheduled × afternoon/night 四套时段 CTA 池；font() LRU(128)；11 处 PIL Image.close()；单 block 异常隔离占位；失败自动回退 Rich/HTML；字体兜底 Windows→Linux→仓库；README 新增图片卡章节；20 smoke 单测。v5.38.22：CTA 收敛为统一单一真相源（删旧 CTA 池/get_random_cta/cta_pool 死参/mystic 第二套 CTA，发送层统一生成回填）、四路开关收敛 `is_broadcast_image_enabled`、视觉常量对齐（CTA 圆角 18/标签 8）、缓存存在性短路 + 原子写、`_stable_seed` 改 md5 确定性 |
@@ -37,14 +37,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：保留群内转发、取消置顶、点赞、每帖至多一条匹配评论/彩虹屁，并在文本/媒体广告、反频道与 AI 前终止；外部频道不豁免 |
 
 ## 当前版本
-v5.38.43（2026-08-13）· 广告治理、个人频道 unknown 门禁与只读巡检控制面
+v5.38.44（2026-08-13）· 审计控制面恢复与旧分叉部署阻断
 
-生产状态：**v5.38.43 已部署；全量 report-only 成员覆盖 96.97%，Profile/评估/真实传输均 100%；74 个强证据账号已统一处置并完成 Telegram + 三表读回，5 个个人频道 unknown 安全跳过**。
+生产状态：**v5.38.43 运行中；成员扫描处置已验证，审计控制面修复待部署实跑**。
 
 ## 最近 3 条大事
-1. 2026-08-13 v5.38.43：全量扫描处置 74 人，5 个个人频道 unknown 安全跳过。
-2. 2026-08-13 v5.38.42：Profile 取证与 Bot API 增强不可用/传输异常分层。
-3. 2026-08-13 v5.38.41：资料/消息隔离，扫描限速并发并独立门禁覆盖。
+1. 2026-08-13 v5.38.44：恢复审计控制面并阻断旧分叉全目录部署。
+2. 2026-08-13 v5.38.43：全量扫描处置 74 人，5 个个人频道 unknown 安全跳过。
+3. 2026-08-13 v5.38.42：Profile 取证与 Bot API 增强不可用/传输异常分层。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
