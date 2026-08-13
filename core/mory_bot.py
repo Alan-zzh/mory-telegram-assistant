@@ -114,6 +114,33 @@ class MoryBot:
             logger.info(f"📌 阅后即焚记录入库：bot_msg={bot_msg_id} chat={cid} user_msg={user_msg_id}")
         
         return sent
+
+    def reply_photo_and_track(self, message, photo, **kwargs) -> Optional[Any]:
+        """群聊回复图片并进入与文本回复相同的阅后即焚追踪链。"""
+        cid = message.chat.id
+        user_msg_id = message.message_id
+        if cid > 0:
+            return self._bot.send_photo(
+                cid, photo, reply_to_message_id=user_msg_id, **kwargs
+            )
+
+        try:
+            sent = self._bot.send_photo(
+                cid, photo, reply_to_message_id=user_msg_id, **kwargs
+            )
+        except Exception as e:
+            logger.error(f"reply_photo_and_track API异常：{e}")
+            return None
+
+        if sent:
+            bot_msg_id = sent.message_id
+            self._db.track_reply(bot_msg_id, cid, user_msg_id)
+            self._db.track_channel_message(cid, bot_msg_id, "photo")
+            logger.info(
+                f"📌 群聊图片回复已追踪：bot_msg={bot_msg_id} "
+                f"chat={cid} user_msg={user_msg_id}"
+            )
+        return sent
     
     def reply_without_track(self, message, text: str, **kwargs) -> Optional[Any]:
         """

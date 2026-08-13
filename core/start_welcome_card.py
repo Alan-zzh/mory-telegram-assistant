@@ -42,6 +42,13 @@ _WELCOME_COPY = (
     "我会先处理；确实需要 Mory 的，会尝试转达，并当场告诉你有没有送达。",
 )
 
+_GROUP_MENTION_COPY = (
+    "{name}，我在。要处理的事情、问题或咨询直接发出来，我先帮你解决；需要 Mory 确认的，我会尝试转达。",
+    "收到，{name}。把具体情况直接告诉我就好，我能处理的马上处理；超出范围的会尝试转给 Mory。",
+    "{name}，这里是 Mory 小助理。事情、问题和咨询都可以直接说，不用先寒暄，我会接着处理。",
+    "我在，{name}。你把要办的事或遇到的问题发来；需要 Mory 本人确认时，我会如实告诉你转达结果。",
+)
+
 _BUTTON_LABEL_PAIRS = (
     ("👀 免费预览", "🛒 自助订阅"),
     ("👀 先看预览", "🛒 查看订阅"),
@@ -95,6 +102,13 @@ def build_start_welcome_markup(config: Optional[dict] = None, *, rng=None):
         ]
     }
     return build_cta_markup_combo(combo, config=config or {})
+
+
+def build_group_mention_caption(display_name: object, *, rng=None) -> str:
+    """群聊纯点名的随机办事式回应，不附带销售入口。"""
+    chooser = rng or random.SystemRandom()
+    name = normalize_display_name(display_name)
+    return chooser.choice(_GROUP_MENTION_COPY).format(name=name)
 
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, *, max_width: int, start: int, minimum: int):
@@ -176,5 +190,6 @@ __all__ = [
     "build_start_welcome_caption",
     "build_start_welcome_card",
     "build_start_welcome_markup",
+    "build_group_mention_caption",
     "normalize_display_name",
 ]

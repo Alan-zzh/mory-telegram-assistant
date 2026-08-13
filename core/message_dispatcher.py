@@ -14,6 +14,7 @@ core/message_dispatcher.py  ·  消息分发器
 """
 
 import os, time, random, traceback, threading, uuid
+import re
 from datetime import datetime, timezone, timedelta
 from threading import Lock
 from dataclasses import dataclass, field
@@ -35,6 +36,24 @@ from core.handlers.ai_reply_handler import (
 )
 
 logger = get_logger("message_dispatcher")
+
+
+def _strip_direct_bot_mention(text: str, bot_username: str) -> tuple[str, bool]:
+    """移除群聊里对当前 Bot 的精确 @，并返回是否真实点名。
+
+    Telegram username 不区分大小写；边界必须精确，避免把
+    ``@MoryBot_backup`` 之类的其他账号误判为当前 Bot。
+    """
+    username = str(bot_username or "").strip().lstrip("@")
+    raw = str(text or "")
+    if not username:
+        return raw, False
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])@{re.escape(username)}(?![A-Za-z0-9_])",
+        re.IGNORECASE,
+    )
+    cleaned, count = pattern.subn(" ", raw)
+    return " ".join(cleaned.split()).strip(), count > 0
 
 
 def _is_group_verification_number(text: str) -> bool:
@@ -411,6 +430,7 @@ class DispatchContext:
     _analysis: dict = field(default_factory=dict)  # 中间分析结果
     conversation_history: list = field(default_factory=list)  # 同一用户/聊天最近几轮真实对话
     contextual_purchase: bool = False  # 当前短句是否承接上一轮购买/定制意图
+    bot_mentioned: bool = False  # 群聊文本是否精确 @ 当前 Bot
     # [TRAE SOLO CN v5.24.0 阶段2-D] 多 Bot 共享上下文（跨 Bot 画像 + 漏斗状态）
     shared_profile: dict = field(default_factory=dict)        # 跨 Bot 用户画像（来自 shared_db）
     shared_funnel_state: str = ""                             # 跨 Bot 漏斗状态（touched/interested/carted/converted/unknown）
@@ -567,6 +587,16 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
         is_group=is_group,
         text=msg_text,
     )
+
+    # 群聊点名既要强制响应，也不能把 ``@BotUsername`` 当成用户问题交给
+    # 意图路由和模型。原文仍由快照/安全链保存，业务处理只使用清洗后的正文。
+    if is_group:
+        cleaned_text, bot_mentioned = _strip_direct_bot_mention(
+            msg_text, ctx.bot_username
+        )
+        if bot_mentioned:
+            dctx.bot_mentioned = True
+            dctx.text = cleaned_text
 
     # 当前轮进入意图路由和 AI 前，先读取同一用户、同一聊天的最近真实对话。
     # 不能只把历史写进摘要缓冲却不给本轮判断/模型使用。
