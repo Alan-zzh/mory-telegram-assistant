@@ -156,6 +156,10 @@ class TestBioPatternV5161:
         """t.me/+... - 旧有规则"""
         assert match_any(BIO_PATTERNS, "Telegram引流：t.me/abc123")
 
+    def test_bare_personal_links_are_not_ad(self):
+        assert not match_any(BIO_PATTERNS, "https://t.me/my_daily_album")
+        assert not match_any(BIO_PATTERNS, "个人主页 telegram.me/my_profile")
+
     def test_normal_bio1_not_match(self):
         """今天 6:34 上线 - 正常 - 不能误判"""
         assert not match_any(BIO_PATTERNS, "今天 6:34 上线"), "正常 bio 被误判"
