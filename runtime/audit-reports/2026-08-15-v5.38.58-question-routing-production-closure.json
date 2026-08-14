@@ -1,0 +1,53 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production VPS /home/ubuntu/mory_assistant",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "626840f98756580e89476a10cfebc0120e53161e",
+  "deployment_performed": true,
+  "backup": {
+    "path": "/home/ubuntu/mory_assistant/backups/code_pre_v53858_jNQCKBDJ.tar.gz",
+    "sha256": "94fe5a9bb7dfc56a98725ad44977a4bf5b03417512c43bff08e0329f2e210dda",
+    "verified": true,
+    "rollback_command": "cd /home/ubuntu/mory_assistant && sudo systemctl stop mory-assistant mory-dashboard && tar -xzf backups/code_pre_v53858_jNQCKBDJ.tar.gz -C /home/ubuntu/mory_assistant && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "artifact_hash": "7902705b06367451ba78edf84dc766cc7a48d994d2e5db081fbded75b42649c9",
+  "technical_checks": [
+    {
+      "name": "local_regression_and_gates",
+      "passed": true,
+      "evidence": "84 targeted and 1148 full unit tests passed; compileall, config sync, DB method, doc consistency and records gates passed"
+    },
+    {
+      "name": "remote_version_and_hashes",
+      "passed": true,
+      "evidence": "Production v5.38.58; keyword_trigger, growth_optimizer, ai_reply_handler and version.py SHA-256 match local"
+    },
+    {
+      "name": "systemd_health_and_startup_window",
+      "passed": true,
+      "evidence": "Bot PID 3788580 and Dashboard PID 3788582 active/running with NRestarts=0; health HTTP 200; final startup window has no real ERROR, CRITICAL, Traceback or invalid-pattern event"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "production_real_config_question_matrix",
+      "passed": true,
+      "evidence": "Fresh production process passed 15 high-frequency positives and 12 unrelated counterexamples; LLM_CALLS=0 and fact/CTA style hint was empty"
+    },
+    {
+      "name": "telegram_private_delivery",
+      "passed": true,
+      "evidence": "Production Telegram delivered message 3513 for source 3507 using 联系与社交解锁; LLM_CALLS=0; probe message then deleted"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "Both services restarted at 2026-08-15 01:18:02 CST; a fresh process then reloaded deployed code and production config and passed the full positive/negative matrix"
+  },
+  "recovery_note": "The first v5.38.58 production adversarial probe found legacy configured substring rules still matching airline points and insurance benefits. The final committed safety controls were atomically deployed, services restarted, and the same probe passed before closure.",
+  "result": "verified"
+}
