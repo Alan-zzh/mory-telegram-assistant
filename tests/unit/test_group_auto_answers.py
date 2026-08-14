@@ -522,6 +522,38 @@ def test_business_presets_reject_same_words_in_unrelated_topics():
     ) is None
 
 
+def test_example_config_rules_keep_project_topics_and_reject_shared_words():
+    from modules.keyword_trigger import KeywordTrigger
+
+    config = json.loads(
+        (Path(__file__).parents[2] / "config.json.example").read_text(encoding="utf-8")
+    )
+    trigger = KeywordTrigger(_QuestionDb(), config=config)
+    expected = {
+        "这个多少钱": "价格咨询",
+        "会员有哪些福利": "福利咨询",
+        "福利在哪呀": "福利咨询",
+        "有没有福利": "福利咨询",
+        "会员里有什么内容": "内容咨询",
+        "我的积分有多少": "积分咨询",
+        "签到有什么奖励": "签到奖励咨询",
+    }
+    for text, name in expected.items():
+        rule = trigger._match_special_rule(text)
+        assert rule and rule["name"] == name, text
+
+    unrelated = (
+        "机票多少钱",
+        "航空积分怎么用",
+        "航空积分有什么福利",
+        "会员包含什么保险权益",
+        "这家公司的员工福利怎么样",
+        "这本书有什么内容",
+    )
+    for text in unrelated:
+        assert trigger._match_special_rule(text) is None, text
+
+
 def test_new_preset_question_families_keep_single_conversion_target():
     from modules.keyword_trigger import _DEFAULT_SPECIAL_AUTO_REPLIES
 

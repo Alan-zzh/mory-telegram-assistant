@@ -385,6 +385,39 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
 )
 
 
+# 这些名称来自项目随附的 SPECIAL_AUTO_REPLIES。线上配置可能仍是旧版，只含
+# keywords 且默认子串匹配；若任由“积分/福利/价格”等词在长句中命中，会把
+# 航空积分、保险权益或无关商品价格串成 Mory 业务答案。安全匹配由代码统一
+# 兜底，Dashboard 仍可改文案和开关，但不能把这些项目内置族降回宽泛子串。
+_CONFIGURED_RULE_MATCH_CONTROLS = {
+    "助理唤醒": [
+        r"(?:mory)?小?助理(?:出来|在吗|在不在)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+    ],
+    "价格咨询": [
+        r"(?:(?:mory|你们)?(?:会员|vip|订阅|预览|定制|原味|视频|内容|这个|这些)(?:的)?)?(?:价格|价钱|费用|报价)(?:是)?(?:多少|怎样|怎么算)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        r"(?:会员|vip|订阅|预览|定制|原味|视频|这个|这些)?(?:要)?多少钱(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        r"(?:会员|vip|订阅|预览|定制|原味|视频|这个|这些)(?:是)?怎么收费(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+    ],
+    "福利咨询": [
+        r"(?:(?:mory|你们|会员|vip|订阅|预览)(?:的|里|都有|有)?)?(?:什么|哪些|啥|更多)?(?:福利|权益)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        r"(?:会员|vip|订阅)(?:都)?(?:有|包含|包括)(?:什么|哪些|啥)(?:福利|权益)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        r"(?:福利|权益)(?:在哪|在哪里|怎么领|怎么拿)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        r"(?:有|有没有|还有没有|有啥|有什么)(?:福利|权益)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+    ],
+    "内容咨询": [
+        r"(?:会员|vip|订阅|预览|完整版|全套)?(?:里|都)?(?:有什么|有啥|能看什么)(?:内容)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        r"(?:会员|vip|订阅|预览|完整版|全套)?(?:的)?内容介绍(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+    ],
+    "积分咨询": [
+        r"(?:我的|签到)?积分(?:可以|能)?(?:干嘛|做什么|有什么用|怎么用|怎么获得|有多少|是多少|排行|排名|抽奖)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        r"(?:怎么获得|如何获得|查看|查)(?:我的)?积分(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+    ],
+    "签到奖励咨询": [
+        r"签到(?:是)?(?:有什么用|干嘛|干嘛用|有什么好处|有什么奖励|有啥奖励)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+    ],
+}
+
+
 class KeywordTrigger:
     """
     关键词触发回复管理器
@@ -822,7 +855,26 @@ class KeywordTrigger:
             for rule in configured
             if isinstance(rule, dict)
         }
-        rules = list(configured)
+        rules = []
+        for configured_rule in configured:
+            if not isinstance(configured_rule, dict):
+                rules.append(configured_rule)
+                continue
+            rule = dict(configured_rule)
+            controls = _CONFIGURED_RULE_MATCH_CONTROLS.get(
+                str(rule.get("name", "")).strip()
+            )
+            if controls:
+                rule["keyword_match_mode"] = "full"
+                if str(rule.get("name", "")).strip() in {"积分咨询", "签到奖励咨询"}:
+                    # “我的积分有多少”里的“多少”不代表询价；只有在完整积分/
+                    # 签到句式已命中后，才允许越过通用转化分类。
+                    rule["ignore_conversion_target"] = True
+                existing_patterns = rule.get("match_patterns", [])
+                if isinstance(existing_patterns, str):
+                    existing_patterns = [existing_patterns]
+                rule["match_patterns"] = [*existing_patterns, *controls]
+            rules.append(rule)
         rules.extend(
             dict(rule)
             for rule in _DEFAULT_SPECIAL_AUTO_REPLIES
