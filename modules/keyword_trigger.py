@@ -85,11 +85,14 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "enabled": True,
         "keywords": [
             "签到积分有什么福利",
-            "签到积分能换什么",
             "积分有什么福利",
-            "积分能换什么",
             "签到有什么福利",
             "签到福利",
+        ],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:签到)?积分(?:有|有什么|有啥)(?:福利|奖励)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"签到(?:有|有什么|有啥)(?:福利|奖励)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
         ],
         "ai_polish": True,
         "ai_mode": "normal",
@@ -111,6 +114,14 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             "积分怎么使用", "积分怎么用", "积分能兑换什么", "积分可以兑换什么",
             "积分换什么", "积分兑换什么", "多少积分能兑换", "兑换会员要多少积分",
         ],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:签到)?积分(?:要|该|可以|能)?怎么(?:使用|用|兑换|换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:积分兑换会员|兑换会员)(?:需要|要)?多少(?:积分|分)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:我有)?\d+积分(?:怎么|如何)(?:换|兑换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"签到(?:多久|多少天)(?:能|可以)?(?:换|兑换)(?:会员|vip)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "contextual_followup_match_mode": "full",
         "contextual_followups": [
             "门槛多少", "多少积分", "怎么兑换", "在哪里兑换", "换什么",
             "90天能换吗", "签到90天可以吗", "多久能换",
@@ -145,6 +156,13 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             "签到90天能否兑换会员", "签到90天能兑换会员吗", "签到90天可以兑换会员吗",
             "签到九十天能兑换会员吗", "连续签到90天能换会员吗",
         ],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:连续)?签到(?:90|九十)天(?:能否|能|可以)?(?:换|兑换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:连续)?签到(?:3个?月|三个月)(?:能否|能|可以)?(?:换|兑换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:我)?签(?:到|了|满)?(?:90|九十)天(?:能否|能|可以)?(?:换|兑换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "contextual_followup_match_mode": "full",
         "contextual_followups": ["我已经90天了", "已经90天", "够90天了", "接下来怎么办"],
         "followup_replies": [
             {
@@ -168,6 +186,12 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             "兑换成功但没进群", "兑换成功没有进群", "积分兑换了没进群",
             "兑换会员后没进群", "兑换成功了怎么没进群",
         ],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:我)?(?:积分)?(?:兑换|换)(?:会员)?(?:成功|完|了|成功了)?(?:但|怎么|为什么|却|还){0,2}(?:没|没有|未)(?:进群|拉我进群|收到群链接)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:积分)?兑换成功(?:了)?(?:但|怎么|为什么|却|还)?(?:没|没有|未)(?:进群|收到群链接)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "contextual_followup_match_mode": "full",
         "contextual_followups": ["要发什么", "订单号在哪", "怎么复制订单号", "凭证怎么发", "然后呢"],
         "followup_replies": [
             {
@@ -195,6 +219,13 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             "至臻全享三个群分别是什么", "至臻全享是哪三个群", "全享三个群是什么",
             "三个群分别是什么", "全享包含哪些群", "至臻全享包括什么群",
         ],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:至臻)?全享(?:都)?(?:包括|包含|有)(?:哪|什么)?(?:三个|3个)?群(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:至臻)?全享(?:都)?有哪些群(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:至臻)?全享(?:是哪|有哪)(?:三个|3个)群(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "contextual_followup_match_mode": "full",
         "contextual_followups": ["都是一年吗", "有效期多久", "时间多久", "能下载吗", "有水印吗", "分别有什么"],
         "followup_replies": [
             {
@@ -226,6 +257,13 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             "VIP订阅具体权益", "vip具体权益", "订阅具体权益", "会员具体权益",
             "VIP有什么权益", "订阅到底有什么", "会员包含什么",
         ],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:vip|会员|订阅)(?:后)?(?:都)?(?:包括|包含|有)(?:什么|啥)(?:权益|内容)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:vip|会员)(?:能干嘛|有什么权益|有啥权益|具体权益)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"订阅后(?:可以|能)(?:得到|获得|看)什么(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "contextual_followup_match_mode": "full",
         "contextual_followups": ["能聊天吗", "能加好友吗", "能线下吗", "哪个适合我", "看不明白"],
         "followup_replies": [
             {
@@ -257,6 +295,15 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             "原味视频定制规则", "原味和视频定制规则", "原味/视频定制规则",
             "视频定制有什么规则", "原味定制有什么规则", "定制流程是什么",
         ],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:原味|视频)(?:是)?怎么(?:定制|订制)(?:的)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:原味|视频)?(?:定制|订制)(?:能|可以)?(?:做|定制)?什么(?:内容)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:可以|能)(?:定制|订制)(?:什么|哪些)(?:内容)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:原味|视频)?(?:定制|订制)(?:要|需要)(?:准备|提供|说)什么(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:原味|视频)?(?:定制|订制)(?:流程|规则)(?:是)?什么(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "contextual_followup_match_mode": "full",
         "contextual_followups": ["怎么留言", "需要说什么", "多久能好", "会露脸吗", "能做什么"],
         "followup_replies": [
             {
@@ -290,6 +337,7 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             "怎么约你", "如何约你", "想约你", "怎么约mory", "如何约mory",
             "想约mory", "怎么联系mory", "如何联系mory", "怎么联系你",
         ],
+        "keyword_match_mode": "full",
         # “怎么约你”在口语里常被说成“怎么和你约/怎么约到你”。这些
         # 完整句式不能只靠子串枚举，否则插入一个虚词就会漏进 P10 AI。
         # 使用整句匹配，同时避免误伤“怎么预约体检/怎么约朋友吃饭”。
@@ -300,7 +348,13 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             r"(?:我)?(?:能|可以|可不可以|能不能)(?:约|见)(?:到)?(?:你|mory)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"(?:我)?(?:想|想要)(?:和|跟)?(?:你|mory)(?:约|见面)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"(?:我)?(?:想|想要)(?:约|见)(?:到)?(?:你|mory)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:微信|telegram|电报)(?:怎么|如何)(?:加|联系)(?:你|mory)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:能|可以|能不能)(?:加|联系)(?:你|mory)(?:微信|telegram|电报)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:怎么|如何)(?:跟|和)?mory联系(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:会员)?怎么联系(?:你|mory)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:我想|想|我要)(?:找|联系)(?:mory本人|mory|你)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
         ],
+        "contextual_followup_match_mode": "full",
         "contextual_followups": ["微信呢", "线下呢", "怎么约", "那怎么联系", "必须先订阅吗", "只是聊聊呢"],
         "followup_replies": [
             {
@@ -565,6 +619,8 @@ class KeywordTrigger:
             return None
 
         text_lower = text.lower()
+        text_normalized = self._normalize_match_phrase(text_lower)
+        text_pattern = re.sub(r"\s+", "", text_lower.strip())
         best_rule = None
         best_score = (-1, -1)
         for rule in rules:
@@ -604,6 +660,9 @@ class KeywordTrigger:
             keywords = rule.get("keywords", [])
             if isinstance(keywords, str):
                 keywords = [keywords]
+            keyword_match_mode = str(
+                rule.get("keyword_match_mode", "substring") or "substring"
+            ).strip().lower()
 
             matched_len = -1
             matched_pattern_text = ""
@@ -611,7 +670,13 @@ class KeywordTrigger:
                 if not keyword:
                     continue
                 keyword_lower = str(keyword).lower()
-                if keyword_lower in text_lower:
+                if keyword_match_mode == "full":
+                    keyword_matched = (
+                        self._normalize_match_phrase(keyword_lower) == text_normalized
+                    )
+                else:
+                    keyword_matched = keyword_lower in text_lower
+                if keyword_matched:
                     matched_len = max(matched_len, len(keyword_lower))
 
             resolved_rule = rule
@@ -624,7 +689,7 @@ class KeywordTrigger:
                 try:
                     pattern_match = re.fullmatch(
                         str(pattern),
-                        text_lower.strip(),
+                        text_pattern,
                         flags=re.IGNORECASE,
                     )
                 except re.error as exc:
@@ -658,17 +723,33 @@ class KeywordTrigger:
                 best_score = score
         return best_rule
 
+    @staticmethod
+    def _normalize_match_phrase(text: str) -> str:
+        """供整句规则使用：忽略空白和句末语气标点，不改变词序与实词。"""
+        compact = re.sub(r"\s+", "", str(text or "").strip().lower())
+        return re.sub(r"[，,。.!！?？~～]+$", "", compact)
+
     @classmethod
     def _resolve_contextual_followup(cls, rule, text_lower: str, conversation_history):
         """把短追问绑定到最近同一问答族，并切换到对应子答案。"""
         followups = rule.get("contextual_followups", [])
         if isinstance(followups, str):
             followups = [followups]
-        matched_followups = [
-            str(marker)
-            for marker in followups
-            if marker and str(marker).lower() in text_lower
-        ]
+        followup_match_mode = str(
+            rule.get("contextual_followup_match_mode", "substring") or "substring"
+        ).strip().lower()
+        normalized_text = cls._normalize_match_phrase(text_lower)
+        matched_followups = []
+        for marker in followups:
+            if not marker:
+                continue
+            marker_text = str(marker)
+            if followup_match_mode == "full":
+                matched = cls._normalize_match_phrase(marker_text) == normalized_text
+            else:
+                matched = marker_text.lower() in text_lower
+            if matched:
+                matched_followups.append(marker_text)
         if not matched_followups:
             return None
 
@@ -703,7 +784,17 @@ class KeywordTrigger:
             markers = item.get("keywords", [])
             if isinstance(markers, str):
                 markers = [markers]
-            if not any(str(marker).lower() in text_lower for marker in markers if marker):
+            if followup_match_mode == "full":
+                matched_item = any(
+                    cls._normalize_match_phrase(marker) == normalized_text
+                    for marker in markers
+                    if marker
+                )
+            else:
+                matched_item = any(
+                    str(marker).lower() in text_lower for marker in markers if marker
+                )
+            if not matched_item:
                 continue
             for key in (
                 "base_reply", "conversion_target", "required_terms",

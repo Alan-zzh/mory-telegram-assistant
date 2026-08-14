@@ -65,6 +65,33 @@ def test_evolution_hint_only_uses_approved_enabled_samples():
     assert "先把对方的问题答清楚" in hint
 
 
+def test_evolution_hint_is_current_scene_only_and_drops_fact_cta_samples():
+    class _SceneDb:
+        def __init__(self):
+            self.scenes = []
+
+        def get_approved_reply_style_samples(self, limit, scene=None):
+            self.scenes.append(scene)
+            return [
+                "用户：加微信\nMory：一个月费都不支持，去 @MorychannelBot 下单。",
+                "用户：在吗\nMory：在，直接说你遇到什么问题。",
+            ][:limit]
+
+    db = _SceneDb()
+    hint = _build_reply_evolution_hint(
+        db,
+        {"REPLY_EVOLUTION_CONFIG": {
+            "enabled": True, "human_approval_required": True,
+            "approved_style_samples": True, "max_prompt_samples": 3,
+        }},
+        scene="chat",
+    )
+    assert db.scenes == ["chat"]
+    assert "直接说你遇到什么问题" in hint
+    assert "一个月费" not in hint
+    assert "@MorychannelBot" not in hint
+
+
 def test_reply_contract_config_is_safe_and_manual():
     root = Path(__file__).resolve().parents[2]
     # config.json 含运行时凭据且被 Git 忽略；可复现契约只检查版本化示例。

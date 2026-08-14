@@ -304,7 +304,7 @@ def test_builtin_points_answer_uses_preview_and_custom_concept_is_not_static_ord
     recorder = _ReplyRecorder()
     trigger = KeywordTrigger(db, mory_bot=recorder, ai=_NoReplyAi(), config={})
 
-    points_msg = "签到积分有什么福利有什么"
+    points_msg = "签到积分有什么福利"
     video_msg = "定制视频是什么"
     assert trigger.handle_message(points_msg, -1001, _message(points_msg), object())
     assert not trigger.handle_message(video_msg, -1001, _message(video_msg), object())
@@ -453,6 +453,73 @@ def test_new_business_presets_keep_each_problem_on_its_own_answer():
         reply = recorder.replies[-1][0]
         assert required in reply
         assert forbidden not in reply
+
+
+def test_business_presets_cover_common_natural_phrasing_without_ai():
+    from modules.keyword_trigger import KeywordTrigger
+
+    class _FailIfCalledAi:
+        def ask(self, *_args, **_kwargs):
+            raise AssertionError("高频业务问法必须在 AI 前确定性命中")
+
+    trigger = KeywordTrigger(
+        _QuestionDb(),
+        mory_bot=_ReplyRecorder(),
+        ai=_FailIfCalledAi(),
+        config={},
+    )
+    cases = {
+        "积分兑换说明": (
+            "积分怎么兑换会员", "签到积分怎么用", "积分兑换会员需要多少分",
+            "我有14900积分怎么换", "签到多久能换会员",
+        ),
+        "签到九十天兑换": (
+            "签到九十天可以换吗", "连续签到三个月能换会员吗", "我签了90天能换VIP吗",
+        ),
+        "会员兑换未进群": (
+            "我兑换会员了怎么还没进群", "积分换完怎么没拉我进群", "兑换成功了没收到群链接",
+        ),
+        "至臻全享群说明": ("全享包括哪三个群", "至臻全享都有哪些群"),
+        "VIP订阅权益说明": (
+            "会员都包括什么", "VIP能干嘛", "订阅后可以得到什么", "会员有啥权益",
+        ),
+        "定制规则说明": ("原味怎么定制", "可以定制什么内容", "定制要准备什么"),
+        "联系与社交解锁": (
+            "微信怎么加", "可以加你微信吗", "怎么跟Mory联系", "会员怎么联系你", "想找Mory本人",
+        ),
+    }
+
+    for expected_name, texts in cases.items():
+        for text in texts:
+            rule = trigger._match_special_rule(text)
+            assert rule and rule["name"] == expected_name, text
+
+
+def test_business_presets_reject_same_words_in_unrelated_topics():
+    from modules.keyword_trigger import KeywordTrigger
+
+    trigger = KeywordTrigger(_QuestionDb(), config={})
+    unrelated = (
+        "航空积分怎么用",
+        "航空积分有什么福利",
+        "定制家具流程是什么",
+        "怎么加好友玩游戏",
+        "怎么联系你们客服",
+        "怎么约你们团队采访",
+        "会员包含什么保险权益",
+        "我想约你开会",
+    )
+    for text in unrelated:
+        assert trigger._match_special_rule(text) is None, text
+
+    contact_history = [
+        {"role": "user", "content": "怎么联系Mory", "intent": "联系Mory"},
+        {"role": "assistant", "content": "按当前社交解锁说明操作。", "intent": "联系Mory"},
+    ]
+    assert trigger._match_special_rule(
+        "怎么约定会议时间",
+        conversation_history=contact_history,
+    ) is None
 
 
 def test_new_preset_question_families_keep_single_conversion_target():

@@ -50,7 +50,8 @@ _DIRECT_CUSTOM_ORDER_MARKERS = (
 
 _CUSTOM_INFORMATION_MARKERS = (
     "是什么", "什么意思", "怎么理解", "介绍一下", "科普一下", "你知道",
-    "规则", "流程", "怎么定制", "如何定制",
+    "规则", "流程", "怎么定制", "如何定制", "定制什么", "订制什么",
+    "定制哪些", "订制哪些",
 )
 
 _CUSTOM_INFORMATION_OBJECT_MARKERS = (

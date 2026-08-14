@@ -197,6 +197,9 @@ def test_screenshot_followups_inherit_custom_purchase_intent():
 
     assert is_direct_custom_order_request("定制舞") is True
     assert is_direct_custom_order_request("定制舞是什么？介绍一下") is False
+    assert resolve_conversion_target("可以定制什么内容") == (
+        "none", "custom_information_only"
+    )
     assert is_contextual_purchase_intent("就是这个味", history) is True
     history.append({"role": "user", "content": "就是这个味", "intent": "purchase_intent"})
     assert is_contextual_purchase_intent("风格可以 挺喜欢这种风格", history) is True

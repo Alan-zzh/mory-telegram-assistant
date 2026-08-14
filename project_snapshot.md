@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-14。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-15。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -11,7 +11,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 模块 | 状态 | 入口文件 | 备注 |
 |------|------|----------|------|
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
-| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；合同模式屏蔽旧毒舌/敷衍桶，FAQ/缓存/模型结果统一走动作旁白和敌意发送前门禁。普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标 |
+| AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标。风格参考仅限当前场景，含价格、权益、联系方式、保证性事实或 CTA 的样本不进入普通 AI 提示 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 单池模式（llm 主池）；配置无三层池时自动降级；局部 `MODE_ROUTING` 与默认映射合并；所有用户可见自然对话跳过 code/coder 专用模型；模型按到期日升序；`enable_thinking` 声明思考能力，实时场景跳过仅思考模型；到期/熔断/超时自动切换 + 黑名单 dirty 标记异步落盘 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类、46 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 实时与存量扫描共用资料/消息规则；裸链接或普通绑定频道不是广告证据，必须再命中明确广告语义；Q裙成人招揽首条处置；1小时同文至少3次只删重复组；全量扫描默认只报告，覆盖不足或状态未知均不处罚，应用时重新取证并走统一处置链 |
@@ -32,19 +32,19 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | Rich Message / 图片卡 | 在用 | `core/telebot_compat.py`、`core/broadcast_image_card.py`、`core/start_welcome_card.py`、`modules/private_preset_media.py` | `/start` 与群首次精确 @ 共用六套欢迎卡；普通用户私聊索图使用审核静态照片，原味/本人/普通照片分流，福利内容先文字后随机图；群聊与管理员不触发私聊媒体 |
 | 泛问候/定点播报 | 生产关闭 | `tasks/broadcast/greeting_task.py`、`tasks/maintenance/scheduled_broadcast_task.py` | 早午晚泛问候与 4 档定点播报全部关闭，避免与内容栏目重叠；若未来人工开启，问候模型失败直接跳过，不用固定套话，图片卡只渲染同源正文 |
 | 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 生产唯一主动栏目：09:05 黄历、13:05 塔罗、20:35 易经；三档语义各异、间隔至少 4 小时，图片卡保留；新闻执行链已删除 |
-| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | VPN/梯子与积分、兑换未进群、全享三群、VIP权益、定制规则、联系Mory等已审核问答在 LLM 前零 Token 命中；联系问法覆盖“和/跟/到”等自然语序并排除预约/普通约人；30分钟短追问绑定原问答族；none/preview/subscribe 单目标 |
+| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | VPN/梯子与积分、兑换未进群、全享三群、VIP权益、定制规则、联系Mory等已审核问答按完整意图在 LLM 前零 Token 命中；自然语序用整句模式覆盖，30分钟短追问仅绑定原问答族；航空积分、客服、采访、保险、会议等同词反例不命中；none/preview/subscribe 单目标 |
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py`、`modules/auto_tasks.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目允许 1-2 个同目标不重复入口；新闻执行链和配置入口已删除 |
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.38.57（2026-08-14）· 修复联系 Mory 自然问法漏入 AI 后偏离资料
+v5.38.58（2026-08-15）· 高频业务问答整句匹配、同题追问与跨话题样本隔离
 
-生产状态：**v5.38.57 已部署；Bot PID 3661455、Dashboard PID 3661456 均 active/running、NRestarts=0、health=200，目标文件哈希与本地一致。真实 Telegram 私聊“怎么和你约”返回审核社交解锁答复，消息 3511 送达后已清理；新进程 6 正例/3 反例且 LLM 调用为 0。**
+生产状态：**v5.38.57 已部署；v5.38.58 本地门禁中，生产尚未替换。**
 
 ## 最近 3 条大事
-1. 2026-08-14 v5.38.57：联系 Mory 自然语序命中已审核社交解锁资料，不再掉入 AI 泛答。
-2. 2026-08-14 v5.38.56：频道群转发直出内容相关彩虹屁、单入口与审核营销图片卡，后到事件不重复。
-3. 2026-08-14 v5.38.55：私聊按原味/本人/普通索图发送审核照片，福利内容先文字后图片并取消旧回复。
+1. 2026-08-15 v5.38.58：高频业务问答按完整意图与同题追问命中，同词反例和跨话题事实样本隔离。
+2. 2026-08-14 v5.38.57：联系 Mory 自然语序命中已审核社交解锁资料，不再掉入 AI 泛答。
+3. 2026-08-14 v5.38.56：频道群转发直出内容相关彩虹屁、单入口与审核营销图片卡，后到事件不重复。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

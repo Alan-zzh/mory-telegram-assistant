@@ -1283,12 +1283,30 @@ def _build_convert_hint(
     return stage_hint, notify_admin_reason
 
 
-def _build_reply_evolution_hint(db, config, scene: str = "chat") -> str:
-    """将人工审核样本作为低优先级风格参考，按场景分组注入。
+_STYLE_REFERENCE_FACT_MARKERS = (
+    "@moryselect", "@morychannelbot", "http://", "https://",
+    "价格", "月费", "下单", "订阅", "会员", "vip", "定制", "原味",
+    "社交解锁", "联系方式", "保证金", "押金", "报警", "权益",
+    "绝不断更", "隐藏解锁", "粉丝", "嘴炮", "变态",
+)
+_STYLE_REFERENCE_FACT_PATTERN = re.compile(
+    r"(?:￥|¥|\d+(?:\.\d+)?\s*(?:元|/月|/季|/年|分钟|天|个群))",
+    re.IGNORECASE,
+)
 
-    每组（scene）最多 max_prompt_samples 条、总条数不超过 12；
-    注入顺序优先当前场景，再补其他场景。调用处不传 scene 时按 chat 组取。
-    """
+
+def _is_style_only_reference(sample: str) -> bool:
+    """全局风格样本只能教措辞，不能携带事实、入口、价格或销售施压。"""
+    text = str(sample or "").strip().lower()
+    if not text:
+        return False
+    if any(marker in text for marker in _STYLE_REFERENCE_FACT_MARKERS):
+        return False
+    return _STYLE_REFERENCE_FACT_PATTERN.search(text) is None
+
+
+def _build_reply_evolution_hint(db, config, scene: str = "chat") -> str:
+    """只注入当前场景的纯风格样本，避免跨场景事实与 CTA 串题。"""
     cfg = (config or {}).get("REPLY_EVOLUTION_CONFIG", {}) or {}
     if not (
         cfg.get("enabled", False)
@@ -1299,23 +1317,14 @@ def _build_reply_evolution_hint(db, config, scene: str = "chat") -> str:
     if not hasattr(db, "get_approved_reply_style_samples"):
         return ""
     limit = max(1, min(int(cfg.get("max_prompt_samples", 3) or 3), 3))
-    total_limit = 12
     valid_scenes = ("chat", "greeting", "engage", "faq", "broadcast")
     scene = scene if scene in valid_scenes else "chat"
-    order = [scene] + [s for s in valid_scenes if s != scene]
-    samples: list[str] = []
-    for sc in order:
-        if len(samples) >= total_limit:
-            break
-        try:
-            group = db.get_approved_reply_style_samples(limit, scene=sc)
-        except TypeError:
-            # 兼容旧签名（如测试用 FakeDB）：不支持 scene 参数时只取一次
-            group = db.get_approved_reply_style_samples(limit)
-            samples.extend(group or [])
-            break
-        samples.extend(group or [])
-    samples = samples[:total_limit]
+    try:
+        samples = db.get_approved_reply_style_samples(limit, scene=scene) or []
+    except TypeError:
+        # 兼容旧签名（如测试用 FakeDB）：不支持 scene 参数时只取一次。
+        samples = db.get_approved_reply_style_samples(limit) or []
+    samples = [sample for sample in samples if _is_style_only_reference(sample)][:limit]
     if not samples:
         return ""
     numbered = "\n".join(f"- {sample}" for sample in samples)
