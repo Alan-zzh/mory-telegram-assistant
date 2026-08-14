@@ -177,9 +177,10 @@ def test_group_silence_questions_use_reviewed_base_and_ai_tone_variation():
         def ask(self, prompt, **_kwargs):
             self.prompts.append(prompt)
             return (
-                "这里是粉丝反馈和通知群，不是陪聊场。大家都有自己的事情，有问题直接反馈，"
-                "有通知自然会发；需要办理就按群里现有入口走。一直口嗨解决不了问题，也不会"
-                "凭空赚钱涨粉，务实一点不是更省时间吗？"
+                "这就是个粉丝反馈群，Mory 不是做女菩萨来陪聊的，也不是做门姐找你要门槛的。"
+                "有问题就反馈，有通知会发公告；想订阅就自助，联系按群里现有入口走。整天在群里口嗨，"
+                "能赚钱还是能涨粉？付费用户更在意内容和效率，大家都要忙，务实点。"
+                "打嘴炮的事 Mory 干不出来，我相信你也不是这样的人，喜欢这样的吧，对不对？"
             )
 
     db = _QuestionDb()
@@ -198,9 +199,46 @@ def test_group_silence_questions_use_reviewed_base_and_ai_tone_variation():
     message = _message("群里好安静")
     assert trigger.handle_message(message.text, message.chat.id, message, object())
     assert ai.prompts
-    assert "90到160个汉字" in ai.prompts[0]
-    assert "粉丝反馈和通知群" in recorder.replies[0][0]
+    assert "140到180个汉字" in ai.prompts[0]
+    assert "不得弱化成客服腔" in ai.prompts[0]
+    assert "结尾必须逐字保留" in ai.prompts[0]
+    assert "想订阅就自助" in ai.prompts[0]
+    assert "粉丝反馈群" in recorder.replies[0][0]
+    assert "有通知会发公告" in recorder.replies[0][0]
+    for term in (
+        "女菩萨", "门姐", "口嗨", "赚钱", "涨粉", "打嘴炮",
+        "想订阅就自助", "喜欢这样的",
+    ):
+        assert term in recorder.replies[0][0]
+    assert "不喜欢这样" not in recorder.replies[0][0]
     assert "@MorychannelBot" not in recorder.replies[0][0]
+    assert db.business_context[0][1]["conversion_target"] == "none"
+
+
+def test_group_silence_polish_with_reversed_closing_falls_back_to_owner_wording():
+    from modules.keyword_trigger import KeywordTrigger
+
+    class _ReversedClosingAi:
+        def ask(self, *_args, **_kwargs):
+            return (
+                "这是粉丝反馈群，Mory 不是女菩萨陪聊，也不是门姐找你要门槛。"
+                "有问题反馈，有通知发公告。群里口嗨不能赚钱涨粉，大家都务实点。"
+                "打嘴炮的事 Mory 不做，我相信你也不是这样的人，应该也不喜欢这样吧？"
+            )
+
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(
+        _QuestionDb(),
+        mory_bot=recorder,
+        ai=_ReversedClosingAi(),
+        config={},
+    )
+    message = _message("群里好安静")
+
+    assert trigger.handle_message(message.text, message.chat.id, message, object())
+    reply = recorder.replies[-1][0]
+    assert "喜欢这样的吧，对不对" in reply
+    assert "不喜欢这样" not in reply
 
 
 def test_group_silence_followups_and_unrelated_phrases_do_not_cross_match():
@@ -211,9 +249,19 @@ def test_group_silence_followups_and_unrelated_phrases_do_not_cross_match():
         {"role": "user", "content": "群里好安静", "intent": "群聊定位"},
         {"role": "assistant", "content": "这里主要承接反馈和通知。", "intent": "群聊定位"},
     ]
-    for text in ("一直这样吗", "都不聊天吗", "为什么不活跃", "没人活跃吗"):
+    followups = (
+        "一直这样吗", "都不聊天吗", "为什么不活跃", "没人活跃吗",
+        "还是很安静", "还是没人说话", "对", "确实", "说得对", "有道理",
+        "这样挺好", "我就喜欢这样", "你说得也对啊", "我喜欢这种氛围",
+        "这么也挺好的", "我明白了", "好像是这么回事", "但是群里还是很冷清啊",
+    )
+    for text in followups:
         rule = trigger._match_special_rule(text, conversation_history=history)
         assert rule and rule["name"] == "群聊冷场说明", text
+        assert rule["conversion_target"] == "preview", text
+        assert rule["card_enabled"] is True, text
+        assert "@moryselect" in rule["base_reply"], text
+        assert "@MorychannelBot" not in rule["base_reply"], text
 
     unrelated = (
         "今天办公室怎么没人说话",
@@ -224,6 +272,50 @@ def test_group_silence_followups_and_unrelated_phrases_do_not_cross_match():
     )
     for text in unrelated:
         assert trigger._match_special_rule(text) is None, text
+
+    refusal_or_objection = (
+        "不喜欢这样", "我就想聊天", "别推了", "不用了", "你说话太冲",
+    )
+    for text in refusal_or_objection:
+        assert trigger._match_special_rule(text, conversation_history=history) is None, text
+
+    # 明确订阅不由冷场追问抢答，继续交给统一 subscribe 成交链。
+    assert trigger._match_special_rule("怎么订阅", conversation_history=history) is None
+
+
+def test_group_silence_positive_followup_sends_single_preview_card():
+    from modules.keyword_trigger import KeywordTrigger
+
+    db = _QuestionDb()
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(
+        db,
+        mory_bot=recorder,
+        ai=_NoReplyAi(),
+        config={"AUTO_REPLY_CARD_ENABLED": True},
+    )
+    history = [
+        {"role": "user", "content": "群里好安静", "intent": "群聊定位"},
+        {"role": "assistant", "content": "这就是个粉丝反馈群。", "intent": "群聊定位"},
+    ]
+
+    message = _message("说得对")
+    assert trigger.handle_message(
+        message.text,
+        message.chat.id,
+        message,
+        object(),
+        conversation_history=history,
+    )
+
+    reply_text, kwargs = recorder.replies[-1]
+    assert "@moryselect" in reply_text
+    assert "@MorychannelBot" not in reply_text
+    markup = kwargs["reply_markup"]
+    assert len(markup.keyboard) == 1
+    assert len(markup.keyboard[0]) == 1
+    assert markup.keyboard[0][0].url == "https://t.me/moryselect"
+    assert db.business_context[-1][1]["conversion_target"] == "preview"
 
 
 def test_vpn_and_ladder_questions_use_clickable_confirmed_referral_without_llm():

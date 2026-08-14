@@ -97,15 +97,48 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "contextual_followup_match_mode": "full",
         "contextual_followups": [
             "一直这样吗", "都不聊天吗", "为什么不活跃", "没人活跃吗",
+            "还是很安静", "还是没人说话", "还是没人聊天", "还是很冷清",
+            "对", "对啊", "是的", "确实", "确实是", "也是", "那倒也是",
+            "说得对", "有道理", "没毛病", "明白了", "懂了", "这样挺好",
+            "我就喜欢这样", "喜欢这样的", "这样也好",
+        ],
+        "contextual_followup_patterns": [
+            r"(?:你说得?)?(?:也)?(?:对|没错|确实|有道理|没毛病)(?:啊|呀|呢|吧|哦|哈)?[？?。！!~～]*",
+            r"(?:我)?(?:就)?喜欢(?:这样|这种)(?:群|方式|氛围)?(?:的)?(?:啊|呀|呢|吧)?[？?。！!~～]*",
+            r"(?:这样|这么)(?:也|就)?(?:挺|蛮|很)?好(?:的)?(?:啊|呀|呢|吧)?[？?。！!~～]*",
+            r"(?:我)?(?:明白|懂|知道)(?:了|啦)(?:啊|呀|呢|吧)?[？?。！!~～]*",
+            r"(?:好像|确实)?(?:是)?(?:这么|这样)(?:回事|个道理)(?:啊|呀|呢|吧)?[？?。！!~～]*",
+            r"(?:可是|但是|不过)?(?:群里)?(?:还是|依然)(?:这么|那么|很|好)?(?:安静|冷清|没人说话|没人聊天)(?:啊|呀|呢|吧|吗)?[？?。！!~～]*",
         ],
         "followup_replies": [
             {
-                "keywords": ["一直这样吗", "都不聊天吗"],
-                "base_reply": "安静不等于没人，这里主要承接粉丝反馈和通知，不靠刷屏维持存在感。大家有事就说、需要办理就走群里现有入口，没事各忙各的，反而省时间。",
-            },
-            {
-                "keywords": ["为什么不活跃", "没人活跃吗"],
-                "base_reply": "活跃不等于天天打嘴炮。这里看的是问题有没有解决、通知有没有送达；有事反馈，没事各自忙，务实一点比刷存在感有用。",
+                "default": True,
+                "keywords": [
+                    "一直这样吗", "都不聊天吗", "为什么不活跃", "没人活跃吗",
+                    "还是很安静", "还是没人说话", "还是没人聊天", "还是很冷清",
+                    "对", "对啊", "是的", "确实", "确实是", "也是", "那倒也是",
+                    "说得对", "有道理", "没毛病", "明白了", "懂了", "这样挺好",
+                    "我就喜欢这样", "喜欢这样的", "这样也好",
+                ],
+                "conversion_target": "preview",
+                "card_enabled": True,
+                "button_enabled": True,
+                "polish_length_instruction": (
+                    "写2到4句、60到110个汉字；直接承接上一轮，不要重新解释整段群定位。"
+                ),
+                "polish_prompt": (
+                    "承接对方对上一轮群定位的继续追问或认同，直接反推转化："
+                    "群里冷不冷清不重要，内容值不值得看才重要；"
+                    "让对方先去 @moryselect 免费预览，喜欢再自助订阅。"
+                    "只保留这一个预览目标，不给订阅机器人或人工联系入口。"
+                ),
+                "required_terms": ["安静", "内容", "@moryselect"],
+                "forbidden_terms": ["@MorychannelBot", "@Moryfansbot", "保证", "限时"],
+                "base_reply": (
+                    "对，所以群里安静一点并不影响你看内容，冷不冷清也不是重点。"
+                    "想知道 Mory 具体有什么，先去 @moryselect 免费预览；喜欢再自助订阅，"
+                    "比在群里等人闲聊实际。"
+                ),
             },
         ],
         "ai_polish": True,
@@ -114,27 +147,32 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "card_enabled": False,
         "remember_context": True,
         "polish_length_instruction": (
-            "写3到5句、90到160个汉字；保留完整逻辑，句式可随机，"
+            "写5到7句、140到180个汉字；保留完整逻辑、原有话锋和反问，句式可随机，"
             "不要压缩成一句客服套话。"
         ),
         "polish_prompt": (
-            "保留这些核心：这是粉丝反馈和通知群，不是陪聊场，也不靠门槛话术催人；"
-            "有问题直接反馈，有通知会发公告，需要订阅或联系时按群里现有入口办理；"
-            "群里口嗨不能解决问题，也不会凭空带来收入或涨粉；结尾可用克制反问。"
-            "语气可以锋利、有点怪，但不攻击提问者、付费用户或群友；"
-            "不得声称所有付费用户都怎样，不编造价格、权益、稀缺或社会证明，"
-            "不输出具体账号、链接或销售按钮。"
+            "严格保留老板给定的立场和话锋，不得弱化成客服腔："
+            "这是粉丝反馈群；Mory 不是做女菩萨来陪聊，也不是做门姐找人要门槛；"
+            "有问题反馈，有通知发公告，订阅自助办理，联系入口群里已有；"
+            "整天口嗨不能赚钱或涨粉，付费用户更看重内容和效率，大家都要忙、要务实；"
+            "Mory 不做打嘴炮的事；结尾必须逐字保留："
+            "‘我相信你也不是这样的人，喜欢这样的吧，对不对？’"
+            "开头必须出现‘粉丝反馈群’，订阅句必须出现‘想订阅就自助’。"
+            "只调整语序和措辞，不删除这些信息点，不增加具体账号、价格、优惠或承诺。"
         ),
-        "required_terms": ["反馈", "通知", "不是"],
+        "required_terms": [
+            "粉丝反馈群", "通知", "女菩萨", "门姐", "口嗨", "赚钱", "涨粉",
+            "打嘴炮", "想订阅就自助", "喜欢这样的",
+        ],
         "forbidden_terms": [
-            "@moryselect", "@MorychannelBot", "所有付费用户", "付费用户都",
-            "垃圾", "傻子", "保证", "限时",
+            "@moryselect", "@MorychannelBot", "@Moryfansbot", "不喜欢这样", "保证", "限时",
         ],
         "base_reply": (
-            "这里是 Mory 的粉丝反馈和通知群，不是拿“女菩萨陪聊”或“门姐门槛”"
-            "做噱头的地方。大家都有自己的事情：有问题就反馈，有通知会发公告；"
-            "需要订阅或联系时，按群里现有入口办理。天天在群里口嗨，既解决不了问题，"
-            "也不会凭空多赚钱、多涨粉；务实一点就好。我相信你来这里也不是为了打嘴炮，对不对？"
+            "这就是个粉丝反馈群，Mory 不是做女菩萨来陪聊的，也不是做门姐找你要门槛的。"
+            "有问题反馈，有通知会发公告；想订阅就自助，要联系群里已经提供入口了。"
+            "未必人家一天到晚闲着在群里口嗨，就能赚钱还是能涨粉？"
+            "付费的用户就没有喜欢公开场合闲聊的，大家都是要忙的，都务实点。"
+            "打嘴炮的事情 Mory 干不出来。我相信你也不是这样的人，喜欢这样的吧，对不对？"
         ),
     },
     {
@@ -842,7 +880,31 @@ class KeywordTrigger:
             if matched:
                 matched_followups.append(marker_text)
         if not matched_followups:
-            return None
+            followup_patterns = rule.get("contextual_followup_patterns", [])
+            if isinstance(followup_patterns, str):
+                followup_patterns = [followup_patterns]
+            pattern_text = re.sub(r"\s+", "", str(text_lower or "").strip())
+            for pattern in followup_patterns:
+                if not pattern:
+                    continue
+                try:
+                    pattern_match = re.fullmatch(
+                        str(pattern),
+                        pattern_text,
+                        flags=re.IGNORECASE,
+                    )
+                except re.error as exc:
+                    logger.warning(
+                        "特定词追问正则无效 name=%s pattern=%r error=%s",
+                        rule.get("name", "未命名规则"),
+                        pattern,
+                        exc,
+                    )
+                    continue
+                if pattern_match:
+                    matched_followups.append(pattern_match.group(0))
+            if not matched_followups:
+                return None
 
         keywords = rule.get("keywords", [])
         if isinstance(keywords, str):
@@ -869,6 +931,7 @@ class KeywordTrigger:
 
         resolved = dict(rule)
         followup_text = max(matched_followups, key=len)
+        selected_followup = None
         for item in rule.get("followup_replies", []) or []:
             if not isinstance(item, dict):
                 continue
@@ -887,13 +950,26 @@ class KeywordTrigger:
                 )
             if not matched_item:
                 continue
+            selected_followup = item
+            break
+        if selected_followup is None:
+            selected_followup = next(
+                (
+                    item
+                    for item in rule.get("followup_replies", []) or []
+                    if isinstance(item, dict) and item.get("default", False)
+                ),
+                None,
+            )
+        if selected_followup:
             for key in (
                 "base_reply", "conversion_target", "required_terms",
                 "forbidden_terms", "parse_mode", "disable_web_page_preview",
+                "ai_polish", "polish_prompt", "polish_length_instruction",
+                "card_enabled", "button_enabled",
             ):
-                if key in item:
-                    resolved[key] = item[key]
-            break
+                if key in selected_followup:
+                    resolved[key] = selected_followup[key]
         resolved["_matched_keyword"] = followup_text
         return len(followup_text), resolved
 
