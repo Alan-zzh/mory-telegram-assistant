@@ -392,13 +392,23 @@ def test_meet_mory_question_and_followups_use_social_unlock_not_chatbot_rejectio
     recorder = _ReplyRecorder()
     trigger = KeywordTrigger(db, mory_bot=recorder, ai=_FailIfCalledAi(), config={})
 
-    for text in ("怎么约你", "怎么约mory"):
+    for text in (
+        "怎么约你",
+        "怎么约mory",
+        "怎么和你约",
+        "怎么跟你约",
+        "怎么约到你",
+        "怎样才能和Mory见面？",
+        "我可以约你吗",
+        "我想见你",
+    ):
         assert trigger.handle_message(text, -1001, _message(text), object())
         reply = recorder.replies[-1][0]
         assert "@MorychannelBot" in reply
         assert "Mory 最终确认" in reply
         assert "只能在这里陪你聊天" not in reply
         assert "没有线下见面的安排" not in reply
+        assert "想聊点什么" not in reply
 
     history = [
         {"role": "user", "content": "怎么联系Mory", "intent": "联系Mory"},
@@ -416,6 +426,8 @@ def test_meet_mory_question_and_followups_use_social_unlock_not_chatbot_rejectio
     assert "城市、事项和期望时间" in reply
     assert "是否安排由 Mory 最终确认" in reply
     assert not trigger._match_special_rule("怎么约朋友出去吃饭")
+    assert not trigger._match_special_rule("怎么预约体检")
+    assert not trigger._match_special_rule("怎么和你约定会议时间")
 
 
 def test_new_business_presets_keep_each_problem_on_its_own_answer():

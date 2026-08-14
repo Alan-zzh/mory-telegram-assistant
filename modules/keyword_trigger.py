@@ -16,6 +16,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
+import re
 import traceback
 from core.logging_util import get_logger
 
@@ -288,6 +289,17 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             "官方联系方式", "如何添加好友", "怎么添加好友", "怎么加好友",
             "怎么约你", "如何约你", "想约你", "怎么约mory", "如何约mory",
             "想约mory", "怎么联系mory", "如何联系mory", "怎么联系你",
+        ],
+        # “怎么约你”在口语里常被说成“怎么和你约/怎么约到你”。这些
+        # 完整句式不能只靠子串枚举，否则插入一个虚词就会漏进 P10 AI。
+        # 使用整句匹配，同时避免误伤“怎么预约体检/怎么约朋友吃饭”。
+        "match_patterns": [
+            r"(?:我)?(?:想|想要)?(?:怎么|如何|怎样)(?:才能)?(?:和|跟)?(?:你|mory)(?:约|见面)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:我)?(?:怎么|如何|怎样)(?:才能)?约(?:到)?(?:你|mory)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:我)?(?:能|可以|可不可以|能不能)(?:和|跟)?(?:你|mory)(?:约|见面)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:我)?(?:能|可以|可不可以|能不能)(?:约|见)(?:到)?(?:你|mory)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:我)?(?:想|想要)(?:和|跟)?(?:你|mory)(?:约|见面)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:我)?(?:想|想要)(?:约|见)(?:到)?(?:你|mory)(?:一下)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
         ],
         "contextual_followups": ["微信呢", "线下呢", "怎么约", "那怎么联系", "必须先订阅吗", "只是聊聊呢"],
         "followup_replies": [
@@ -594,6 +606,7 @@ class KeywordTrigger:
                 keywords = [keywords]
 
             matched_len = -1
+            matched_pattern_text = ""
             for keyword in keywords:
                 if not keyword:
                     continue
@@ -602,6 +615,33 @@ class KeywordTrigger:
                     matched_len = max(matched_len, len(keyword_lower))
 
             resolved_rule = rule
+            match_patterns = rule.get("match_patterns", [])
+            if isinstance(match_patterns, str):
+                match_patterns = [match_patterns]
+            for pattern in match_patterns:
+                if not pattern:
+                    continue
+                try:
+                    pattern_match = re.fullmatch(
+                        str(pattern),
+                        text_lower.strip(),
+                        flags=re.IGNORECASE,
+                    )
+                except re.error as exc:
+                    logger.warning(
+                        "特定词规则正则无效 name=%s pattern=%r error=%s",
+                        rule.get("name", "未命名规则"),
+                        pattern,
+                        exc,
+                    )
+                    continue
+                if pattern_match and len(pattern_match.group(0)) > matched_len:
+                    matched_pattern_text = pattern_match.group(0)
+                    matched_len = len(matched_pattern_text)
+
+            if matched_pattern_text:
+                resolved_rule = dict(rule)
+                resolved_rule["_matched_keyword"] = matched_pattern_text
             if matched_len < 0:
                 followup = self._resolve_contextual_followup(
                     rule,
