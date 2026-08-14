@@ -167,6 +167,65 @@ def test_builtin_persona_wakeup_replies_without_conversion_entry():
     assert db.telemetry[0][3] == "助理唤醒"
 
 
+def test_group_silence_questions_use_reviewed_base_and_ai_tone_variation():
+    from modules.keyword_trigger import KeywordTrigger
+
+    class _PolishAi:
+        def __init__(self):
+            self.prompts = []
+
+        def ask(self, prompt, **_kwargs):
+            self.prompts.append(prompt)
+            return (
+                "这里是粉丝反馈和通知群，不是陪聊场。大家都有自己的事情，有问题直接反馈，"
+                "有通知自然会发；需要办理就按群里现有入口走。一直口嗨解决不了问题，也不会"
+                "凭空赚钱涨粉，务实一点不是更省时间吗？"
+            )
+
+    db = _QuestionDb()
+    recorder = _ReplyRecorder()
+    ai = _PolishAi()
+    trigger = KeywordTrigger(db, mory_bot=recorder, ai=ai, config={})
+
+    variants = (
+        "群里好安静", "群里怎么没人说话", "为什么群里都不说话",
+        "这个群怎么这么冷清", "群里没人聊天",
+    )
+    for text in variants:
+        rule = trigger._match_special_rule(text)
+        assert rule and rule["name"] == "群聊冷场说明", text
+
+    message = _message("群里好安静")
+    assert trigger.handle_message(message.text, message.chat.id, message, object())
+    assert ai.prompts
+    assert "90到160个汉字" in ai.prompts[0]
+    assert "粉丝反馈和通知群" in recorder.replies[0][0]
+    assert "@MorychannelBot" not in recorder.replies[0][0]
+
+
+def test_group_silence_followups_and_unrelated_phrases_do_not_cross_match():
+    from modules.keyword_trigger import KeywordTrigger
+
+    trigger = KeywordTrigger(_QuestionDb(), config={})
+    history = [
+        {"role": "user", "content": "群里好安静", "intent": "群聊定位"},
+        {"role": "assistant", "content": "这里主要承接反馈和通知。", "intent": "群聊定位"},
+    ]
+    for text in ("一直这样吗", "都不聊天吗", "为什么不活跃", "没人活跃吗"):
+        rule = trigger._match_special_rule(text, conversation_history=history)
+        assert rule and rule["name"] == "群聊冷场说明", text
+
+    unrelated = (
+        "今天办公室怎么没人说话",
+        "为什么客服不说话",
+        "群里没人回答我的退款问题",
+        "没人说话就发红包吧",
+        "群里好安静适合学习",
+    )
+    for text in unrelated:
+        assert trigger._match_special_rule(text) is None, text
+
+
 def test_vpn_and_ladder_questions_use_clickable_confirmed_referral_without_llm():
     from modules.keyword_trigger import KeywordTrigger
 
@@ -774,6 +833,40 @@ def test_daily_question_summary_excludes_commands_and_model_fallback():
     assert "/myid" not in summary
     assert "/me@afoolGroupBot" not in summary
     assert "真牛" not in summary
+
+
+def test_daily_question_summary_excludes_plain_smalltalk_but_keeps_real_requests():
+    from tasks.analytics.faq_distill_task import _build_daily_question_summary
+
+    questions = [
+        {
+            "question_text": "你在干嘛",
+            "ai_reply_summary": "在处理消息。",
+            "faq_hit_id": 0,
+        },
+        {
+            "question_text": "你忙吗？",
+            "ai_reply_summary": "在。",
+            "faq_hit_id": 0,
+        },
+        {
+            "question_text": "你在干嘛帮我查积分",
+            "ai_reply_summary": "还没查到。",
+            "faq_hit_id": 0,
+        },
+        {
+            "question_text": "积分怎么兑换会员",
+            "ai_reply_summary": "按积分商城操作。",
+            "faq_hit_id": 0,
+        },
+    ]
+
+    summary = _build_daily_question_summary(questions)
+    assert "共记录 4 条｜FAQ命中 0 条｜待优化 0 条" in summary
+    assert "你在干嘛\n" not in summary
+    assert "你忙吗" not in summary
+    assert "你在干嘛帮我查积分" in summary
+    assert "积分怎么兑换会员" in summary
 
 
 def test_daily_summary_job_sends_to_admin():

@@ -4,6 +4,8 @@ tasks/analytics/faq_distill_task.py - FAQ 蒸馏任务
 从最近 7 天的用户问题中提取高频问题，生成 FAQ 候选并通知管理员审核。
 """
 
+import re
+
 from typing import Any, Dict, List
 
 from core.logging_util import get_logger
@@ -25,6 +27,26 @@ _FALLBACK_REPLY_MARKERS = (
     "直接问 @Moryfansbot",
 )
 
+# FAQ 日报只服务“以后应沉淀成稳定业务答案”的问题。明确的小闲聊即使由 AI
+# 正常回答，也不是 FAQ 漏命中；整句匹配避免把“你在干嘛帮我查积分”等实际
+# 诉求一起隐藏。群聊定位/业务类问题由关键词早路由承接，不在这里扩大过滤。
+_CASUAL_CHAT_QUESTION_PATTERNS = (
+    re.compile(
+        r"(?:(?:你|mory|小助理)(?:现在)?(?:在)?)?"
+        r"(?:干嘛|干什么|做什么|忙什么|忙啥|忙吗|忙不忙)"
+        r"(?:呢|呀|啊|吗|嘛)?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:(?:你|mory|小助理))?"
+        r"(?:在吗|在不在|睡了吗|睡了没|吃了吗|吃了没)"
+        r"(?:呢|呀|啊|吗|嘛)?",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?:有点|好)?无聊(?:呢|呀|啊|吗|嘛)?", re.IGNORECASE),
+    re.compile(r"(?:陪我|来)(?:聊聊|聊天)(?:吧|呢|呀|啊)?", re.IGNORECASE),
+)
+
 
 def _is_command_text(text: str) -> bool:
     """以 / 开头的命令类消息不进话术待优化统计。"""
@@ -35,6 +57,13 @@ def _is_fallback_reply(summary: str) -> bool:
     """模型故障兜底文案，不是话术待优化项。"""
     lowered = str(summary or "").lower()
     return any(marker in lowered for marker in _FALLBACK_REPLY_MARKERS)
+
+
+def _is_casual_chat_question(text: str) -> bool:
+    """只过滤没有附带实际事项的完整闲聊句，不按宽泛子串猜测。"""
+    normalized = re.sub(r"\s+", "", str(text or "").strip())
+    normalized = re.sub(r"[，,。.!！?？~～]+$", "", normalized)
+    return any(pattern.fullmatch(normalized) for pattern in _CASUAL_CHAT_QUESTION_PATTERNS)
 
 
 def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
@@ -60,24 +89,27 @@ def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
                 break
         return samples
 
-    unresolved = [
+    reportable = [
         item
         for item in questions
+        if not _is_command_text(item.get("question_text", ""))
+        and not _is_fallback_reply(item.get("ai_reply_summary", ""))
+        and not _is_casual_chat_question(item.get("question_text", ""))
+    ]
+    unresolved = [
+        item
+        for item in reportable
         if (
             not str(item.get("ai_reply_summary", "") or "").strip()
             or str(item.get("ai_reply_summary", "")).startswith("[UNRESOLVED]")
         )
-        and not _is_command_text(item.get("question_text", ""))
-        and not _is_fallback_reply(item.get("ai_reply_summary", ""))
     ]
     faq_hits = sum(1 for item in questions if int(item.get("faq_hit_id", 0) or 0) > 0)
     faq_misses = [
         item
-        for item in questions
+        for item in reportable
         if int(item.get("faq_hit_id", 0) or 0) <= 0
         and item not in unresolved
-        and not _is_command_text(item.get("question_text", ""))
-        and not _is_fallback_reply(item.get("ai_reply_summary", ""))
     ]
 
     lines = [
