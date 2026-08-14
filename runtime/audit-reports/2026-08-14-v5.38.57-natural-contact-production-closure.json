@@ -1,0 +1,52 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production VPS /home/ubuntu/mory_assistant",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "c8af206ed2253775d3edc9b1af1b06b64971a570",
+  "deployment_performed": true,
+  "backup": {
+    "path": "/home/ubuntu/mory_assistant/backups/code_pre_v53857_1786721384.tar.gz",
+    "sha256": "b97b2004743c0f070a1b31a197626fb2f48bbff235902b0b9ae8e8acfe417a2b",
+    "verified": true,
+    "rollback_command": "cd /home/ubuntu/mory_assistant && sudo systemctl stop mory-assistant mory-dashboard && tar -xzf backups/code_pre_v53857_1786721384.tar.gz -C /home/ubuntu/mory_assistant && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "artifact_hash": "bfd1edd44c06f8b39fb9a1f681e78083fb5869ec20e6ff1fdc9c2a6cabbc354e",
+  "technical_checks": [
+    {
+      "name": "local_regression",
+      "passed": true,
+      "evidence": "24 targeted tests and 1144 full unit tests passed; compileall, document consistency and DB method gates passed"
+    },
+    {
+      "name": "remote_version_and_hash",
+      "passed": true,
+      "evidence": "Production version is v5.38.57 and modules/keyword_trigger.py SHA-256 matches local bfd1edd44c06f8b39fb9a1f681e78083fb5869ec20e6ff1fdc9c2a6cabbc354e"
+    },
+    {
+      "name": "systemd_and_health",
+      "passed": true,
+      "evidence": "mory-assistant PID 3661455 and mory-dashboard PID 3661456 active/running with NRestarts=0; health HTTP 200"
+    },
+    {
+      "name": "startup_window",
+      "passed": true,
+      "evidence": "Two tracebacks belonged to old dashboard worker 2286511 during TERM shutdown; new PIDs 3661455/3661456/3661477 have no ERROR, CRITICAL, Traceback or invalid-pattern event"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "telegram_private_natural_contact_question",
+      "passed": true,
+      "evidence": "Production Telegram delivered reply message 3511 to source 3507 with the approved social-unlock answer; FailIfCalled AI remained untouched and probe reply was deleted"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "Both services restarted at 2026-08-14 23:46 CST; a fresh production process then passed 6 natural contact variants and 3 appointment/friend counterexamples with LLM_CALLS=0"
+  },
+  "result": "verified"
+}
