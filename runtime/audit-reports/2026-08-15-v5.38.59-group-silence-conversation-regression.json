@@ -1,0 +1,81 @@
+{
+  "schema": "mory_conversation_regression_v1",
+  "cases": [
+    {
+      "id": "group-silence-positioning",
+      "surface": "production Telegram group response routing",
+      "input": "群里好安静",
+      "exact_failure_evidence": {
+        "date": "2026-08-15",
+        "text": "截图中的群聊冷场问法此前进入泛 AI 对话，没有以审核过的反馈群和通知群定位作为回答事实底稿。"
+      },
+      "normal_counterexample": {
+        "input": "今天办公室怎么没人说话",
+        "expected": "不命中群聊定位规则，继续正常问题处理。"
+      },
+      "must_include": [
+        "反馈",
+        "通知",
+        "不是"
+      ],
+      "must_not_include": [
+        "所有付费用户",
+        "@MorychannelBot",
+        "保证"
+      ],
+      "cta_state": "none",
+      "trace": [
+        "message_dispatcher P6.6 keyword trigger",
+        "KeywordTrigger._match_special_rule full phrase and contextual follow-up",
+        "KeywordTrigger._handle_special_rule reviewed base reply and constrained AI polish"
+      ],
+      "local_regression": {
+        "passed": true,
+        "receipt": "85 targeted and 1151 full unit tests passed"
+      },
+      "production_probe_required": true,
+      "production_business_probe": {
+        "passed": true,
+        "reply_state": "reply_polished",
+        "telegram_message_id": 3514,
+        "telegram_delivery": "delivered then deleted",
+        "fresh_process_primary_cases": "5/5",
+        "fresh_process_followup_cases": "4/4",
+        "fresh_process_negative_cases": "5/5"
+      }
+    },
+    {
+      "id": "daily-faq-smalltalk-filter",
+      "surface": "daily FAQ question summary",
+      "input": "你在干嘛",
+      "exact_failure_evidence": {
+        "date": "2026-08-15",
+        "text": "旧日报把已经由 AI 正常回答的普通闲聊列入“AI已答但FAQ未命中”，造成虚假 FAQ 补充项。"
+      },
+      "normal_counterexample": {
+        "input": "你在干嘛帮我查积分",
+        "expected": "保留为可报告问题，不能因包含闲聊短语而被过滤。"
+      },
+      "must_include": [],
+      "must_not_include": [
+        "AI已答但FAQ未命中"
+      ],
+      "cta_state": "none",
+      "trace": [
+        "question repository rolling 24-hour history",
+        "faq_distill_task._is_casual_chat_question normalized full match",
+        "faq_distill_task._build_daily_question_summary reportable set"
+      ],
+      "local_regression": {
+        "passed": true,
+        "receipt": "explicit casual chat is excluded while embedded business requests remain reportable"
+      },
+      "production_probe_required": true,
+      "production_business_probe": {
+        "passed": true,
+        "fresh_process_filter_cases": "5/5",
+        "real_history_result": "你在干嘛 was excluded from the generated summary"
+      }
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production VPS /home/ubuntu/mory_assistant and administrator Telegram chat",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "d24173638ee434e19d6769363cc980bda733c823",
+  "deployment_performed": true,
+  "backup": {
+    "path": "/home/ubuntu/mory_assistant/backups/code_pre_v53859_ZjdAzcwK.tar.gz",
+    "sha256": "91d4af0166198b066b656c81e2b200552e75348772a4bcd424926e32955ed559",
+    "verified": true,
+    "rollback_command": "cd /home/ubuntu/mory_assistant && sudo systemctl stop mory-assistant mory-dashboard && tar -xzf backups/code_pre_v53859_ZjdAzcwK.tar.gz -C /home/ubuntu/mory_assistant && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "artifact_hash": "175b2122e44522d97978ee80349e2c8ca5bd16596a0e66d53e3798c5cbdb9929",
+  "technical_checks": [
+    {
+      "name": "local_regression_and_gates",
+      "passed": true,
+      "evidence": "85 targeted and 1151 full unit tests passed; compileall, config sync, DB method, document consistency and records gates passed"
+    },
+    {
+      "name": "remote_version_and_hashes",
+      "passed": true,
+      "evidence": "Production v5.38.59; keyword_trigger.py 175b2122e44522d97978ee80349e2c8ca5bd16596a0e66d53e3798c5cbdb9929, faq_distill_task.py 69cfc2d3f1d9c83290bd02ca3202b4a43f4431ee12637c723f175c408d60b721 and version.py 8232153f24c9927fc596f29efdd76942d42219b6cad317651012871de00a07c0 match local"
+    },
+    {
+      "name": "systemd_health_and_startup_window",
+      "passed": true,
+      "evidence": "Bot PID 3864929 and Dashboard PID 3864931 active/running with NRestarts=0; health HTTP 200; final startup window after 2026-08-15 02:13:59 CST has no ERROR, CRITICAL, Traceback or invalid-pattern event"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "production_group_silence_matrix_and_real_ai",
+      "passed": true,
+      "evidence": "Fresh production process passed 5 primary phrases, 4 contextual follow-ups and 5 unrelated counterexamples; real AI returned reply_polished with required feedback, notification and non-companion positioning"
+    },
+    {
+      "name": "production_faq_smalltalk_filter",
+      "passed": true,
+      "evidence": "Fresh process passed 5/5 filter cases; actual rolling production history excluded 你在干嘛 while synthetic business-bearing variants remained reportable"
+    },
+    {
+      "name": "telegram_group_style_delivery",
+      "passed": true,
+      "evidence": "Production Telegram delivered generated reply message 3514 through the full handler transport with reply_state=reply_polished and reply_length=106; probe message then deleted"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "Both services restarted at 2026-08-15 02:13:58 CST; fresh production processes reloaded the deployed code and passed routing, AI polish, FAQ filtering and Telegram delivery probes"
+  },
+  "recovery_note": "Shutdown-time greenlet finalization tracebacks belonged to the replaced worker PID 3863032 at restart. The final startup window for PIDs 3864929 and 3864931 is clean.",
+  "result": "verified"
+}
