@@ -6,8 +6,8 @@ modules/linked_channel_sync.py  ·  关联频道联动模块（置顶取消 + �
   1. 频道发帖 → 机器人自动点赞（set_message_reaction，需频道管理员权限）
   2. 关联频道自动转发到群的消息 → 自动取消置顶（unpin_chat_message，
      因为 Telegram 群设置里"频道消息置顶"开关经常不生效）
-  3. 对频道新帖 → 在群内对应转发消息下回复一条随机评论：
-     彩虹屁（无入口）/ 带转化评论（引导定制 / 解锁完整版 / 联系双向机器人），
+  3. 对群内自有频道转发 → 直接回复一条内容相关彩虹屁：
+     按原帖文案选择定制私聊或自助订阅，并可配一张已审核营销图片卡；
      每帖至多一条、每按钮正文一致、不引导看预览（频道本身即预览群发）。
 
   触发点：
@@ -21,15 +21,19 @@ modules/linked_channel_sync.py  ·  关联频道联动模块（置顶取消 + �
   auto_like_enabled:    频道发帖自动点赞（默认 True）
   like_emoji:           点赞表情（默认 👍）
   auto_comment_enabled: 是否自动评论（默认 True）
-  comment_style:        mixed=彩虹屁与转化混合随机 / compliment=纯彩虹屁 / convert=纯转化
+  comment_style:        contextual=按原帖文案选单一入口 / mixed=旧混合随机 / compliment=纯彩虹屁 / convert=纯转化
+  comment_media_enabled: 是否用已审核营销图作为评论卡（默认 False）
   comment_timeout_seconds: 群转发等待窗口（秒，默认 15；超时未匹配可选直接回复频道）
   comment_fallback_direct: 超时后是否直接回复频道帖子（默认 False，防重复/扰民）
   max_comments_per_hour: 每小时评论上限（默认 10，防刷屏）
 """
 
+import re
+import secrets
 import threading
 import time
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from core.logging_util import get_logger
 
@@ -44,7 +48,8 @@ _DEFAULT_CONFIG = {
     "auto_like_enabled": True,
     "like_emoji": "👍",
     "auto_comment_enabled": True,
-    "comment_style": "mixed",
+    "comment_style": "contextual",
+    "comment_media_enabled": False,
     "comment_timeout_seconds": 15,
     "comment_fallback_direct": False,
     "max_comments_per_hour": 10,
@@ -82,6 +87,23 @@ _CONVERT_POOL = [
         TARGET_CONTACT,
     ),
 ]
+
+# 频道评论营销图只复用项目内已经人工审核的静态卡片，不调用图片模型。
+_COMMENT_MEDIA_ROOT = Path(__file__).resolve().parents[1] / "assets" / "preset_media"
+_COMMENT_MEDIA_POOL = tuple(f"photo_pool_{index:02d}.png" for index in range(1, 8))
+_ORIGINAL_TASTE_MEDIA = "original_taste_menu.png"
+
+_CONTACT_INTENT_RE = re.compile(
+    r"(?:定制|訂製|订制|专属|專屬|需求|想法|原味|同款|私聊|联系|聯繫|咨询|諮詢|聊聊)",
+    re.I | re.S,
+)
+_SUBSCRIBE_INTENT_RE = re.compile(
+    r"(?:完整版|完整内容|完整內容|解锁|解鎖|订阅|訂閱|开通|開通|下单|下單|"
+    r"购买|購買|付费|付費|价格|價格|套餐|档位|檔位|会员|會員|VIP|全享)",
+    re.I | re.S,
+)
+_VIDEO_COPY_RE = re.compile(r"(?:视频|視頻|片段|短片|镜头|鏡頭|预告|預告)", re.I)
+_PHOTO_COPY_RE = re.compile(r"(?:照片|图片|圖片|图集|圖集|写真|寫真|这组|這組)", re.I)
 
 # ── 待回复评论队列 ──
 # key=(channel_id, post_msg_id) → {ts, consumed}；评论成功即消费，防重复
@@ -223,16 +245,55 @@ def build_comment(cfg: dict) -> tuple:
 
     返回 (text, target) 或 (text, None)：target 为 contact/subscribe/preview/none。
     """
+    return build_contextual_comment(cfg, "")
+
+
+def resolve_comment_target(source_text: str) -> str:
+    """按频道帖子文案选择唯一转化目标；频道本身已是预览，不再回引预览。"""
+    text = str(source_text or "").strip()
+    if _CONTACT_INTENT_RE.search(text):
+        return TARGET_CONTACT
+    if _SUBSCRIBE_INTENT_RE.search(text):
+        return TARGET_SUBSCRIBE
+    # 普通预览帖默认承接到自助订阅；只有明确的沟通/定制语义才导向私聊。
+    return TARGET_SUBSCRIBE
+
+
+def _compliment_subject(source_text: str) -> str:
+    text = str(source_text or "")
+    if _VIDEO_COPY_RE.search(text):
+        return "这段"
+    if _PHOTO_COPY_RE.search(text):
+        return "这组"
+    return "这篇"
+
+
+def build_contextual_comment(cfg: dict, source_text: str) -> tuple:
+    """按配置与原帖文案生成彩虹屁，并保证正文与唯一按钮目标一致。"""
     import random
 
-    style = (cfg.get("comment_style") or "mixed").lower()
+    style = (cfg.get("comment_style") or "contextual").lower()
     # 纯转发 / 混合随机（默认混合）
     if style == "compliment":
         return random.choice(_COMPLIMENT_POOL), None
     if style == "convert":
         text, label, target = random.choice(_CONVERT_POOL)
         return text, target
-    # mixed：彩虹与大纯转化随机，彩虹概率压低（转化是主线，否则没有转化效果）
+    if style == "contextual":
+        target = resolve_comment_target(source_text)
+        subject = _compliment_subject(source_text)
+        if target == TARGET_CONTACT:
+            return (
+                f"{subject}真的太会了，氛围和细节都很抓人 ✨ "
+                "想做同款或有自己的想法，直接把需求发给 Mory 慢慢定制。",
+                target,
+            )
+        return (
+            f"{subject}质感太绝了，光预告就让人想继续看 ✨ "
+            "想解锁完整版，可以直接查看当前选项并自助订阅。",
+            target,
+        )
+    # mixed：保留旧兼容模式；生产可显式切 contextual，避免纯彩虹屁没有入口。
     if random.random() < 0.35:
         return random.choice(_COMPLIMENT_POOL), None
     text, label, target = random.choice(_CONVERT_POOL)
@@ -265,10 +326,100 @@ def build_comment_button(target: str, config: dict):
         return None
 
 
+def _extract_post_text(m) -> str:
+    """读取群内频道转发可见文案，文本帖和媒体 caption 都覆盖。"""
+    parts = []
+    for attr in ("text", "caption"):
+        value = str(getattr(m, attr, "") or "").strip()
+        if value and value not in parts:
+            parts.append(value)
+    return "\n".join(parts)
+
+
+def _extract_origin_post_id(m, channel_id: int) -> int:
+    """兼容 Telegram 新旧转发字段提取频道原帖 ID。"""
+    try:
+        origin = getattr(m, "forward_origin", None)
+        origin_chat = getattr(origin, "chat", None)
+        if origin_chat and int(getattr(origin_chat, "id", 0) or 0) == int(channel_id):
+            return int(getattr(origin, "message_id", 0) or 0)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(getattr(m, "forward_from_message_id", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _pick_comment_media(cfg: dict, source_text: str) -> Path | None:
+    """选择一张已审核营销图；开关关闭或素材缺失时返回 None。"""
+    if not bool(cfg.get("comment_media_enabled", False)):
+        return None
+    text = str(source_text or "")
+    if "原味" in text:
+        candidate = _COMMENT_MEDIA_ROOT / _ORIGINAL_TASTE_MEDIA
+        return candidate if candidate.is_file() and candidate.stat().st_size > 0 else None
+    candidates = [
+        _COMMENT_MEDIA_ROOT / name
+        for name in _COMMENT_MEDIA_POOL
+        if (_COMMENT_MEDIA_ROOT / name).is_file()
+        and (_COMMENT_MEDIA_ROOT / name).stat().st_size > 0
+    ]
+    return secrets.choice(candidates) if candidates else None
+
+
+def _send_comment_reply(
+    bot,
+    chat_id: int,
+    reply_to_message_id: int,
+    cfg: dict,
+    root_config: dict,
+    source_text: str,
+    db=None,
+):
+    """发送一条评论：优先营销图片卡，失败时降级为同文案文本卡。"""
+    text, target = build_contextual_comment(cfg, source_text)
+    markup = build_comment_button(target, root_config or cfg)
+    media_path = _pick_comment_media(cfg, source_text)
+    sent = None
+    if media_path is not None:
+        try:
+            from core.telebot_compat import send_photo_compat
+
+            sent = send_photo_compat(
+                bot,
+                chat_id,
+                str(media_path),
+                caption=text,
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=markup,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"营销图片评论发送失败，降级文本: chat={chat_id} "
+                f"reply_to={reply_to_message_id}: {exc}"
+            )
+    if sent is None:
+        sent = bot.send_message(
+            chat_id,
+            text,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=markup,
+        )
+    if sent is None:
+        raise RuntimeError("Telegram 未返回评论消息回执")
+    _track_sent_message(db, chat_id, sent)
+    return sent, target, media_path
+
+
 def _register_pending(cfg: dict, channel_id: int, post_msg_id: int, bot=None, root_config=None, db=None):
     """登记待评论帖子，并安排超时兜底线程。"""
     key = (channel_id, post_msg_id)
     with _pending_lock:
+        existing = _pending_comments.get(key)
+        if existing and existing.get("consumed"):
+            # 群自动转发可能先于 channel_post 到达；已直评的帖子不能被后到事件重新打开。
+            return False
         if len(_pending_comments) > _MAX_PENDING:
             try:
                 oldest = min(_pending_comments, key=lambda k: _pending_comments[k]["ts"])
@@ -286,6 +437,7 @@ def _register_pending(cfg: dict, channel_id: int, post_msg_id: int, bot=None, ro
         )
         timer.daemon = True
         timer.start()
+    return True
 
 
 def _track_sent_message(db, chat_id: int, sent) -> None:
@@ -317,11 +469,15 @@ def _timeout_fallback(bot, channel_id: int, post_msg_id: int, cfg: dict, root_co
                 if pending:
                     pending["consumed"] = False
             return
-        text, target = build_comment(cfg)
-        # 按钮样式读根配置，业务参数读模块 cfg
-        markup = build_comment_button(target, root_config or cfg)
-        sent = bot.send_message(channel_id, text, reply_to_message_id=post_msg_id, reply_markup=markup)
-        _track_sent_message(db, channel_id, sent)
+        sent, target, media_path = _send_comment_reply(
+            bot,
+            channel_id,
+            post_msg_id,
+            cfg,
+            root_config or {},
+            "",
+            db=db,
+        )
         logger.info(f"📝 频道直评（兜底）: channel={channel_id} msg={post_msg_id} style={cfg.get('comment_style')}")
     except Exception as e:
         logger.debug(f"频道直评兜底失败: channel={channel_id} msg={post_msg_id}: {e}")
@@ -399,7 +555,20 @@ def handle_group_forward(bot, m, config: dict, db=None) -> bool:
         if post_msg_id is not None:
             _try_consumed_post(
                 bot, chat_id, message_id, channel_id, post_msg_id, cfg,
-                root_config=config, db=db,
+                root_config=config, db=db, source_text=_extract_post_text(m),
+            )
+        else:
+            # 生产实测 Telegram 可能只先送达群自动转发、频道事件缺席或后到。
+            # 评论直接以可信自有频道转发为真相源，取消对 channel_post pending 的硬依赖。
+            _try_direct_forward_comment(
+                bot,
+                m,
+                chat_id,
+                message_id,
+                channel_id,
+                cfg,
+                root_config=config,
+                db=db,
             )
 
     return True
@@ -441,7 +610,17 @@ def _match_pending_post(m, channel_id: int, cfg: dict) -> int | None:
             return None
         return best
 
-def _try_consumed_post(bot, chat_id, message_id, channel_id, post_msg_id, cfg, root_config=None, db=None):
+def _try_consumed_post(
+    bot,
+    chat_id,
+    message_id,
+    channel_id,
+    post_msg_id,
+    cfg,
+    root_config=None,
+    db=None,
+    source_text="",
+):
     """消费并发送评论（防重复）。"""
     with _pending_lock:
         pending = _pending_comments.get((channel_id, post_msg_id))
@@ -457,17 +636,20 @@ def _try_consumed_post(bot, chat_id, message_id, channel_id, post_msg_id, cfg, r
         logger.info(f"⏳ 评论限流，跳过发送: chat={chat_id} post={post_msg_id}")
         return
 
-    text, target = build_comment(cfg)
-    markup = build_comment_button(target, root_config or cfg)
     try:
-        sent = bot.send_message(
+        sent, target, media_path = _send_comment_reply(
+            bot,
             chat_id,
-            text,
-            reply_to_message_id=message_id,
-            reply_markup=markup,
+            message_id,
+            cfg,
+            root_config or {},
+            source_text,
+            db=db,
         )
-        _track_sent_message(db, chat_id, sent)
-        logger.info(f"💬 关联频道评论已发: chat={chat_id} channel={channel_id} post={post_msg_id} target={target}")
+        logger.info(
+            f"💬 关联频道评论已发: chat={chat_id} channel={channel_id} "
+            f"post={post_msg_id} target={target} media={bool(media_path)} source=pending"
+        )
     except Exception as e:
         logger.warning(f"评论发送失败: chat={chat_id} post={post_msg_id}: {e}")
         _refund_rate()
@@ -476,3 +658,49 @@ def _try_consumed_post(bot, chat_id, message_id, channel_id, post_msg_id, cfg, r
             pending = _pending_comments.get((channel_id, post_msg_id))
             if pending:
                 pending["consumed"] = False
+
+
+def _try_direct_forward_comment(
+    bot,
+    m,
+    chat_id,
+    message_id,
+    channel_id,
+    cfg,
+    root_config=None,
+    db=None,
+):
+    """无频道 pending 时直接回复群自动转发，修复只取消置顶、不出评论。"""
+    if not _check_rate(cfg, channel_id):
+        logger.info(f"⏳ 评论限流，跳过直评: chat={chat_id} message={message_id}")
+        return False
+    source_text = _extract_post_text(m)
+    post_msg_id = _extract_origin_post_id(m, channel_id)
+    try:
+        sent, target, media_path = _send_comment_reply(
+            bot,
+            chat_id,
+            message_id,
+            cfg,
+            root_config or {},
+            source_text,
+            db=db,
+        )
+        if post_msg_id:
+            with _pending_lock:
+                _pending_comments[(channel_id, post_msg_id)] = {
+                    "ts": time.time(),
+                    "consumed": True,
+                }
+        logger.info(
+            f"💬 关联频道评论已发: chat={chat_id} channel={channel_id} "
+            f"post={post_msg_id or 0} target={target} media={bool(media_path)} source=group_forward"
+        )
+        return bool(sent)
+    except Exception as e:
+        logger.warning(
+            f"评论直发失败: chat={chat_id} channel={channel_id} "
+            f"message={message_id}: {e}"
+        )
+        _refund_rate()
+        return False

@@ -1,0 +1,38 @@
+{
+  "schema": "mory_conversation_regression_v1",
+  "cases": [
+    {
+      "id": "linked-channel-forward-without-channel-event",
+      "surface": "linked-discussion-group",
+      "input": "新视频预告，想看完整版可以直接解锁",
+      "exact_failure_evidence": {
+        "date": "2026-08-14",
+        "text": "群自动转发只取消置顶，没有彩虹屁、按钮或营销图片评论。"
+      },
+      "normal_counterexample": {
+        "input": "普通外部频道转发",
+        "expected": "不进入自有频道评论链，继续原有安全治理。"
+      },
+      "must_include": [
+        "这段质感太绝了",
+        "自助订阅",
+        "MorychannelBot"
+      ],
+      "must_not_include": [
+        "moryselect",
+        "联系 Mory",
+        "第二个按钮"
+      ],
+      "cta_state": "subscribe",
+      "trace": [
+        "trusted group forward gate",
+        "contextual comment and image card renderer"
+      ],
+      "local_regression": {
+        "passed": true,
+        "evidence": "目标测试覆盖无 channel_post、图片卡、单订阅按钮和后到事件幂等。"
+      },
+      "production_probe_required": false
+    }
+  ]
+}

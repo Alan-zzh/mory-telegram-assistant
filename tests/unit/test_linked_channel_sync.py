@@ -30,12 +30,22 @@ def _channel_config(**overrides):
     }
 
 
-def _group_msg(origin_msg_id=7, msg_id=50, sender_channel=100, chat_id=-123):
+def _group_msg(
+    origin_msg_id=7,
+    msg_id=50,
+    sender_channel=100,
+    chat_id=-123,
+    text="",
+    caption="",
+):
     m = SimpleNamespace(
         chat=SimpleNamespace(id=chat_id, type="group"),
         message_id=msg_id,
         sender_chat=SimpleNamespace(id=sender_channel, type="channel") if sender_channel else None,
         forward_origin=None,
+        forward_from_message_id=origin_msg_id or 0,
+        text=text,
+        caption=caption,
     )
     if origin_msg_id and sender_channel:
         m.forward_origin = SimpleNamespace(
@@ -48,11 +58,16 @@ def _group_msg(origin_msg_id=7, msg_id=50, sender_channel=100, chat_id=-123):
 class _Bot:
     def __init__(self):
         self.sent = []
+        self.sent_photos = []
         self.unpinned = []
 
     def send_message(self, chat_id, text, **kwargs):
         self.sent.append((chat_id, text, kwargs))
         return SimpleNamespace(message_id=99)
+
+    def send_photo(self, chat_id, photo, **kwargs):
+        self.sent_photos.append((chat_id, photo, kwargs))
+        return SimpleNamespace(message_id=100)
 
     def unpin_chat_message(self, chat_id, **kwargs):
         self.unpinned.append((chat_id, kwargs))
@@ -169,7 +184,7 @@ def test_group_forward_skips_duplicate_message():
     cfg = _channel_config(comment_style="compliment")
     assert mod.handle_group_forward(bot, m, cfg) is True
     assert mod.handle_group_forward(bot, m, cfg) is True  # 去重后仍返回 True
-    assert len(bot.sent) == 0
+    assert len(bot.sent) == 1
     assert len(bot.unpinned) == 1
 
 
@@ -221,3 +236,71 @@ def test_convert_comment_has_button():
     btn = markup.keyboard[0][0]
     assert btn.url  # 转化评论必须带可点击入口
     assert btn.text
+
+
+def test_group_forward_without_channel_event_still_comments_and_marks_origin_consumed():
+    """生产事件顺序：只有群自动转发也必须评论，后到频道事件不得再次打开。"""
+    _reset_state()
+    bot = _Bot()
+    m = _group_msg(origin_msg_id=81, caption="新视频预告，想看完整版可以直接解锁")
+    cfg = _channel_config(comment_style="contextual", auto_like_enabled=False)
+
+    assert mod.handle_group_forward(bot, m, cfg) is True
+    assert len(bot.sent) == 1
+    _, text, kwargs = bot.sent[0]
+    assert "这段质感太绝了" in text
+    assert kwargs["reply_to_message_id"] == m.message_id
+    assert kwargs["reply_markup"].keyboard[0][0].url.endswith("MorychannelBot")
+    assert mod._pending_comments[(100, 81)]["consumed"] is True
+
+    channel_post = SimpleNamespace(chat=SimpleNamespace(id=100), message_id=81)
+    assert mod.handle_channel_post(bot, channel_post, cfg) is True
+    assert mod._pending_comments[(100, 81)]["consumed"] is True
+
+
+def test_contextual_comment_routes_custom_copy_to_contact_only():
+    cfg = mod._load_config(_channel_config(comment_style="contextual"))
+    text, target = mod.build_contextual_comment(cfg, "喜欢这套可以把自己的想法发来定制同款")
+
+    assert target == mod.TARGET_CONTACT
+    assert "需求发给 Mory" in text
+    markup = mod.build_comment_button(target, _channel_config())
+    assert len(markup.keyboard) == 1
+    assert len(markup.keyboard[0]) == 1
+    assert markup.keyboard[0][0].url.endswith("Moryfansbot")
+
+
+def test_contextual_comment_sends_reviewed_marketing_image_card():
+    _reset_state()
+    bot = _Bot()
+    m = _group_msg(
+        origin_msg_id=82,
+        caption="这组写真完整版已更新，想继续看可以自助订阅",
+    )
+    cfg = _channel_config(
+        comment_style="contextual",
+        comment_media_enabled=True,
+        auto_like_enabled=False,
+    )
+
+    assert mod.handle_group_forward(bot, m, cfg) is True
+    assert bot.sent == []
+    assert len(bot.sent_photos) == 1
+    chat_id, photo, kwargs = bot.sent_photos[0]
+    assert chat_id == -123
+    assert "photo_pool_" in photo.file_name
+    assert kwargs["reply_to_message_id"] == 50
+    assert "这组质感太绝了" in kwargs["caption"]
+    assert kwargs["reply_markup"].keyboard[0][0].url.endswith("MorychannelBot")
+
+
+def test_original_taste_copy_uses_menu_card_and_contact_target():
+    _reset_state()
+    bot = _Bot()
+    m = _group_msg(origin_msg_id=83, caption="原味定制可以私聊说具体需求")
+    cfg = _channel_config(comment_style="contextual", comment_media_enabled=True)
+
+    assert mod.handle_group_forward(bot, m, cfg) is True
+    _, photo, kwargs = bot.sent_photos[0]
+    assert photo.file_name == "original_taste_menu.png"
+    assert kwargs["reply_markup"].keyboard[0][0].url.endswith("Moryfansbot")

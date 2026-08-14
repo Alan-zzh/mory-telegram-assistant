@@ -855,7 +855,8 @@
     "auto_like_enabled": true,
     "like_emoji": "👍",
     "auto_comment_enabled": true,
-    "comment_style": "mixed",
+    "comment_style": "contextual",
+    "comment_media_enabled": false,
     "comment_timeout_seconds": 15,
     "comment_fallback_direct": false,
     "max_comments_per_hour": 10
