@@ -306,7 +306,10 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict, db_instance=None):
-    """保存配置到文件，并同步动态状态到数据库。
+    """保存配置到文件，并同步非模型动态状态到数据库。
+
+    模型优先级只以当前 config.json 为真相源。失败切换属于进程内临时状态，
+    不写数据库，避免重启后让旧索引覆盖用户刚确认的模型顺序。
     返回bool表示成功/失败
     """
     logger = _get_logger()
@@ -327,7 +330,7 @@ def save_config(cfg: dict, db_instance=None):
 
     # 同步动态状态到数据库
     if db_instance is not None:
-        dynamic_keys = ["CURRENT_MODEL_INDEX", "IMAGE_POOL", "VOICE_POOL", "_LAST_LEAK_WEEK"]
+        dynamic_keys = ["IMAGE_POOL", "VOICE_POOL", "_LAST_LEAK_WEEK"]
         for key in dynamic_keys:
             if key in cfg:
                 value = cfg[key]
@@ -343,39 +346,41 @@ def _get_minimal_default_config() -> dict:
     return {
         "TOKEN": "", "API_KEY": "", "ADMIN_ID": 0, "GROUP_ID": 0,
         "BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-        # 兜底配置不设过期，确保 config.json 损坏时始终可用
-        "MODEL_POOLS": {"llm": [
-            {"name": "qwen3.7-max-2026-05-17", "enable_thinking": True},
-            {"name": "qwen3.7-max-preview", "enable_thinking": True},
-            {"name": "qwen3.7-plus-2026-05-26", "enable_thinking": False},
-            {"name": "qwen3.7-max-2026-06-08", "enable_thinking": False},
-            {"name": "kimi-k2.7-code", "enable_thinking": False},
-        ]},
+        # 内置兜底与当前唯一模型真相保持一致；到期后宁可失败关闭也不复活旧型号。
+        "MODEL_POOLS": {
+            "llm": [
+                {"name": "qwen3.7-max-preview", "expire": "2026-08-24", "enable_thinking": True},
+                {"name": "qwen3.7-plus-2026-05-26", "expire": "2026-09-01", "enable_thinking": False},
+                {"name": "qwen3.7-max-2026-06-08", "expire": "2026-09-08", "enable_thinking": False},
+                {"name": "qwen3.7-flash-2026-07-15", "expire": "2026-10-23", "enable_thinking": False},
+                {"name": "qwen3.7-flash", "expire": "2026-10-23", "enable_thinking": False},
+                {"name": "deepseek-v4-flash-0731", "expire": "2026-10-31", "enable_thinking": False},
+                {"name": "qwen3.8-max", "expire": "2026-11-01", "enable_thinking": False},
+                {"name": "qwen3.8-2.4t-a95b", "expire": "2026-11-12", "enable_thinking": True},
+                {"name": "deepseek-v4-pro-0813", "expire": "2026-11-13", "enable_thinking": False},
+            ],
+            "vision": [
+                {"name": "qwen3.5-ocr", "expire": "2026-09-14"},
+            ],
+        },
         "REPLY_CHANCE": 10, "_CONFIG_VERSION": "5.0.0",
         "SYSTEM_PROMPT": "你是Mory，一个活泼可爱的小助理。",
     }
 
 
 def _load_dynamic_states(cfg: dict, db_instance=None):
-    """从数据库加载动态状态到配置"""
+    """从数据库加载非模型动态状态到配置。"""
     logger = _get_logger()
     if db_instance is None:
         return
 
     # 从数据库读取动态状态
-    dynamic_keys = [
-        "CURRENT_MODEL_INDEX",
-        "IMAGE_POOL",
-        "VOICE_POOL",
-        "_LAST_LEAK_WEEK"
-    ]
+    dynamic_keys = ["IMAGE_POOL", "VOICE_POOL", "_LAST_LEAK_WEEK"]
 
     for key in dynamic_keys:
         db_value = db_instance.get_system_state(key)
         if db_value is not None:
-            if key in ("CURRENT_MODEL_INDEX",):
-                cfg[key] = int(db_value) if db_value else 0
-            elif key in ("IMAGE_POOL", "VOICE_POOL"):
+            if key in ("IMAGE_POOL", "VOICE_POOL"):
                 try:
                     cfg[key] = json.loads(db_value)
                 except Exception as e:

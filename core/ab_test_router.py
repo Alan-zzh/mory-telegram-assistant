@@ -5,8 +5,8 @@
 ║                                                                        ║
 ║  功能：                                                                ║
 ║    1. 按 uid % 10 分流：                                               ║
-║       - Group A (uid%10==0): 全量走 glm-5.2（对照组）                 ║
-║       - Group B (uid%10==1): 全量走 qwen3.7-max-preview（实验组）     ║
+║       - Group A (uid%10==0): 走配置中的对照模型                       ║
+║       - Group B (uid%10==1): 走配置中的实验模型                       ║
 ║       - Group Base (uid%10 in 2-9): 走默认路由（基线组）               ║
 ║    2. record_ab_metric() 记录 latency/cost/converted                   ║
 ║    3. 内存累计指标，定时刷盘到 ab_test_metrics 表                      ║
@@ -26,8 +26,8 @@ from core.logging_util import get_logger
 logger = get_logger("ab_test_router")
 
 # ── 分组常量 ──────────────────────────────────────────────
-GROUP_A = "A"        # 对照组：全量走 glm-5.2
-GROUP_B = "B"        # 实验组：全量走 qwen3.7-max-preview
+GROUP_A = "A"        # 对照组：模型仅来自当前配置
+GROUP_B = "B"        # 实验组：模型仅来自当前配置
 GROUP_BASE = "Base"  # 基线组：走默认路由
 
 
@@ -49,8 +49,8 @@ def get_ab_group(uid: int) -> str:
     """按 uid % 10 分流到 A/B/Base 三组
 
     分流策略：
-        - uid%10 == 0 → Group A（对照组，全量走 glm-5.2）
-        - uid%10 == 1 → Group B（实验组，全量走 qwen3.7-max-preview）
+        - uid%10 == 0 → Group A（对照组，读取当前配置）
+        - uid%10 == 1 → Group B（实验组，读取当前配置）
         - uid%10 in 2-9 → Group Base（基线组，走默认路由）
 
     Args:
@@ -85,9 +85,9 @@ def get_model_for_group(group: str, config: dict) -> Optional[str]:
         模型名；Base 组返回 None（走默认路由，不覆盖）
     """
     if group == GROUP_A:
-        return config.get("AB_TEST_GROUP_A_MODEL", "glm-5.2")
+        return config.get("AB_TEST_GROUP_A_MODEL") or None
     elif group == GROUP_B:
-        return config.get("AB_TEST_GROUP_B_MODEL", "qwen3.7-max-preview")
+        return config.get("AB_TEST_GROUP_B_MODEL") or None
     return None  # Base 组走默认路由
 
 
@@ -525,4 +525,3 @@ def get_significance_report(days: int = 7, alpha: float = 0.05) -> Dict[str, Any
             "significance": None,
             "generated_at": int(time.time())
         }
-

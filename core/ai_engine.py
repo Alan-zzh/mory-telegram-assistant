@@ -274,14 +274,14 @@ class AIEngine:
     - LLM池：用于聊天对话，这是Mory最核心的池
     - 其他池（vision/omni/voice_tts/voice_asr/embedding）：预留扩展
     - 每个池内按到期时间排序，优先消耗快到期的
-    - 失败自动拉黑+切换，全程无感
+    - 临时失败自动切换并在恢复后回到到期最早模型
 
     兼容性：
     - 如果配置里还是旧的 MODEL_POOL（单列表），自动迁移到新结构
     - 向后兼容，不会因为配置格式变化而报错
 
     全自动管理：
-    - 没钱的模型自动拉黑（加入BLACKLISTED_MODELS），不再尝试
+    - 仅明确额度耗尽的模型自动拉黑（加入BLACKLISTED_MODELS），不再尝试
     - 黑名单模型自动跳过，直到你手动恢复
     - 恢复指令：「模型恢复 模型名」（管理员指令）
     """
@@ -720,11 +720,13 @@ class AIEngine:
         self.api_key = config.get("API_KEY", "")
         _register_api_key_for_redaction(self.api_key)
 
-        # 黑名单：没钱/不可用的模型，不再尝试（全局共享）
+        # 永久黑名单：仅保存供应商明确确认额度耗尽的模型（全局共享）
         self.blacklisted = set(config.get("BLACKLISTED_MODELS", []))
         self._lock = threading.Lock()  # 保护config/blacklist的并发写入
         # 黑名单脏标记：拉黑/恢复时置 True，由 save_config_task 检测并落盘
         self._blacklist_dirty = False
+        # 自动故障转移不持久化索引；临时故障恢复后重新尝试到期最早模型。
+        self._recovery_pending = False
 
         # ── 兼容新旧配置结构 ──
         # 新结构：MODEL_POOLS = {llm:[...], vision:[...], ...}
@@ -736,32 +738,18 @@ class AIEngine:
             # 主聊天池：Omni池 + LLM池合并。全模态模型也能处理文本时，优先消耗有时效的全模态额度。
             llm_pool = pools.get("llm", [])
             omni_pool = pools.get("omni", [])
-            # 获取cost_level优先级映射
-            cost_priority = {"high": 0, "medium": 1, "low": 2}
-            model_costs = config.get("MODEL_COSTS", {})
-
-            def get_sort_key(model):
-                # 第一优先级：expire日期(早的在前)
-                expire_date = model.get("expire", "2099-12-31")
-                # 第二优先级：性能级别(high > medium > low)
-                model_name = model.get("name", "")
-                cost_level = "medium"  # 默认
-                # 从MODEL_COSTS中查找cost_level
-                for pool_name in ["llm", "omni"]:
-                    if pool_name in model_costs and model_name in model_costs[pool_name]:
-                        cost_level = model_costs[pool_name][model_name].get("cost_level", "medium")
-                        break
-                return (expire_date, cost_priority.get(cost_level, 1))
-
-            omni_sorted = sorted(omni_pool, key=get_sort_key)
-            llm_sorted = sorted(llm_pool, key=get_sort_key)
-            combined_pool = self._filter_runtime_pool(omni_sorted + llm_sorted, "chat")
+            # 唯一优先级是到期日；同日保持配置/截图原顺序，不再让成本标签改写顺序。
+            combined_sorted = sorted(
+                list(omni_pool) + list(llm_pool),
+                key=self._model_expiry_sort_key,
+            )
+            combined_pool = self._filter_runtime_pool(combined_sorted, "chat")
             self.model_pool = combined_pool
         else:
             # 旧的单池结构 → 自动迁移
             old_pool = config.get(
                 "MODEL_POOL",
-                [{"name": "qwen3.7-plus-2026-05-26", "enable_thinking": False}],
+                [{"name": "qwen3.7-max-preview", "enable_thinking": True}],
             )
             self.model_pool = self._filter_runtime_pool(old_pool, "llm")
             self.model_pools = {"llm": old_pool}
@@ -795,7 +783,10 @@ class AIEngine:
                     merged_tier_pool.append(m)
                 tier_pool = merged_tier_pool
             if tier_pool:
-                filtered_tier_pool = self._filter_runtime_pool(tier_pool, tier_name)
+                filtered_tier_pool = self._filter_runtime_pool(
+                    sorted(tier_pool, key=self._model_expiry_sort_key),
+                    tier_name,
+                )
                 if filtered_tier_pool:
                     self._tier_pools[tier_name] = filtered_tier_pool
 
@@ -843,6 +834,11 @@ class AIEngine:
         if self.model_pool and self.current_idx < len(self.model_pool):
             return self.model_pool[self.current_idx]["name"]
         return "unknown"
+
+    @staticmethod
+    def _model_expiry_sort_key(model: dict) -> str:
+        """按到期日稳定排序；同日顺序由配置真相源决定。"""
+        return str((model or {}).get("expire") or "2099-12-31")
 
     def get_pool_model(self, pool_name: str) -> str:
         """获取指定池的当前模型名"""
@@ -905,9 +901,7 @@ class AIEngine:
                 logger.info(f"⏭️ [{pool_name}] 模型 {model_name} 已在黑名单，跳过")
                 continue
             if self._is_model_expired(model):
-                # 同一过期模型在多池重复出现时只拉黑一次，避免启动日志重复刷屏
-                if not self._is_blacklisted(model_name):
-                    self._blacklist_model(model_name, f"已过期 {model.get('expire', '')}")
+                # 到期是计划生命周期，不是额度故障；只从运行池剔除，不污染永久黑名单。
                 continue
             filtered.append(model)
         if pool and not filtered:
@@ -915,7 +909,7 @@ class AIEngine:
         return filtered
 
     def _blacklist_model(self, model_name: str, reason: str):
-        """拉黑模型（没钱/不可用），保存到config（线程安全）"""
+        """永久拉黑明确额度耗尽的模型，保存到config（线程安全）。"""
         with self._lock:
             self.blacklisted.add(model_name)
             if "BLACKLISTED_MODELS" not in self.config:
@@ -964,6 +958,93 @@ class AIEngine:
         except Exception as e:
             logger.debug(f"操作异常: {e}")
         return False
+
+    @staticmethod
+    def _response_error_text(resp) -> str:
+        """提取供应商错误分类文本；只用于分类，不把响应正文写入用户输出。"""
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = {}
+
+        parts = []
+
+        def collect(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if str(key).lower() in {"code", "message", "type", "error", "detail"}:
+                        collect(item)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    collect(item)
+            elif value is not None:
+                parts.append(str(value))
+
+        collect(payload)
+        return " ".join(parts).lower()
+
+    @classmethod
+    def _is_quota_exhausted_response(cls, resp) -> bool:
+        """仅在供应商明确表示额度/余额耗尽时返回 True。"""
+        if getattr(resp, "status_code", None) not in {402, 403, 429}:
+            return False
+        error_text = cls._response_error_text(resp)
+        quota_markers = (
+            "free quota exhausted",
+            "quota exhausted",
+            "quota has been exhausted",
+            "insufficient quota",
+            "insufficient_quota",
+            "allocationquota",
+            "upper limit for today's usage",
+            "balance is insufficient",
+            "insufficient balance",
+            "arrearage",
+            "额度耗尽",
+            "额度用尽",
+            "配额耗尽",
+            "余额不足",
+            "额度不足",
+        )
+        return any(marker in error_text for marker in quota_markers)
+
+    def _prefer_earliest_recovered_model(self):
+        """临时故障后优先回到未到期、未拉黑且熔断已恢复的最早到期模型。"""
+        if not self._recovery_pending or not self.model_pool:
+            return
+
+        preferred_idx = None
+        available_idx = None
+        optimizer = None
+        try:
+            optimizer = _get_optimizer()
+        except Exception as e:
+            logger.debug(f"恢复优先模型时读取熔断器失败（非致命）：{e}")
+
+        for idx, model in enumerate(self.model_pool):
+            model_name = model.get("name")
+            if not model_name or self._is_blacklisted(model_name) or self._is_model_expired(model):
+                continue
+            if preferred_idx is None:
+                preferred_idx = idx
+            circuit_available = True
+            if optimizer and optimizer.enabled:
+                try:
+                    circuit_available = optimizer.circuit.is_available(model_name)
+                except Exception as e:
+                    logger.debug(f"恢复优先模型时熔断检查跳过（非致命）：{e}")
+            if circuit_available:
+                available_idx = idx
+                break
+
+        if available_idx is None:
+            return
+        if available_idx != self.current_idx:
+            self.current_idx = available_idx
+            self._pool_indices["chat"] = available_idx
+            logger.warning(f"↩️ 临时故障恢复探测 → {self.current_model}")
+        # 最早优先模型仍在熔断时保持待恢复，冷却结束后的新请求会再次检查。
+        self._recovery_pending = available_idx != preferred_idx
 
     def _retry_tiers_for(self, tier: str) -> list[str]:
         """当前层级失败时的重试层级链：先原层，再降级/升级找可用模型。"""
@@ -1078,7 +1159,6 @@ class AIEngine:
             if self._is_blacklisted(model_name):
                 self._next_tier_model(tier)
             elif self._is_model_expired(pool[idx]):
-                self._blacklist_model(model_name, f"已过期 {pool[idx].get('expire', '')}")
                 self._next_tier_model(tier)
 
     def _record_response_time(self, model_name: str, elapsed: float):
@@ -1147,11 +1227,6 @@ class AIEngine:
                     return options
         return {}
 
-    @staticmethod
-    def _mode_prefers_non_thinking(mode: str) -> bool:
-        """实时聊天、播报和业务咨询优先走已验证的非思考模型，避免 30 秒假死。"""
-        return mode not in {"tarot", "dream"}
-
     @classmethod
     def _is_model_suitable_for_mode(cls, model_name: str, mode: str) -> bool:
         """用户可见自然对话统一跳过 code/coder 专用模型。"""
@@ -1176,8 +1251,6 @@ class AIEngine:
                 logger.warning(f"⚠️ [{pool_name}] 当前模型{model_name}已拉黑，自动切换")
                 self._next_available_model(pool_name)
             elif self._is_model_expired(pool[idx]):
-                # 过期模型视同拉黑
-                self._blacklist_model(model_name, f"已过期 {pool[idx].get('expire', '')}")
                 self._next_available_model(pool_name)
 
     def _next_available_model(self, pool_name: str = "chat"):
@@ -1204,10 +1277,9 @@ class AIEngine:
                     continue
                 # 找到可用模型
                 self._pool_indices[pool_name] = idx
-                # 聊天池同步更新旧字段，保证日志、熔断和配置指针一致
+                # 自动故障转移只更新内存索引；不能把临时回退写成重启后的永久顺序。
                 if pool_name == "chat":
                     self.current_idx = idx
-                    self.config["CURRENT_MODEL_INDEX"] = idx
                 logger.warning(f"🔄 [{pool_name}] 模型切换 → {candidate}")
                 return
 
@@ -2392,7 +2464,8 @@ class AIEngine:
             max_attempts = min(max_attempt_cap, max(1, retry * min(candidate_count, max_attempt_cap)))
             max_iterations = max_attempts + candidate_count + 4
 
-        # 确保当前模型可用
+        # 临时故障恢复后先回到到期最早模型，再做黑名单/到期检查。
+        self._prefer_earliest_recovered_model()
         self._ensure_valid_model()
 
         def _advance_tier_if_exhausted(failed_tier: str, failed_model: str):
@@ -2504,24 +2577,6 @@ class AIEngine:
                 time.sleep(2)
                 continue
 
-            active_options = self._get_model_request_options(active_model)
-            if (
-                self._mode_prefers_non_thinking(mode)
-                and active_options.get("enable_thinking") is True
-            ):
-                logger.info(
-                    f"⏩ 模型{active_model}仅支持思考模式，不符合实时场景时延要求，本轮跳过"
-                )
-                local_skip_streak += 1
-                if use_tier_routing:
-                    self._next_tier_model(tier)
-                else:
-                    self._next_available_model()
-                if local_skip_streak >= max_local_skips:
-                    logger.warning("⚠️ 没有符合实时场景时延要求的模型，返回业务兜底")
-                    break
-                continue
-
             # ── [阶段3-A] 多模型协同路由（可选开关，向后兼容）──
             # 开启时按 task_type 路由到不同 API URL + API Key + 模型名
             # 未开启时保持原有逻辑（用 self.base_url / self.api_key / active_model）
@@ -2548,8 +2603,7 @@ class AIEngine:
 
             # ── [阶段2-C] 多模型路由 A/B 测试分流（可选开关，向后兼容）──
             # 开启时用 get_ab_group(uid) 覆盖 route_model 的结果
-            # Group A → 全量走 qwen-max（对照组）
-            # Group B → 全量走 deepseek-chat（实验组）
+            # Group A / B 仅使用当前配置显式指定的模型；空值不覆盖主池。
             # Group Base → 走默认路由（基线组，不覆盖）
             _ab_uid = user_profile.get("uid", 0) if isinstance(user_profile, dict) else 0
             _ab_group = ""
@@ -2578,7 +2632,7 @@ class AIEngine:
                     return self._final_fallback_reply(mode=mode, is_priv=is_priv)
                 if _final_tier != _cost_tier:
                     # 降级：切换到 light 模型（复用百炼 API，仅切模型名）
-                    _light_model = self.config.get("MODEL_POOL_LIGHT", "qwen-flash")
+                    _light_model = self.config.get("MODEL_POOL_LIGHT") or active_model
                     if _light_model:
                         req_model = _light_model
                         _cost_tier = "llm_light"
@@ -2758,17 +2812,17 @@ class AIEngine:
                             opt.circuit.record_failure(active_model)
                     except Exception as e:
                         logger.debug(f"操作异常: {e}")
+                    self._recovery_pending = True
                     if use_tier_routing:
                         self._next_tier_model(tier)
                         _advance_tier_if_exhausted(tier, active_model)
                     else:
                         self._next_available_model()
-                elif resp.status_code in (429, 402, 403):
+                elif self._is_quota_exhausted_response(resp):
                     model_name = active_model
-                    logger.warning(f"⚠️ 模型{model_name}额度/权限异常({resp.status_code})，自动拉黑")
-                    if resp.status_code in (402, 403):
-                        quota_permission_failures.append(f"{model_name}:HTTP{resp.status_code}")
-                    self._blacklist_model(model_name, f"HTTP {resp.status_code}")
+                    logger.warning(f"⚠️ 模型{model_name}明确额度耗尽({resp.status_code})，永久拉黑")
+                    quota_permission_failures.append(f"{model_name}:HTTP{resp.status_code}")
+                    self._blacklist_model(model_name, f"额度耗尽 HTTP {resp.status_code}")
                     try:
                         opt = _get_optimizer()
                         if opt:
@@ -2791,7 +2845,13 @@ class AIEngine:
                             opt.circuit.record_failure(active_model)
                     except Exception as e:
                         logger.debug(f"操作异常: {e}")
-                    logger.warning(f"⚠️ HTTP {resp.status_code}，重试({attempt_no})")
+                    self._recovery_pending = True
+                    if resp.status_code in (402, 403, 429):
+                        logger.warning(
+                            f"⚠️ HTTP {resp.status_code} 未确认额度耗尽，按临时故障切换({attempt_no})"
+                        )
+                    else:
+                        logger.warning(f"⚠️ HTTP {resp.status_code}，按临时故障切换({attempt_no})")
                     if use_tier_routing:
                         self._next_tier_model(tier)
                         _advance_tier_if_exhausted(tier, active_model)
@@ -2805,6 +2865,7 @@ class AIEngine:
                         opt.circuit.record_failure(active_model)
                 except Exception as e:
                     logger.debug(f"操作异常: {e}")
+                self._recovery_pending = True
                 if use_tier_routing:
                     self._next_tier_model(tier)
                     _advance_tier_if_exhausted(tier, active_model)
@@ -2818,6 +2879,7 @@ class AIEngine:
                         opt.circuit.record_failure(active_model)
                 except Exception as opt_err:
                     logger.debug(f"操作异常: {opt_err}")
+                self._recovery_pending = True
                 if use_tier_routing:
                     self._next_tier_model(tier)
                     _advance_tier_if_exhausted(tier, active_model)

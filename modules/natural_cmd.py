@@ -1430,7 +1430,7 @@ def _handle_model_restore(msg: str, config: dict, bot, m, save_config_fn, mory_b
         return False
     model_hint = msg.replace("模型恢复", "").replace("恢复模型", "").strip()
     if not model_hint:
-        mory_bot.reply_and_track(m, "⚠️ 请指定要恢复的模型名，如「模型恢复 qwen3-max」")
+        mory_bot.reply_and_track(m, "⚠️ 请指定要恢复的模型名，如「模型恢复 qwen3.7-max-preview」")
         return True
     blacklisted = config.get("BLACKLISTED_MODELS", [])
     if not isinstance(blacklisted, list):

@@ -26,6 +26,7 @@
 
 import os
 import logging
+from datetime import datetime
 from typing import Optional, Tuple
 
 from core.logging_util import get_logger
@@ -34,26 +35,45 @@ logger = get_logger("model_router")
 
 
 # ── 三层模型池默认配置 ──────────────────────────────────────────────
-# 每层包含：默认模型名、默认 API URL、对应的 .env 变量名
-# 实际值优先从 config.json 读取（MODEL_POOL_PREMIUM/STANDARD/LIGHT），其次用默认值
+# 每层只保存 API URL 和对应的 .env 变量名；模型默认值统一取 MODEL_POOLS
+# 中到期最早的当前模型，避免并行硬编码重新引入已删除型号。
 
 _DEFAULT_TIER_CONFIG = {
     "llm_premium": {
-        "model_name": "qwen3.7-max-2026-06-08",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "PREMIUM_MODEL_API_KEY",
     },
     "llm_standard": {
-        "model_name": "qwen3.7-plus-2026-05-26",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "STANDARD_MODEL_API_KEY",
     },
     "llm_light": {
-        "model_name": "qwen3.7-plus-2026-05-26",
         "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "api_key_env": "LIGHT_MODEL_API_KEY",
     },
 }
+
+
+def _primary_model_from_pool(config: dict) -> Optional[str]:
+    """从唯一 MODEL_POOLS 真相源选择到期最早的当前文本模型。"""
+    pools = (config or {}).get("MODEL_POOLS", {}) or {}
+    candidates = list(pools.get("omni", []) or []) + list(pools.get("llm", []) or [])
+    blacklisted = set((config or {}).get("BLACKLISTED_MODELS", []) or [])
+    today = datetime.now().date()
+    usable = []
+    for model in candidates:
+        name = model.get("name")
+        if not name or name in blacklisted or model.get("enabled", True) is False:
+            continue
+        expire = str(model.get("expire") or "2099-12-31")
+        try:
+            if datetime.strptime(expire, "%Y-%m-%d").date() < today:
+                continue
+        except ValueError:
+            pass
+        usable.append(model)
+    usable.sort(key=lambda item: str(item.get("expire") or "2099-12-31"))
+    return usable[0].get("name") if usable else None
 
 
 # ── 任务类型 → 模型池层级 映射 ──────────────────────────────────────
@@ -97,14 +117,15 @@ class ModelRouter:
         self.config = config or {}
         # 用户自定义覆盖（task_type → tier），允许手动指定某些任务走不同层级
         self.override = self.config.get("MODEL_ROUTER_OVERRIDE", {}) or {}
-        # 各层模型配置（从 config 读取，缺省用默认值）
+        # 各层模型配置（显式覆盖可选；缺省统一取当前池首选模型）
         # config 键名：MODEL_POOL_PREMIUM / MODEL_POOL_STANDARD / MODEL_POOL_LIGHT
         self.tier_config = {}
+        primary_model = _primary_model_from_pool(self.config)
         for tier, default in _DEFAULT_TIER_CONFIG.items():
             # 从 tier 名提取后缀：llm_premium → PREMIUM
             suffix = tier.split("_", 1)[1].upper()
             config_key = f"MODEL_POOL_{suffix}"
-            model_name = self.config.get(config_key, default["model_name"])
+            model_name = self.config.get(config_key) or primary_model
             self.tier_config[tier] = {
                 "model_name": model_name,
                 "api_url": default["api_url"],
@@ -133,7 +154,7 @@ class ModelRouter:
         if not cfg:
             return False
         api_key = os.environ.get(cfg["api_key_env"], "").strip()
-        return bool(api_key)
+        return bool(api_key and cfg.get("model_name"))
 
     def route_model(self, task_type: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """

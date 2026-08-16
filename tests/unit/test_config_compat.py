@@ -123,3 +123,37 @@ def test_save_config_skips_when_disk_file_is_newer(tmp_path):
     finally:
         bi.CONFIG_FILE = original_path
         bi._loaded_config_mtime = original_mtime
+
+
+def test_model_index_is_not_restored_from_or_written_to_database(tmp_path):
+    """旧数据库索引不能覆盖当前模型池真相，也不能被临时切换重新固化。"""
+    import core.bot_initializer as bi
+
+    class FakeDB:
+        def __init__(self):
+            self.writes = []
+
+        def get_system_state(self, key):
+            return "7" if key == "CURRENT_MODEL_INDEX" else None
+
+        def set_system_state(self, key, value):
+            self.writes.append((key, value))
+
+    original_path = bi.CONFIG_FILE
+    original_mtime = bi._loaded_config_mtime
+    try:
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"CURRENT_MODEL_INDEX": 0}', encoding="utf-8")
+        bi.CONFIG_FILE = str(config_path)
+        bi._loaded_config_mtime = config_path.stat().st_mtime
+        cfg = {"CURRENT_MODEL_INDEX": 0}
+        db = FakeDB()
+
+        bi._load_dynamic_states(cfg, db)
+        assert cfg["CURRENT_MODEL_INDEX"] == 0
+
+        assert bi.save_config(cfg, db) is True
+        assert all(key != "CURRENT_MODEL_INDEX" for key, _value in db.writes)
+    finally:
+        bi.CONFIG_FILE = original_path
+        bi._loaded_config_mtime = original_mtime

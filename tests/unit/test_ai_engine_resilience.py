@@ -85,7 +85,93 @@ def test_runtime_pools_skip_expired_and_blacklisted_models(monkeypatch):
 
     assert names == ["standard-ok"]
     assert engine._retry_model_count_for("llm_standard") >= 1
-    assert "expired-a" in engine.blacklisted
+    assert "expired-a" not in engine.blacklisted
+
+
+@pytest.mark.parametrize(
+    ("status", "payload", "expected"),
+    [
+        (403, {"error": {"message": "free quota exhausted"}}, True),
+        (429, {"error": {"message": "rate limit exceeded"}}, False),
+        (403, {"error": {"message": "permission denied"}}, False),
+        (500, {"error": {"message": "quota exhausted"}}, False),
+    ],
+)
+def test_only_explicit_quota_exhaustion_is_permanent(status, payload, expected):
+    response = _FakeResponse(status, payload)
+
+    assert ai_engine.AIEngine._is_quota_exhausted_response(response) is expected
+
+
+def test_rate_limit_switches_temporarily_without_blacklisting(monkeypatch):
+    engine = _engine(monkeypatch)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json["model"])
+        if len(calls) == 1:
+            return _FakeResponse(429, {"error": {"message": "rate limit exceeded"}})
+        return _FakeResponse(200, {"choices": [{"message": {"content": "临时限流后已恢复。"}}]})
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    result = engine.ask("限流切换测试", mode="normal", retry=1)
+
+    assert result == "临时限流后已恢复。"
+    assert calls[:2] == ["standard-a", "light-a"]
+    assert "standard-a" not in engine.blacklisted
+    assert engine._recovery_pending is True
+
+
+def test_explicit_quota_exhaustion_blacklists_and_switches(monkeypatch):
+    engine = _engine(monkeypatch)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json["model"])
+        if len(calls) == 1:
+            return _FakeResponse(403, {"error": {"message": "free quota exhausted"}})
+        return _FakeResponse(200, {"choices": [{"message": {"content": "额度模型已切换。"}}]})
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    result = engine.ask("额度切换测试", mode="normal", retry=1)
+
+    assert result == "额度模型已切换。"
+    assert calls[:2] == ["standard-a", "light-a"]
+    assert "standard-a" in engine.blacklisted
+
+
+def test_transient_fallback_returns_to_earliest_expiry_on_next_request(monkeypatch):
+    cfg = _config()
+    cfg["MODEL_POOLS"] = {
+        "llm": [
+            {"name": "earliest", "expire": "2099-01-01", "enable_thinking": False},
+            {"name": "later", "expire": "2099-02-01", "enable_thinking": False},
+        ]
+    }
+    cfg["CURRENT_MODEL_INDEX"] = 0
+    cfg["AI_MAX_ATTEMPTS"] = 2
+    monkeypatch.setattr(ai_engine, "init_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine, "_get_optimizer", lambda: None)
+    monkeypatch.setattr(ai_engine.time, "sleep", lambda _seconds: None)
+    engine = ai_engine.AIEngine(cfg)
+    calls = []
+
+    def fake_post(_url, json, headers, timeout):
+        calls.append(json["model"])
+        if len(calls) == 1:
+            raise ai_engine.requests.exceptions.Timeout()
+        text = "备用模型成功。" if len(calls) == 2 else "首选模型恢复。"
+        return _FakeResponse(200, {"choices": [{"message": {"content": text}}]})
+
+    monkeypatch.setattr(ai_engine.requests, "post", fake_post)
+
+    assert engine.ask("第一次", mode="normal", retry=1) == "备用模型成功。"
+    assert engine.ask("第二次", mode="normal", retry=1) == "首选模型恢复。"
+    assert calls == ["earliest", "later", "earliest"]
+    assert cfg["CURRENT_MODEL_INDEX"] == 0
+    assert engine.current_model == "earliest"
 
 
 def test_ask_switches_model_after_empty_content(monkeypatch):
@@ -259,7 +345,7 @@ def test_ask_silences_normal_group_when_all_requests_fail(monkeypatch):
     assert result == ""
 
 
-def test_realtime_mode_skips_thinking_only_model_and_disables_thinking(monkeypatch):
+def test_realtime_mode_uses_priority_thinking_model_with_verified_contract(monkeypatch):
     cfg = _config()
     cfg["MODEL_POOLS"]["llm_light"] = [
         {
@@ -291,8 +377,8 @@ def test_realtime_mode_skips_thinking_only_model_and_disables_thinking(monkeypat
     result = engine.ask("早安", mode="morning", retry=1)
 
     assert result == "早。先挑一件真正要紧的事做。"
-    assert [call["model"] for call in calls] == ["fast-model"]
-    assert calls[0]["enable_thinking"] is False
+    assert [call["model"] for call in calls] == ["thinking-only"]
+    assert calls[0]["enable_thinking"] is True
 
 
 def test_greeting_mode_skips_code_specialized_models(monkeypatch):
@@ -618,7 +704,7 @@ def test_sanitize_retry_flag_cleared_on_quota_exhaustion_early_exit(monkeypatch)
         # 第一次响应触发穿帮过滤（置位降温度重试），之后模型返回 402 被拉黑耗尽
         if len(calls) == 1:
             return _FakeResponse(200, {"choices": [{"message": {"content": "我不能帮你处理这个。"}}]})
-        return _FakeResponse(402, {})
+        return _FakeResponse(402, {"error": {"message": "free quota exhausted"}})
 
     monkeypatch.setattr(ai_engine.requests, "post", fake_post)
 

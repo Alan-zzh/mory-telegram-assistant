@@ -262,17 +262,11 @@
     "视频",
     "看图"
   ],
-  "CURRENT_MODEL_INDEX": 3,
+  "CURRENT_MODEL_INDEX": 0,
   "IMAGE_POOL": [],
   "VOICE_POOL": [],
   "MODEL_POOLS": {
     "llm": [
-      {
-        "name": "qwen3.7-max-2026-05-17",
-        "expire": "2026-08-24",
-        "desc": "通义千问3.7 Max (2026-05-17)",
-        "enable_thinking": true
-      },
       {
         "name": "qwen3.7-max-preview",
         "expire": "2026-08-24",
@@ -292,9 +286,39 @@
         "enable_thinking": false
       },
       {
-        "name": "kimi-k2.7-code",
-        "expire": "2026-09-14",
-        "desc": "Kimi K2.7 Code",
+        "name": "qwen3.7-flash-2026-07-15",
+        "expire": "2026-10-23",
+        "desc": "通义千问3.7 Flash (2026-07-15)",
+        "enable_thinking": false
+      },
+      {
+        "name": "qwen3.7-flash",
+        "expire": "2026-10-23",
+        "desc": "通义千问3.7 Flash",
+        "enable_thinking": false
+      },
+      {
+        "name": "deepseek-v4-flash-0731",
+        "expire": "2026-10-31",
+        "desc": "DeepSeek V4 Flash 0731",
+        "enable_thinking": false
+      },
+      {
+        "name": "qwen3.8-max",
+        "expire": "2026-11-01",
+        "desc": "通义千问3.8 Max",
+        "enable_thinking": false
+      },
+      {
+        "name": "qwen3.8-2.4t-a95b",
+        "expire": "2026-11-12",
+        "desc": "通义千问3.8 2.4T A95B",
+        "enable_thinking": true
+      },
+      {
+        "name": "deepseek-v4-pro-0813",
+        "expire": "2026-11-13",
+        "desc": "DeepSeek V4 Pro 0813",
         "enable_thinking": false
       }
     ],
@@ -327,15 +351,15 @@
     "night": "你是 Mory 小助理，在熟悉的粉丝群里留一句晚安。25到55字，最多两句；不虚构状态、动作或生活剧情，不引导倾诉、不提问、不写睡眠建议，正文不营销。{seed_hint}"
   },
   "MODEL_ROUTER_ENABLED": false,
-  "MODEL_POOL_PREMIUM": "qwen3.7-max-2026-06-08",
-  "MODEL_POOL_STANDARD": "qwen3.7-plus-2026-05-26",
-  "MODEL_POOL_LIGHT": "qwen3.7-plus-2026-05-26",
+  "MODEL_POOL_PREMIUM": "",
+  "MODEL_POOL_STANDARD": "",
+  "MODEL_POOL_LIGHT": "",
   "MODEL_ROUTER_OVERRIDE": {},
   "GROWTH_OPTIMIZER_ENABLED": true,
   "GROWTH_AB_SPLIT": 50,
   "AB_TEST_ENABLED": false,
-  "AB_TEST_GROUP_A_MODEL": "qwen3.7-plus-2026-05-26",
-  "AB_TEST_GROUP_B_MODEL": "qwen3.7-max-2026-06-08",
+  "AB_TEST_GROUP_A_MODEL": "",
+  "AB_TEST_GROUP_B_MODEL": "",
   "LLM_COST_GUARD_ENABLED": true,
   "LLM_COST_USER_HOURLY_LIMIT": 1.0,
   "LLM_COST_GLOBAL_HOURLY_LIMIT": 5.0,
@@ -344,37 +368,11 @@
   "BOT_ROUTING_ENABLED": false,
   "BOT_ROUTING_DEFAULT_POLICY": "allow",
   "MODEL_COSTS": {
-    "llm": {
-      "qwen3.7-max-2026-05-17": {
-        "cost_level": "high",
-        "input_price": 2.5e-06,
-        "output_price": 1e-05
-      },
-      "qwen3.7-max-2026-06-08": {
-        "cost_level": "high",
-        "input_price": 2.5e-06,
-        "output_price": 1e-05
-      },
-      "qwen3.7-max-preview": {
-        "cost_level": "high",
-        "input_price": 2.5e-06,
-        "output_price": 1e-05
-      },
-      "qwen3.7-plus-2026-05-26": {
-        "cost_level": "medium"
-      },
-      "kimi-k2.7-code": {
-        "cost_level": "high"
-      }
-    },
+    "llm": {},
     "llm_light": {},
     "llm_standard": {},
     "llm_premium": {},
-    "vision": {
-      "qwen3.5-ocr": {
-        "cost_level": "medium"
-      }
-    },
+    "vision": {},
     "omni": {},
     "voice_tts": {},
     "voice_asr": {},

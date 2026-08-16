@@ -106,6 +106,28 @@ def test_runtime_sync_cannot_restore_legacy_auto_greeting_switches():
     assert "AUTO_GOODNIGHT" not in synced
 
 
+def test_runtime_sync_cannot_restore_old_model_state():
+    from core.deploy_utils import sync_runtime_fields_from_vps
+
+    local = {
+        "CURRENT_MODEL_INDEX": 0,
+        "BLACKLISTED_MODELS": [],
+        "BLACKLISTED_MODELS_TS": {},
+    }
+    remote = {
+        "CURRENT_MODEL_INDEX": 3,
+        "BLACKLISTED_MODELS": ["removed-model"],
+        "BLACKLISTED_MODELS_TS": {"removed-model": 1},
+    }
+
+    merged, synced = sync_runtime_fields_from_vps(local, remote)
+
+    assert merged == local
+    assert "CURRENT_MODEL_INDEX" not in synced
+    assert "BLACKLISTED_MODELS" not in synced
+    assert "BLACKLISTED_MODELS_TS" not in synced
+
+
 def test_deploy_manifest_excludes_sync_conflicts_and_includes_truth_docs():
     import deploy_vps
 

@@ -91,6 +91,15 @@ RUNTIME_SYNC_FIELDS = _natural_keys - _MERGE_SET
 LOCAL_AUTHORITATIVE_DEPLOY_FIELDS = {
     "AUTO_GREETING",
     "AUTO_GOODNIGHT",
+    # 模型池发布时必须以本次已审核清单为准，不能把线上旧索引/旧黑名单回灌回来。
+    "CURRENT_MODEL_INDEX",
+    "BLACKLISTED_MODELS",
+    "BLACKLISTED_MODELS_TS",
+    "MODEL_POOL_PREMIUM",
+    "MODEL_POOL_STANDARD",
+    "MODEL_POOL_LIGHT",
+    "AB_TEST_GROUP_A_MODEL",
+    "AB_TEST_GROUP_B_MODEL",
 }
 
 # 已确认没有运行入口的废弃配置；安全合并时也从生产配置移除，避免幽灵开关。

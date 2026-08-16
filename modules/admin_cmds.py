@@ -1231,7 +1231,7 @@ def _handle_evolve(bot, mory_bot, m, config: dict, db, ai, save_config_fn, msg: 
         return True
 
     if evo_cmd.startswith("模型"):
-        # 进化模型 qwen3-max
+        # 进化模型 qwen3.7-max-preview
         parts = evo_cmd.split()
         if len(parts) >= 2:
             model_name = parts[1]
