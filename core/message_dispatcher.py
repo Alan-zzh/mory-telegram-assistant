@@ -1472,12 +1472,12 @@ def _dispatch_p3_52_keyword_auto_delete(dctx: DispatchContext) -> bool:
         return False
 
     from modules.keyword_auto_delete import (
-        get_message_keyword_match,
+        get_message_keyword_rule,
         schedule_keyword_message_delete,
     )
 
-    keyword = get_message_keyword_match(dctx.msg, dctx.ctx.config)
-    if not keyword:
+    rule = get_message_keyword_rule(dctx.msg, dctx.ctx.config)
+    if not rule:
         return False
 
     receipt = schedule_keyword_message_delete(
@@ -1485,7 +1485,7 @@ def _dispatch_p3_52_keyword_auto_delete(dctx: DispatchContext) -> bool:
         dctx.msg,
         dctx.ctx.config,
         dctx.ctx.db,
-        matched_keyword=keyword,
+        matched_rule=rule,
     )
     if receipt.get("status") != "scheduled":
         logger.warning(

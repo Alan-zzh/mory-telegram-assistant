@@ -2060,6 +2060,7 @@ class DB:
         'mark_message_deleted': 'groups',
         'queue_keyword_message_delete': 'groups',
         'get_due_keyword_message_deletes': 'groups',
+        'get_keyword_message_cleanup_candidates': 'groups',
         'resolve_keyword_message_delete': 'groups',
         'get_keyword_message_delete_state': 'groups',
         'get_user_messages': 'groups',

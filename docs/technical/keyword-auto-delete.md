@@ -12,10 +12,15 @@
 {
   "KEYWORD_AUTO_DELETE_CONFIG": {
     "enabled": false,
-    "keywords": ["/me@afoolGroupBot"],
-    "delay_seconds": 300,
-    "match_mode": "exact",
-    "case_sensitive": false,
+    "rules": [
+      {
+        "keyword": "/me@afoolGroupBot",
+        "delay_seconds": 300,
+        "match_mode": "exact",
+        "case_sensitive": false,
+        "enabled": true
+      }
+    ],
     "max_attempts": 5
   }
 }
@@ -23,8 +28,9 @@
 
 - 新功能默认关闭；生产开启前同时确认 `ENABLE_MESSAGE_DELETION=true`。
 - `match_mode` 支持 `exact`、`prefix`、`contains`，默认和推荐值为 `exact`。宽泛的前缀或包含规则必须补正常反例后再启用。
-- 延迟限制为 30 秒至 24 小时；关键词最多 50 个，每个最多 100 字符。
-- Dashboard → 配置 → 安全治理 → 关键词延迟删，可查看当前状态并编辑 JSON；保存后走现有配置热重载。
+- 每条规则可独立设置延迟（1 秒至 7 天）、匹配方式、大小写和启用状态；关键词最多 50 个，每个最多 100 字符。
+- v5.38.62 的 `keywords + delay_seconds` 旧格式仍可读取，管理员保存时自动转成 `rules` 新格式。
+- Dashboard → 配置 → 安全治理提供结构化编辑器；Telegram 中仅配置管理员能通过 `/settings → 安全设置 → 关键词删除规则` 管理规则或立即清理现存匹配消息。Dashboard 对非管理员不返回规则内容。
 
 ## 执行与恢复
 

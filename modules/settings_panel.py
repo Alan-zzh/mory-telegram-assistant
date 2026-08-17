@@ -109,6 +109,9 @@ SECURITY_KEYS = {
     "nightmode_list":        {"path": "_list_night_mode",                  "type": "list", "label": "夜间状态"},
     # 反垃圾列表
     "ad_detect_list":        {"path": "_list_ad_detect",                   "type": "list", "label": "反垃圾状态"},
+    # 关键词延迟删除（独立于广告处罚链）
+    "keyword_delete_enable": {"path": "KEYWORD_AUTO_DELETE_CONFIG.enabled", "type": "toggle", "label": "关键词延迟删", "default": False},
+    "keyword_delete_rules":  {"path": "_list_keyword_auto_delete",          "type": "list", "label": "关键词删除规则"},
 }
 
 # ── 成员管理 ──────────────────────────────────────────────────────────────
@@ -378,6 +381,118 @@ def _status_text(val):
     if val:
         return "✅ 开"
     return "❌ 关"
+
+
+def _get_keyword_delete_config(config):
+    from modules.keyword_auto_delete import normalize_keyword_auto_delete_payload
+    return normalize_keyword_auto_delete_payload(config.get("KEYWORD_AUTO_DELETE_CONFIG", {}))
+
+
+def _save_keyword_delete_config(config, keyword_config):
+    from modules.keyword_auto_delete import normalize_keyword_auto_delete_payload
+    config["KEYWORD_AUTO_DELETE_CONFIG"] = normalize_keyword_auto_delete_payload(keyword_config)
+    _save_config(config)
+
+
+def _keyword_rule_summary(rule):
+    mode_labels = {"exact": "精确", "prefix": "开头", "contains": "包含"}
+    status = "✅" if rule.get("enabled", True) else "⏸"
+    case_text = "区分大小写" if rule.get("case_sensitive", False) else "忽略大小写"
+    return (
+        f"{status} {rule.get('keyword', '')} · {int(rule.get('delay_seconds', 300))}秒 · "
+        f"{mode_labels.get(rule.get('match_mode'), '精确')} · {case_text}"
+    )
+
+
+def _render_keyword_delete_rules(bot, chat_id, config, *, message_id=None):
+    cfg = _get_keyword_delete_config(config)
+    rules = cfg["rules"]
+    lines = [
+        "🧹 关键词延迟删除",
+        f"总开关：{'已开启' if cfg['enabled'] else '已关闭'}",
+        "每条规则可独立设置关键词、删除秒数、匹配方式和大小写。",
+        "",
+    ]
+    if rules:
+        lines.extend(f"{idx + 1}. {_keyword_rule_summary(rule)}" for idx, rule in enumerate(rules))
+    else:
+        lines.append("暂无规则")
+
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    for idx, rule in enumerate(rules[:20]):
+        short_keyword = rule["keyword"][:14]
+        keyboard.row(
+            InlineKeyboardButton(
+                f"✏️ {idx + 1}. {short_keyword}",
+                callback_data=f"settings_security_kad_edit_{idx}",
+            ),
+            InlineKeyboardButton(
+                f"🗑 删除 {idx + 1}",
+                callback_data=f"settings_security_kad_delete_{idx}",
+            ),
+        )
+    keyboard.row(
+        InlineKeyboardButton("➕ 新增规则", callback_data="settings_security_kad_add"),
+        InlineKeyboardButton("🧹 立即清理现存匹配", callback_data="settings_security_kad_clean"),
+    )
+    keyboard.add(InlineKeyboardButton("🔙 返回安全设置", callback_data="settings_security_menu"))
+    text = "\n".join(lines)
+    if message_id is None:
+        bot.send_message(chat_id, text, reply_markup=keyboard)
+    else:
+        bot.edit_message_text(text, chat_id, message_id, reply_markup=keyboard)
+
+
+def _request_keyword_rule_value(bot, chat_id, user_id, config, *, index=None):
+    cfg = _get_keyword_delete_config(config)
+    existing = cfg["rules"][index] if index is not None and 0 <= index < len(cfg["rules"]) else None
+    action = "编辑" if existing else "新增"
+    example = (
+        f"\n当前：{_keyword_rule_summary(existing)}" if existing else "\n示例：/me@afoolGroupBot | 300 | exact | 否"
+    )
+    prompt = (
+        f"📝 {action}关键词删除规则，请按一行发送：\n"
+        "关键词 | 删除秒数 | exact/prefix/contains | 是否区分大小写(是/否)"
+        f"{example}\n允许 1～604800 秒。"
+    )
+    _pending_value_sessions[(chat_id, user_id)] = {
+        "kind": "keyword_auto_delete_rule",
+        "index": index,
+    }
+    bot.send_message(chat_id, prompt)
+
+
+def _parse_keyword_rule_value(value, existing=None):
+    parts = [item.strip() for item in str(value or "").split("|")]
+    if len(parts) < 2 or not parts[0]:
+        raise ValueError("格式应为：关键词 | 删除秒数 | exact/prefix/contains | 是/否")
+    if len(parts[0]) > 100:
+        raise ValueError("关键词最多 100 个字符")
+    try:
+        delay_seconds = int(parts[1])
+    except (TypeError, ValueError):
+        raise ValueError("删除时间必须填写整数秒") from None
+    if not 1 <= delay_seconds <= 604800:
+        raise ValueError("删除时间范围是 1～604800 秒")
+    match_mode = parts[2].lower() if len(parts) > 2 and parts[2] else (existing or {}).get("match_mode", "exact")
+    if match_mode not in {"exact", "prefix", "contains"}:
+        raise ValueError("匹配方式只能是 exact、prefix 或 contains")
+    case_sensitive = (existing or {}).get("case_sensitive", False)
+    if len(parts) > 3 and parts[3]:
+        case_value = parts[3].casefold()
+        if case_value in {"是", "true", "1", "yes", "区分"}:
+            case_sensitive = True
+        elif case_value in {"否", "false", "0", "no", "不区分", "忽略"}:
+            case_sensitive = False
+        else:
+            raise ValueError("大小写选项请填写 是 或 否")
+    return {
+        "keyword": parts[0],
+        "delay_seconds": delay_seconds,
+        "match_mode": match_mode,
+        "case_sensitive": case_sensitive,
+        "enabled": (existing or {}).get("enabled", True),
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -670,6 +785,10 @@ def _apply_list_action(bot, chat_id, key, category, config, db=None):
 
     path = key_info["path"]
     label = key_info["label"]
+
+    if path == "_list_keyword_auto_delete":
+        _render_keyword_delete_rules(bot, chat_id, config)
+        return
 
     # ── 联邦封禁列表 ───────────────────────────────────────────────
     if path == "_list_federation":
@@ -1210,6 +1329,72 @@ def handle_settings_callback(bot, call, config, db=None):
         bot.answer_callback_query(call.id)
         return True
 
+    # ── 关键词延迟删专用管理 ─────────────────────────────────────────
+    if action == "kad":
+        cfg = _get_keyword_delete_config(config)
+        if key == "add":
+            if len(cfg["rules"]) >= 50:
+                bot.answer_callback_query(call.id, text="最多 50 条规则", show_alert=True)
+                return True
+            _request_keyword_rule_value(bot, chat_id, user_id, config)
+            bot.answer_callback_query(call.id)
+            return True
+        if key.startswith("edit_"):
+            try:
+                index = int(key.split("_", 1)[1])
+                if not 0 <= index < len(cfg["rules"]):
+                    raise ValueError
+            except ValueError:
+                bot.answer_callback_query(call.id, text="规则已变化，请重新打开", show_alert=True)
+                return True
+            _request_keyword_rule_value(bot, chat_id, user_id, config, index=index)
+            bot.answer_callback_query(call.id)
+            return True
+        if key.startswith("delete_"):
+            try:
+                index = int(key.split("_", 1)[1])
+                removed = cfg["rules"].pop(index)
+            except (ValueError, IndexError):
+                bot.answer_callback_query(call.id, text="规则已变化，请重新打开", show_alert=True)
+                return True
+            _save_keyword_delete_config(config, cfg)
+            _render_keyword_delete_rules(
+                bot,
+                chat_id,
+                config,
+                message_id=call.message.message_id,
+            )
+            bot.answer_callback_query(call.id, text=f"已删除：{removed['keyword'][:30]}")
+            return True
+        if key == "clean":
+            if not db:
+                bot.answer_callback_query(call.id, text="数据库不可用", show_alert=True)
+                return True
+            target_chat_id = (
+                chat_id
+                if getattr(call.message.chat, "type", "") in ("group", "supergroup")
+                else int(config.get("GROUP_ID", 0) or 0)
+            )
+            if not target_chat_id:
+                bot.answer_callback_query(call.id, text="未配置目标群", show_alert=True)
+                return True
+            from modules.keyword_auto_delete import cleanup_existing_keyword_messages
+            counts = cleanup_existing_keyword_messages(
+                bot,
+                db,
+                config,
+                chat_id=target_chat_id,
+            )
+            bot.send_message(
+                chat_id,
+                "🧹 清理完成："
+                f"扫描 {counts['scanned']}，命中 {counts['matched']}，"
+                f"删除 {counts['deleted']}，已不存在 {counts['already_gone']}，"
+                f"失败 {counts['failed']}。",
+            )
+            bot.answer_callback_query(call.id, text="清理已执行")
+            return True
+
     # ── 开关切换 ────────────────────────────────────────────────────
     if action == "toggle" and key:
         new_val = _toggle_setting(key, category, config)
@@ -1304,6 +1489,44 @@ def apply_pending_value(bot, chat_id, user_id, value, config):
     session = _pending_value_sessions.get(session_key)
     if not session:
         return False
+
+    if not _is_admin(user_id, config):
+        _pending_value_sessions.pop(session_key, None)
+        return False
+
+    if session.get("kind") == "keyword_auto_delete_rule":
+        cfg = _get_keyword_delete_config(config)
+        index = session.get("index")
+        existing = cfg["rules"][index] if index is not None and 0 <= index < len(cfg["rules"]) else None
+        try:
+            rule = _parse_keyword_rule_value(value, existing)
+        except ValueError as exc:
+            bot.send_message(chat_id, f"⚠️ {exc}\n请按正确格式重新发送，或重新打开设置面板取消。")
+            return True
+        if index is None:
+            if any(item["keyword"].casefold() == rule["keyword"].casefold() for item in cfg["rules"]):
+                bot.send_message(chat_id, "⚠️ 该关键词已经存在，请编辑原规则。")
+                return True
+            cfg["rules"].append(rule)
+            action_text = "已新增"
+        elif 0 <= index < len(cfg["rules"]):
+            duplicate = any(
+                idx != index and item["keyword"].casefold() == rule["keyword"].casefold()
+                for idx, item in enumerate(cfg["rules"])
+            )
+            if duplicate:
+                bot.send_message(chat_id, "⚠️ 该关键词已经存在，请换一个关键词。")
+                return True
+            cfg["rules"][index] = rule
+            action_text = "已更新"
+        else:
+            _pending_value_sessions.pop(session_key, None)
+            bot.send_message(chat_id, "⚠️ 规则已变化，请重新打开设置面板。")
+            return True
+        _save_keyword_delete_config(config, cfg)
+        _pending_value_sessions.pop(session_key, None)
+        bot.send_message(chat_id, f"✅ {action_text}：{_keyword_rule_summary(rule)}")
+        return True
 
     key = session["key"]
     category = session["category"]

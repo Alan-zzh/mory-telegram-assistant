@@ -329,6 +329,41 @@ class GroupRepo:
             for row in rows
         ]
 
+    def get_keyword_message_cleanup_candidates(
+        self,
+        chat_id: int | None = None,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """读取仍未标记删除的文本快照，供管理员显式清理当前匹配消息。"""
+        bounded_limit = max(1, min(10000, int(limit)))
+        with self.lock:
+            if chat_id is None:
+                rows = self.conn.execute(
+                    """SELECT chat_id, msg_id, user_id, text, ts
+                       FROM message_snapshots
+                       WHERE deleted=0 AND text<>''
+                       ORDER BY ts DESC LIMIT ?""",
+                    (bounded_limit,),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    """SELECT chat_id, msg_id, user_id, text, ts
+                       FROM message_snapshots
+                       WHERE chat_id=? AND deleted=0 AND text<>''
+                       ORDER BY ts DESC LIMIT ?""",
+                    (int(chat_id), bounded_limit),
+                ).fetchall()
+        return [
+            {
+                "chat_id": row[0],
+                "message_id": row[1],
+                "user_id": row[2],
+                "text": row[3],
+                "ts": row[4],
+            }
+            for row in rows
+        ]
+
     def resolve_keyword_message_delete(
         self,
         chat_id: int,

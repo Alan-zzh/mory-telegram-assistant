@@ -1929,6 +1929,130 @@ async function loadGroups() {
   }
 }
 
+function normalizeKeywordDeleteUiConfig(raw) {
+  raw = raw && typeof raw === 'object' ? raw : {};
+  let rules = Array.isArray(raw.rules) ? raw.rules : null;
+  if (rules === null) {
+    const keywords = Array.isArray(raw.keywords) ? raw.keywords : (raw.keywords ? [raw.keywords] : []);
+    rules = keywords.map(keyword => ({
+      keyword,
+      delay_seconds: Number(raw.delay_seconds || 300),
+      match_mode: raw.match_mode || 'exact',
+      case_sensitive: !!raw.case_sensitive,
+      enabled: true,
+    }));
+  }
+  return {
+    enabled: !!raw.enabled,
+    max_attempts: Math.max(1, Math.min(20, Number(raw.max_attempts || 5))),
+    rules: rules.slice(0, 50).map(rule => ({
+      keyword: String(rule.keyword || '').trim().slice(0, 100),
+      delay_seconds: Math.max(1, Math.min(604800, Number(rule.delay_seconds || 300))),
+      match_mode: ['exact', 'prefix', 'contains'].includes(rule.match_mode) ? rule.match_mode : 'exact',
+      case_sensitive: !!rule.case_sensitive,
+      enabled: rule.enabled !== false,
+    })),
+  };
+}
+
+function keywordDeleteRuleRow(rule, index) {
+  return `<div data-kad-rule="${index}" style="display:grid; grid-template-columns:auto minmax(160px,1fr) 110px 100px auto auto; gap:8px; align-items:center; padding:8px; background:#151522; border-radius:8px; margin-top:8px;">
+    <input data-field="enabled" type="checkbox" ${rule.enabled ? 'checked' : ''} title="启用此规则" style="width:18px;height:18px;">
+    <input data-field="keyword" type="text" value="${escHtml(rule.keyword)}" maxlength="100" placeholder="关键词" style="min-width:0;padding:7px;background:#0f0f1a;border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#e2e8f0;">
+    <input data-field="delay_seconds" type="number" min="1" max="604800" value="${Number(rule.delay_seconds)}" title="删除秒数" style="width:100%;padding:7px;background:#0f0f1a;border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#e2e8f0;">
+    <select data-field="match_mode" style="padding:7px;background:#0f0f1a;border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#e2e8f0;">
+      <option value="exact" ${rule.match_mode === 'exact' ? 'selected' : ''}>精确</option>
+      <option value="prefix" ${rule.match_mode === 'prefix' ? 'selected' : ''}>开头</option>
+      <option value="contains" ${rule.match_mode === 'contains' ? 'selected' : ''}>包含</option>
+    </select>
+    <label style="color:#94a3b8;font-size:12px;white-space:nowrap;"><input data-field="case_sensitive" type="checkbox" ${rule.case_sensitive ? 'checked' : ''}> 区分大小写</label>
+    <button class="btn btn-secondary" style="padding:6px 10px;font-size:12px;" onclick="removeKeywordDeleteRule(${index})">删除</button>
+  </div>`;
+}
+
+function renderKeywordDeleteEditor() {
+  const root = document.getElementById('keywordAutoDeleteEditor');
+  if (!root) return;
+  const cfg = normalizeKeywordDeleteUiConfig(window.keywordAutoDeleteConfig || {});
+  window.keywordAutoDeleteConfig = cfg;
+  root.innerHTML = `<div style="display:flex;align-items:center;gap:12px;">
+      <label style="font-weight:600;color:#e2e8f0;flex:1;">关键词延迟删除</label>
+      <label style="color:#94a3b8;font-size:13px;"><input id="kadEnabled" type="checkbox" ${cfg.enabled ? 'checked' : ''}> 总开关</label>
+      <label style="color:#94a3b8;font-size:13px;">失败重试 <input id="kadMaxAttempts" type="number" min="1" max="20" value="${cfg.max_attempts}" style="width:54px;padding:5px;background:#0f0f1a;border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#e2e8f0;"></label>
+    </div>
+    <div style="color:#64748b;font-size:12px;margin-top:6px;">每条规则独立设置删除秒数；1～604800 秒。只删消息，不处罚用户。</div>
+    <div id="kadRuleRows">${cfg.rules.map(keywordDeleteRuleRow).join('') || '<div style="color:#64748b;padding:12px 0;">暂无规则</div>'}</div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn btn-secondary" onclick="addKeywordDeleteRule()">＋ 新增规则</button>
+      <button class="btn btn-primary" onclick="saveKeywordDeleteConfig()">保存关键词规则</button>
+    </div>`;
+}
+
+function addKeywordDeleteRule() {
+  const cfg = collectKeywordDeleteConfig(false);
+  if (!cfg || cfg.rules.length >= 50) {
+    if (cfg && cfg.rules.length >= 50) showToast('最多 50 条规则', 'error');
+    return;
+  }
+  cfg.rules.push({keyword: '', delay_seconds: 300, match_mode: 'exact', case_sensitive: false, enabled: true});
+  window.keywordAutoDeleteConfig = cfg;
+  const root = document.getElementById('keywordAutoDeleteEditor');
+  renderKeywordDeleteEditor();
+  const inputs = root ? root.querySelectorAll('[data-field="keyword"]') : [];
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+
+function removeKeywordDeleteRule(index) {
+  const cfg = collectKeywordDeleteConfig(false);
+  if (!cfg) return;
+  cfg.rules.splice(index, 1);
+  window.keywordAutoDeleteConfig = cfg;
+  renderKeywordDeleteEditor();
+}
+
+function collectKeywordDeleteConfig(validate = true) {
+  const root = document.getElementById('keywordAutoDeleteEditor');
+  if (!root) return null;
+  const rules = [];
+  const seen = new Set();
+  for (const row of root.querySelectorAll('[data-kad-rule]')) {
+    const keyword = row.querySelector('[data-field="keyword"]').value.trim();
+    const delay = Number(row.querySelector('[data-field="delay_seconds"]').value);
+    if (!keyword && !validate) continue;
+    if (!keyword) { showToast('关键词不能为空', 'error'); return null; }
+    if (!Number.isInteger(delay) || delay < 1 || delay > 604800) { showToast('删除秒数必须为 1～604800 的整数', 'error'); return null; }
+    const identity = keyword.toLocaleLowerCase();
+    if (seen.has(identity)) { showToast(`关键词重复：${keyword}`, 'error'); return null; }
+    seen.add(identity);
+    rules.push({
+      keyword,
+      delay_seconds: delay,
+      match_mode: row.querySelector('[data-field="match_mode"]').value,
+      case_sensitive: row.querySelector('[data-field="case_sensitive"]').checked,
+      enabled: row.querySelector('[data-field="enabled"]').checked,
+    });
+  }
+  return {
+    enabled: document.getElementById('kadEnabled').checked,
+    max_attempts: Math.max(1, Math.min(20, Number(document.getElementById('kadMaxAttempts').value || 5))),
+    rules,
+  };
+}
+
+async function saveKeywordDeleteConfig() {
+  const cfg = collectKeywordDeleteConfig(true);
+  if (!cfg) return;
+  try {
+    const r = await api('/api/config/update', {
+      method: 'POST',
+      body: JSON.stringify({key: 'KEYWORD_AUTO_DELETE_CONFIG', value: cfg}),
+    });
+    window.keywordAutoDeleteConfig = cfg;
+    showToast(r.msg || '关键词规则已保存', r.ok ? 'success' : 'error');
+    if (r.ok) renderKeywordDeleteEditor();
+  } catch(e) { showToast('关键词规则保存失败', 'error'); }
+}
+
 async function loadConfig() {
   try {
     const d = await api('/api/config');
@@ -1995,10 +2119,7 @@ async function loadConfig() {
             <input type="text" value="${escHtml(v.join(', '))}" onchange="quickSaveConfig('${escHtml(k)}', this.value.split(/[,，]/).map(s=>s.trim()).filter(s=>s))" style="flex:1; padding:4px 8px; background:#0f0f1a; border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#e2e8f0; font-size:13px;">
           </div>`;
         } else if (k === 'KEYWORD_AUTO_DELETE_CONFIG' && v && typeof v === 'object') {
-          html += `<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#1e1e2e; border-radius:8px; grid-column:1/-1;">
-            <label style="flex:1; color:#94a3b8; font-size:13px;">${escHtml(label)}：${v.enabled ? '已开启' : '已关闭'} · ${Number(v.delay_seconds || 300)} 秒 · ${escHtml((v.keywords || []).join(', '))}</label>
-            <button class="btn btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="editConfig('KEYWORD_AUTO_DELETE_CONFIG', JSON.stringify(window.keywordAutoDeleteConfig || {}))">编辑 JSON</button>
-          </div>`;
+          html += '<div id="keywordAutoDeleteEditor" style="padding:12px;background:#1e1e2e;border-radius:8px;grid-column:1/-1;"></div>';
         }
       }
       html += '</div>';
@@ -2016,6 +2137,7 @@ async function loadConfig() {
       html += '</tbody></table>';
     }
     cc.innerHTML = html || '<div class="empty-state"><h3>暂无配置数据</h3></div>';
+    renderKeywordDeleteEditor();
   } catch (e) { console.error(e); }
 }
 
@@ -2025,7 +2147,7 @@ async function quickSaveConfig(key, value) {
       method: 'POST',
       body: JSON.stringify({key, value})
     });
-    showToast(r.ok ? `${key} 已更新（5到8秒内自动生效）` : (r.msg || '更新失败'), r.ok ? 'success' : 'error');
+    showToast(r.ok ? (r.msg || `${key} 已更新`) : (r.msg || '更新失败'), r.ok ? 'success' : 'error');
   } catch(e) { showToast('更新失败', 'error'); }
 }
 

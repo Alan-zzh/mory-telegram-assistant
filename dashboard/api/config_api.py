@@ -5,7 +5,7 @@ import math
 
 from flask import Blueprint, request, jsonify
 from dashboard.helpers import (
-    login_required, admin_required, read_config, write_config,
+    login_required, admin_required, get_current_role, read_config, write_config,
     _DashboardFakeMessage, _DashboardReplyProxy
 )
 from modules.natural_cmd import handle_natural_admin, ALL_CONFIGS
@@ -150,7 +150,16 @@ def api_config():
                   description: 配置字典（已过滤敏感项）
     """
     cfg = read_config()
-    safe_cfg = {k: v for k, v in cfg.items() if not any(s in k.lower() for s in ['key', 'token', 'password', 'secret'])}
+    role = get_current_role()
+    safe_cfg = {
+        k: v
+        for k, v in cfg.items()
+        if (
+            k == "KEYWORD_AUTO_DELETE_CONFIG" and role == "admin"
+        ) or not any(s in k.lower() for s in ['key', 'token', 'password', 'secret'])
+    }
+    if role != "admin":
+        safe_cfg.pop("KEYWORD_AUTO_DELETE_CONFIG", None)
     return jsonify({"ok": True, "data": {"config": safe_cfg}})
 
 
@@ -215,6 +224,9 @@ def api_config_update():
     if key not in ALLOWED_CONFIG_FIELDS:
         return jsonify({"ok": False, "msg": "该配置项不允许修改"}), 403
     cfg = read_config()
+    if key == "KEYWORD_AUTO_DELETE_CONFIG":
+        from modules.keyword_auto_delete import normalize_keyword_auto_delete_payload
+        value = normalize_keyword_auto_delete_payload(value if isinstance(value, dict) else {})
     cfg[key] = value
     if write_config(cfg):
         return jsonify({"ok": True, "msg": f"配置项 {key} 已更新，{CONFIG_RELOAD_NOTICE}"})

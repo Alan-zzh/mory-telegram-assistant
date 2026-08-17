@@ -70,6 +70,57 @@ def test_exact_match_covers_screenshot_and_rejects_normal_counterexamples():
     assert kad.match_keyword_auto_delete("/me@afoolGroupBot 123", config) is None
 
 
+def test_multiple_rules_keep_independent_delays_and_legacy_config_stays_compatible():
+    config = _config(
+        rules=[
+            {
+                "keyword": "/me@afoolGroupBot",
+                "delay_seconds": 300,
+                "match_mode": "exact",
+                "case_sensitive": False,
+                "enabled": True,
+            },
+            {
+                "keyword": "垃圾前缀",
+                "delay_seconds": 12,
+                "match_mode": "prefix",
+                "case_sensitive": False,
+                "enabled": True,
+            },
+        ]
+    )
+
+    rule = kad.match_keyword_auto_delete_rule("垃圾前缀123", config)
+    assert rule["keyword"] == "垃圾前缀"
+    assert rule["delay_seconds"] == 12
+    assert kad.get_keyword_auto_delete_config(_config())["rules"][0]["delay_seconds"] == 300
+
+
+def test_per_rule_delay_is_used_by_scheduler(tmp_path):
+    db = DB(str(tmp_path / "keyword-delete-per-rule.db"))
+    _FakeTimer.instances.clear()
+    config = _config(
+        rules=[
+            {
+                "keyword": "/me@afoolGroupBot",
+                "delay_seconds": 9,
+                "match_mode": "exact",
+                "case_sensitive": False,
+                "enabled": True,
+            }
+        ]
+    )
+    try:
+        receipt = kad.schedule_keyword_message_delete(
+            _Bot(), _message(), config, db, timer_factory=_FakeTimer
+        )
+
+        assert receipt["delay_seconds"] == 9
+        assert _FakeTimer.instances[0].delay == 9
+    finally:
+        db.close()
+
+
 def test_only_plain_group_user_messages_are_candidates():
     config = _config()
 
@@ -176,11 +227,38 @@ def test_due_queue_recovers_after_timer_loss(tmp_path):
         db.close()
 
 
+def test_admin_cleanup_deletes_all_current_snapshot_matches_without_punishment(tmp_path):
+    db = DB(str(tmp_path / "keyword-delete-cleanup.db"))
+    bot = _Bot()
+    try:
+        db.snapshot_message(-100123, 70, 1, "/me@afoolGroupBot", 1)
+        db.snapshot_message(-100123, 71, 2, "/ME@AFOOLGROUPBOT", 2)
+        db.snapshot_message(-100123, 72, 3, "正常聊天", 3)
+
+        counts = kad.cleanup_existing_keyword_messages(bot, db, _config(), chat_id=-100123)
+
+        assert counts == {
+            "scanned": 3,
+            "matched": 2,
+            "deleted": 2,
+            "already_gone": 0,
+            "failed": 0,
+            "status": "completed",
+        }
+        assert bot.deleted == [(-100123, 71), (-100123, 70)]
+        assert bot.restricted == []
+        assert bot.banned == []
+        assert db.get_keyword_message_delete_state(-100123, 70)["deleted"] == 1
+        assert db.get_keyword_message_delete_state(-100123, 72)["deleted"] == 0
+    finally:
+        db.close()
+
+
 def test_dispatch_stage_stops_later_chat_pipeline_after_match(monkeypatch):
     scheduled = []
 
-    def fake_schedule(bot, message, config, db, *, matched_keyword=None, **_kwargs):
-        scheduled.append((message.message_id, matched_keyword))
+    def fake_schedule(bot, message, config, db, *, matched_rule=None, **_kwargs):
+        scheduled.append((message.message_id, matched_rule["keyword"] if matched_rule else None))
         return {"status": "scheduled"}
 
     monkeypatch.setattr(kad, "schedule_keyword_message_delete", fake_schedule)
