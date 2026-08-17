@@ -1933,12 +1933,13 @@ async function loadConfig() {
   try {
     const d = await api('/api/config');
     const cfg = d.data.config || {};
+    window.keywordAutoDeleteConfig = cfg.KEYWORD_AUTO_DELETE_CONFIG || {};
     const cc = document.getElementById('configContent');
     if (!cc) return;
     const categories = {
       '核心互动': ['REPLY_CHANCE', 'REPLY_SPEED', 'REPLY_DELAY_MIN', 'REPLY_DELAY_MAX', 'MAX_MSG_LENGTH', 'RELAY_MODE_ENABLED', 'FAQ_TRACKING_ENABLED', 'FAQ_AUTO_REPLY_ENABLED'],
       '播报调度': ['GREETING_CONFIG', 'MYSTIC_BROADCAST_CONFIG', 'RELAY_MODE_ENABLED', 'WELCOME_MSG'],
-      '安全治理': ['ENABLE_MESSAGE_DELETION', 'ORPHAN_CLEANUP_ENABLED', 'AD_CLEANUP_REACTIONS', 'RETROACTIVE_SCAN_ENABLED', 'EMOJI_MASK_DETECT', 'EDIT_DETECT_ENABLE', 'AD_DETECT_CONFIG', 'ANTIFLOOD_CONFIG', 'ANTI_DELETE_CONFIG', 'SPAM_LIMIT'],
+      '安全治理': ['ENABLE_MESSAGE_DELETION', 'ORPHAN_CLEANUP_ENABLED', 'KEYWORD_AUTO_DELETE_CONFIG', 'AD_CLEANUP_REACTIONS', 'RETROACTIVE_SCAN_ENABLED', 'EMOJI_MASK_DETECT', 'EDIT_DETECT_ENABLE', 'AD_DETECT_CONFIG', 'ANTIFLOOD_CONFIG', 'ANTI_DELETE_CONFIG', 'SPAM_LIMIT'],
       '业务配置': ['PROACTIVE_ENGAGE_CONFIG', 'CHECKIN_CONFIG', 'POINTS_RULES', 'POINTS_PER_INVITE', 'PRICE_LIST', 'REPLY_STICKER_CHANCE'],
       'AI模型': ['MODE_ROUTING', 'MODEL_POOLS', 'TEMPERATURE', 'MAX_TOKENS', 'TOP_P', 'FREQUENCY_PENALTY', 'PRESENCE_PENALTY', 'CURRENT_MODEL_INDEX'],
       '内容互动': ['SYSTEM_PROMPT', 'PROMPT_TEMPLATES', 'HATE_KEYWORDS', 'BANNED_WORDS', 'SLANG_DICT', 'PHOTO_KEYWORDS'],
@@ -1952,7 +1953,7 @@ async function loadConfig() {
       'GREETING_CONFIG': '问候配置', 'MYSTIC_BROADCAST_CONFIG': '传统文化播报配置', 'RELAY_MODE_ENABLED': '私聊中继', 'WELCOME_MSG': '入群欢迎',
       'ENABLE_MESSAGE_DELETION': '消息删除', 'ORPHAN_CLEANUP_ENABLED': '孤儿清理', 'AD_CLEANUP_REACTIONS': '广告反应清理', 'RETROACTIVE_SCAN_ENABLED': '启动追溯',
       'EMOJI_MASK_DETECT': 'Emoji面具检测', 'EDIT_DETECT_ENABLE': '编辑消息检测', 'AD_DETECT_CONFIG': '广告检测',
-      'ANTIFLOOD_CONFIG': '反刷屏', 'ANTI_DELETE_CONFIG': '反撤回', 'SPAM_LIMIT': '刷屏限制',
+      'KEYWORD_AUTO_DELETE_CONFIG': '关键词延迟删', 'ANTIFLOOD_CONFIG': '反刷屏', 'ANTI_DELETE_CONFIG': '反撤回', 'SPAM_LIMIT': '刷屏限制',
       'PROACTIVE_ENGAGE_CONFIG': '主动搭讪', 'CHECKIN_CONFIG': '签到配置', 'POINTS_RULES': '积分规则',
       'POINTS_PER_INVITE': '邀请积分', 'PRICE_LIST': '价格表', 'REPLY_STICKER_CHANCE': '贴纸概率(%)',
       'MODE_ROUTING': '模式路由', 'MODEL_POOLS': '模型池', 'TEMPERATURE': '创意温度',
@@ -1992,6 +1993,11 @@ async function loadConfig() {
           html += `<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#1e1e2e; border-radius:8px;">
             <label style="color:#94a3b8; font-size:13px; min-width:100px;">${escHtml(label)}</label>
             <input type="text" value="${escHtml(v.join(', '))}" onchange="quickSaveConfig('${escHtml(k)}', this.value.split(/[,，]/).map(s=>s.trim()).filter(s=>s))" style="flex:1; padding:4px 8px; background:#0f0f1a; border:1px solid rgba(255,255,255,0.1); border-radius:6px; color:#e2e8f0; font-size:13px;">
+          </div>`;
+        } else if (k === 'KEYWORD_AUTO_DELETE_CONFIG' && v && typeof v === 'object') {
+          html += `<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#1e1e2e; border-radius:8px; grid-column:1/-1;">
+            <label style="flex:1; color:#94a3b8; font-size:13px;">${escHtml(label)}：${v.enabled ? '已开启' : '已关闭'} · ${Number(v.delay_seconds || 300)} 秒 · ${escHtml((v.keywords || []).join(', '))}</label>
+            <button class="btn btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="editConfig('KEYWORD_AUTO_DELETE_CONFIG', JSON.stringify(window.keywordAutoDeleteConfig || {}))">编辑 JSON</button>
           </div>`;
         }
       }

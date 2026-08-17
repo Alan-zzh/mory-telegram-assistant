@@ -11,6 +11,7 @@ from tasks.maintenance.clean_relay_sessions_task import CleanRelaySessionsTask
 from tasks.maintenance.daily_backup_task import DailyBackupTask
 from tasks.maintenance.flush_alert_summary_task import FlushAlertSummaryTask
 from tasks.maintenance.log_cleanup_task import LogCleanupTask
+from tasks.maintenance.keyword_message_auto_delete_task import KeywordMessageAutoDeleteTask
 from tasks.maintenance.night_mode_task import NightModeTask
 from tasks.maintenance.points_decay_task import PointsDecayTask
 from tasks.maintenance.reminders_task import RemindersTask
@@ -32,6 +33,7 @@ __all__ = [
     "DailyBackupTask",
     "FlushAlertSummaryTask",
     "LogCleanupTask",
+    "KeywordMessageAutoDeleteTask",
     "NightModeTask",
     "PointsDecayTask",
     "RemindersTask",

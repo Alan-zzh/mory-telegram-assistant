@@ -797,6 +797,10 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     if _dispatch_p3_5_ad_detection(dctx):
         return
 
+    # ── P3.52：配置词命中后延迟删除，只清消息，不进入积分/意图/AI ──
+    if _dispatch_p3_52_keyword_auto_delete(dctx):
+        return
+
     # ── P3.55：群聊首次精确 @ 欢迎（确定性本地模板，必须早于意图路由/AI）──
     if _dispatch_first_group_mention_onboarding(dctx):
         return
@@ -1460,6 +1464,39 @@ def _dispatch_p3_5_ad_detection(dctx: DispatchContext) -> bool:
             return True
 
     return False
+
+
+def _dispatch_p3_52_keyword_auto_delete(dctx: DispatchContext) -> bool:
+    """对配置词命中的普通群文本登记延迟删除，不触发任何用户治理。"""
+    if not dctx.is_group:
+        return False
+
+    from modules.keyword_auto_delete import (
+        get_message_keyword_match,
+        schedule_keyword_message_delete,
+    )
+
+    keyword = get_message_keyword_match(dctx.msg, dctx.ctx.config)
+    if not keyword:
+        return False
+
+    receipt = schedule_keyword_message_delete(
+        dctx.ctx.bot,
+        dctx.msg,
+        dctx.ctx.config,
+        dctx.ctx.db,
+        matched_keyword=keyword,
+    )
+    if receipt.get("status") != "scheduled":
+        logger.warning(
+            "[关键词延迟删] 命中但调度降级 uid=%s chat=%s msg=%s receipt=%s",
+            dctx.uid,
+            dctx.chat_id,
+            getattr(dctx.msg, "message_id", 0),
+            receipt,
+        )
+    clear_logging_context()
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════

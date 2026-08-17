@@ -877,11 +877,22 @@ class DB:
                 ts INTEGER NOT NULL,
                 is_ad INTEGER DEFAULT 0,
                 deleted INTEGER DEFAULT 0,
+                auto_delete_due_at INTEGER DEFAULT 0,
+                auto_delete_status TEXT DEFAULT '',
+                auto_delete_keyword TEXT DEFAULT '',
+                auto_delete_attempts INTEGER DEFAULT 0,
+                auto_delete_error TEXT DEFAULT '',
                 UNIQUE(chat_id, msg_id)
             )""")
+            self._safe_add_column(c, "message_snapshots", "auto_delete_due_at", "INTEGER DEFAULT 0")
+            self._safe_add_column(c, "message_snapshots", "auto_delete_status", "TEXT DEFAULT ''")
+            self._safe_add_column(c, "message_snapshots", "auto_delete_keyword", "TEXT DEFAULT ''")
+            self._safe_add_column(c, "message_snapshots", "auto_delete_attempts", "INTEGER DEFAULT 0")
+            self._safe_add_column(c, "message_snapshots", "auto_delete_error", "TEXT DEFAULT ''")
             c.execute("CREATE INDEX IF NOT EXISTS idx_msg_snapshots_chat_ts ON message_snapshots(chat_id, ts)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_msg_snapshots_user ON message_snapshots(user_id)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_msg_snapshots_ad ON message_snapshots(is_ad, deleted)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_msg_snapshots_auto_delete ON message_snapshots(auto_delete_status, auto_delete_due_at)")
 
             c.execute("""CREATE TABLE IF NOT EXISTS connected_chats (
                 uid INTEGER NOT NULL,
@@ -2047,6 +2058,10 @@ class DB:
         'snapshot_message': 'groups',
         'mark_message_ad': 'groups',
         'mark_message_deleted': 'groups',
+        'queue_keyword_message_delete': 'groups',
+        'get_due_keyword_message_deletes': 'groups',
+        'resolve_keyword_message_delete': 'groups',
+        'get_keyword_message_delete_state': 'groups',
         'get_user_messages': 'groups',
         'get_user_undeleted_messages': 'groups',
         'get_user_ad_messages': 'groups',

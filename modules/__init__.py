@@ -79,6 +79,7 @@ __all__ = [
     "ad_patterns_encoded",
     "ad_detector",
     "keyword_trigger",
+    "keyword_auto_delete",
     "admin_cmds",
     "content",
     "avatar_detector",

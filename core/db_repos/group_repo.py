@@ -261,6 +261,133 @@ class GroupRepo:
             logger.warning(f"mark_message_deleted 失败 chat_id={chat_id} msg_id={msg_id}: {e}")
             return False
 
+    def queue_keyword_message_delete(
+        self,
+        chat_id: int,
+        message_id: int,
+        user_id: int,
+        text: str,
+        keyword: str,
+        due_at: int,
+    ) -> bool:
+        """登记关键词命中消息的到期删除状态；同一消息重复投递保持幂等。"""
+        with self.lock:
+            self.conn.execute(
+                """INSERT INTO message_snapshots (
+                       chat_id, msg_id, user_id, text, ts,
+                       auto_delete_due_at, auto_delete_status,
+                       auto_delete_keyword, auto_delete_attempts, auto_delete_error
+                   ) VALUES (?,?,?,?,? ,?,'pending',?,0,'')
+                   ON CONFLICT(chat_id, msg_id) DO UPDATE SET
+                       auto_delete_due_at=excluded.auto_delete_due_at,
+                       auto_delete_status='pending',
+                       auto_delete_keyword=excluded.auto_delete_keyword,
+                       auto_delete_attempts=0,
+                       auto_delete_error=''""",
+                (
+                    int(chat_id),
+                    int(message_id),
+                    int(user_id),
+                    (text or "")[:200],
+                    int(time.time()),
+                    int(due_at),
+                    (keyword or "")[:100],
+                ),
+            )
+            self.conn.commit()
+        return True
+
+    def get_due_keyword_message_deletes(
+        self,
+        now_ts: int,
+        limit: int = 100,
+        max_attempts: int = 5,
+    ) -> list[dict]:
+        """读取到期且仍可重试的关键词待删消息。"""
+        with self.lock:
+            rows = self.conn.execute(
+                """SELECT chat_id, msg_id, user_id, auto_delete_keyword,
+                          auto_delete_due_at, auto_delete_attempts
+                   FROM message_snapshots
+                   WHERE auto_delete_status='pending'
+                     AND auto_delete_due_at>0
+                     AND auto_delete_due_at<=?
+                     AND auto_delete_attempts<?
+                   ORDER BY auto_delete_due_at ASC
+                   LIMIT ?""",
+                (int(now_ts), max(1, int(max_attempts)), max(1, min(500, int(limit)))),
+            ).fetchall()
+        return [
+            {
+                "chat_id": row[0],
+                "message_id": row[1],
+                "user_id": row[2],
+                "keyword": row[3],
+                "due_at": row[4],
+                "attempts": row[5],
+            }
+            for row in rows
+        ]
+
+    def resolve_keyword_message_delete(
+        self,
+        chat_id: int,
+        message_id: int,
+        *,
+        success: bool,
+        error: str = "",
+        max_attempts: int = 5,
+    ) -> str:
+        """固化单条删除回执；失败达到上限后转为 failed，不包装成成功。"""
+        with self.lock:
+            if success:
+                cursor = self.conn.execute(
+                    """UPDATE message_snapshots
+                       SET auto_delete_status='deleted', deleted=1, auto_delete_error=''
+                       WHERE chat_id=? AND msg_id=?""",
+                    (int(chat_id), int(message_id)),
+                )
+                self.conn.commit()
+                return "deleted" if cursor.rowcount else "missing"
+
+            row = self.conn.execute(
+                """SELECT auto_delete_attempts FROM message_snapshots
+                   WHERE chat_id=? AND msg_id=?""",
+                (int(chat_id), int(message_id)),
+            ).fetchone()
+            if row is None:
+                return "missing"
+            attempts = int(row[0] or 0) + 1
+            status = "failed" if attempts >= max(1, int(max_attempts)) else "pending"
+            self.conn.execute(
+                """UPDATE message_snapshots
+                   SET auto_delete_status=?, auto_delete_attempts=?, auto_delete_error=?
+                   WHERE chat_id=? AND msg_id=?""",
+                (status, attempts, (error or "")[:300], int(chat_id), int(message_id)),
+            )
+            self.conn.commit()
+            return status
+
+    def get_keyword_message_delete_state(self, chat_id: int, message_id: int) -> dict | None:
+        """读取单条待删/已删状态，供测试与生产业务回执核对。"""
+        with self.lock:
+            row = self.conn.execute(
+                """SELECT auto_delete_due_at, auto_delete_status, auto_delete_keyword,
+                          auto_delete_attempts, auto_delete_error, deleted
+                   FROM message_snapshots WHERE chat_id=? AND msg_id=?""",
+                (int(chat_id), int(message_id)),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "due_at": row[0],
+            "status": row[1],
+            "keyword": row[2],
+            "attempts": row[3],
+            "error": row[4],
+            "deleted": row[5],
+        }
+
     def mark_message_ad(self, chat_id: int, msg_id: int) -> bool:
         """固化逐条广告判定；删除是否成功由 deleted 字段独立表达。"""
         try:

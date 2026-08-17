@@ -415,6 +415,16 @@
     "mute_duration": 60,
     "action": "mute"
   },
+  "KEYWORD_AUTO_DELETE_CONFIG": {
+    "enabled": false,
+    "keywords": [
+      "/me@afoolGroupBot"
+    ],
+    "delay_seconds": 300,
+    "match_mode": "exact",
+    "case_sensitive": false,
+    "max_attempts": 5
+  },
   "BLIND_BOX_CONFIG": {
     "enabled": false,
     "cost": 50

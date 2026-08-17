@@ -10,10 +10,10 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 模块状态表（2026-08-05 更新）
 | 模块 | 状态 | 入口文件 | 备注 |
 |------|------|----------|------|
-| 消息总分发 | 在用 | `core/message_dispatcher.py` | 9 个分发函数（8 定义 + 导入 `_dispatch_p10_ai`） |
+| 消息总分发 | 在用 | `core/message_dispatcher.py` | 10 个分发函数（9 定义 + 导入 `_dispatch_p10_ai`） |
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标。风格参考仅限当前场景，含价格、权益、联系方式、保证性事实或 CTA 的样本不进入普通 AI 提示 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 当前唯一池为9个文本型号+`qwen3.5-ocr`；严格按到期日升序且同日保留配置顺序；思考型按声明调用。超时、限流和服务异常仅进程内熔断并自动回首选，只有明确额度耗尽永久拉黑；当前索引只认配置，不从数据库复活旧值 |
-| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类、46 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
+| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 46 个 BaseTask 子类、47 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 实时与存量扫描共用资料/消息规则；裸链接或普通绑定频道不是广告证据，必须再命中明确广告语义；Q裙成人招揽首条处置；1小时同文至少3次只删重复组；全量扫描默认只报告，覆盖不足或状态未知均不处罚，应用时重新取证并走统一处置链 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 137 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
@@ -23,6 +23,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 新成员数据图 | 默认关闭 | `modules/new_member_analytics.py` | 入群漏斗/来源分析/留存曲线/质量评估，`NEW_MEMBER_ANALYTICS.enabled` |
 | 网编会员 | 默认关闭 | `modules/membership.py` | 付费等级/订阅管理/权益体系，`MEMBERSHIP_CONFIG.enabled` |
 | 孤儿清理 | 在用 | `dashboard/api/orphan_api.py`、`tasks/maintenance/burn_orphan_task.py` | 端到端串联 |
+| 关键词延迟删 | 默认关闭 | `modules/keyword_auto_delete.py`、`tasks/maintenance/keyword_message_auto_delete_task.py` | 精确命中群成员文本后延迟删除；SQLite 队列支持重启恢复，只删消息不处罚用户 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 174 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史；0006=首次欢迎送达状态 |
@@ -37,22 +38,22 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.38.61（2026-08-17）· 当前模型池唯一真相与临时故障自动回切
+v5.38.62（2026-08-17）· 群消息预填关键词延迟删除与重启恢复
 
 生产状态：**v5.38.61 已部署。Bot PID 3647502、Dashboard PID 3647504 均 active/running、enabled、NRestarts=0，health 200，启动错误 0；7 个关键文件 SHA-256 与本地一致。生产配置精确为9个文本型号+1个OCR、索引0、黑名单0、旧数据库模型状态0；10/10 型号真实API请求成功，实际路由连续请求由到期最早模型返回。再次重启后配置、首选模型与服务状态仍成立；部署代码和配置备份均已校验。**
 
 ## 最近 3 条大事
-1. 2026-08-17 v5.38.61：只保留当前10个型号并按到期优先；临时故障回切，仅额度耗尽拉黑。
-2. 2026-08-15 v5.38.60：冷场首答保留老板话锋，后续认同或追问转单预览，拒绝不硬推。
-3. 2026-08-15 v5.38.59：冷场问法用审核底稿随机润色，FAQ日报排除明确小闲聊并保留实际诉求。
+1. 2026-08-17 v5.38.62：预填关键词群消息延迟删除，重启恢复且不处罚用户。
+2. 2026-08-17 v5.38.61：只保留当前10个型号并按到期优先；临时故障回切，仅额度耗尽拉黑。
+3. 2026-08-15 v5.38.60：冷场首答保留老板话锋，后续认同或追问转单预览，拒绝不硬推。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
-modules_py=138
+modules_py=139
 core_py=81
 job_count=33
 db_tables=174
 dashboard_routes=163
-dispatch_funcs=9
+dispatch_funcs=10
 model_router_mappings=10
 <!-- METRICS:END -->
