@@ -116,6 +116,11 @@ def write_config(cfg):
         cfg = compact_runtime_config(cfg)
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        # config.json 可能包含 Token/API Key；原子替换前先把临时文件收紧，
+        # 避免 Dashboard 每次保存后把部署器设置的 0600 放宽成 0644。
+        os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, cfg_path)
         # [P2-NEW-14] 更新缓存，避免同进程立即 read_config 返回旧数据（竞态）
         _config_cache["data"] = cfg

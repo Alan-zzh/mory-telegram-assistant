@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from flask import Flask
 
 import dashboard.api.config_api as config_api
+import dashboard.helpers as dashboard_helpers
 from modules import settings_panel
 
 
@@ -99,3 +100,22 @@ def test_bot_rule_input_is_admin_only_and_saves_canonical_rules(monkeypatch):
     assert settings_panel.handle_settings_callback(bot, call, config) is True
     assert bot.answers[-1][1]["show_alert"] is True
     assert not settings_panel.has_pending_session(-1001, 99)
+
+
+def test_dashboard_config_write_tightens_temp_permissions_before_replace(monkeypatch, tmp_path):
+    modes = []
+    replace_calls = []
+    real_replace = dashboard_helpers.os.replace
+    monkeypatch.setattr(dashboard_helpers, "_MORY_ROOT", str(tmp_path))
+    monkeypatch.setattr(dashboard_helpers, "_signal_config_reload", lambda: None)
+    monkeypatch.setattr(dashboard_helpers.os, "chmod", lambda path, mode: modes.append((path, mode)))
+
+    def tracked_replace(source, target):
+        replace_calls.append((source, target, list(modes)))
+        real_replace(source, target)
+
+    monkeypatch.setattr(dashboard_helpers.os, "replace", tracked_replace)
+
+    assert dashboard_helpers.write_config({"KEYWORD_AUTO_DELETE_CONFIG": {"enabled": False}}) is True
+    assert modes[-1][1] == 0o600
+    assert replace_calls[0][2][-1][1] == 0o600
