@@ -23,10 +23,10 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 新成员数据图 | 默认关闭 | `modules/new_member_analytics.py` | 入群漏斗/来源分析/留存曲线/质量评估，`NEW_MEMBER_ANALYTICS.enabled` |
 | 网编会员 | 默认关闭 | `modules/membership.py` | 付费等级/订阅管理/权益体系，`MEMBERSHIP_CONFIG.enabled` |
 | 孤儿清理 | 在用 | `dashboard/api/orphan_api.py`、`tasks/maintenance/burn_orphan_task.py` | 端到端串联 |
-| 关键词延迟删 | 默认关闭 | `modules/keyword_auto_delete.py`、`tasks/maintenance/keyword_message_auto_delete_task.py` | 精确命中群成员文本后延迟删除；SQLite 队列支持重启恢复，只删消息不处罚用户 |
+| 关键词延迟删 | 生产开启 | `modules/keyword_auto_delete.py`、`tasks/maintenance/keyword_message_auto_delete_task.py` | 生产精确匹配 `/me@afoolGroupBot` 并延迟 300 秒删除；SQLite 队列支持重启恢复，只删消息不处罚用户 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
-| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 174 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史；0006=首次欢迎送达状态 |
+| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 174 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史；0006=首次欢迎送达状态；0007=关键词待删恢复状态 |
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前备份、失败保险恢复双服务；项目巡检由 `project_audit_control.py` 只读取证并以 0/2/3 回执，三条 systemd timer 已安装启用 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
@@ -40,7 +40,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.38.62（2026-08-17）· 群消息预填关键词延迟删除与重启恢复
 
-生产状态：**v5.38.61 已部署。Bot PID 3647502、Dashboard PID 3647504 均 active/running、enabled、NRestarts=0，health 200，启动错误 0；7 个关键文件 SHA-256 与本地一致。生产配置精确为9个文本型号+1个OCR、索引0、黑名单0、旧数据库模型状态0；10/10 型号真实API请求成功，实际路由连续请求由到期最早模型返回。再次重启后配置、首选模型与服务状态仍成立；部署代码和配置备份均已校验。**
+生产状态：**v5.38.62 已部署。Bot PID 1035200、Dashboard PID 1028658 均 active、enabled、NRestarts=0，health 200；10 个关键发布文件与部署源 SHA-256 一致，数据库 Alembic 0007 且 integrity=ok。生产精确匹配 `/me@afoolGroupBot` 并延迟 300 秒：真实入站消息在 22:21:06 自动登记、22:26:07 删除，Telegram 复核为 message_not_found，四类处罚记录均为 0；另一次待删状态跨 Bot 重启后由恢复任务完成。**
 
 ## 最近 3 条大事
 1. 2026-08-17 v5.38.62：预填关键词群消息延迟删除，重启恢复且不处罚用户。
