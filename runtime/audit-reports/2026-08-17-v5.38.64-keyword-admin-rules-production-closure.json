@@ -1,0 +1,128 @@
+{
+  "schema": "mory.production-closure/v1",
+  "feature": "admin-managed keyword message auto-delete rules",
+  "completed_at": "2026-08-17T23:41:00+08:00",
+  "result": "deployed_with_telegram_history_limit",
+  "version": "v5.38.64",
+  "commits": [
+    "ebf9b5d61a54 feat: add admin-managed keyword deletion rules",
+    "1f7462e56996 fix: preserve config permissions on dashboard save"
+  ],
+  "capabilities": {
+    "dashboard": "structured add/edit/delete UI with per-rule keyword, delay, match mode, case sensitivity and enabled state",
+    "telegram_settings": "configured admins can add, edit, delete and immediately clean matching messages through /settings",
+    "visibility": "Dashboard viewer response omits KEYWORD_AUTO_DELETE_CONFIG; Telegram outsider receives an authorization alert and no pending edit session",
+    "compatibility": "v5.38.62 keywords plus global delay is read and canonicalized to rules[]",
+    "governance_boundary": "message deletion only; no mute, ban, blacklist or advertising classification call"
+  },
+  "local_verification": {
+    "focused_keyword_and_admin": "16 passed before permission patch; final permission and Dashboard set: 13 passed",
+    "full_unit": "1180 passed",
+    "db_method_registry": "208 delegated methods, no missing or orphaned registrations",
+    "config_sync": "config example and Dashboard allowlist consistent",
+    "clean_release_gate": "version/config/db/docs/deploy readiness all passed in isolated worktree"
+  },
+  "production": {
+    "services": {
+      "mory-assistant": {
+        "pid": 1150241,
+        "active": true,
+        "nrestarts": 0,
+        "started_at": "2026-08-17T23:39:48+08:00"
+      },
+      "mory-dashboard": {
+        "pid": 1150242,
+        "active": true,
+        "nrestarts": 0,
+        "started_at": "2026-08-17T23:39:48+08:00"
+      },
+      "health_http": 200,
+      "health_body": {"status": "ok"},
+      "new_start_window_errors": 0
+    },
+    "config": {
+      "enabled": true,
+      "rules": [
+        {
+          "keyword": "/me@afoolGroupBot",
+          "delay_seconds": 300,
+          "match_mode": "exact",
+          "case_sensitive": false,
+          "enabled": true
+        }
+      ],
+      "legacy_fields_present": false,
+      "hot_reload_receipt": "2026-08-17T23:40:50+08:00 Dashboard config synchronized into Bot memory and scheduler"
+    },
+    "dashboard_business_probe": {
+      "admin_login_http": 200,
+      "admin_config_read_http": 200,
+      "keyword_visible_to_admin": true,
+      "viewer_config_read_http": 200,
+      "keyword_visible_to_viewer": false,
+      "admin_save_http": 200,
+      "config_mode_immediately_after_save": "0600",
+      "config_mode_after_hot_reload": "0600"
+    },
+    "telegram_settings_probe": {
+      "keyword_toggle_present": true,
+      "keyword_rules_entry_present": true,
+      "outsider_callback_blocked": true,
+      "outsider_pending_session": false
+    },
+    "existing_message_cleanup": {
+      "initial_exact_snapshot_count": 122,
+      "exact_count_at_execution": 123,
+      "scanned_undeleted_text_snapshots": 2118,
+      "matched": 123,
+      "deleted_by_telegram": 33,
+      "already_absent": 26,
+      "telegram_refused_too_old": 64,
+      "remaining_within_48_hours": 0,
+      "youngest_refused_age_hours": 54.33,
+      "second_delete_receipt": {
+        "message_id": 67817,
+        "result": "message_not_found"
+      },
+      "database_integrity": "ok"
+    },
+    "permissions": {
+      "config.json": "0600",
+      ".env": "0600",
+      "mory.db": "0600",
+      "mory-assistant.service": "root:root 0644",
+      "mory-dashboard.service": "root:root 0644"
+    },
+    "runtime_sha256": {
+      "dashboard/helpers.py": "d7ad31854c7c40e21b0d15b20571b04cb4ab20c502371baf796152cdebf9087a",
+      "version.py": "66365e823024766fa6d3c9eb16d9d37707f56ac35e8e6366abd433223e08b474",
+      "modules/keyword_auto_delete.py": "ee43273bf2203965dc36a5dec5bb903523af610d5920b7f35100e9bcfd483995",
+      "modules/settings_panel.py": "a7ca4fba710310501171b050491615789811cf1fa439b13ec4397ab80c36026b",
+      "dashboard/api/config_api.py": "c5feef93f609a20bc38ab4d4b0ace85cb963c4cc8e420ce9f3341e504ee599b5",
+      "dashboard/templates/html_page.py": "52f9a5e38f6def78e8d526bb905f125ec94b2296439cdbc51dc7f0bab57f9f89"
+    }
+  },
+  "rollback": {
+    "code_before_v5.38.64": {
+      "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1786980304.tar.gz",
+      "sha256": "d44d004239ba60d9332aac8e0b9138e005f4fe4d7af634885f1ac9342073ec61"
+    },
+    "code_before_v5.38.63": {
+      "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1786978867.tar.gz",
+      "sha256": "ef9cc106ecd184d6b4b545a75ad17bc6bb18ca6fafc98e4a8a15aaa3f1de19e8"
+    },
+    "config_before_canonical_migration": {
+      "path": "/home/ubuntu/mory_assistant/backups/config_pre_v53863_20260817_231611.json",
+      "sha256": "91b7b860cb7a2ce5a806fcd03a62968ca990331560482c7a26f7e64f66869957"
+    },
+    "database_before_cleanup": {
+      "path": "/home/ubuntu/mory_assistant/backups/mory_pre_v53863_cleanup_20260817_231611.db",
+      "sha256": "362d8f57270297a6077a5ab5571da65c4ec0a693f1eea84968257b05681b644d"
+    }
+  },
+  "evidence_gap": [
+    "Telegram Bot API refused 64 messages older than its deletion window; they are not reported as deleted.",
+    "No fresh inbound human message was generated for this release; the real business receipt is the admin-triggered Telegram deletion batch plus second-delete message_not_found."
+  ],
+  "deployment": "deployed"
+}
