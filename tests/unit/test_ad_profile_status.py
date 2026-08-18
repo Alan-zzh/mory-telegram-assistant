@@ -110,6 +110,35 @@ def test_profile_bio_bare_personal_link_is_not_ad():
     assert result["score"] == 0
 
 
+def test_profile_bio_invite_teaser_exact_incident_is_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="洪念桐", status_id=""),
+        "👉 https://t.me/+GXnFrenFyj0zOTE9 👈多一条路试试。",
+        {},
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert result["source"] == "bio_invite_teaser"
+
+
+def test_normal_group_invite_without_teaser_is_not_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="摄影群管理员", status_id=""),
+        "备用摄影交流群：https://t.me/+AbCdEfGhIjKlMnOp",
+        {},
+    )
+
+    assert result["is_ad"] is False
+    assert result["score"] == 0
+
+
 def test_profile_bio_explicit_promotion_with_link_is_ad():
     from modules.ad_profile_signals import detect_profile_ad_signal
 
@@ -500,6 +529,45 @@ def test_bare_link_bio_and_plain_channel_do_not_block_short_message():
     assert bot.deleted == []
     assert bot.restricted == []
     assert ctx.db.blacklist == []
+
+
+def test_invite_teaser_and_look_at_me_message_are_enforced_and_marked():
+    from core.handlers.security_handlers import check_ad_detection
+
+    bot = _FakePersonalChannelBot("", "", "")
+    bot.user_chat.personal_chat = None
+    bot.user_chat.bio = "👉 https://t.me/+GXnFrenFyj0zOTE9 👈多一条路试试。"
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.text = "都TMD看我，搞不了几k你直接骂死我"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": _FakeAdDetector(),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": "洪念桐",
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
+    assert db.ad_marked == [(-1001, 88)]
 
 
 def test_profile_status_ad_does_not_block_whitelisted_user():

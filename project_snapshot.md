@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-17。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-19。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标。风格参考仅限当前场景，含价格、权益、联系方式、保证性事实或 CTA 的样本不进入普通 AI 提示 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 当前唯一池为9个文本型号+`qwen3.5-ocr`；严格按到期日升序且同日保留配置顺序；思考型按声明调用。超时、限流和服务异常仅进程内熔断并自动回首选，只有明确额度耗尽永久拉黑；当前索引只认配置，不从数据库复活旧值 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 46 个 BaseTask 子类、47 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 实时与存量扫描共用资料/消息规则；裸链接或普通绑定频道不是广告证据，必须再命中明确广告语义；Q裙成人招揽首条处置；1小时同文至少3次只删重复组；全量扫描默认只报告，覆盖不足或状态未知均不处罚，应用时重新取证并走统一处置链 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 实时与存量扫描共用资料/消息规则；裸链接或普通绑定频道不是广告证据，群邀请链接再叠加规避式引流话术才处置；入群 Bio 空值按 30 秒/5 分钟/30 分钟有界复审；全量扫描默认只报告，覆盖不足或状态未知均不处罚 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 137 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
@@ -38,14 +38,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.38.64（2026-08-17）· Dashboard 配置写入权限闭环
+v5.38.65（2026-08-19）· 入群资料延迟复审与邀请引流漏判修复
 
-生产状态：**v5.38.64 已部署。Bot PID 1150241、Dashboard PID 1150242 均 active、NRestarts=0，health 200；管理员面板真实保存并热重载后 config.json 仍为 0600。生产规则为 `/me@afoolGroupBot` 精确匹配、300 秒；本轮 123 条命中中删除 33、确认已不存在 26，近 48 小时剩余 0；另有 64 条至少 54.33 小时的旧消息被 Telegram 明确拒绝删除。**
+生产状态：**v5.38.64 当前仍在运行，Bot PID 1150241、Dashboard PID 1150242 均 active、NRestarts=0，health 200；v5.38.65 已完成本地门禁，等待本次部署闭环。**
 
 ## 最近 3 条大事
-1. 2026-08-17 v5.38.64：Dashboard 原子保存配置前强制临时文件 0600 权限。
-2. 2026-08-17 v5.38.63：关键词规则可独立计时，由双端管理员管理并清理现存消息。
-3. 2026-08-17 v5.38.62：预填关键词群消息延迟删除，重启恢复且不处罚用户。
+1. 2026-08-19 v5.38.65：入群 Bio 空值有界复审，邀请链接叠加规避引流直接处置。
+2. 2026-08-17 v5.38.64：Dashboard 原子保存配置前强制临时文件 0600 权限。
+3. 2026-08-17 v5.38.63：关键词规则可独立计时，由双端管理员管理并清理现存消息。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

@@ -317,6 +317,46 @@ def test_verification_release_rechecks_delayed_bio_and_blocks(monkeypatch):
     assert avatar_calls == []
 
 
+def test_empty_release_bio_schedules_bounded_retry_and_later_blocks(monkeypatch):
+    from core.handlers import member_handlers
+    from tasks import task_scheduler
+
+    bot = _Bot(bio="")
+    bot.get_chat_member = lambda chat_id, uid: SimpleNamespace(status="member")
+    db = _DB()
+    user = _User("洪念桐", uid=8858734300)
+    update = SimpleNamespace(
+        chat=SimpleNamespace(id=-1003004701688),
+        old_chat_member=SimpleNamespace(status="restricted", user=user),
+        new_chat_member=SimpleNamespace(status="member", user=user),
+    )
+    jobs = []
+
+    class _Scheduler:
+        def add_job(self, func, **kwargs):
+            jobs.append((func, kwargs))
+
+    monkeypatch.setattr(task_scheduler, "get_scheduler_instance", lambda: _Scheduler())
+    enforced = []
+    monkeypatch.setattr(
+        member_handlers,
+        "_enforce_member_ad",
+        lambda *args, **kwargs: enforced.append((args, kwargs)),
+    )
+    monkeypatch.setattr(member_handlers, "_review_member_avatar", lambda *args, **kwargs: False)
+
+    member_handlers._handle_chat_member_update(bot, update, {}, db)
+
+    assert len(jobs) == 1
+    assert jobs[0][1]["id"] == "member_profile_retry_-1003004701688_8858734300"
+
+    bot.bio = "👉 https://t.me/+GXnFrenFyj0zOTE9 👈多一条路试试。"
+    func, job = jobs[0]
+    func(*job["args"])
+
+    assert len(enforced) == 1
+
+
 def test_non_release_member_update_only_tracks_without_repeat_review(monkeypatch):
     from core.handlers import member_handlers
 

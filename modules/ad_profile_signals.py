@@ -16,6 +16,20 @@ from modules.ad_patterns_encoded import BIO_PATTERNS, USERNAME_PATTERNS
 logger = get_logger("ad_profile_signals")
 
 
+_TELEGRAM_INVITE_RE = re.compile(
+    r"(?:https?://)?(?:t\.me|telegram\.me|te\.me|tg\.me)/(?:\+|joinchat/)[A-Za-z0-9_-]{8,}",
+    re.IGNORECASE,
+)
+_INVITE_TEASER_RE = re.compile(
+    r"(?:给(?:自己|你)?多(?:一条|条)?路|多(?:一条|条)?路)(?:试试|看看|了解|选择)",
+    re.IGNORECASE,
+)
+_PROFILE_CTA_RE = re.compile(
+    r"(?:都|来|先|可以|直接)?(?:tmd)?(?:看我|看头像|看简介|看主页|点我)",
+    re.IGNORECASE,
+)
+
+
 def _iter_status_ids(user) -> list:
     """兼容不同 pyTelegramBotAPI 版本的 emoji 状态字段。"""
     ids = []
@@ -167,6 +181,23 @@ def _match_ad_patterns(text: str, patterns=None) -> str:
 def _compact_profile_text(text: str) -> str:
     """压平空格、标点和拆字，避免“飞 机 / 结 算”规避资料检测。"""
     return re.sub(r"[\W_]+", "", str(text or "").lower(), flags=re.UNICODE)
+
+
+def _detect_invite_teaser_ad(bio: str) -> str:
+    """识别群邀请链接与规避式引流话术的同字段组合。"""
+    raw = str(bio or "")
+    if not _TELEGRAM_INVITE_RE.search(raw):
+        return ""
+    compact = _compact_profile_text(raw)
+    match = _INVITE_TEASER_RE.search(compact)
+    return match.group() if match else ""
+
+
+def has_profile_message_bridge(message_text: str, bio: str) -> bool:
+    """正文明确让人查看资料，且资料含确证邀请引流时，正文属于广告桥接消息。"""
+    if not _detect_invite_teaser_ad(bio):
+        return False
+    return bool(_PROFILE_CTA_RE.search(_compact_profile_text(message_text)))
 
 
 def _detect_personal_channel_ad(parts: list[str]) -> dict:
@@ -325,6 +356,17 @@ def detect_profile_ad_signal(
             "is_ad": True,
             "score": 3,
             "reason": f"资料文字命中广告规则: {profile_hit}",
+            "status_ids": status_ids,
+            "status_text": status_text,
+        }
+
+    invite_teaser = _detect_invite_teaser_ad(bio)
+    if invite_teaser:
+        return {
+            "is_ad": True,
+            "score": 3,
+            "reason": f"Bio群邀请链接命中规避式引流话术: {invite_teaser}",
+            "source": "bio_invite_teaser",
             "status_ids": status_ids,
             "status_text": status_text,
         }

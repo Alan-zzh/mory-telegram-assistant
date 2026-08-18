@@ -272,14 +272,20 @@ def check_ad_detection(dctx) -> bool:
             user_bio = (getattr(profile_chat_info, "bio", "") or "")[:500]
         except Exception as e:
             logger.debug(f"[AD] 短消息资料检测拉取Bio失败: uid={uid} err={e}")
-        from modules.ad_profile_signals import detect_profile_ad_signal
+        from modules.ad_profile_signals import (
+            detect_profile_ad_signal,
+            has_profile_message_bridge,
+        )
         profile_result = detect_profile_ad_signal(
             bot, m.from_user, user_bio, CONFIG, chat_info=profile_chat_info
         )
         profile_score = int(profile_result.get("score", 0) or 0)
         if profile_result.get("is_ad"):
             from modules.ad_enforcement import enforce_ad_user
-            message_is_ad = _has_direct_message_ad_evidence(ad_detector, ad_text)
+            message_is_ad = (
+                _has_direct_message_ad_evidence(ad_detector, ad_text)
+                or has_profile_message_bridge(ad_text, user_bio)
+            )
             enforce_ad_user(
                 bot=bot,
                 db=db,

@@ -18,6 +18,8 @@ from core.logging_util import get_logger
 
 logger = get_logger("member_handlers")
 
+_PROFILE_RETRY_DELAYS_SECONDS = (30, 300, 1800)
+
 
 def _get_member_bio(bot, user_id):
     """读取 Telegram 私聊资料；失败时显式返回不可用，供延迟复审补偿。"""
@@ -26,6 +28,80 @@ def _get_member_bio(bot, user_id):
         return (getattr(chat_info, "bio", "") or "")[:500], "", chat_info
     except Exception as e:
         return "", str(e), None
+
+
+def _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx=None, attempt=0):
+    """当 Telegram 暂未返回 Bio 时，注册有界定向复审，不做全群扫描。"""
+    if attempt >= len(_PROFILE_RETRY_DELAYS_SECONDS):
+        logger.warning(
+            f"[入群资料复审] uid={user.id} chat={chat_id} outcome=degraded reason=retry_exhausted"
+        )
+        return False
+    try:
+        from datetime import datetime, timedelta, timezone
+        from tasks.task_scheduler import get_scheduler_instance
+
+        scheduler = get_scheduler_instance()
+        if scheduler is None:
+            logger.warning(
+                f"[入群资料复审] uid={user.id} chat={chat_id} outcome=degraded reason=scheduler_unavailable"
+            )
+            return False
+        delay = _PROFILE_RETRY_DELAYS_SECONDS[attempt]
+        scheduler.add_job(
+            _run_delayed_member_profile_review,
+            trigger="date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=delay),
+            args=[bot, user, config, db, chat_id, ctx, attempt],
+            id=f"member_profile_retry_{chat_id}_{user.id}",
+            replace_existing=True,
+            max_instances=1,
+            misfire_grace_time=300,
+        )
+        logger.info(
+            f"[入群资料复审] uid={user.id} chat={chat_id} attempt={attempt + 1} "
+            f"scheduled_in={delay}s"
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"入群资料复审调度失败 uid={user.id} chat={chat_id}: {e}")
+        return False
+
+
+def _run_delayed_member_profile_review(bot, user, config, db, chat_id, ctx=None, attempt=0):
+    """执行单个新成员的延迟资料复审；离群、群管和白名单均安全跳过。"""
+    user_id = user.id
+    try:
+        member = bot.get_chat_member(chat_id, user_id)
+        member_status = getattr(member, "status", "")
+        if member_status in ("left", "kicked"):
+            logger.info(f"[入群资料复审] uid={user_id} chat={chat_id} outcome=skip reason=not_member")
+            return False
+        if member_status in ("administrator", "creator"):
+            logger.info(f"[入群资料复审] uid={user_id} chat={chat_id} outcome=skip reason=role")
+            return False
+    except Exception as e:
+        logger.warning(f"[入群资料复审] uid={user_id} chat={chat_id} membership_unknown={e}")
+        _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx, attempt + 1)
+        return False
+
+    if _is_member_whitelisted(config, user_id):
+        logger.info(f"[入群资料复审] uid={user_id} chat={chat_id} outcome=skip reason=whitelist")
+        return False
+
+    bio, bio_error, chat_info = _get_member_bio(bot, user_id)
+    logger.info(
+        f"[入群资料复审] uid={user_id} chat={chat_id} attempt={attempt + 1} "
+        f"bio_available={bool(bio)} fetch_failed={bool(bio_error)}"
+    )
+    if bio:
+        return _review_member_profile(
+            bot, user, bio, config, db, chat_id, ctx=ctx,
+            stage=f"delayed_retry_{attempt + 1}", chat_info=chat_info,
+        )
+
+    _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx, attempt + 1)
+    return False
 
 
 def _enforce_member_ad(bot, db, config, chat_id, user_id, user_display, reason):
@@ -43,11 +119,15 @@ def _enforce_member_ad(bot, db, config, chat_id, user_id, user_display, reason):
     )
 
 
-def _is_member_ad_exempt(bot, config, chat_id, user_id):
-    """白名单和群管理员在任何资料/头像检测前免检。"""
+def _is_member_whitelisted(config, user_id):
     whitelist_cfg = config.get("AD_WHITELIST", {})
     whitelist_uids = whitelist_cfg.get("user_ids", []) if isinstance(whitelist_cfg, dict) else []
-    if user_id in whitelist_uids or str(user_id) in {str(uid) for uid in whitelist_uids}:
+    return user_id in whitelist_uids or str(user_id) in {str(uid) for uid in whitelist_uids}
+
+
+def _is_member_ad_exempt(bot, config, chat_id, user_id):
+    """白名单和群管理员在任何资料/头像检测前免检。"""
+    if _is_member_whitelisted(config, user_id):
         logger.info(f"[入群广告审核] uid={user_id} outcome=skip reason=whitelist")
         return True
     try:
@@ -287,6 +367,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
                 chat_info=chat_info,
             ):
                 continue
+            if not user_bio:
+                _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx=ctx)
 
             # 步骤2.5：明确头像视觉/OCR证据 + 批量相似头像。
             if _review_member_avatar(
@@ -372,6 +454,7 @@ def _handle_chat_member_update(bot, update, config, db, ctx=None):
 
         if new_status in ('member', 'administrator', 'creator', 'restricted'):
             bio = ''
+            chat_info = None
             try:
                 chat_info = bot.get_chat(uid)
                 bio = getattr(chat_info, 'bio', '') or ''
@@ -396,6 +479,8 @@ def _handle_chat_member_update(bot, update, config, db, ctx=None):
                 _review_member_avatar(
                     bot, user, config, db, chat_id, stage="verify_release", check_similarity=False
                 )
+                if not bio:
+                    _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx=ctx)
         elif new_status in ('left', 'kicked'):
             db.remove_group_member(uid, chat_id)
             logger.debug(f"[成员追踪] 离群: uid={uid} chat={chat_id}")
