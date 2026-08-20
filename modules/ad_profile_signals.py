@@ -28,6 +28,15 @@ _PROFILE_CTA_RE = re.compile(
     r"(?:都|来|先|可以|直接)?(?:tmd)?(?:看我|看头像|看简介|看主页|点我)",
     re.IGNORECASE,
 )
+_TELEGRAM_BOT_INVITE_DEEP_LINK_RE = re.compile(
+    r"(?:https?://)?(?:t\.me|telegram\.me|te\.me|tg\.me)/"
+    r"[A-Za-z0-9_]{5,}bot\?(?:[^\s#&]+&)*start=invite[_-]?[A-Za-z0-9_-]{4,}",
+    re.IGNORECASE,
+)
+_PROFILE_NAME_FREE_LISTING_RE = re.compile(
+    r"(?:同城|同程|老师).{0,8}免费.{0,6}上榜|免费.{0,6}上榜.{0,8}(?:同城|同程|老师)",
+    re.IGNORECASE,
+)
 
 
 def _iter_status_ids(user) -> list:
@@ -193,6 +202,19 @@ def _detect_invite_teaser_ad(bio: str) -> str:
     return match.group() if match else ""
 
 
+def _detect_profile_name_bot_invite_ad(display: str, username: str, bio: str) -> str:
+    """识别广告化姓名与 Bot 拉新深链的高置信跨字段组合。
+
+    普通姓名、普通 t.me 链接和普通群邀请仍保持字段隔离；只有姓名含“老师/同城/同程
+    + 免费上榜”招揽语义，且 Bio 同时给出 ``bot?start=invite_*`` 拉新深链时才定罪。
+    """
+    if not _TELEGRAM_BOT_INVITE_DEEP_LINK_RE.search(str(bio or "")):
+        return ""
+    compact_name = _compact_profile_text(" ".join((display, username)))
+    match = _PROFILE_NAME_FREE_LISTING_RE.search(compact_name)
+    return match.group() if match else ""
+
+
 def has_profile_message_bridge(message_text: str, bio: str) -> bool:
     """正文明确让人查看资料，且资料含确证邀请引流时，正文属于广告桥接消息。"""
     if not _detect_invite_teaser_ad(bio):
@@ -346,8 +368,8 @@ def detect_profile_ad_signal(
 
     status_text = " ".join(sticker_texts)
 
-    # 字段证据隔离：姓名/username 只跑账号名规则，Bio 只跑 Bio 规则。
-    # 禁止把一个字段里的普通文字与另一个字段里的裸链接拼成广告证据。
+    # 普通字段证据保持隔离：姓名/username 只跑账号名规则，Bio 只跑 Bio 规则。
+    # 唯一例外是高置信“广告化姓名 + Bot 拉新深链”组合，禁止用普通文字+裸链接定罪。
     profile_hit = _match_ad_patterns(" ".join((display, username)), USERNAME_PATTERNS)
     if not profile_hit:
         profile_hit = _match_ad_patterns(bio or "", BIO_PATTERNS)
@@ -356,6 +378,17 @@ def detect_profile_ad_signal(
             "is_ad": True,
             "score": 3,
             "reason": f"资料文字命中广告规则: {profile_hit}",
+            "status_ids": status_ids,
+            "status_text": status_text,
+        }
+
+    name_link_hit = _detect_profile_name_bot_invite_ad(display, username, bio)
+    if name_link_hit:
+        return {
+            "is_ad": True,
+            "score": 3,
+            "reason": f"广告化姓名与Bio Bot拉新链接组合命中: {name_link_hit}",
+            "source": "profile_name_bot_invite",
             "status_ids": status_ids,
             "status_text": status_text,
         }

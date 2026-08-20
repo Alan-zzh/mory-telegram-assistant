@@ -141,6 +141,44 @@ def test_same_city_prostitution_profile_name_is_direct_ad():
     assert result["score"] == 3
 
 
+def test_evasive_ad_name_and_bot_invite_deep_link_are_combined_as_ad():
+    """姓名和 Bio 单看均可规避时，高置信组合仍应在资料门禁直接处置。"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="y同程老师免费上榜{牵.茗.进}y", status_id=""),
+        "p小程序：https://t.me/tcsy1bot?start=invite_7982354468",
+        {},
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert result["source"] == "profile_name_bot_invite"
+
+
+@pytest.mark.parametrize(
+    ("display_name", "bio"),
+    [
+        ("老师免费上榜", "https://t.me/my_daily_album"),
+        ("摄影记录", "https://t.me/tcsy1bot?start=invite_7982354468"),
+        ("同程旅行老师", "https://t.me/tcsy1bot?start=invite_7982354468"),
+        ("公益教师评选免费上榜", "https://school.example.org/results"),
+    ],
+)
+def test_profile_name_bot_invite_combo_preserves_normal_counterexamples(display_name, bio):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name=display_name, status_id=""),
+        bio,
+        {},
+    )
+
+    assert result["is_ad"] is False
+
+
 @pytest.mark.parametrize(
     "display_name",
     ["反诈提醒：嫖娼违法", "同程旅行老师", "同城电脑维修", "老师免费上榜"],
@@ -562,6 +600,46 @@ def test_bare_link_bio_and_plain_channel_do_not_block_short_message():
     assert bot.deleted == []
     assert bot.restricted == []
     assert ctx.db.blacklist == []
+
+
+def test_evasive_ad_name_and_bot_invite_bio_block_on_first_short_message():
+    """入群漏检后，第一次发言也会重查资料并立即统一处置。"""
+    from core.handlers.security_handlers import check_ad_detection
+
+    bot = _FakePersonalChannelBot("", "", "")
+    bot.user_chat.personal_chat = None
+    bot.user_chat.bio = "p小程序：https://t.me/tcsy1bot?start=invite_7982354468"
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.from_user = _FakeUser(first_name="y同程老师免费上榜{牵.茗.进}y", status_id="")
+    msg.text = "在吗"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": _FakeAdDetector(),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": msg.from_user.first_name,
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
 
 
 def test_invite_teaser_and_look_at_me_message_are_enforced_and_marked():
