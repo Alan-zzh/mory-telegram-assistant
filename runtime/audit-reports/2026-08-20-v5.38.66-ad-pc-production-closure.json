@@ -1,0 +1,70 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production VPS /home/ubuntu/mory_assistant and Telegram group -1003004701688",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true,
+    "message_deletion_authorized": true
+  },
+  "git_hash": "6825e29fd596ac068fc2cdcdf53276c51196fb82",
+  "goal": "Block the screenshot same-city PC adult solicitation at admission or first message while preserving normal computer and anti-fraud text.",
+  "deployment_performed": true,
+  "production_version": "v5.38.66",
+  "backup": {
+    "path": "/home/ubuntu/mory_assistant/backups/ad_pc_v53866_20260820_084404.tar.gz",
+    "sha256": "4b1b9253ef6c82c3cc1dcf9370cabf0afb4712102fe52b00546fa438681c8ae3",
+    "verified": true,
+    "rollback_command": "cd /home/ubuntu/mory_assistant && tar -xzf /home/ubuntu/mory_assistant/backups/ad_pc_v53866_20260820_084404.tar.gz && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "artifact_hash": "a39f943058722446562909905982cc26805df24dd0291091da770d51e13f698a",
+  "rollback_points": [
+    {
+      "type": "code",
+      "path": "/home/ubuntu/mory_assistant/backups/ad_pc_v53866_20260820_084404.tar.gz",
+      "sha256": "4b1b9253ef6c82c3cc1dcf9370cabf0afb4712102fe52b00546fa438681c8ae3"
+    }
+  ],
+  "technical_checks": [
+    {
+      "name": "local_release_gates",
+      "passed": true,
+      "evidence": "367 focused tests and 1195 full unit tests passed; compileall, 208 DB method registrations, config sync, documentation consistency and clean deploy-ready gates passed."
+    },
+    {
+      "name": "remote_version_and_hashes",
+      "passed": true,
+      "evidence": "Production is v5.38.66 and SHA-256 values for the two advertising modules plus version.py match clean commit 6825e29."
+    },
+    {
+      "name": "systemd_health_and_database",
+      "passed": true,
+      "evidence": "Bot PID 1613495 and Dashboard PID 1613496 are active/running with NRestarts=0; health is HTTP 200; PRAGMA integrity_check returned ok; startup window has no unexplained priority error."
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "production_positive_and_negative_rules",
+      "passed": true,
+      "evidence": "Exact message scored 4 and exact profile name scored 3; four normal computer, coursework-review and anti-fraud counterexamples remained false."
+    },
+    {
+      "name": "telegram_and_message_evidence",
+      "passed": true,
+      "evidence": "UID 6070826211 remained kicked before and after enforcement; messages 68564, 68608 and 68650 all returned already_absent and persist as is_ad=1/deleted=1."
+    },
+    {
+      "name": "persistent_moderation_state",
+      "passed": true,
+      "evidence": "A separate SQLite connection read blacklist=1, global_blacklist=1 and mute_records=1; ad_suspicious_users=0."
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "After restart and an independent reconnect, production still reports v5.38.66, matching hashes, active services, HTTP 200, kicked Telegram status and the three persisted moderation records."
+  },
+  "known_risks": [
+    "The three historical messages were already absent when unified enforcement ran, so this receipt proves current absence and persisted evidence, not that v5.38.66 performed their original deletion."
+  ],
+  "result": "verified"
+}
