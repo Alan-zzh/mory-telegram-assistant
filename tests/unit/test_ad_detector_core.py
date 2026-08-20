@@ -252,6 +252,30 @@ def test_content_score_normal_message(detector):
     assert dims == []
 
 
+def test_same_city_pc_guarantee_incident_is_direct_ad(detector):
+    """截图话术的 PC 暗语、交易审核和安全背书组合应作为正文直证。"""
+    text = "同城PC，老师人工审核，平台担保交易，拒绝被骗，PC无忧！"
+
+    result = detector.detect("", text)
+
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "同城PC电脑维修，师傅人工审核后上门服务",
+        "这家平台担保交易靠谱吗？大家注意拒绝被骗",
+        "老师正在人工审核作业，PC电脑请保持开机",
+        "同城PC装机无忧，支持硬件检测和系统安装",
+    ],
+)
+def test_same_city_pc_rule_preserves_normal_computer_and_antifraud_text(detector, text):
+    assert detector.detect("", text)["is_ad"] is False
+
+
 def test_content_score_empty_message(detector):
     """L3: 空消息评分为 0"""
     score, dims = detector._check_content_score("")

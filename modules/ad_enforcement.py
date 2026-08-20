@@ -97,6 +97,16 @@ def delete_repeated_spam_messages(bot, db, messages: list[dict]) -> dict:
 def _mute_forever(bot, db, chat_id: int, uid: int, reason: str = "广告检测") -> bool:
     """永久禁言广告账号，不踢出群；持久态由统一事务写入。"""
     try:
+        current_member = bot.get_chat_member(chat_id, uid)
+        if str(getattr(current_member, "status", "") or "").lower() == "kicked":
+            # 账号已被外部管理员封禁时保持更严格的现状，不用 restrict 将其改回群成员。
+            # 返回成功让统一链继续固化双黑名单和 mute_records，阻止后续重入漏审。
+            logger.info(f"广告账号已处于群封禁状态，保留现状并固化治理记录: chat={chat_id} uid={uid}")
+            return True
+    except Exception as e:
+        # 处置入口已经完成管理员三态门禁；这里的状态读回只用于避免改写既有 kicked 状态。
+        logger.debug(f"读取广告账号既有限制状态失败，继续执行永久禁言: chat={chat_id} uid={uid} err={e}")
+    try:
         restriction_result = restrict_chat_member_compat(
             bot,
             chat_id,

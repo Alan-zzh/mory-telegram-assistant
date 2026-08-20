@@ -6,6 +6,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 
@@ -123,6 +125,37 @@ def test_profile_bio_invite_teaser_exact_incident_is_ad():
     assert result["is_ad"] is True
     assert result["score"] == 3
     assert result["source"] == "bio_invite_teaser"
+
+
+def test_same_city_prostitution_profile_name_is_direct_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="y同程嫖娼老师免费上榜{牵.茗.进}y", status_id=""),
+        "p小程序：https://t.me/tcsy1bot?start=invite_7982354468",
+        {},
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+
+
+@pytest.mark.parametrize(
+    "display_name",
+    ["反诈提醒：嫖娼违法", "同程旅行老师", "同城电脑维修", "老师免费上榜"],
+)
+def test_same_city_prostitution_profile_rule_preserves_normal_names(display_name):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name=display_name, status_id=""),
+        "",
+        {},
+    )
+
+    assert result["is_ad"] is False
 
 
 def test_normal_group_invite_without_teaser_is_not_ad():

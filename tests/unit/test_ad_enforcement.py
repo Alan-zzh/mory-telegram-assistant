@@ -69,6 +69,11 @@ class _FalseRestrictBot(_FakeBot):
         return False
 
 
+class _KickedBot(_FakeBot):
+    def get_chat_member(self, chat_id, uid):
+        return type("Member", (), {"status": "kicked"})()
+
+
 class _FakeConn:
     def __init__(self):
         self.executed = []
@@ -185,6 +190,35 @@ def test_enforce_ad_user_deletes_confirmed_ads_when_general_deletion_disabled():
     assert any("INTO blacklist" in sql for sql, _ in db.conn.executed)
     assert bot.ban_calls == []
     assert bot.kick_calls == []
+
+
+def test_enforce_preserves_existing_kick_and_persists_ad_state():
+    """外部管理员已封禁时不得用 restrict 改写状态，但统一持久态仍须补齐。"""
+    from modules.ad_enforcement import enforce_ad_user
+
+    bot = _KickedBot()
+    db = _FakeDB()
+
+    result = enforce_ad_user(
+        bot=bot,
+        db=db,
+        config={},
+        chat_id=-1001,
+        uid=42,
+        reason="明确广告补处置",
+        current_msg_id=66,
+        current_message_is_ad=True,
+        notify_admin=False,
+    )
+
+    assert result["code"] == 200
+    assert result["data"]["muted"] is True
+    assert result["data"]["blacklisted"] is True
+    assert bot.restricted == []
+    assert bot.ban_calls == []
+    assert bot.kick_calls == []
+    assert any("mute_records" in sql for sql, _ in db.conn.executed)
+    assert any("global_blacklist" in sql for sql, _ in db.conn.executed)
 
 
 def test_enforce_ad_user_reports_reaction_cleanup(monkeypatch):
