@@ -3,6 +3,8 @@
 
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -230,6 +232,15 @@ def test_p1_signup_reassert_is_linked_and_never_marks_signup_as_ad(monkeypatch):
 def test_self_review_callback_is_registered_before_blacklist_interceptor():
     source = (Path(__file__).parents[2] / "core/handlers/callback_handlers.py").read_text(encoding="utf-8")
     assert source.index('startswith("ad_self_review:")') < source.index("def _is_blacklisted_callback")
+
+
+def test_replay_script_can_start_outside_project_root(tmp_path):
+    script = Path(__file__).parents[2] / "scripts/replay_ad_enforcement_candidates.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"], cwd=tmp_path,
+        capture_output=True, text=True, encoding="utf-8", timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_expired_and_repeated_self_review_are_fail_closed(tmp_path, detector):
