@@ -450,6 +450,7 @@ CONTACT_PATTERNS = [
 
 # 招募/拉人类
 RECRUIT_PATTERNS = [
+    r"\u517c\u804c[\s\S]{0,6}\u65e5\u7ed3",  # 兼职+日结的明确招募组合
     r"\u62db\u56e2\u961f", r"\u627e\u51e0\u4e2a",
     # r"\u6765\u51e0\u4e2a",  # 移除：太容易误判正常社交
     r"\u62db.*\u5408\u4f5c", r"\u5408\u4f19",

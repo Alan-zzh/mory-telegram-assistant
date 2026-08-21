@@ -1264,6 +1264,8 @@ def _dispatch_p1_p3_security(dctx: DispatchContext) -> bool:
             message=m,
             current_msg_id=getattr(m, "message_id", 0),
             notify_admin=False,
+            source_type="blacklist_reassert",
+            reason_code="blacklist_reassert",
         )
         logger.info(f"🚫 [P1] 黑名单拦截: uid={uid} name={uname} chat={chat_id} mid={m.message_id} text='{msg[:30]}'")
         clear_logging_context()

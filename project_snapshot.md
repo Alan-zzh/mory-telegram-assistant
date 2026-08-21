@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-20。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-22。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标。风格参考仅限当前场景，含价格、权益、联系方式、保证性事实或 CTA 的样本不进入普通 AI 提示 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 当前唯一池为9个文本型号+`qwen3.5-ocr`；严格按到期日升序且同日保留配置顺序；思考型按声明调用。超时、限流和服务异常仅进程内熔断并自动回首选，只有明确额度耗尽永久拉黑；当前索引只认配置，不从数据库复活旧值 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 46 个 BaseTask 子类、47 个静态调度项 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；`modules/auto_tasks.py` 为 legacy |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 实时与存量扫描共用资料/消息规则；同城PC须叠加审核/担保与防骗/无忧背书才处置，“同程/同城+嫖娼”显示名首条拦截；裸链接或普通绑定频道不是广告证据；入群 Bio 空值按 30 秒/5 分钟/30 分钟有界复审；全量扫描默认只报告，未知不处罚 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 歧义联系方式仅作弱信号，需收益/招募/成人/灰产等独立强证据；处置事件保留首次根因，24小时说明卡支持本人限频复检，高风险/未知状态拒绝自动恢复；全量扫描默认只报告 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 137 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
@@ -26,7 +26,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关键词延迟删 | 生产开启 | `modules/keyword_auto_delete.py`、`tasks/maintenance/keyword_message_auto_delete_task.py` | 生产精确匹配 `/me@afoolGroupBot` 并延迟 300 秒删除；SQLite 队列支持重启恢复，只删消息不处罚用户 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
-| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 174 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史；0006=首次欢迎送达状态；0007=关键词待删恢复状态 |
+| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 175 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史；0006=首次欢迎送达状态；0007=关键词待删恢复；0008=广告处置事件 |
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前备份、失败保险恢复双服务；项目巡检由 `project_audit_control.py` 只读取证并以 0/2/3 回执，三条 systemd timer 已安装启用 |
 | 转化漏斗 | 在用 | `social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `memory_summarizer.py`、`profile_learner.py` | `profile_learner` 的 `sticker` 维度未入库 |
@@ -38,21 +38,21 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.38.67（2026-08-20）· 广告化姓名与Bio Bot拉新深链组合漏判修复
+v5.38.68（2026-08-22）· 签到误封根因修复与本人安全复检解封
 
-生产状态：**v5.38.67 已部署。Bot PID 1658275、Dashboard PID 1658276 均 active/running、NRestarts=0，health 200；规避式广告名+Bot邀请深链生产评分 3，截图正文评分 4，4 类普通姓名/链接反例均为 0。UID 6070826211 刷新后仍为 kicked，双黑名单和禁言记录均为 1。**
+生产状态：**v5.38.67 仍在运行；v5.38.68 已完成本地实现与广告相关回归，待本轮部署和真实 Telegram/数据库验收。**
 
 ## 最近 3 条大事
-1. 2026-08-20 v5.38.67：广告化姓名+Bio Bot拉新深链在进群和发言入口立即处置。
-2. 2026-08-20 v5.38.66：同城PC交易招揽与同程嫖娼显示名首条处置。
-3. 2026-08-19 v5.38.65：入群 Bio 空值有界复审，邀请链接叠加规避引流直接处置。
+1. 2026-08-22 v5.38.68：歧义联系方式误封修复，新增双按钮说明卡与本人安全复检。
+2. 2026-08-20 v5.38.67：广告化姓名+Bio Bot拉新深链在进群和发言入口立即处置。
+3. 2026-08-20 v5.38.66：同城PC交易招揽与同程嫖娼显示名首条处置。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=139
-core_py=81
+core_py=82
 job_count=33
-db_tables=174
+db_tables=175
 dashboard_routes=163
 dispatch_funcs=10
 model_router_mappings=10

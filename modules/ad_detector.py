@@ -78,8 +78,19 @@ BUILTIN_KEYWORD_GROUPS = {
     },
     "contact_info": {
         "label": "联系方式/引流",
-        "weight": 3,
+        # 裸链接、普通 @、支付/客服/加群等歧义表达只作弱信号。
+        "weight": 1,
         "patterns": CONTACT_PATTERNS,
+    },
+    "strong_contact": {
+        "label": "明确联系方式组合",
+        "weight": 3,
+        "patterns": CONTACT_PATTERNS[10:13] + CONTACT_PATTERNS[67:68] + [
+            r"\u52a0\s*(?:\u6211)?\s*\u5fae\u4fe1[\s:\uff1a-]*[A-Za-z][A-Za-z0-9_-]{5,}",
+            r"\u5fae\u4fe1[\s:\uff1a-]+[A-Za-z][A-Za-z0-9_-]{5,}",
+            r"(?:[Vv]|\u5fae|\u5a01)[\s:\uff1a\u52a0]{1,3}[A-Za-z0-9_]{6,}",
+            r"(?:QQ|qq|\u6263\u6263)[\s:\uff1a-]*[1-9][0-9]{5,11}",
+        ],
     },
     "profile_hint": {
         "label": "引流暗示",
@@ -121,7 +132,7 @@ BUILTIN_KEYWORD_GROUPS = {
     },
     "marketing_contact": {
         "label": "引流联系方式",
-        "weight": 3,
+        "weight": 1,
         "patterns": MARKETING_CONTACT_PATTERNS,
     },
     "marketing_urgency": {
@@ -897,18 +908,19 @@ class AdDetector:
         reason = "；".join(reasons) if reasons else ""
         return is_suspicious, reason, score
 
-    def _check_content_score(self, msg: str) -> tuple:
-        """对消息内容评分，返回 (总分, 命中维度列表)"""
+    def _check_content_score_with_evidence(self, msg: str, field: str = "message") -> tuple:
+        """对单一字段评分，并返回脱敏的规则证据。"""
         if not msg:
-            return 0, []
+            return 0, [], []
         msg_len = len(msg)
         # [TRAE SOLO CN] 修复：2字符消息只对高权重维度（色情/灰色）检测，避免漏检短词色情引流
         # 3字符以上正常检测所有维度
         if msg_len < 2:
             logger.debug(f"[AD] 内容评分跳过: 消息过短 len={msg_len}")
-            return 0, []
+            return 0, [], []
         total = 0
         hit_dimensions = []
+        evidence = []
         for group_name, group_cfg in BUILTIN_KEYWORD_GROUPS.items():
             patterns = group_cfg.get("patterns", [])
             weight = group_cfg.get("weight", 1)
@@ -924,6 +936,12 @@ class AdDetector:
                         # 避免同一维度多个规则重复加分导致误判
                         total += weight
                         hit_dimensions.append(f"{label}(+{weight})")
+                        evidence.append({
+                            "rule_id": f"builtin.{group_name}",
+                            "category": group_name,
+                            "field": field,
+                            "strength": "strong" if weight >= 3 else "weak",
+                        })
                         logger.info(f"[AD] 内容命中: 维度={label}, 权重=+{weight}, 匹配={match.group()[:30]}, 规则={pat[:50]}")
                         break  # 每个维度只计一次最高分
                 except re.error:
@@ -934,6 +952,10 @@ class AdDetector:
             weight = BUILTIN_KEYWORD_GROUPS["gray_industry"]["weight"]
             total += weight
             hit_dimensions.append(f"灰色产业(+{weight})")
+            evidence.append({
+                "rule_id": "combo.lottery_trade", "category": "gray_industry",
+                "field": field, "strength": "strong",
+            })
             logger.info("[AD] 彩票交易三要素命中: 权重=+%s, 消息=%s", weight, msg[:80])
         if (
             _is_sexual_qq_skirt_invite(msg)
@@ -941,13 +963,26 @@ class AdDetector:
         ) and not any(
             dimension.startswith("联系方式/引流") for dimension in hit_dimensions
         ):
-            weight = BUILTIN_KEYWORD_GROUPS["contact_info"]["weight"]
+            weight = BUILTIN_KEYWORD_GROUPS["strong_contact"]["weight"]
             total += weight
             hit_dimensions.append(f"联系方式/引流(+{weight})")
+            evidence.append({
+                "rule_id": "combo.sexual_qq_invite", "category": "adult_content",
+                "field": field, "strength": "strong",
+            })
             logger.info("[AD] 色情招揽 q裙组合命中: 权重=+%s, 消息=%s", weight, msg[:80])
         if total > 0:
             logger.info(f"[AD] 内容评分结果: 总分={total}, 命中维度={hit_dimensions}, 消息={msg[:80]}")
-        return total, hit_dimensions
+        # 多个歧义联系方式/主页/客服规则不能靠彼此叠加达到永久处置阈值。
+        # 只有至少一条独立强证据存在时，弱信号才参与最终封禁评分。
+        if evidence and not any(item.get("strength") == "strong" for item in evidence):
+            total = min(total, SCORE_THRESHOLD - 1)
+        return total, hit_dimensions, evidence
+
+    def _check_content_score(self, msg: str) -> tuple:
+        """兼容旧调用：返回 (总分, 命中维度列表)。"""
+        score, dimensions, _evidence = self._check_content_score_with_evidence(msg)
+        return score, dimensions
 
     def _check_pinyin_ad(self, msg: str) -> int:
         """【v5.23.0 P2-5】拼音级广告检测
@@ -1099,9 +1134,13 @@ class AdDetector:
         logger.info(f"[AD] 开始检测: 用户={uname_clean[:30]}, 消息={msg_clean[:80]}")
 
         uname_matches = self._check_username(uname_clean)
-        content_score, hit_dims = self._check_content_score(msg_clean)
+        content_score, hit_dims, content_evidence = self._check_content_score_with_evidence(
+            msg_clean, field="message"
+        )
         # [Trae] v4.6.6 修复：用户显示名称本身也可能是广告（如"虚拟货币搬砖日挣1千U"）
-        name_score, name_hit_dims = self._check_content_score(uname_clean)
+        name_score, name_hit_dims, name_evidence = self._check_content_score_with_evidence(
+            uname_clean, field="display_name"
+        )
         total_score = content_score + name_score
         # [v5.23.0 P2-5] 拼音级广告检测加分
         total_score += msg_pinyin_leak
@@ -1122,11 +1161,17 @@ class AdDetector:
         action = "delete"
         matched_rules = []
         reasons = []
+        evidence = list(content_evidence) + list(name_evidence)
 
         if uname_matches:
             for rule in uname_matches:
                 matched_rules.append(rule.get("name", rule.get("id", "?")))
                 reasons.append(f"用户名命中: {rule.get('name', '?')}")
+                evidence.append({
+                    "rule_id": str(rule.get("id") or rule.get("name") or "username_rule"),
+                    "category": "username_profile", "field": "username",
+                    "strength": "strong" if rule.get("severity") == "high" else "weak",
+                })
                 if rule.get("severity") == "high":
                     is_ad = True
                     action = "ban"
@@ -1166,6 +1211,10 @@ class AdDetector:
                 total_score += bio_score
                 matched_rules.append(f"Bio广告评分={bio_score}")
                 reasons.append(f"Bio含广告: {', '.join(bio_hit_dims)}")
+                evidence.append({
+                    "rule_id": "profile.bio_pattern", "category": "profile_ad",
+                    "field": "bio", "strength": "strong",
+                })
                 logger.info(f"[AD] Bio评分: +{bio_score}, 命中={bio_hit_dims}")
 
         # [TRAE SOLO CN] v5.8.0 新增：CAS/SPB外部数据库辅助评分
@@ -1179,6 +1228,10 @@ class AdDetector:
                     total_score += cas_score
                     matched_rules.append("CAS黑名单辅助+2")
                     reasons.append(f"CAS黑名单辅助评分+2: {cas_reason}")
+                    evidence.append({
+                        "rule_id": "external.cas", "category": "external_blacklist",
+                        "field": "external", "strength": "strong",
+                    })
                     logger.info(f"[AD] CAS黑名单辅助评分+2: uid={user_id}, reason={cas_reason}")
             except Exception as e:
                 logger.debug(f"[AD] CAS查询异常: {e}")
@@ -1190,12 +1243,20 @@ class AdDetector:
                     total_score += spb_score
                     matched_rules.append("SPB高评分辅助+2")
                     reasons.append(f"SPB垃圾评分辅助+2 (score={spb_spam_score:.2f})")
+                    evidence.append({
+                        "rule_id": "external.spb_high", "category": "external_blacklist",
+                        "field": "external", "strength": "strong",
+                    })
                     logger.info(f"[AD] SPB高评分辅助+2: uid={user_id}, score={spb_spam_score:.2f}")
                 elif spb_spam_score >= 0.5:
                     spb_score = 1
                     total_score += spb_score
                     matched_rules.append("SPB中评分辅助+1")
                     reasons.append(f"SPB垃圾评分辅助+1 (score={spb_spam_score:.2f})")
+                    evidence.append({
+                        "rule_id": "external.spb_medium", "category": "external_blacklist",
+                        "field": "external", "strength": "weak",
+                    })
                     logger.info(f"[AD] SPB中评分辅助+1: uid={user_id}, score={spb_spam_score:.2f}")
             except Exception as e:
                 logger.debug(f"[AD] SPB查询异常: {e}")
@@ -1363,6 +1424,11 @@ class AdDetector:
                 ai_review_result = None
 
         reason_str = "；".join(reasons) if reasons else "未命中规则"
+        strong_categories = {
+            item.get("category") for item in evidence
+            if item.get("strength") == "strong"
+        }
+        evidence_level = "high" if is_ad and strong_categories else ("ambiguous" if is_ad else "none")
 
         result = {
             "is_ad": is_ad,
@@ -1370,6 +1436,9 @@ class AdDetector:
             "action": action,
             "matched_rules": matched_rules,
             "reason": reason_str,
+            "reason_code": "ad_detected" if is_ad else "not_ad",
+            "evidence_level": evidence_level,
+            "evidence": evidence,
             # 供调用方获取实际被检测的完整文本（含 caption / link preview 等）
             "ad_text": msg_clean[:500],
             # [TRAE SOLO CN] v5.7.5 新增：供 security_handlers 头像检测触发条件使用

@@ -72,9 +72,9 @@ MARKETING_CONTACT_PATTERNS = [
     r"\u5b98\u65b9\u5ba2\u670d",
     r"\u54a8\u8be2\u5ba2\u670d",
     # 私聊+具体引导
-    r"\u79c1\u804a[\s\S]{0,3}[\u8be6\u60c5\u4e86\u89e3\u62a5\u540d]",
-    r"\u79c1\u4fe1[\s\S]{0,3}[\u8be6\u60c5\u4e86\u89e3\u62a5\u540d]",
-    r"\u6ef4\u6ef4\u6211[\s\S]{0,3}[\u8be6\u60c5\u4e86\u89e3\u62a5\u540d]",
+    r"\u79c1\u804a[\s\S]{0,3}(?:\u8be6\u60c5|\u4e86\u89e3|\u62a5\u540d)",
+    r"\u79c1\u4fe1[\s\S]{0,3}(?:\u8be6\u60c5|\u4e86\u89e3|\u62a5\u540d)",
+    r"\u6ef4\u6ef4\u6211[\s\S]{0,3}(?:\u8be6\u60c5|\u4e86\u89e3|\u62a5\u540d)",
 ]
 
 # ── 诱导话术（紧迫感+利益诱导）──

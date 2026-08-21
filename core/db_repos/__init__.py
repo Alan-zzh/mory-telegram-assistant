@@ -13,5 +13,6 @@ from .sales_repo import SalesRepo
 from .reply_evolution_repo import ReplyEvolutionRepo
 from .conversation_context_repo import ConversationContextRepo
 from .task_exec_history_repo import TaskExecHistoryRepo
+from .ad_enforcement_repo import AdEnforcementRepo
 
-__all__ = ['UserRepo', 'GroupRepo', 'PointsRepo', 'TrackingRepo', 'ConfigRepo', 'SocialRepo', 'QuestionRepo', 'RelayRepo', 'ABTestRepo', 'SalesRepo', 'ReplyEvolutionRepo', 'ConversationContextRepo', 'TaskExecHistoryRepo']
+__all__ = ['UserRepo', 'GroupRepo', 'PointsRepo', 'TrackingRepo', 'ConfigRepo', 'SocialRepo', 'QuestionRepo', 'RelayRepo', 'ABTestRepo', 'SalesRepo', 'ReplyEvolutionRepo', 'ConversationContextRepo', 'TaskExecHistoryRepo', 'AdEnforcementRepo']

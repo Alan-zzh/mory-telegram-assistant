@@ -107,6 +107,8 @@ def check_blacklist(dctx) -> bool:
                     message=dctx.msg,
                     current_msg_id=getattr(dctx.msg, "message_id", 0),
                     notify_admin=False,
+                    source_type="blacklist_reassert",
+                    reason_code="blacklist_reassert",
                 )
             except Exception as e:
                 logger.warning(f"P1黑名单统一处置失败: uid={uid} err={e}")
@@ -585,6 +587,9 @@ def _handle_immediate_ad(dctx, ad_result: dict) -> bool:
         current_msg_id=getattr(dctx.msg, "message_id", 0),
         current_message_is_ad=message_is_ad,
         notify_admin=True,
+        evidence=ad_result.get("evidence") or [],
+        reason_code=str(ad_result.get("reason_code") or "ad_detected"),
+        evidence_level=str(ad_result.get("evidence_level") or ""),
     )
     clear_logging_context()
     return True

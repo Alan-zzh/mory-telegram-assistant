@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.67**：广告化姓名叠加 Bio Bot 拉新深链时，进群和首次发言立即统一处置；普通姓名、普通链接继续放行。
+当前版本 **v5.38.68**：修复普通私信/客服/加群等误封，新增根因保真的群内双按钮说明卡与本人安全复检解封。
 
 ## 快速开始
 
@@ -115,7 +115,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 > 普通用户命令见 `/help`；管理员在私聊触发 `/help` 会额外附带上述清单。
 
 ## 目录结构
-- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（81 个业务 `.py`）。
+- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（82 个业务 `.py`）。
 - `modules/`：139 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等默认关闭能力）。
 - `dashboard/`：运营后台（`app` + `api`，163 路由，含人工审核风格样本 API）。
 - `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
@@ -126,8 +126,8 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `runtime/audit-reports/`：审计报告与完工报告。
 - `config/`：systemd 服务文件。
 
-## 客观指标（2026-08-09 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 139，core 业务 `.py` = 81，`_job_` = 33，DB 表 = 174，Dashboard 路由 = 163，消息分发函数 = 10，model_router 映射 = 10。
+## 客观指标（2026-08-22 实测，`scripts/doc_consistency.py` 全过）
+modules 业务 `.py` = 139，core 业务 `.py` = 82，`_job_` = 33，DB 表 = 175，Dashboard 路由 = 163，消息分发函数 = 10，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）

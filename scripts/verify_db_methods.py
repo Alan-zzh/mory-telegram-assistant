@@ -22,6 +22,7 @@ def verify():
         ABTestRepo,
         ConfigRepo,
         ConversationContextRepo,
+        AdEnforcementRepo,
         GroupRepo,
         PointsRepo,
         QuestionRepo,
@@ -48,6 +49,7 @@ def verify():
         (ReplyEvolutionRepo, "reply_evolution", "reply_evolution"),
         (ConversationContextRepo, "conversation_context", "conversation_context"),
         (TaskExecHistoryRepo, "task_exec_history", "task_exec_history"),
+        (AdEnforcementRepo, "ad_enforcement", "ad_enforcement"),
     ]
     internal_methods = {"conn", "lock", "db_file"}
     missing = []

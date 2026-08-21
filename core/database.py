@@ -71,7 +71,7 @@ class DB:
         # 获取统计，write_queue 保留为空壳兼容层。
         self._real_conn = self.conn  # 保留引用兼容（部分代码用 db._real_conn 访问真实连接）
         # 初始化8个Repo实例
-        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo, SalesRepo, ReplyEvolutionRepo, ConversationContextRepo, TaskExecHistoryRepo
+        from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo, SalesRepo, ReplyEvolutionRepo, ConversationContextRepo, TaskExecHistoryRepo, AdEnforcementRepo
         self.users = UserRepo(self)
         self.groups = GroupRepo(self)
         self.points = PointsRepo(self)
@@ -85,6 +85,7 @@ class DB:
         self.reply_evolution = ReplyEvolutionRepo(self)
         self.conversation_context = ConversationContextRepo(self)
         self.task_exec_history = TaskExecHistoryRepo(self)
+        self.ad_enforcement = AdEnforcementRepo(self)
 
         # 【v5.31.1 第一层防御：启动自检】扫描所有 Repo 实例的 public 方法，
         # 验证每个方法都在 _REPO_METHOD_MAP 中注册。缺失则直接启动失败，
@@ -1107,6 +1108,37 @@ class DB:
                 messages TEXT DEFAULT '[]',
                 updated_at INTEGER
             )""")
+
+            # 广告处置根因、说明卡和自助复检账本；不保存完整 Bio/私聊原文。
+            c.execute("""CREATE TABLE IF NOT EXISTS ad_enforcement_events (
+                event_id TEXT PRIMARY KEY,
+                root_event_id TEXT NOT NULL,
+                parent_event_id TEXT DEFAULT '',
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                source_message_id INTEGER DEFAULT 0,
+                source_type TEXT NOT NULL,
+                reason_code TEXT NOT NULL,
+                reason_summary TEXT NOT NULL,
+                evidence_level TEXT NOT NULL,
+                evidence_json TEXT DEFAULT '[]',
+                enforcement_status TEXT DEFAULT 'pending',
+                muted INTEGER DEFAULT 0,
+                blacklisted INTEGER DEFAULT 0,
+                deleted_count INTEGER DEFAULT 0,
+                notice_message_id INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                attempt_count INTEGER DEFAULT 0,
+                last_attempt_at INTEGER DEFAULT 0,
+                resolved_at INTEGER DEFAULT 0,
+                resolution TEXT DEFAULT '',
+                recovery_json TEXT DEFAULT '{}'
+            )""")
+            c.execute("""CREATE INDEX IF NOT EXISTS idx_ad_events_user_open
+                         ON ad_enforcement_events(user_id, resolved_at, expires_at)""")
+            c.execute("""CREATE INDEX IF NOT EXISTS idx_ad_events_notice
+                         ON ad_enforcement_events(user_id, chat_id, root_event_id, notice_message_id)""")
 
             # [TRAE SOLO CN] v5.8.1 新增：群成员追踪表（渐进式构建完整成员列表）
             c.execute("""CREATE TABLE IF NOT EXISTS group_members (
@@ -2181,6 +2213,16 @@ class DB:
         # 【P1-2】僵尸 running 清理(启动时调用) + 【P2-1】历史记录 TTL 清理
         'cleanup_zombie_running': 'task_exec_history',
         'cleanup_old_history': 'task_exec_history',
+        # ad_enforcement_repo：处置根因、双按钮说明卡和本人自助复检。
+        'create_ad_enforcement_event': 'ad_enforcement',
+        'get_ad_enforcement_event': 'ad_enforcement',
+        'get_open_ad_root_event': 'ad_enforcement',
+        'get_active_ad_notice': 'ad_enforcement',
+        'set_ad_event_enforcement': 'ad_enforcement',
+        'set_ad_event_notice': 'ad_enforcement',
+        'claim_ad_recheck': 'ad_enforcement',
+        'resolve_ad_event': 'ad_enforcement',
+        'list_unresolved_ad_events': 'ad_enforcement',
     }
 
     # ──────────────────────────── v5.31.1 第一层防御：启动自检 ──────────────────────────
@@ -2193,6 +2235,7 @@ class DB:
         'reply_evolution': 'reply_evolution',
         'conversation_context': 'conversation_context',
         'task_exec_history': 'task_exec_history',
+        'ad_enforcement': 'ad_enforcement',
     }
 
     def _self_check_repo_methods(self):
@@ -2243,6 +2286,7 @@ class DB:
             'sales': self.sales, 'reply_evolution': self.reply_evolution,
             'conversation_context': self.conversation_context,
             'task_exec_history': self.task_exec_history,
+            'ad_enforcement': self.ad_enforcement,
         }
         for method_name, repo_key in self._REPO_METHOD_MAP.items():
             repo_instance = repo_instances.get(repo_key)

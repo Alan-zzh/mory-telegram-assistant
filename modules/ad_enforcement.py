@@ -3,6 +3,8 @@
 广告账号统一处置：不踢人，只永久禁言、删消息、双黑名单。
 """
 
+import html
+import json
 import time
 
 from core.helpers import format_user_mention
@@ -136,7 +138,7 @@ def _mute_forever(bot, db, chat_id: int, uid: int, reason: str = "广告检测")
 
 
 def _persist_ad_state(bot, db, chat_id: int, uid: int, reason: str, muted: bool) -> bool:
-    """在一个 SQLite 事务内写入广告处置持久态，避免半黑名单。"""
+    """在一个事务内写入广告持久态；重复拦截不得覆盖首次根因和时间。"""
     if db is None or not getattr(db, "conn", None):
         logger.error(f"广告处置缺少数据库，无法固化状态: uid={uid}")
         return False
@@ -151,12 +153,12 @@ def _persist_ad_state(bot, db, chat_id: int, uid: int, reason: str, muted: bool)
             lock.acquire()
         if muted:
             db.conn.execute(
-                "INSERT OR REPLACE INTO mute_records "
+                "INSERT OR IGNORE INTO mute_records "
                 "(uid, chat_id, mute_until, reason) VALUES (?,?,?,?)",
                 (uid, chat_id, 0, reason),
             )
         db.conn.execute(
-            "INSERT OR REPLACE INTO global_blacklist "
+            "INSERT OR IGNORE INTO global_blacklist "
             "(user_id, reason, added_by, added_at) VALUES (?,?,?,datetime('now'))",
             (uid, reason, actor_id),
         )
@@ -169,19 +171,19 @@ def _persist_ad_state(bot, db, chat_id: int, uid: int, reason: str, muted: bool)
             blacklist_columns = ["uid", "reason", "date"]
         if "date" in blacklist_columns:
             db.conn.execute(
-                "INSERT OR REPLACE INTO blacklist (uid, reason, date) VALUES (?,?,?)",
+                "INSERT OR IGNORE INTO blacklist (uid, reason, date) VALUES (?,?,?)",
                 (uid, reason, int(time.time())),
             )
         elif "timestamp" in blacklist_columns:
             db.conn.execute(
-                "INSERT OR REPLACE INTO blacklist (uid, reason, timestamp) VALUES (?,?,?)",
+                "INSERT OR IGNORE INTO blacklist (uid, reason, timestamp) VALUES (?,?,?)",
                 (uid, reason, int(time.time())),
             )
         elif len(blacklist_columns) >= 3:
-            db.conn.execute("INSERT OR REPLACE INTO blacklist VALUES (?,?,?)", (uid, reason, int(time.time())))
+            db.conn.execute("INSERT OR IGNORE INTO blacklist VALUES (?,?,?)", (uid, reason, int(time.time())))
         else:
             db.conn.execute(
-                "INSERT OR REPLACE INTO blacklist (uid, reason) VALUES (?,?)",
+                "INSERT OR IGNORE INTO blacklist (uid, reason) VALUES (?,?)",
                 (uid, reason),
             )
         db.conn.commit()
@@ -330,6 +332,22 @@ def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int
     persistence_verified, persistence_counts = _verify_persistent_state_cleared(db, uid)
     permission_verified = restored and _verify_chat_permissions_restored(bot, chat_id, uid)
     confirmed = removed and persistence_verified and permission_verified
+    resolved_events = 0
+    if confirmed and hasattr(db, "list_unresolved_ad_events") and hasattr(db, "resolve_ad_event"):
+        try:
+            roots = {
+                str(item.get("root_event_id") or item.get("event_id") or "")
+                for item in (db.list_unresolved_ad_events(uid) or [])
+            }
+            for root_id in roots:
+                if root_id:
+                    resolved_events += int(db.resolve_ad_event(
+                        root_id, "restored",
+                        {"actor_id": int(actor_id or 0), "permission_verified": True,
+                         "persistence_verified": True},
+                    ) or 0)
+        except Exception as e:
+            logger.warning(f"解封后关闭处置事件失败: uid={uid} err={e}")
     logger.warning(
         f"广告误封解封核验: uid={uid} chat={chat_id} confirmed={confirmed} "
         f"removed={removed} persistence_verified={persistence_verified} "
@@ -386,6 +404,7 @@ def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int
             "permission_verified": permission_verified,
             "tracking_cleared": tracking_cleared,
             "actor_id": actor_id,
+            "resolved_events": resolved_events,
         },
         "msg": "success" if confirmed else "restore_not_verified",
     }
@@ -683,6 +702,257 @@ def _build_unban_markup(uid: int, chat_id: int):
         return None
 
 
+def _event_categories(evidence) -> list[str]:
+    labels = {
+        "money_promise": "收益承诺", "recruit": "招募引流",
+        "adult_content": "成人招揽", "gray_industry": "灰产",
+        "crypto_money": "资金/洗钱", "strong_contact": "明确联系方式",
+        "contact_info": "联系方式", "marketing_contact": "私聊/客服引导",
+        "profile_ad": "资料/Bio", "username_profile": "昵称/用户名",
+        "external_blacklist": "外部反垃圾库", "personal_chat": "关联频道",
+    }
+    values = []
+    for item in evidence or []:
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category", ""))
+        label = labels.get(category, "")
+        if label and label not in values:
+            values.append(label)
+    return values
+
+
+def self_review_ad_event(bot, db, config: dict, event_id: str, actor_id: int,
+                         ad_detector=None) -> dict:
+    """本人整改后复检；任何高风险或未知状态都保持原处置。"""
+    if not (config or {}).get("AD_SELF_UNBAN_ENABLED", False):
+        return {"code": 403, "status": "disabled", "message": "自助复检暂未开放"}
+    try:
+        clicked = db.get_ad_enforcement_event(str(event_id))
+    except Exception:
+        clicked = None
+    if not clicked:
+        return {"code": 404, "status": "not_found", "message": "复检记录不存在或已清理"}
+    root_id = str(clicked.get("root_event_id") or clicked.get("event_id") or "")
+    claim = db.claim_ad_recheck(root_id, int(actor_id), cooldown_seconds=60, max_attempts=5)
+    status = str(claim.get("status") or "")
+    if status != "claimed":
+        messages = {
+            "not_owner": "只有被限制的账号本人可以操作",
+            "expired": "按钮已超过24小时，请联系管理员",
+            "resolved": "本次处置已经完成恢复",
+            "attempts_exhausted": "本次复检次数已用完，请联系管理员",
+            "not_found": "复检记录不存在或已清理",
+        }
+        if status == "rate_limited":
+            wait = int(claim.get("retry_after") or 60)
+            message = f"请等待{wait}秒后再复检"
+        else:
+            message = messages.get(status, "当前无法复检，请联系管理员")
+        return {"code": 409 if status != "not_owner" else 403, "status": status, "message": message}
+
+    event = claim.get("event") or clicked
+    uid = int(event.get("user_id") or 0)
+    # 卡片可能由 P1 在另一个群重申；恢复应以用户实际点击的卡片所在群为准。
+    chat_id = int(clicked.get("chat_id") or event.get("chat_id") or 0)
+    level = str(event.get("evidence_level") or "high")
+    try:
+        evidence = json.loads(event.get("evidence_json") or "[]")
+    except Exception:
+        evidence = []
+    categories = {str(item.get("category", "")) for item in evidence if isinstance(item, dict)}
+    if level not in {"low", "ambiguous"} or categories & {
+        "adult_content", "gray_industry", "money_promise", "recruit", "crypto_money",
+        "strong_contact", "external_blacklist", "profile_ad", "personal_chat",
+    }:
+        return {
+            "code": 403, "status": "manual_review_required",
+            "message": "该记录属于高风险或确证广告，需联系管理员复核",
+        }
+
+    # 同一账号存在其他未解决高风险根事件时，低风险卡不能绕过它。
+    try:
+        unresolved = db.list_unresolved_ad_events(uid) or []
+        if any(
+            str(item.get("event_id") or "") != root_id
+            and str(item.get("evidence_level") or "high") == "high"
+            for item in unresolved
+        ):
+            return {"code": 403, "status": "other_high_risk", "message": "仍有高风险记录未解决，请联系管理员"}
+    except Exception:
+        return {"code": 503, "status": "state_unknown", "message": "风险状态读取失败，请稍后再试"}
+
+    try:
+        chat_info = bot.get_chat(uid)
+        from modules.ad_profile_signals import detect_profile_ad_signal
+        profile = detect_profile_ad_signal(
+            bot, chat_info, getattr(chat_info, "bio", "") or "", config or {}, chat_info=chat_info
+        )
+    except Exception as e:
+        logger.warning(f"自助解封资料复检失败: uid={uid} err={e}")
+        return {"code": 503, "status": "profile_unknown", "message": "当前资料读取失败，请稍后再试"}
+    if profile.get("is_ad") or int(profile.get("score", 0) or 0) > 0:
+        return {
+            "code": 403, "status": "profile_not_clean",
+            "message": "昵称、用户名、Bio、状态或关联频道仍有风险内容，请整改后再试",
+        }
+
+    if not ad_detector or not hasattr(ad_detector, "_check_cas"):
+        return {"code": 503, "status": "external_unknown", "message": "外部反垃圾状态暂时无法确认，请稍后再试"}
+    try:
+        cas_banned, _cas_reason = ad_detector._check_cas(uid)
+    except Exception as e:
+        logger.warning(f"自助解封CAS复检失败: uid={uid} err={e}")
+        return {"code": 503, "status": "external_unknown", "message": "外部反垃圾状态暂时无法确认，请稍后再试"}
+    if cas_banned:
+        return {"code": 403, "status": "external_blacklist", "message": "外部反垃圾库仍有记录，请联系管理员"}
+    try:
+        row = db.conn.execute("SELECT 1 FROM federation_bans WHERE user_id=? LIMIT 1", (uid,)).fetchone()
+    except Exception:
+        return {"code": 503, "status": "federation_unknown", "message": "联邦黑名单状态读取失败，请稍后再试"}
+    if row:
+        return {"code": 403, "status": "federation_ban", "message": "联邦黑名单仍有记录，请联系管理员"}
+
+    restored = restore_ad_user(
+        bot=bot, db=db, config=config or {}, chat_id=chat_id, uid=uid,
+        actor_id=actor_id, ad_detector=ad_detector,
+    )
+    if restored.get("code") != 200:
+        return {"code": 500, "status": "restore_not_verified", "message": "恢复未完全确认，请联系管理员"}
+    return {
+        "code": 200, "status": "restored",
+        "message": "已恢复发言权限；历史被删除的消息无法恢复",
+        "data": restored.get("data", {}),
+    }
+def _derive_event_meta(reason: str, evidence=None, source_type: str = "detection",
+                       reason_code: str = "", evidence_level: str = "") -> tuple[str, str]:
+    categories = {str(item.get("category", "")) for item in (evidence or []) if isinstance(item, dict)}
+    code = str(reason_code or "")
+    level = str(evidence_level or "")
+    if not code:
+        code = "blacklist_reassert" if source_type == "blacklist_reassert" else "ad_detected"
+    if not level:
+        high = not (evidence or []) or bool(categories & {
+            "money_promise", "recruit", "adult_content", "gray_industry", "crypto_money",
+            "strong_contact", "external_blacklist", "profile_ad", "personal_chat",
+        })
+        level = "high" if high else "ambiguous"
+    return code[:64], level[:16]
+
+
+def _safe_event_reason(reason: str, evidence=None) -> str:
+    categories = _event_categories(evidence)
+    if categories:
+        return "触发类别：" + "、".join(categories)
+    value = str(reason or "")
+    keyword_labels = (
+        (("cas", "spb", "外部", "spamwatch"), "外部反垃圾库"),
+        (("bio", "资料", "简介", "昵称", "用户名"), "账号资料"),
+        (("emoji", "贴纸", "头像"), "头像或状态"),
+        (("色情", "成人", "裸聊", "约炮"), "成人招揽"),
+        (("灰产", "洗米", "跑分", "代收"), "灰产或资金风险"),
+        (("收益", "日入", "日赚", "赚钱"), "收益承诺"),
+        (("招募", "兼职", "招聘"), "招募引流"),
+        (("私信", "私聊", "客服", "联系", "引流"), "联系方式或引流"),
+    )
+    lower = value.lower()
+    for needles, label in keyword_labels:
+        if any(item in lower for item in needles):
+            return f"触发类别：{label}"
+    return "广告检测规则命中"
+
+
+def _create_enforcement_event(db, uid: int, chat_id: int, msg_id: int, reason: str,
+                              evidence=None, source_type: str = "detection",
+                              reason_code: str = "", evidence_level: str = ""):
+    if not db or not hasattr(db, "create_ad_enforcement_event"):
+        return None
+    try:
+        root = db.get_open_ad_root_event(uid) if source_type == "blacklist_reassert" else None
+        parent_id = ""
+        root_id = ""
+        event_evidence = evidence or []
+        event_reason = _safe_event_reason(reason, event_evidence)
+        code, level = _derive_event_meta(
+            event_reason, event_evidence, source_type, reason_code, evidence_level
+        )
+        if root:
+            root_id = str(root.get("root_event_id") or root.get("event_id") or "")
+            parent_id = str(root.get("event_id") or "")
+            # 重复 P1 只关联首次事件，播报和账本都保留原始根因。
+            if source_type == "blacklist_reassert":
+                event_reason = str(root.get("reason_summary") or event_reason)
+                code = str(root.get("reason_code") or code)
+                level = str(root.get("evidence_level") or level)
+                try:
+                    event_evidence = json.loads(root.get("evidence_json") or "[]")
+                except Exception:
+                    event_evidence = []
+        return db.create_ad_enforcement_event(
+            user_id=uid, chat_id=chat_id, source_message_id=msg_id,
+            source_type=source_type, reason_code=code, reason_summary=event_reason,
+            evidence_level=level, evidence=event_evidence, root_event_id=root_id,
+            parent_event_id=parent_id, expires_at=int(time.time()) + 86400,
+        )
+    except Exception as e:
+        logger.warning(f"创建广告处置事件失败: uid={uid} chat={chat_id} err={e}")
+        return None
+
+
+def _build_self_review_markup(event_id: str):
+    try:
+        from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = InlineKeyboardMarkup()
+        keyboard.row(
+            InlineKeyboardButton("🔓 已整改，一键复检解封", callback_data=f"ad_self_review:{event_id}"),
+            InlineKeyboardButton("👤 联系管理员", url="https://t.me/Moryfansbot"),
+        )
+        return keyboard
+    except Exception as e:
+        logger.debug(f"构建自助复检按钮失败: event={event_id} err={e}")
+        return None
+
+
+def _send_self_review_notice(bot, db, config: dict, event: dict, uid: int, uname: str) -> int:
+    if not (config or {}).get("AD_SELF_UNBAN_ENABLED", False) or not event:
+        return 0
+    chat_id = int(event.get("chat_id") or 0)
+    root_id = str(event.get("root_event_id") or event.get("event_id") or "")
+    try:
+        existing = db.get_active_ad_notice(uid, chat_id, root_id)
+        if existing:
+            return int(existing.get("notice_message_id") or 0)
+    except Exception as e:
+        logger.debug(f"查询处置说明卡去重状态失败: uid={uid} err={e}")
+    try:
+        evidence = json.loads(event.get("evidence_json") or "[]")
+    except Exception:
+        evidence = []
+    categories = _event_categories(evidence)
+    category_text = "、".join(categories) if categories else "历史广告/黑名单记录"
+    text = (
+        f"⚠️ <b>{html.escape(uname or str(uid))} 已被限制发言</b>\n\n"
+        f"触发类别：{html.escape(category_text)}\n"
+        "可能来自本条消息、昵称、用户名、Bio、关联频道或外部反垃圾记录。\n"
+        "请先删除广告话术或联系方式，并整改昵称、用户名、Bio 和关联频道内容，再由本人点击复检。\n\n"
+        "低风险误判且当前资料复检干净会自动恢复；成人/灰产、收益+联系方式、外部黑名单或重复确证广告需管理员处理。"
+    )
+    try:
+        sent = bot.send_message(
+            chat_id, text, parse_mode="HTML",
+            reply_markup=_build_self_review_markup(str(event.get("event_id") or "")),
+        )
+        message_id = int(getattr(sent, "message_id", 0) or 0)
+        if message_id:
+            db.set_ad_event_notice(str(event.get("event_id")), message_id)
+            if hasattr(db, "track_bot_message"):
+                db.track_bot_message(chat_id, message_id)
+        return message_id
+    except Exception as e:
+        logger.warning(f"发送广告处置说明卡失败: uid={uid} chat={chat_id} err={e}")
+        return 0
+
+
 def _notify_admin(
     bot,
     config: dict,
@@ -739,6 +1009,10 @@ def enforce_ad_user(
     current_msg_id: int = 0,
     current_message_is_ad: bool = False,
     notify_admin: bool = True,
+    evidence=None,
+    source_type: str = "detection",
+    reason_code: str = "",
+    evidence_level: str = "",
 ) -> dict:
     """统一广告账号处置入口。
 
@@ -793,10 +1067,27 @@ def enforce_ad_user(
     evidence_persisted = False
     if current_message_is_ad:
         evidence_persisted = _mark_current_message_ad(db, chat_id, current_msg_id)
+    event = _create_enforcement_event(
+        db, uid, chat_id, current_msg_id, reason, evidence=evidence,
+        source_type=source_type, reason_code=reason_code, evidence_level=evidence_level,
+    )
     deleted_count = _cleanup_user_messages(bot, db, config or {}, uid, chat_id, current_msg_id)
     muted = _mute_forever(bot, db, chat_id, uid, reason)
     reactions_cleaned = _cleanup_user_reactions(bot, config or {}, uid, chat_id)
-    blacklisted = _persist_ad_state(bot, db, chat_id, uid, reason, muted)
+    persist_reason = (
+        str((event or {}).get("reason_summary") or reason)
+        if source_type == "blacklist_reassert" else reason
+    )
+    blacklisted = _persist_ad_state(bot, db, chat_id, uid, persist_reason, muted)
+    if event and hasattr(db, "set_ad_event_enforcement"):
+        try:
+            db.set_ad_event_enforcement(
+                str(event.get("event_id")), muted, blacklisted, deleted_count,
+                "completed" if muted and blacklisted else "incomplete",
+            )
+            event = db.get_ad_enforcement_event(str(event.get("event_id"))) or event
+        except Exception as e:
+            logger.warning(f"更新广告处置事件结果失败: uid={uid} err={e}")
     if notify_admin:
         _notify_admin(
             bot,
@@ -810,6 +1101,9 @@ def enforce_ad_user(
             blacklisted=blacklisted,
             reactions_cleaned=reactions_cleaned,
         )
+    notice_message_id = _send_self_review_notice(
+        bot, db, config or {}, event or {}, uid, uname or str(uid)
+    ) if muted and blacklisted else 0
     logger.warning(
         f"广告账号处置完成: uid={uid} chat={chat_id} "
         f"muted={muted} blacklisted={blacklisted} deleted={deleted_count} reactions_cleaned={reactions_cleaned}"
@@ -840,6 +1134,9 @@ def enforce_ad_user(
             "deleted_count": deleted_count,
             "evidence_persisted": evidence_persisted,
             "reactions_cleaned": reactions_cleaned,
+            "event_id": str((event or {}).get("event_id") or ""),
+            "root_event_id": str((event or {}).get("root_event_id") or ""),
+            "notice_message_id": notice_message_id,
         },
         "msg": "success" if muted and blacklisted else "enforcement_incomplete",
     }

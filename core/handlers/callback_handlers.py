@@ -38,6 +38,43 @@ def register_callback_handlers(bot, ctx):
         except Exception:
             return False
 
+    # 自助复检必须注册在黑名单统一拦截器之前，否则目标用户永远点不到自己的恢复入口。
+    @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("ad_self_review:"))
+    def on_ad_self_review_callback(call):
+        actor_id = getattr(getattr(call, "from_user", None), "id", 0) or 0
+        try:
+            parts = str(call.data or "").split(":", 1)
+            if len(parts) != 2 or not parts[1]:
+                bot.answer_callback_query(call.id, text="复检参数无效", show_alert=True)
+                return
+            from modules.ad_enforcement import self_review_ad_event
+            result = self_review_ad_event(
+                bot=bot, db=ctx.db, config=ctx.config, event_id=parts[1],
+                actor_id=actor_id, ad_detector=getattr(ctx, "ad_detector", None),
+            )
+            ok = result.get("code") == 200
+            bot.answer_callback_query(
+                call.id, text=str(result.get("message") or "复检完成")[:180], show_alert=True
+            )
+            if ok or result.get("status") in {"expired", "resolved", "attempts_exhausted"}:
+                try:
+                    bot.edit_message_reply_markup(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        reply_markup=None,
+                    )
+                except Exception as e:
+                    logger.debug(f"移除自助复检按钮失败: {e}")
+            logger.info(
+                f"广告自助复检回调: actor={actor_id} status={result.get('status')} ok={ok}"
+            )
+        except Exception as e:
+            logger.error(f"广告自助复检回调异常：{e}")
+            try:
+                bot.answer_callback_query(call.id, text="复检异常，请稍后再试", show_alert=True)
+            except Exception:
+                pass
+
     def _is_blacklisted_callback(call) -> bool:
         uid = getattr(getattr(call, "from_user", None), "id", 0) or 0
         if not uid:
