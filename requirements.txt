@@ -6,7 +6,6 @@ pyTelegramBotAPI>=4.14.0,<5.0.0
 requests>=2.31.0,<3.0.0
 apscheduler>=3.10.0,<4.0.0
 python-dotenv>=1.0.0,<2.0.0
-pydantic-settings>=2.0.0,<3.0.0
 cnlunar==0.2.4
 
 # 数据库
@@ -28,15 +27,6 @@ flask>=3.0.0,<3.1.0
 flasgger>=0.9.5
 gunicorn>=21.2.0,<22.0.0
 gevent>=24.2.0,<25.0.0
-
-# 结构化日志
-structlog>=23.0.0,<25.0.0
-
-# 系统监控
-psutil>=5.9.0,<7.0.0
-
-# 缓存层
-diskcache>=5.6.0,<6.0.0
 
 # 分布式追踪（OpenTelemetry）
 opentelemetry-sdk>=1.20.0,<2.0.0

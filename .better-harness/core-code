@@ -1,7 +1,0 @@
-# Configured core boundary for core-change-watch evidence packs.
-# One path pattern per line; a leading ! marks an exclusion.
-# Keep in sync with project_snapshot.md module responsibilities.
-core/
-modules/
-tasks/
-dashboard/

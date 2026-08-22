@@ -56,7 +56,11 @@ __pycache__/
 *.sync-conflict-*
 reload_flag
 fault_dedup_state.json
-data/
+# 运行时数据目录：仅三个内容文案文件入库（非敏感、新克隆必需），其余不入库
+data/*
+!data/badges.json
+!data/fortune_texts.json
+!data/tarot_cards.json
 💾 备份/
 
 # 根目录临时输出文件
@@ -64,8 +68,9 @@ tmp_*.txt
 test_out.txt
 test*.txt
 
-# 播报视觉样张与运行时缓存（生成产物，不提交）
-assets/
+# 播报样张与字体不入库（bg 样张为生成产物；字体 19MB 由 deploy_vps.py 单独同步）
+assets/broadcast/
+assets/fonts/
 runtime/cache/
 runtime/demo_*.py
 runtime/demo_*.png
@@ -110,3 +115,5 @@ runtime/audit-reports/project-automation/*.json
 
 # ── AI 审查/分析产物（better-harness 等，不提交）────────────────────
 .qoder/
+.better-harness/
+.codebuddy/

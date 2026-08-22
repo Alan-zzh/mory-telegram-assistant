@@ -1,0 +1,14 @@
+{
+  "early_bird": {"name": "早起鸟", "emoji": "🐦", "desc": "每天8点前发消息"},
+  "night_owl": {"name": "夜猫子", "emoji": "🦉", "desc": "每天23点后发消息"},
+  "social_butterfly": {"name": "社牛", "emoji": "🦋", "desc": "群消息超过100条"},
+  "chatty_cathy": {"name": "话痨", "emoji": "💬", "desc": "单日消息超过50条"},
+  "first_fan": {"name": "铁粉", "emoji": "❤️", "desc": "连续7天活跃"},
+  "super_fan": {"name": "超级铁粉", "emoji": "💖", "desc": "连续30天活跃"},
+  "og_member": {"name": "OG会员", "emoji": "👑", "desc": "加入超过30天"},
+  "treasure_hunter": {"name": "寻宝达人", "emoji": "💎", "desc": "碎片寻宝满7天"},
+  "tarot_master": {"name": "塔罗师", "emoji": "🔮", "desc": "查看运势超过10次"},
+  "lucky_star": {"name": "幸运星", "emoji": "⭐", "desc": "被随机点名3次"},
+  "early_adopter": {"name": "尝鲜客", "emoji": "🚀", "desc": "首日体验会员"},
+  "loyal_customer": {"name": "老会员", "emoji": "💎", "desc": "连续付费超过3个月"}
+}
