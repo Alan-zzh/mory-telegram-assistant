@@ -93,27 +93,8 @@ class TestAntiRaidFix:
         assert status['active'] is False  # 无 db 时 is_raid_active 返回 False
 
 
-# ──────────────────── P0-2 36 模块 import 健康 ────────────────────
-
-# 修复的 36 模块清单
-_FIXED_MODULES = [
-    'ad_blocker', 'afool_member', 'auto_rules', 'bot_list', 'bot_settings',
-    'bottom_button', 'channel_link', 'chat_points_cost', 'chat_settings',
-    'config_template', 'content_archive', 'crypto_detector', 'entertainment_games',
-    'force_channel', 'force_subscribe', 'group_commands', 'group_list', 'group_members',
-    'group_message_push', 'group_migration', 'group_props', 'group_report',
-    'group_safety_center', 'group_todo', 'image_manager', 'invite_link_manager',
-    'join_settings', 'language_whitelist', 'message_library', 'new_member_probation',
-    'punishment_center', 'random_drop', 'super_afool',
-    'user_marking', 'valid_speak', 'word_cloud'
-]
-
-
-@pytest.mark.parametrize('module_name', _FIXED_MODULES)
-def test_fixed_module_importable(module_name):
-    """每个修复的模块都能正常 import（无 ImportError）"""
-    m = importlib.import_module(f'modules.{module_name}')
-    assert m is not None
+# 【v5.38.69】原"P0-2 36 模块 import 健康"清单中的模块已按全仓审计结论
+# 分批下线（import 层面全仓零引用），存在性断言随删除一并移除。
 
 
 def test_no_broken_import_pattern_remains():
