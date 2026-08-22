@@ -10,6 +10,7 @@ modules/invite.py · 邀请系统
 
 import time
 from datetime import datetime, timedelta, timezone
+from core.database import _db_lock
 from core.logging_util import get_logger
 
 logger = get_logger("invite")
@@ -32,7 +33,7 @@ def record_invite(db, inviter_uid: int, invitee_uid: int, chat_id: int, config=N
     """
     ts = int(time.time())
     try:
-        with db.conn:
+        with _db_lock:
             c = db.conn.cursor()
             # 防重复：同一邀请人+被邀请人只记一次
             c.execute(
@@ -84,7 +85,7 @@ def handle_invite_rank(bot, m, config: dict, db):
     """
     chat_id = m.chat.id
     try:
-        with db.conn:
+        with _db_lock:
             c = db.conn.cursor()
             c.execute("""
                 SELECT ir.inviter_uid, COUNT(*) as invite_count

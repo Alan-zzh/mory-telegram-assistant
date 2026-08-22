@@ -6,6 +6,10 @@ tasks/support/task_config.py - 任务相关配置解析
 
 from typing import Tuple
 
+from core.logging_util import get_logger
+
+logger = get_logger("task_config")
+
 
 def parse_hhmm(value, default_hour: int, default_minute: int) -> Tuple[int, int]:
     """解析 HH:MM 配置，异常时回落默认时间。"""
@@ -97,6 +101,7 @@ def get_all_group_ids(config: dict) -> list:
             for g in mg:
                 if g and g not in group_ids:
                     group_ids.append(g)
-    except Exception:
-        pass
+    except Exception as e:
+        # MANAGED_GROUPS 配置畸形时禁止静默缩水：定时任务会只发 GROUP_ID 甚至零群且无告警
+        logger.error(f"get_all_group_ids：MANAGED_GROUPS 配置解析失败（返回残缺群列表）：{e}")
     return group_ids

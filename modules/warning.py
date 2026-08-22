@@ -18,6 +18,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
+import html
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -85,9 +86,9 @@ def handle_warn(bot, m, config: dict, db, target_uid: int, reason: str):
     else:
         auto_msg = ""
 
-    # 构造回复
+    # 构造回复（reason 为管理员输入的自由文本，必须转义防止 HTML 解析失败）
     target_mention = f"<a href='tg://user?id={target_uid}'>用户</a>"
-    reply = f"⚠️ {target_mention} 收到警告 ({count}/{limit})\n原因：{reason}"
+    reply = f"⚠️ {target_mention} 收到警告 ({count}/{limit})\n原因：{html.escape(reason or '')}"
     if auto_msg:
         reply += f"\n{auto_msg}"
     else:

@@ -37,7 +37,7 @@ import html
 from typing import Any, Dict, Optional
 from datetime import datetime, timedelta, timezone
 from core.broadcast_formatter import build_greeting_html, build_rich_greeting_html
-from core.helpers import can_delete_message, can_orphan_cleanup, get_broadcast_auto_delete_config
+from core.helpers import can_delete_message, can_orphan_cleanup, get_broadcast_auto_delete_config, is_permanently_gone_chat_error
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
 from core.task_transaction import TaskTransactionManager
@@ -1371,12 +1371,11 @@ def _job_reactivate(rm):
                         sent_count += 1
                         logger.info(f"💌 非活跃用户问候：{uid}")
                     except Exception as e:
-                        err_str = str(e).lower()
-                        if "chat not found" in err_str or "bot was blocked" in err_str or "forbidden" in err_str:
+                        if is_permanently_gone_chat_error(e):
                             rm.db.delete_user(uid)
-                            logger.debug(f"非活跃用户问候跳过无效用户 uid={uid}（已清理）")
+                            logger.info(f"非活跃用户问候：会话永久失效已清理 uid={uid}")
                         else:
-                            logger.warning(f"非活跃用户问候发送失败 uid={uid}：{e}")
+                            logger.warning(f"非活跃用户问候发送失败（不清理，瞬态/模糊错误）uid={uid}：{e}")
             if sent_count == 0:
                 raise _TaskAbort("无发送目标", expected=True)
     except _TaskAbort as e:
@@ -1448,16 +1447,12 @@ def _job_cart_recovery(rm):
                     logger.info(f"🛒 购物车单次预览提醒完成并取消: uid={uid} old_stage={stage}")
 
                 except Exception as e:
-                    err_str = str(e).lower()
-                    if any(kw in err_str for kw in (
-                        "chat not found", "bot was blocked", "forbidden",
-                        "bot was kicked", "user is deactivated"
-                    )):
+                    if is_permanently_gone_chat_error(e):
                         rm.db.delete_user(uid)
                         rm.db.cancel_cart_recovery(uid)
-                        logger.debug(f"💔 购物车挽回跳过无效用户 uid={uid}（已清理）")
+                        logger.info(f"💔 购物车挽回：会话永久失效已清理 uid={uid}")
                     else:
-                        logger.warning(f"购物车挽回发送失败 uid={uid} stage={stage}: {e}")
+                        logger.warning(f"购物车挽回发送失败（不清理，瞬态/模糊错误）uid={uid} stage={stage}: {e}")
 
             if sent_count == 0:
                 raise _TaskAbort("无发送目标", expected=True)

@@ -22,6 +22,7 @@
 ══════════════════════════════════════════════════════════════════════════╝
 """
 
+from core.database import _db_lock
 from core.logging_util import get_logger
 from core.admin_utils import is_admin_user
 import re
@@ -36,7 +37,7 @@ def fban_user(db, user_id: int, banned_by: int, reason: str = "联邦封禁", ch
     import time
     # 【P2-2 安全加固】过滤 reason 中的控制字符，防止日志注入和换行伪造
     reason = re.sub(r'[\r\n\t\x00-\x1f]', ' ', str(reason))[:200]
-    with db.conn:
+    with _db_lock:
         db.conn.execute(
             "INSERT OR REPLACE INTO federation_bans VALUES (?,?,?,?,?)",
             (user_id, banned_by, reason, chat_id, int(time.time()))
@@ -47,7 +48,7 @@ def fban_user(db, user_id: int, banned_by: int, reason: str = "联邦封禁", ch
 
 def unfban_user(db, user_id: int):
     """解除联邦封禁"""
-    with db.conn:
+    with _db_lock:
         db.conn.execute("DELETE FROM federation_bans WHERE user_id=?", (user_id,))
         db.conn.commit()
     logger.info(f"✅ 解除联邦封禁: uid={user_id}")
@@ -58,7 +59,7 @@ def is_federation_banned(db, user_id: int) -> tuple:
     检查用户是否被联邦封禁
     返回 (is_banned, ban_info) 或 (False, None)
     """
-    with db.conn:
+    with _db_lock:
         c = db.conn.cursor()
         c.execute(
             "SELECT banned_by, reason, chat_id, ts FROM federation_bans WHERE user_id=?",
@@ -77,7 +78,7 @@ def is_federation_banned(db, user_id: int) -> tuple:
 
 def get_fban_count(db, user_id: int) -> int:
     """获取用户联邦封禁次数"""
-    with db.conn:
+    with _db_lock:
         c = db.conn.cursor()
         c.execute("SELECT COUNT(*) FROM federation_bans WHERE user_id=?", (user_id,))
         return c.fetchone()[0]

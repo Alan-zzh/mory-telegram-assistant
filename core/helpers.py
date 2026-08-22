@@ -117,3 +117,20 @@ def format_user_mention(uid, name):
     # HTML转义（顺序重要：&先转义）
     safe_name = str(name).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")[:30]
     return f'<a href="tg://user?id={uid}">{safe_name}</a> ID: {uid}'
+
+
+# ── 会话失效判定（v5.38.69 审计加固）───────────────────────────────────────
+# 仅当 Telegram 错误明确表示"该用户会话永久失效"时才允许清理用户档案。
+# forbidden/超时/限流等瞬态或模糊错误一律不算，防止一次网络抖动误删真人数据；
+# "bot was kicked" 属群级错误，与用户档案无关，同样不得触发删档。
+_PERMANENT_CHAT_GONE_KEYWORDS = ("chat not found", "bot was blocked", "user is deactivated")
+
+
+def is_permanently_gone_chat_error(err: Exception) -> bool:
+    """判断异常是否为 Telegram 明确的会话永久失效错误。
+
+    只有精确命中 _PERMANENT_CHAT_GONE_KEYWORDS 才返回 True。
+    调用方据此决定是否 delete_user；False 时必须跳过清理并留日志。
+    """
+    s = str(err).lower()
+    return any(kw in s for kw in _PERMANENT_CHAT_GONE_KEYWORDS)

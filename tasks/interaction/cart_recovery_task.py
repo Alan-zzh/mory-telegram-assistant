@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
+from core.helpers import is_permanently_gone_chat_error
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
@@ -117,20 +118,16 @@ class CartRecoveryTask(BaseTask):
                         logger.info(f"🛒 购物车单次预览提醒完成并取消: uid={uid} old_stage={stage}")
 
                     except Exception as e:
-                        err_str = str(e).lower()
-                        if any(kw in err_str for kw in (
-                            "chat not found", "bot was blocked", "forbidden",
-                            "bot was kicked", "user is deactivated"
-                        )):
+                        if is_permanently_gone_chat_error(e):
                             try:
                                 self.rm.db.delete_user(uid)
                                 self.rm.db.cancel_cart_recovery(uid)
-                                logger.debug(f"💔 购物车挽回跳过无效用户 uid={uid}（已清理）")
+                                logger.info(f"💔 购物车挽回：会话永久失效已清理 uid={uid}")
                             except Exception as cleanup_err:
                                 logger.error(f"购物车无效用户清理失败 uid={uid}: {cleanup_err}")
                                 failures.append(cleanup_err)
                         else:
-                            logger.warning(f"购物车挽回发送失败 uid={uid} stage={stage}: {e}")
+                            logger.warning(f"购物车挽回发送失败（不清理，瞬态/模糊错误）uid={uid} stage={stage}: {e}")
                             failures.append(e)
 
                 if failures:

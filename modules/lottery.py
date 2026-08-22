@@ -132,20 +132,25 @@ def handle_join_lottery(bot, call, config, db):
 
         # 记录参与
         now_ts = int(time.time())
+        join_notice = None
         with _db_lock:
             # 再次检查状态（防止并发）
             status_row = db.conn.execute(
                 "SELECT status FROM lotteries WHERE id=?", (lottery_id,)
             ).fetchone()
             if not status_row or status_row[0] != "active":
-                bot.answer_callback_query(call.id, text="抽奖已结束", show_alert=True)
-                return True
+                # 锁外应答：Telegram 网络 IO 不占用全局数据库锁
+                join_notice = "抽奖已结束"
+            else:
+                db.conn.execute(
+                    "INSERT INTO lottery_participants (lottery_id, uid, ts) VALUES (?,?,?)",
+                    (lottery_id, uid, now_ts)
+                )
+                db.conn.commit()
 
-            db.conn.execute(
-                "INSERT INTO lottery_participants (lottery_id, uid, ts) VALUES (?,?,?)",
-                (lottery_id, uid, now_ts)
-            )
-            db.conn.commit()
+        if join_notice:
+            bot.answer_callback_query(call.id, text=join_notice, show_alert=True)
+            return True
 
         # 更新参与人数显示
         count = db.conn.execute(

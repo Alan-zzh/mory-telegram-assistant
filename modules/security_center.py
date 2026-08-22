@@ -188,16 +188,23 @@ class RiskScorer:
             return "low"
         return "safe"
 
-    def clear_risk(self, uid: int):
-        """清除用户风险分"""
-        if uid in self._cache:
-            del self._cache[uid]
-        if self.db:
+    def clear_risk(self, uid: int) -> bool:
+        """清除用户风险分；返回真实清除结果，失败时如实上抛给调用方而非假成功"""
+        if not self.db:
+            logger.warning(f"清除风险档案跳过：评分器未挂载数据库 uid={uid}")
+            self._cache.pop(uid, None)
+            return True
+        from core.database import _db_lock
+        with _db_lock:
             try:
                 self.db.conn.execute("DELETE FROM user_risk_profile WHERE uid=?", (uid,))
                 self.db.conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                # 不吞错：删除失败必须让管理员知道，否则缓存清了、库里残留会"复活"
+                logger.error(f"清除风险档案失败 uid={uid}: {e}")
+                return False
+        self._cache.pop(uid, None)
+        return True
 
 
 # 全局评分器单例（延迟初始化）
@@ -405,8 +412,10 @@ def handle_admin_cmd(bot, m, config: dict, db, args: list) -> bool:
         elif cmd == "清除" and len(args) >= 2:
             target_uid = int(args[1])
             scorer = get_scorer(db, config)
-            scorer.clear_risk(target_uid)
-            bot.reply_to(m, f"✅ 已清除用户 {target_uid} 的风险记录")
+            if scorer.clear_risk(target_uid):
+                bot.reply_to(m, f"✅ 已清除用户 {target_uid} 的风险记录")
+            else:
+                bot.reply_to(m, f"⚠️ 清除用户 {target_uid} 风险记录失败（数据库异常），详情见服务器日志")
 
         elif cmd == "高风险":
             rows = db.conn.execute(

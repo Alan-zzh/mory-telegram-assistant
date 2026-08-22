@@ -28,6 +28,7 @@ import json
 import os
 import tempfile
 import logging
+import threading
 from core.config_compat import normalize_runtime_config, compact_runtime_config
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -36,6 +37,8 @@ logger = logging.getLogger(__name__)
 # ── 临时会话：等待管理员输入新值 ──────────────────────────────────────────
 # {(chat_id, user_id): {"key": str, "msg": str, "callback_data": str}}
 _pending_value_sessions = {}
+# Bot 50 线程并发：会话字典的 check-then-act 必须持锁，防止同用户并发回调重复消费/KeyError
+_pending_value_sessions_lock = threading.Lock()
 
 # ── config.json 路径 ─────────────────────────────────────────────────────
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
@@ -1477,7 +1480,8 @@ def handle_settings_callback(bot, call, config, db=None):
 
 def has_pending_session(chat_id, user_id):
     """检查是否有等待中的输入会话（供main.py调用）"""
-    return (chat_id, user_id) in _pending_value_sessions
+    with _pending_value_sessions_lock:
+        return (chat_id, user_id) in _pending_value_sessions
 
 
 def apply_pending_value(bot, chat_id, user_id, value, config):
@@ -1485,6 +1489,13 @@ def apply_pending_value(bot, chat_id, user_id, value, config):
     应用管理员输入的新值（供main.py调用）
     返回 True 表示成功消费该消息
     """
+    session_key = (chat_id, user_id)
+    # 全程持会话锁：串行化同键的 check-then-act（双击/并发回调只消费一次；重试路径不受影响）
+    with _pending_value_sessions_lock:
+        return _apply_pending_value_locked(bot, chat_id, user_id, value, config)
+
+
+def _apply_pending_value_locked(bot, chat_id, user_id, value, config):
     session_key = (chat_id, user_id)
     session = _pending_value_sessions.get(session_key)
     if not session:

@@ -90,6 +90,7 @@ def handle_blind_box(bot, m, config, db):
 
     try:
         # [TRAE SOLO CN] 原子扣款：UPDATE ... WHERE uid=? AND points>=?，避免 TOCTOU 竞态
+        insufficient_reply = None
         with _db_lock:
             cur = db.conn.execute(
                 "UPDATE user_levels SET points = points - ? WHERE uid = ? AND points >= ?",
@@ -99,14 +100,16 @@ def handle_blind_box(bot, m, config, db):
                 db.conn.rollback()
                 current_points = db.get_user_points(uid) or 0
                 deficit = cost - current_points
-                bot.reply_to(
-                    m,
+                # 锁外回复：Telegram 网络 IO 不占用全局数据库锁
+                insufficient_reply = (
                     f"❌ 积分不足！\n"
                     f"💎 当前积分：{current_points}\n"
                     f"🎫 需要积分：{cost}\n"
                     f"📉 还差：{deficit}积分"
                 )
-                return
+        if insufficient_reply:
+            bot.reply_to(m, insufficient_reply)
+            return
             # 记录积分日志
             try:
                 db.conn.execute(

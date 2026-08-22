@@ -8,6 +8,8 @@
 3. AI 回复（私聊+群聊）→ 转发给管理员可见
 """
 
+import html
+
 from core.logging_util import get_logger
 from core.helpers import format_user_mention
 
@@ -171,7 +173,7 @@ def handle_admin_reply(bot, db, CONFIG, message):
             ok = _manual_blacklist_user(bot, db, int(user_id), blacklist_reason)
             bot.send_message(
                 message.chat.id,
-                f"{'✅' if ok else '⚠️'} 已拉黑 {format_user_mention(user_id, '用户')}\n原因：{blacklist_reason}",
+                f"{'✅' if ok else '⚠️'} 已拉黑 {format_user_mention(user_id, '用户')}\n原因：{html.escape(blacklist_reason)}",
                 parse_mode="HTML",
             )
             logger.info(f"🚫 管理员中继拉黑: uid={user_id} ok={ok} reason={blacklist_reason}")

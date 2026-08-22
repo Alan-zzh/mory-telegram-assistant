@@ -153,12 +153,15 @@ def handle_transfer(bot, m, config, db, args=None):
         entities = m.entities or []
         mention_found = False
         for ent in entities:
-            if ent.type in ("mention", "text_mention"):
+            if ent.type == "text_mention":
                 mention_found = True
-                if ent.type == "text_mention":
-                    target_uid = ent.user.id
-                    target_name = ent.user.first_name or "用户"
+                target_uid = ent.user.id
+                target_name = ent.user.first_name or "用户"
                 break
+            if ent.type == "mention":
+                # 纯 @用户名 无法本地解析出 uid：旧代码走到这里必然 NameError，改为明确提示
+                bot.reply_to(m, "❌ 暂不支持 @用户名 转账，请回复对方消息后发送「转账 金额」")
+                return
         if not mention_found:
             bot.reply_to(m, "❌ 请用 @用户 指定转账对象")
             return
@@ -181,6 +184,7 @@ def handle_transfer(bot, m, config, db, args=None):
 
     # [TRAE SOLO CN] 原子扣款：UPDATE ... SET points = points - ? WHERE uid = ? AND points >= ?
     # 避免"先查余额再扣款"两步操作之间的竞态条件
+    insufficient_reply = None
     try:
         with _db_lock:
             cur = db.conn.cursor()
@@ -190,21 +194,25 @@ def handle_transfer(bot, m, config, db, args=None):
                 # 余额不足或用户不存在
                 db.conn.rollback()
                 sender_points = db.get_user_points(uid) or 0
-                bot.reply_to(m, f"❌ 积分不足，当前余额：{sender_points}")
-                return
-            # 记录发送方积分日志
-            ts = int(time.time())
-            try:
-                cur.execute(
-                    "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
-                    (uid, -amount, db.get_user_points(uid), "transfer", ts)
-                )
-            except Exception as e:
-                logger.debug(f"操作异常: {e}")
-            db.conn.commit()
+                # 锁外回复：Telegram 网络 IO 不占用全局数据库锁
+                insufficient_reply = f"❌ 积分不足，当前余额：{sender_points}"
+            else:
+                # 记录发送方积分日志
+                ts = int(time.time())
+                try:
+                    cur.execute(
+                        "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                        (uid, -amount, db.get_user_points(uid), "transfer", ts)
+                    )
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
+                db.conn.commit()
     except Exception as e:
         logger.error(f"转账扣款异常: {e}")
         bot.reply_to(m, "❌ 转账失败，请稍后再试")
+        return
+    if insufficient_reply:
+        bot.reply_to(m, insufficient_reply)
         return
 
     # 执行接收方入账（事务保护：如果接收方入账失败，退还发送方）

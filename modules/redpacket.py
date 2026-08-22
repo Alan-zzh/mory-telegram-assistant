@@ -53,6 +53,8 @@ def handle_send_redpacket(bot, m, config, db, args):
             return
 
         now_ts = int(time.time())
+        rp_id = None
+        insufficient_reply = None
         with _db_lock:
             # [TRAE SOLO CN] 原子扣款：UPDATE ... WHERE uid=? AND points>=?，避免 TOCTOU 竞态
             cur = db.conn.execute(
@@ -62,22 +64,26 @@ def handle_send_redpacket(bot, m, config, db, args):
             if cur.rowcount == 0:
                 db.conn.rollback()
                 current = db.get_user_points(uid) or 0
-                bot.reply_to(m, f"❌ 积分不足！当前：{current}，需要：{total}")
-                return
-            # 记录积分日志
-            try:
-                db.conn.execute(
-                    "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
-                    (uid, -total, db.get_user_points(uid), "redpacket", now_ts)
+                # 锁外回复：Telegram 网络 IO 不占用全局数据库锁
+                insufficient_reply = f"❌ 积分不足！当前：{current}，需要：{total}"
+            else:
+                # 记录积分日志
+                try:
+                    db.conn.execute(
+                        "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                        (uid, -total, db.get_user_points(uid), "redpacket", now_ts)
+                    )
+                except Exception as e:
+                    logger.debug(f"操作异常: {e}")
+                cursor = db.conn.execute(
+                    "INSERT INTO redpackets (sender_id, chat_id, total_points, count, remaining, mode, expired, ts) VALUES (?,?,?,?,?,?,?,?)",
+                    (uid, chat_id, total, count, count, mode, 0, now_ts)
                 )
-            except Exception as e:
-                logger.debug(f"操作异常: {e}")
-            cursor = db.conn.execute(
-                "INSERT INTO redpackets (sender_id, chat_id, total_points, count, remaining, mode, expired, ts) VALUES (?,?,?,?,?,?,?,?)",
-                (uid, chat_id, total, count, count, mode, 0, now_ts)
-            )
-            rp_id = cursor.lastrowid
-            db.conn.commit()
+                rp_id = cursor.lastrowid
+                db.conn.commit()
+        if insufficient_reply:
+            bot.reply_to(m, insufficient_reply)
+            return
 
         # 发送红包消息
         keyboard = InlineKeyboardMarkup()
@@ -171,45 +177,48 @@ def handle_claim_redpacket(bot, call, config, db):
 
         amount = max(1, amount)
 
-        # 写入领取记录 + 更新剩余（原子操作）
         now_ts = int(time.time())
+        claim_notice = None
+        _lv_result = None
         with _db_lock:
             # 再次检查剩余（防止并发超抢）
             current_remaining = db.conn.execute(
                 "SELECT remaining FROM redpackets WHERE id=?", (rp_id,)
             ).fetchone()
             if not current_remaining or current_remaining[0] <= 0:
-                bot.answer_callback_query(call.id, text="红包已抢完", show_alert=True)
-                return True
+                claim_notice = "红包已抢完"
+            else:
+                # 再次检查是否已抢（防止并发重复抢）
+                already = db.conn.execute(
+                    "SELECT id FROM redpacket_claims WHERE redpacket_id=? AND uid=?",
+                    (rp_id, uid)
+                ).fetchone()
+                if already:
+                    claim_notice = "你已经抢过了！"
+                else:
+                    try:
+                        db.conn.execute(
+                            "INSERT INTO redpacket_claims (redpacket_id, uid, amount, ts) VALUES (?,?,?,?)",
+                            (rp_id, uid, amount, now_ts)
+                        )
+                        db.conn.execute(
+                            "UPDATE redpackets SET remaining=remaining-1 WHERE id=?",
+                            (rp_id,)
+                        )
+                        # 积分入账与领取记录原子提交（add_points内部RLock可重入，会一并commit领取记录）
+                        _lv_result = db.add_points(uid, amount)
+                    except Exception:
+                        db.conn.rollback()
+                        raise
 
-            # 再次检查是否已抢（防止并发重复抢）
-            already = db.conn.execute(
-                "SELECT id FROM redpacket_claims WHERE redpacket_id=? AND uid=?",
-                (rp_id, uid)
-            ).fetchone()
-            if already:
-                bot.answer_callback_query(call.id, text="你已经抢过了！", show_alert=True)
-                return True
-
-            try:
-                db.conn.execute(
-                    "INSERT INTO redpacket_claims (redpacket_id, uid, amount, ts) VALUES (?,?,?,?)",
-                    (rp_id, uid, amount, now_ts)
-                )
-                db.conn.execute(
-                    "UPDATE redpackets SET remaining=remaining-1 WHERE id=?",
-                    (rp_id,)
-                )
-                # 积分入账与领取记录原子提交（add_points内部RLock可重入，会一并commit领取记录）
-                _lv_result = db.add_points(uid, amount)
-            except Exception:
-                db.conn.rollback()
-                raise
+        if claim_notice:
+            bot.answer_callback_query(call.id, text=claim_notice, show_alert=True)
+            return True
 
         bot.answer_callback_query(call.id, text=f"🧧 抢到 {amount} 积分！")
 
         # 检查升级通知
-        if amount > 0:
+        if amount > 0 and _lv_result is not None:
             from modules.points_enhanced import check_level_up
             _rp_uname = call.from_user.first_name or "用户"
             check_level_up(bot, chat_id, uid, _rp_uname, _lv_result, config)

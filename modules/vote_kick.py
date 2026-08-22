@@ -9,9 +9,10 @@
 ║  check_expired_votes()    -> 检查并关闭过期投票                         ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
-
 import time
+
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from core.database import _db_lock
 from core.logging_util import get_logger
 
 logger = get_logger("vote_kick")
@@ -26,11 +27,11 @@ VOTE_DURATION_SEC = 600   # 投票总时长（10分钟）
 
 def _safe_commit(db):
     """安全提交：sqlite3 连接在 autocommit 模式下 commit() 会抛
-    'cannot commit - no transaction is active'，此处静默吞掉该异常。"""
+    'cannot commit - no transaction is active'，此处降级为 debug 留痕。"""
     try:
         db.conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"vote_kick commit跳过（无活动事务，非致命）：{e}")
 
 
 def handle_vote_kick(bot, m, config, db, target_uid, reason=""):
@@ -118,63 +119,68 @@ def handle_vote_kick_callback(bot, call, config, db):
     except (ValueError, IndexError):
         return
 
-    # 查询投票记录
-    row = db.conn.execute(
-        "SELECT id, chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, status, msg_id, end_ts, ts "
-        "FROM vote_kicks WHERE id=?", (vote_id,)
-    ).fetchone()
+    # 计票临界区：读-改-写全程持全局数据库锁，防止并发按钮点击互相覆盖丢票
+    notice = None
+    vid = chat_id = target_uid = initiator_id = None
+    reason = ""
+    yes_count = no_count = 0
+    status = msg_id = end_ts = ts = 0
+    with _db_lock:
+        row = db.conn.execute(
+            "SELECT id, chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, status, msg_id, end_ts, ts "
+            "FROM vote_kicks WHERE id=?", (vote_id,)
+        ).fetchone()
 
-    if not row:
-        bot.answer_callback_query(call.id, "⚠️ 投票记录不存在")
+        if not row:
+            notice = "⚠️ 投票记录不存在"
+        else:
+            vid, chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, status, msg_id, end_ts, ts = row
+
+            if status != "active":
+                notice = "投票已结束"
+            else:
+                # 解析已有投票
+                yes_list = [x for x in yes_votes.split(",") if x] if yes_votes else []
+                no_list = [x for x in no_votes.split(",") if x] if no_votes else []
+
+                # 检查是否已投票（切换投票需先移除旧票）
+                if voter_uid in yes_list and vote_type == "yes":
+                    notice = "你已经投了赞成票"
+                elif voter_uid in no_list and vote_type == "no":
+                    notice = "你已经投了反对票"
+                else:
+                    # 移除旧票（允许改投）
+                    if voter_uid in yes_list:
+                        yes_list.remove(voter_uid)
+                    if voter_uid in no_list:
+                        no_list.remove(voter_uid)
+
+                    # 添加新票
+                    if vote_type == "yes":
+                        yes_list.append(voter_uid)
+                    else:
+                        no_list.append(voter_uid)
+
+                    yes_count = len(yes_list)
+                    no_count = len(no_list)
+
+                    # 更新数据库
+                    new_yes = ",".join(yes_list)
+                    new_no = ",".join(no_list)
+                    db.conn.execute(
+                        "UPDATE vote_kicks SET yes_votes=?, no_votes=? WHERE id=?",
+                        (new_yes, new_no, vote_id)
+                    )
+                    _safe_commit(db)
+
+    if notice:
+        bot.answer_callback_query(call.id, notice)
         return
 
-    vid, chat_id, target_uid, initiator_id, reason, yes_votes, no_votes, status, msg_id, end_ts, ts = row
-
-    # 检查投票是否已结束
-    if status != "active":
-        bot.answer_callback_query(call.id, "投票已结束")
-        return
-
-    # 解析已有投票
-    yes_list = [x for x in yes_votes.split(",") if x] if yes_votes else []
-    no_list = [x for x in no_votes.split(",") if x] if no_votes else []
-
-    # 检查是否已投票（切换投票需先移除旧票）
-    if voter_uid in yes_list and vote_type == "yes":
-        bot.answer_callback_query(call.id, "你已经投了赞成票")
-        return
-    if voter_uid in no_list and vote_type == "no":
-        bot.answer_callback_query(call.id, "你已经投了反对票")
-        return
-
-    # 移除旧票（允许改投）
-    if voter_uid in yes_list:
-        yes_list.remove(voter_uid)
-    if voter_uid in no_list:
-        no_list.remove(voter_uid)
-
-    # 添加新票
-    if vote_type == "yes":
-        yes_list.append(voter_uid)
-    else:
-        no_list.append(voter_uid)
-
-    yes_count = len(yes_list)
-    no_count = len(no_list)
-    total_count = yes_count + no_count
-
-    # 更新数据库
-    new_yes = ",".join(yes_list)
-    new_no = ",".join(no_list)
-    db.conn.execute(
-        "UPDATE vote_kicks SET yes_votes=?, no_votes=? WHERE id=?",
-        (new_yes, new_no, vote_id)
-    )
-    _safe_commit(db)
-
-    # 检查是否通过
+    # 检查是否通过（锁外执行，踢人为网络操作不占数据库锁）
     now = int(time.time())
     elapsed = now - ts
+    total_count = yes_count + no_count
     rate = yes_count / total_count if total_count > 0 else 0
 
     if yes_count >= PASS_MIN_YES and rate > PASS_RATE and elapsed >= MIN_ELAPSED_SEC:

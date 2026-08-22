@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Dashboard设置面板API - 所有/settings/*路由"""
 from flask import Blueprint, request, jsonify
-from dashboard.helpers import login_required, admin_required, get_current_role, read_config, write_config
+from dashboard.helpers import login_required, admin_required, get_current_role, read_config, write_config, clamp_int, clamp_float
 from core.logging_util import get_logger
 
 logger = get_logger("settings_api")
@@ -180,9 +180,9 @@ def api_settings_warning():
     data = request.get_json() or {}
     cfg = read_config()
     val = cfg.get("WARNING_CONFIG", {})
-    val["limit"] = int(data.get("limit", val.get("limit", 3)))
+    val["limit"] = clamp_int(data.get("limit", val.get("limit", 3)), 0, 10000000)
     val["action"] = data.get("action", val.get("action", "mute"))
-    val["duration"] = int(data.get("duration", val.get("duration", 3600)))
+    val["duration"] = clamp_int(data.get("duration", val.get("duration", 3600)), 0, 10000000)
     cfg["WARNING_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -204,7 +204,7 @@ def api_settings_slowmode():
     cfg = read_config()
     val = cfg.get("SLOW_MODE_DEFAULT", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["interval"] = int(data.get("interval", val.get("interval", 0)))
+    val["interval"] = clamp_int(data.get("interval", val.get("interval", 0)), 0, 10000000)
     cfg["SLOW_MODE_DEFAULT"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -226,7 +226,7 @@ def api_settings_report():
     cfg = read_config()
     val = cfg.get("REPORT_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["cooldown"] = int(data.get("cooldown", val.get("cooldown", 300)))
+    val["cooldown"] = clamp_int(data.get("cooldown", val.get("cooldown", 300)), 0, 10000000)
     cfg["REPORT_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -247,9 +247,9 @@ def api_settings_votekick():
     data = request.get_json() or {}
     cfg = read_config()
     val = cfg.get("VOTEKICK_CONFIG", {})
-    val["min_yes"] = int(data.get("min_yes", val.get("min_yes", 5)))
-    val["min_ratio"] = float(data.get("min_ratio", val.get("min_ratio", 0.6)))
-    val["duration"] = int(data.get("duration", val.get("duration", 300)))
+    val["min_yes"] = clamp_int(data.get("min_yes", val.get("min_yes", 5)), 0, 10000000)
+    val["min_ratio"] = clamp_float(data.get("min_ratio", val.get("min_ratio", 0.6)), 0.0, 1.0)
+    val["duration"] = clamp_int(data.get("duration", val.get("duration", 300)), 0, 10000000)
     cfg["VOTEKICK_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -302,9 +302,9 @@ def api_settings_anti_raid():
     cfg = read_config()
     val = cfg.get("ANTI_RAID_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["threshold"] = int(data.get("threshold", val.get("threshold", 5)))
-    val["window"] = int(data.get("window", val.get("window", 60)))
-    val["lock_duration"] = int(data.get("lock_duration", val.get("lock_duration", 300)))
+    val["threshold"] = clamp_int(data.get("threshold", val.get("threshold", 5)), 0, 10000000)
+    val["window"] = clamp_int(data.get("window", val.get("window", 60)), 0, 10000000)
+    val["lock_duration"] = clamp_int(data.get("lock_duration", val.get("lock_duration", 300)), 0, 10000000)
     cfg["ANTI_RAID_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -331,7 +331,7 @@ def api_settings_blindbox():
     cfg = read_config()
     val = cfg.get("BLIND_BOX_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["cost"] = int(data.get("cost", val.get("cost", 30)))
+    val["cost"] = clamp_int(data.get("cost", val.get("cost", 30)), 0, 10000000)
     cfg["BLIND_BOX_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -354,8 +354,8 @@ def api_settings_luckywheel():
     cfg = read_config()
     val = cfg.get("LUCKY_WHEEL_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["cost"] = int(data.get("cost", val.get("cost", 30)))
-    val["free_spins"] = int(data.get("free_spins", val.get("free_spins", 1)))
+    val["cost"] = clamp_int(data.get("cost", val.get("cost", 30)), 0, 10000000)
+    val["free_spins"] = clamp_int(data.get("free_spins", val.get("free_spins", 1)), 0, 10000000)
     cfg["LUCKY_WHEEL_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -377,8 +377,8 @@ def api_settings_redpacket():
     cfg = read_config()
     val = cfg.get("REDPACKET_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["min_amount"] = int(data.get("min_amount", val.get("min_amount", 1)))
-    val["max_amount"] = int(data.get("max_amount", val.get("max_amount", 100)))
+    val["min_amount"] = clamp_int(data.get("min_amount", val.get("min_amount", 1)), 0, 10000000)
+    val["max_amount"] = clamp_int(data.get("max_amount", val.get("max_amount", 100)), 0, 10000000)
     cfg["REDPACKET_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -432,7 +432,7 @@ def api_settings_checkin():
     enabled = bool(data.get("enabled", val.get("enabled", val.get("enable", False))))
     val["enabled"] = enabled
     val["enable"] = enabled
-    val["base_points"] = int(data.get("base_points", val.get("base_points", 5)))
+    val["base_points"] = clamp_int(data.get("base_points", val.get("base_points", 5)), 0, 10000000)
     streak_bonus = data.get("streak_bonus", val.get("streak_bonus", {}))
     if isinstance(streak_bonus, dict):
         normalized_bonus = {}
@@ -509,7 +509,7 @@ def api_settings_tip():
     cfg = read_config()
     val = _as_dict(cfg.get("TIP_CONFIG"), {"enabled": False, "min_amount": 1})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["min_amount"] = int(data.get("min_amount", val.get("min_amount", 1)))
+    val["min_amount"] = clamp_int(data.get("min_amount", val.get("min_amount", 1)), 0, 10000000)
     cfg["TIP_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -551,8 +551,8 @@ def api_settings_pointsdecay():
     cfg = read_config()
     val = _as_dict(cfg.get("POINTS_DECAY"), {"enabled": False, "rate": 0.01, "minimum": 10})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["rate"] = float(data.get("rate", val.get("rate", 0.01)))
-    val["minimum"] = int(data.get("minimum", val.get("minimum", 10)))
+    val["rate"] = clamp_float(data.get("rate", val.get("rate", 0.01)), 0.0, 10000.0)
+    val["minimum"] = clamp_int(data.get("minimum", val.get("minimum", 10)), 0, 10000000)
     cfg["POINTS_DECAY"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -619,7 +619,7 @@ def api_settings_nsfw():
     cfg = read_config()
     val = cfg.get("NSFW_DETECT_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["threshold"] = float(data.get("threshold", val.get("threshold", 0.85)))
+    val["threshold"] = clamp_float(data.get("threshold", val.get("threshold", 0.85)), 0.0, 1.0)
     cfg["NSFW_DETECT_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "配置已保存"})
@@ -741,7 +741,7 @@ def api_settings_ad_spam():
     cfg = read_config()
     ad = cfg.get("AD_DETECT_CONFIG", {})
     ad["enable"] = bool(data.get("enabled", ad.get("enable", False)))
-    ad["sensitivity"] = int(data.get("sensitivity", ad.get("sensitivity", 3)))
+    ad["sensitivity"] = clamp_int(data.get("sensitivity", ad.get("sensitivity", 3)), 0, 10000000)
     cfg["AD_DETECT_CONFIG"] = ad
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "反垃圾配置已保存"})
@@ -765,7 +765,7 @@ def api_settings_inactive_clean():
     cfg = read_config()
     cfg["AUTO_KICK_INACTIVE_DAYS"] = {
         "enable": bool(data.get("enabled", False)),
-        "days": int(data.get("days", 30)),
+        "days": clamp_int(data.get("days", 30), 0, 36500),
     }
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "不活跃清理配置已保存"})
@@ -1026,14 +1026,14 @@ def api_settings_ai_model():
         return _adm
     data = request.get_json() or {}
     cfg = read_config()
-    cfg["TEMPERATURE"] = float(data.get("temperature", cfg.get("TEMPERATURE", 0.85)))
-    cfg["TOP_P"] = float(data.get("top_p", cfg.get("TOP_P", 0.9)))
-    cfg["MAX_TOKENS"] = int(data.get("max_tokens", cfg.get("MAX_TOKENS", 500)))
-    cfg["FREQUENCY_PENALTY"] = float(data.get("frequency_penalty", cfg.get("FREQUENCY_PENALTY", 0.3)))
-    cfg["PRESENCE_PENALTY"] = float(data.get("presence_penalty", cfg.get("PRESENCE_PENALTY", 0.2)))
-    cfg["REPLY_CHANCE"] = int(data.get("reply_chance", cfg.get("REPLY_CHANCE", 10)))
+    cfg["TEMPERATURE"] = clamp_float(data.get("temperature", cfg.get("TEMPERATURE", 0.85)), 0.0, 2.0)
+    cfg["TOP_P"] = clamp_float(data.get("top_p", cfg.get("TOP_P", 0.9)), 0.0, 1.0)
+    cfg["MAX_TOKENS"] = clamp_int(data.get("max_tokens", cfg.get("MAX_TOKENS", 500)), 1, 200000)
+    cfg["FREQUENCY_PENALTY"] = clamp_float(data.get("frequency_penalty", cfg.get("FREQUENCY_PENALTY", 0.3)), -2.0, 2.0)
+    cfg["PRESENCE_PENALTY"] = clamp_float(data.get("presence_penalty", cfg.get("PRESENCE_PENALTY", 0.2)), -2.0, 2.0)
+    cfg["REPLY_CHANCE"] = clamp_int(data.get("reply_chance", cfg.get("REPLY_CHANCE", 10)), 0, 100)
     cfg["REPLY_SPEED"] = data.get("reply_speed", cfg.get("REPLY_SPEED", "human"))
-    cfg["REPLY_STICKER_CHANCE"] = int(data.get("reply_sticker_chance", cfg.get("REPLY_STICKER_CHANCE", 5)))
+    cfg["REPLY_STICKER_CHANCE"] = clamp_int(data.get("reply_sticker_chance", cfg.get("REPLY_STICKER_CHANCE", 5)), 0, 100)
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "AI模型配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
@@ -1056,7 +1056,7 @@ def api_settings_bot_core():
     data = request.get_json() or {}
     cfg = read_config()
     cfg["BOT_NAME"] = data.get("bot_name", cfg.get("BOT_NAME", "Mory小助理"))
-    cfg["MAX_REQUESTS_PER_USER"] = int(data.get("max_requests_per_user", cfg.get("MAX_REQUESTS_PER_USER", 20)))
+    cfg["MAX_REQUESTS_PER_USER"] = clamp_int(data.get("max_requests_per_user", cfg.get("MAX_REQUESTS_PER_USER", 20)), 0, 100000)
     cfg["ENABLE_MESSAGE_DELETION"] = bool(data.get("enable_message_deletion", cfg.get("ENABLE_MESSAGE_DELETION", False)))
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "Bot核心配置已保存"})
@@ -1136,8 +1136,8 @@ def api_settings_approvals():
     val = cfg.get("VERIFICATION_CONFIG", {})
     val["enable"] = bool(data.get("enable", val.get("enable", False)))
     val["mode"] = data.get("mode", val.get("mode", "button"))
-    val["timeout"] = int(data.get("timeout", val.get("timeout", 120)))
-    val["max_attempts"] = int(data.get("max_attempts", val.get("max_attempts", 3)))
+    val["timeout"] = clamp_int(data.get("timeout", val.get("timeout", 120)), 0, 10000000)
+    val["max_attempts"] = clamp_int(data.get("max_attempts", val.get("max_attempts", 3)), 0, 10000000)
     cfg["VERIFICATION_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "进群审批配置已保存"})
@@ -1160,7 +1160,7 @@ def api_settings_pin():
     data = request.get_json() or {}
     cfg = read_config()
     cfg["PIN_NOTIFY"] = bool(data.get("pin_notify", cfg.get("PIN_NOTIFY", False)))
-    cfg["MAX_PINS"] = int(data.get("max_pins", cfg.get("MAX_PINS", 5)))
+    cfg["MAX_PINS"] = clamp_int(data.get("max_pins", cfg.get("MAX_PINS", 5)), 0, 100)
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "置顶管理配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
@@ -1248,12 +1248,12 @@ def api_settings_points_rules():
     data = request.get_json() or {}
     cfg = read_config()
     pr = cfg.get("POINTS_RULES", {})
-    pr["message"] = int(data.get("points_per_message", pr.get("message", 1)))
+    pr["message"] = clamp_int(data.get("points_per_message", pr.get("message", 1)), 0, 10000000)
     cfg["POINTS_RULES"] = pr
     checkin = cfg.get("CHECKIN_CONFIG", {})
-    checkin["base_points"] = int(data.get("points_per_checkin", checkin.get("base_points", 5)))
+    checkin["base_points"] = clamp_int(data.get("points_per_checkin", checkin.get("base_points", 5)), 0, 10000000)
     cfg["CHECKIN_CONFIG"] = checkin
-    cfg["POINTS_PER_INVITE"] = int(data.get("points_per_invite", cfg.get("POINTS_PER_INVITE", 5)))
+    cfg["POINTS_PER_INVITE"] = clamp_int(data.get("points_per_invite", cfg.get("POINTS_PER_INVITE", 5)), 0, 1000000)
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "积分规则配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500
@@ -1336,8 +1336,8 @@ def api_settings_points_decay():
     cfg = read_config()
     val = _as_dict(cfg.get("POINTS_DECAY"), {"enabled": False, "rate": 0.01, "minimum": 10})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["rate"] = float(data.get("rate", val.get("rate", 0.01)))
-    val["minimum"] = int(data.get("minimum", val.get("minimum", 10)))
+    val["rate"] = clamp_float(data.get("rate", val.get("rate", 0.01)), 0.0, 10000.0)
+    val["minimum"] = clamp_int(data.get("minimum", val.get("minimum", 10)), 0, 10000000)
     cfg["POINTS_DECAY"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "积分衰减配置已保存"})
@@ -1413,7 +1413,7 @@ def api_settings_speech_stats():
     cfg = read_config()
     val = cfg.get("SPEECH_STATS_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["top_n"] = int(data.get("top_n", val.get("top_n", 10)))
+    val["top_n"] = clamp_int(data.get("top_n", val.get("top_n", 10)), 0, 10000000)
     cfg["SPEECH_STATS_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "发言统计配置已保存"})
@@ -1455,7 +1455,7 @@ def api_settings_group_backup():
     cfg = read_config()
     val = cfg.get("BACKUP_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
-    val["interval_hours"] = int(data.get("interval_hours", val.get("interval_hours", 24)))
+    val["interval_hours"] = clamp_int(data.get("interval_hours", val.get("interval_hours", 24)), 0, 10000000)
     cfg["BACKUP_CONFIG"] = val
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "群设置备份配置已保存"})

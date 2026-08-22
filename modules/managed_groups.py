@@ -160,8 +160,9 @@ def is_feature_enabled(db, chat_id: int, feature: str) -> bool:
         ).fetchone()
         if row:
             return bool(row[0])
-    except Exception:
-        pass
+    except Exception as e:
+        # DB 异常时回退静态表必须留痕，否则开关判断与真实配置不一致无从排查
+        logger.warning(f"is_feature_enabled：功能开关查询失败，回退套餐静态表（非致命降级）mg={mg['id']} feature={feature}: {e}")
     return feature in features
 
 

@@ -279,14 +279,20 @@ class UserRepo:
         return profiles
 
     def delete_user(self, uid: int):
-        """删除无效用户及其关联数据（购物车挽回/醋意挽回中清理400用户）"""
+        """删除无效用户及其关联数据（仅限调用方确认"会话永久失效"后触发，见 core.helpers.is_permanently_gone_chat_error）"""
         with self.lock:
             try:
                 self.conn.execute("DELETE FROM cart_recovery WHERE uid=?", (uid,))
                 self.conn.execute("DELETE FROM users WHERE uid=?", (uid,))
                 self.conn.commit()
+                logger.info(f"delete_user：已清理永久失效档案 uid={uid}")
             except Exception as e:
-                logger.warning(f"delete_user失败 uid={uid}: {e}")
+                # 两步 DELETE 必须原子：失败整体回滚，避免留下半清理状态
+                try:
+                    self.conn.rollback()
+                except Exception as rb_err:
+                    logger.error(f"delete_user回滚失败 uid={uid}: {rb_err}")
+                logger.warning(f"delete_user失败（已回滚） uid={uid}: {e}")
 
     # ─────────────────────────────── 用户画像（v5.18.0） ────────────────────────────────
     def get_user_persona_profile(self, user_id: int) -> dict | None:

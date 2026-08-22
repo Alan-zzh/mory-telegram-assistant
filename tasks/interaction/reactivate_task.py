@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
+from core.helpers import is_permanently_gone_chat_error
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
@@ -109,16 +110,15 @@ class ReactivateTask(BaseTask):
                             sent_count += 1
                             logger.info(f"💌 非活跃用户问候：{uid}")
                         except Exception as e:
-                            err_str = str(e).lower()
-                            if "chat not found" in err_str or "bot was blocked" in err_str or "forbidden" in err_str:
+                            if is_permanently_gone_chat_error(e):
                                 try:
                                     self.rm.db.delete_user(uid)
-                                    logger.debug(f"非活跃用户问候跳过无效用户 uid={uid}（已清理）")
+                                    logger.info(f"非活跃用户问候：会话永久失效已清理 uid={uid}")
                                 except Exception as cleanup_err:
                                     logger.error(f"非活跃无效用户清理失败 uid={uid}: {cleanup_err}")
                                     failures.append(cleanup_err)
                             else:
-                                logger.warning(f"非活跃用户问候发送失败 uid={uid}：{e}")
+                                logger.warning(f"非活跃用户问候发送失败（不清理，瞬态/模糊错误）uid={uid}：{e}")
                                 failures.append(e)
 
                 if failures:

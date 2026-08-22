@@ -49,6 +49,7 @@ def handle_tip(bot, m, config, db, extra=""):
         return
 
     # [TRAE SOLO CN] 原子扣款：UPDATE ... WHERE uid=? AND points>=?，避免 TOCTOU 竞态
+    insufficient_reply = None
     with _db_lock:
         cur = db.conn.execute(
             "UPDATE user_levels SET points = points - ? WHERE uid = ? AND points >= ?",
@@ -57,8 +58,11 @@ def handle_tip(bot, m, config, db, extra=""):
         if cur.rowcount == 0:
             db.conn.rollback()
             tipper_points = db.get_user_points(tipper.id) or 0
-            bot.reply_to(m, f"⚠️ 积分不足！你当前有 {tipper_points} 积分，还差 {amount - tipper_points} 积分")
-            return
+            # 锁外回复：Telegram 网络 IO 不占用全局数据库锁
+            insufficient_reply = f"⚠️ 积分不足！你当前有 {tipper_points} 积分，还差 {amount - tipper_points} 积分"
+    if insufficient_reply:
+        bot.reply_to(m, insufficient_reply)
+        return
         # 记录积分日志
         try:
             db.conn.execute(

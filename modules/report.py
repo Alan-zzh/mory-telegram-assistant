@@ -12,6 +12,7 @@ modules/report.py · 举报/标记系统
 被调用：main.py 消息处理流程
 """
 
+import html
 import time
 import threading
 from core.logging_util import get_logger
@@ -98,11 +99,11 @@ def handle_report(bot, m, config, db):
         logger.warning("举报失败：未配置管理员ID")
         return
 
-    # 获取被举报消息的信息
+    # 获取被举报消息的信息（用户可控字段全部 HTML 转义，防止注入/打瘫 parse_mode=HTML 通知）
     reported_msg = m.reply_to_message
     reported_user = reported_msg.from_user
-    reported_text = (reported_msg.text or reported_msg.caption or "")[:200]
-    chat_name = m.chat.title or str(m.chat.id)
+    reported_text = html.escape((reported_msg.text or reported_msg.caption or "")[:200])
+    chat_name = html.escape(m.chat.title or str(m.chat.id))
 
     # 举报人信息
     reporter_name = reporter.first_name or str(uid)
@@ -118,6 +119,8 @@ def handle_report(bot, m, config, db):
     else:
         reported_name = "未知用户"
         reported_uid = 0
+    reporter_name = html.escape(reporter_name)
+    reported_name = html.escape(reported_name)
 
     # 构建通知文本
     notify_text = (

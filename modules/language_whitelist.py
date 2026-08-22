@@ -35,8 +35,9 @@ class LanguageWhitelistModule:
             if LANGUAGE_WHITELIST_CONFIG.get('delete_message', True):
                 try:
                     await self._compat.delete_message(chat_id, message_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 删除失败必须留痕：Bot 被降权时白名单功能形同虚设且无迹可查
+                    logger.error(f"[语言白名单] 删除违规消息失败（功能可能未生效）chat={chat_id} msg={message_id}: {e}")
             if LANGUAGE_WHITELIST_CONFIG.get('delete_hint'):
                 await self._compat.send_message(chat_id, LANGUAGE_WHITELIST_CONFIG['delete_hint'])
             logger.info(f"[语言白名单] 删除非白名单语言消息 chat={chat_id}, user={user_id}, lang={detected_lang}")

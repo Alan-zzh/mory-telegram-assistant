@@ -160,6 +160,8 @@ class IntentRouter:
                 try:
                     import json
                     return json.loads(args_str) if isinstance(args_str, str) else args_str
-                except Exception:
+                except Exception as e:
+                    # 畸形/截断的工具参数不可静默丢弃，否则用户只看到"没执行"无从排查
+                    logger.debug(f"工具调用参数解析失败（非致命，跳过该次函数调用）：func={func.get('name')} err={e}")
                     continue
         return None

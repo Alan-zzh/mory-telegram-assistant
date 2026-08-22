@@ -279,16 +279,25 @@ def check_callback_query(bot, callback_query, config: dict):
         _verification_timeout(bot, chat_id, user_id)
         return True
 
+    cb_notice = None
+    session = None
     with _verification_lock:
         if key not in _verification_sessions:
-            bot.answer_callback_query(callback_query.id, text="验证已过期")
-            return False
+            cb_notice = "验证已过期"
+        else:
+            s = _verification_sessions[key]
+            if s["mode"] != "button":
+                cb_notice = "此验证不需要点击按钮"
+            else:
+                # 验证通过：持锁摘除会话，防止并发双消费
+                del _verification_sessions[key]
+                session = s
 
-        session = _verification_sessions[key]
-
-        if session["mode"] != "button":
-            bot.answer_callback_query(callback_query.id, text="此验证不需要点击按钮")
-            return False
+    if cb_notice:
+        bot.answer_callback_query(callback_query.id, text=cb_notice)
+        return False
+    if session is None:
+        return False
 
         # 验证通过
         del _verification_sessions[key]

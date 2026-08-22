@@ -95,47 +95,60 @@ def handle_exchange(bot, m, config, db, item_name):
             )
             return
 
-        # 先扣积分，再扣库存 + 记录兑换（原子操作）
+        # 先扣积分，再扣库存 + 记录兑换（单事务：任一步失败整体回滚，杜绝半事务）
         now_ts = int(time.time())
+        sold_out = False
+        insufficient = False
         with _db_lock:
-            # 再次检查库存（防止并发超卖）
-            current_stock = db.conn.execute(
-                "SELECT stock FROM shop_items WHERE id=?", (item_id,)
-            ).fetchone()
-            if current_stock and current_stock[0] == 0:
-                bot.reply_to(m, f"❌ 「{name}」已售罄")
-                return
+            try:
+                # 再次检查库存（防止并发超卖）
+                current_stock = db.conn.execute(
+                    "SELECT stock FROM shop_items WHERE id=?", (item_id,)
+                ).fetchone()
+                if current_stock and current_stock[0] == 0:
+                    sold_out = True
+                else:
+                    # 扣积分（原子操作：WHERE points >= ? 防止并发下积分变负数）
+                    # 注意：redpacket/blind_box/tip 用 db.lock 原子扣分，与 shop._db_lock 不同锁
+                    # 必须用原子 SQL 防止"锁外检查通过→他线程扣分→锁内扣分变负数"
+                    cur = db.conn.execute(
+                        "UPDATE user_levels SET points=points-? WHERE uid=? AND points >= ?",
+                        (cost, uid, cost)
+                    )
+                    if cur.rowcount == 0:
+                        # 并发下积分已被其他线程扣光（如红包/盲盒/打赏原子扣减）
+                        insufficient = True
+                    else:
+                        # 扣库存
+                        if current_stock and current_stock[0] > 0:
+                            db.conn.execute("UPDATE shop_items SET stock=stock-1 WHERE id=?", (item_id,))
+                        # 记录兑换
+                        db.conn.execute(
+                            "INSERT INTO exchange_records (uid, item_id, item_name, points_cost, ts, status) VALUES (?,?,?,?,?,?)",
+                            (uid, item_id, name, cost, now_ts, "pending")
+                        )
+                        # 记录积分日志（points_log schema: id, uid, change_amount, balance_after, source, ts）
+                        balance_after = db.get_user_points(uid) or 0
+                        db.conn.execute(
+                            "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                            (uid, -cost, balance_after, f"兑换:{name}", now_ts)
+                        )
+                        db.conn.commit()
+            except Exception as e:
+                # 任一步失败：整体回滚（积分/库存/订单/流水都不落库），再上抛给外层统一提示
+                try:
+                    db.conn.rollback()
+                except Exception as rb_err:
+                    logger.error(f"兑换事务回滚失败: {rb_err}")
+                logger.error(f"兑换事务失败已回滚: uid={uid} item={name} err={e}")
+                raise
 
-            # 扣积分（原子操作：WHERE points >= ? 防止并发下积分变负数）
-            # 注意：redpacket/blind_box/tip 用 db.lock 原子扣分，与 shop._db_lock 不同锁
-            # 必须用原子 SQL 防止"锁外检查通过→他线程扣分→锁内扣分变负数"
-            cur = db.conn.execute(
-                "UPDATE user_levels SET points=points-? WHERE uid=? AND points >= ?",
-                (cost, uid, cost)
-            )
-            if cur.rowcount == 0:
-                # 并发下积分已被其他线程扣光（如红包/盲盒/打赏原子扣减）
-                db.conn.rollback()
-                bot.reply_to(m, f"❌ 积分不足！兑换失败（并发竞争，请重试）")
-                return
-
-            # 扣库存
-            if current_stock and current_stock[0] > 0:
-                db.conn.execute("UPDATE shop_items SET stock=stock-1 WHERE id=?", (item_id,))
-
-            # 记录兑换
-            db.conn.execute(
-                "INSERT INTO exchange_records (uid, item_id, item_name, points_cost, ts, status) VALUES (?,?,?,?,?,?)",
-                (uid, item_id, name, cost, now_ts, "pending")
-            )
-
-            # 记录积分日志（points_log schema: id, uid, change_amount, balance_after, source, ts）
-            balance_after = db.get_user_points(uid) or 0
-            db.conn.execute(
-                "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
-                (uid, -cost, balance_after, f"兑换:{name}", now_ts)
-            )
-            db.conn.commit()
+        if sold_out:
+            bot.reply_to(m, f"❌ 「{name}」已售罄")
+            return
+        if insufficient:
+            bot.reply_to(m, "❌ 积分不足！兑换失败（并发竞争，请重试）")
+            return
 
         remaining_points = db.get_user_points(uid)
         discount_info = ""

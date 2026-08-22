@@ -289,3 +289,27 @@ def get_current_role():
     """获取当前登录用户的角色（默认 viewer，最小权限原则）"""
     # 【TRAE SOLO CN v5.18.3审计修复】默认 viewer 而非 admin，防止 session 异常时越权
     return session.get("role", "viewer")
+
+
+# ── 配置数值钳制（审计加固：Dashboard 数值输入禁止负数/天文数字落盘）────────
+_INT_CLAMP_HI = 10_000_000
+
+
+def clamp_int(value, lo: int = 0, hi: int = _INT_CLAMP_HI):
+    """把 Dashboard 传入的整型配置值安全钳制到 [lo, hi]；垃圾输入返回 lo。
+
+    用于 settings_api/group_api 的所有 int(data.get(...)) 写入点，
+    防止负数或超大值写进 config.json 影响运行态。
+    """
+    try:
+        return max(lo, min(int(value), hi))
+    except (TypeError, ValueError):
+        return lo
+
+
+def clamp_float(value, lo: float = 0.0, hi: float = float(_INT_CLAMP_HI)):
+    """同 clamp_int 的浮点版本；垃圾输入返回 lo。"""
+    try:
+        return max(lo, min(float(value), hi))
+    except (TypeError, ValueError):
+        return lo
