@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mory Assistant - 登录</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { font-family: 'Inter', system-ui, sans-serif; box-sizing: border-box; }
+body { margin: 0; padding: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%); }
+.login-box { background: rgba(30, 30, 46, 0.95); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; padding: 48px; width: 100%; max-width: 420px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+.login-icon { text-align: center; font-size: 48px; margin-bottom: 24px; }
+.login-title { font-size: 28px; font-weight: 700; text-align: center; margin: 0 0 8px 0; background: linear-gradient(135deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.login-subtitle { text-align: center; color: #94a3b8; margin: 0 0 8px 0; font-size: 14px; }
+.login-desc { text-align: center; color: #64748b; margin: 0 0 32px 0; font-size: 12px; }
+.input-group { margin-bottom: 20px; }
+.input-group label { display: block; color: #94a3b8; font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+.input-field { width: 100%; padding: 14px 16px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; color: #e2e8f0; font-size: 15px; transition: all 0.3s; }
+.input-field:focus { outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2); }
+.login-btn { width: 100%; padding: 14px; background: linear-gradient(135deg, #60a5fa, #3b82f6); border: none; border-radius: 12px; color: white; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.3s; }
+.login-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3); }
+</style>
+</head>
+<body>
+<div class="login-container">
+  <div class="login-box">
+    <div class="login-icon">🤖</div>
+    <h1 class="login-title">Mory Assistant</h1>
+    <p class="login-subtitle">私域可视化面板 v6.0</p>
+    <p class="login-desc">Telegram群管机器人管理后台 — 数据监控 · 配置管理 · 群管设置</p>
+    <div class="input-group">
+      <label>访问密码</label>
+      <input type="password" id="password" class="input-field" placeholder="请输入访问密码" onkeyup="if(event.key === 'Enter') doLogin()">
+    </div>
+    <button class="login-btn" onclick="doLogin()">登录</button>
+  </div>
+</div>
+<script>
+async function doLogin() {
+  const pw = document.getElementById('password').value;
+  if (!pw) return;
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({ password: pw })
+    });
+    const d = await res.json();
+    if (d.ok) {
+      window.location.reload();
+    } else {
+      alert(d.msg || '登录失败');
+    }
+  } catch (e) {
+      alert('登录失败: ' + (e.message || e));
+    }
+}
+</script>
+</body>
+</html>

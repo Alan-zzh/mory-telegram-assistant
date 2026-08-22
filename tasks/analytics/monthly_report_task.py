@@ -11,6 +11,7 @@ from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
 from tasks.base_task import BaseTask, TaskContext
 from tasks.support.common import TaskAbort, retry_task
+from tasks.support.report_utils import pct, trend, fetch_member_count_with_db_fallback
 
 logger = get_logger("tasks.analytics.monthly_report")
 
@@ -76,31 +77,7 @@ class MonthlyReportTask(BaseTask):
         this_month = rm.db.get_weekly_group_stats(month_start, today, chat_id=gid)
         last_month = rm.db.get_weekly_group_stats(prev_month_start, month_start, chat_id=gid)
 
-        total_members = 0
-        if gid:
-            try:
-                with rm.locked('bot'):
-                    total_members = rm.bot.get_chat_member_count(gid)
-            except Exception as e:
-                logger.debug(f"群人数API失败，回退DB（非致命）：gid={gid} err={e}")
-                total_members = rm.db.get_group_total_members_latest(gid)
-
-        def pct(cur, prev):
-            if prev == 0:
-                return "🆕" if cur > 0 else "➖"
-            diff = ((cur - prev) / prev) * 100
-            if diff > 0:
-                return f"📈+{diff:.0f}%"
-            if diff < 0:
-                return f"📉{diff:.0f}%"
-            return "➖0%"
-
-        def trend(cur, prev):
-            if cur > prev:
-                return "📈"
-            if cur < prev:
-                return "📉"
-            return "➖"
+        total_members = fetch_member_count_with_db_fallback(rm, gid) if gid else 0
 
         activity_rate = (this_month.get("active_users", 0) / max(total_members, 1)) * 100
         row = rm.db.conn.execute(
@@ -179,13 +156,7 @@ class MonthlyReportTask(BaseTask):
             cid = ch.get("id", 0) if isinstance(ch, dict) else ch
             cname = ch.get("name", str(cid)) if isinstance(ch, dict) else str(cid)
 
-            ch_count = 0
-            try:
-                with rm.locked('bot'):
-                    ch_count = rm.bot.get_chat_member_count(cid)
-            except Exception as e:
-                logger.debug(f"频道月报获取失败: {cname} err={e}")
-                ch_count = rm.db.get_group_total_members_latest(cid)
+            ch_count = fetch_member_count_with_db_fallback(rm, cid)
 
             member_changes = rm.db.get_channel_monthly_member_changes(cid, month_display)
             joined = member_changes["joined"]

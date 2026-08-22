@@ -1496,7 +1496,7 @@ class AdDetector:
                 return sorted(candidates, key=lambda item: item["time"])
             except Exception as e:
                 logger.warning(
-                    f"[AD] 查询一小时重复消息快照失败，降级进程内追踪: "
+                    f"[AD] 查询 {window_minutes} 分钟重复消息快照失败，降级进程内追踪: "
                     f"uid={user_id} chat={chat_id} err={e}"
                 )
 

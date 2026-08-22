@@ -250,9 +250,11 @@ SCAN_DIRS = [
 
 # 各扫描目录的扩展名映射（未列出的目录默认扫描 .py）
 # i18n 目录只含 .json 语言包；assets 含字体/图片等二进制资源，需显式声明扩展名。
+# dashboard 含前端模板（v5.38.69 起前端拆分为真实 .html 文件），缺失会导致页面白屏。
 SCAN_DIR_EXTS = {
     "i18n": [".json"],
     "assets": [".ttf", ".ttc", ".otf", ".woff", ".woff2", ".png", ".jpg", ".jpeg", ".gif"],
+    "dashboard": [".py", ".html"],
 }
 
 # 单文件体积上限（字节）。超过则跳过并警告，避免误上传缓存图片/旧数据库/视频。

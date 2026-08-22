@@ -195,6 +195,28 @@ class DB:
             logger.info(f"✅ 列已添加: {table}.{column}")
 
     def _init_tables(self):
+        """初始化全部数据表（v5.38.69 拆分为域方法；建表语句与顺序保持不变）。"""
+        self._init_tables_users()
+        self._init_tables_groups()
+        self._init_tables_growth()
+        self._init_tables_commerce()
+        self._init_tables_misc()
+        self._init_tables_misc_2()
+        self._init_tables_misc_3()
+        self._init_tables_misc_4()
+        self._init_tables_misc_5()
+        self._init_tables_misc_6()
+        self._init_tables_misc_7()
+        self._init_tables_misc_8()
+        self._init_tables_misc_9()
+        self._init_tables_misc_10()
+        self._init_tables_misc_11()
+        self._init_tables_performance_indexes()
+        logger.info("✅ 数据库初始化完成")
+
+
+    def _init_tables_users(self):
+        """建表分片 1/15（逐字迁移自原 _init_tables）。"""
         with _db_lock:
             c = self.conn.cursor()
 
@@ -298,6 +320,13 @@ class DB:
                 ts    INTEGER,
                 mode  TEXT DEFAULT ''
             )""")
+            self.conn.commit()
+
+
+    def _init_tables_groups(self):
+        """建表分片 2/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             # [TRAE SOLO CN] v5.12.3 新增：conversions 转化追踪表（AGENTS.md 商业闭环核心表）
             c.execute("""CREATE TABLE IF NOT EXISTS conversions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,10 +338,10 @@ class DB:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_conversions_uid ON conversions(uid)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_conversions_event ON conversions(event)")
-            # [TRAE SOLO CN] v5.12.3 补充：conversion_events 表索引（加速漏斗查询和用户维度查询）
             c.execute("CREATE INDEX IF NOT EXISTS idx_conversion_events_uid ON conversion_events(uid)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_conversion_events_event ON conversion_events(event)")
 
+            # [TRAE SOLO CN] v5.12.3 补充：conversion_events 表索引（加速漏斗查询和用户维度查询）
             # 垃圾信息/反刷记录
             c.execute("""CREATE TABLE IF NOT EXISTS spam_track (
                 uid INTEGER PRIMARY KEY,
@@ -424,6 +453,13 @@ class DB:
                 enabled INTEGER DEFAULT 0
             )""")
 
+            self.conn.commit()
+
+
+    def _init_tables_growth(self):
+        """建表分片 3/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             # 【v4.13.1新增】欢迎配置表
             c.execute("""CREATE TABLE IF NOT EXISTS welcome_configs (
                 chat_id INTEGER PRIMARY KEY,
@@ -456,9 +492,9 @@ class DB:
                 created_at INTEGER,
                 updated_at INTEGER
             )""")
-            # 添加关键词索引，加速匹配
             c.execute("CREATE INDEX IF NOT EXISTS idx_keyword_trigger_enabled ON keyword_triggers(enabled)")
 
+            # 添加关键词索引，加速匹配
             # 【v5.12.0新增】孤儿播报追踪表（升级/早安午安晚安/定时播报等，30S或链式互删）
             # 复合主键 (chat_id, category)：每个群每个播报类型只保留最新一条
             # [Trae CN] 用于"发新消息删旧消息"互删机制和孤儿播报30S自动删除
@@ -537,7 +573,6 @@ class DB:
             c.execute("CREATE INDEX IF NOT EXISTS idx_proactive_engage_log_uid ON proactive_engage_log(uid)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_proactive_engage_log_ts ON proactive_engage_log(ts)")
 
-            # 【v4.5.31】防连发：清理重复记录 + 添加UNIQUE约束
             try:
                 c.execute("""DELETE FROM task_log WHERE id NOT IN (
                     SELECT MIN(id) FROM task_log GROUP BY task_key, exec_date
@@ -552,6 +587,7 @@ class DB:
                 except Exception:
                     pass  # report_fault 不可用时不上报，但不阻塞启动
 
+            # 【v4.5.31】防连发：清理重复记录 + 添加UNIQUE约束
             c.execute("""CREATE TABLE IF NOT EXISTS reply_feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bot_msg_id INTEGER NOT NULL,
@@ -583,6 +619,13 @@ class DB:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_invite_inviter ON invite_records(inviter_uid)")
 
+            self.conn.commit()
+
+
+    def _init_tables_commerce(self):
+        """建表分片 4/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS coupon_claims (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 code TEXT NOT NULL,
@@ -698,10 +741,10 @@ class DB:
                 PRIMARY KEY (uid, date, chat_id)
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_speech_uid_date ON speech_daily(uid, date)")
-            # 【v4.17.0新增】日报按日期+群组查询的复合索引
             c.execute("CREATE INDEX IF NOT EXISTS idx_speech_date_chat ON speech_daily(date, chat_id)")
 
             # ── 【v4.15新增】积分增强/AFK/任务/成就/盲盒/转盘表 ──────
+            # 【v4.17.0新增】日报按日期+群组查询的复合索引
             c.execute("""CREATE TABLE IF NOT EXISTS points_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 uid INTEGER NOT NULL,
@@ -713,6 +756,13 @@ class DB:
             c.execute("CREATE INDEX IF NOT EXISTS idx_points_log_uid ON points_log(uid)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_points_log_uid_ts ON points_log(uid, ts)")
 
+            self.conn.commit()
+
+
+    def _init_tables_misc(self):
+        """建表分片 5/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS afk_status (
                 uid INTEGER PRIMARY KEY,
                 reason TEXT DEFAULT '',
@@ -759,10 +809,10 @@ class DB:
                 UNIQUE(uid, date)
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_lucky_wheel_uid_date ON lucky_wheel_results(uid, date)")
-            # 兼容旧表：幂等添加 spin_count 列（避免 duplicate column 反复报错）
             self._safe_add_column(c, "lucky_wheel_results", "spin_count", "INTEGER NOT NULL DEFAULT 1")
 
             # ── 【v4.16新增】高级群管功能表 ──────
+            # 兼容旧表：幂等添加 spin_count 列（避免 duplicate column 反复报错）
             c.execute("""CREATE TABLE IF NOT EXISTS warnings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 uid INTEGER NOT NULL,
@@ -836,6 +886,13 @@ class DB:
                 ts INTEGER NOT NULL
             )""")
 
+            self.conn.commit()
+
+
+    def _init_tables_misc_2(self):
+        """建表分片 6/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS disabled_commands (
                 chat_id INTEGER NOT NULL,
                 cmd_name TEXT NOT NULL,
@@ -961,6 +1018,13 @@ class DB:
             )""")
 
             # ── 【v5.0.0设置面板完全体新增】配置表补齐 ──────
+            self.conn.commit()
+
+
+    def _init_tables_misc_3(self):
+        """建表分片 7/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             # 警告设置（按群）
             c.execute("""CREATE TABLE IF NOT EXISTS warning_settings (
                 chat_id INTEGER PRIMARY KEY,
@@ -1062,6 +1126,13 @@ class DB:
                 ts INTEGER NOT NULL
             )""")
 
+            self.conn.commit()
+
+
+    def _init_tables_misc_4(self):
+        """建表分片 8/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             # 打赏配置（按群）
             c.execute("""CREATE TABLE IF NOT EXISTS tip_config (
                 chat_id INTEGER PRIMARY KEY,
@@ -1161,7 +1232,6 @@ class DB:
                 self.conn.execute("ALTER TABLE reply_tracking ADD COLUMN replied INTEGER DEFAULT 0")
                 logger.info("🔄 数据库迁移：reply_tracking 补充 replied 列")
 
-            # 【修复v21.33】reply_tracking 单主键 → 复合主键迁移
             try:
                 c = self.conn.cursor()
                 c.execute("PRAGMA table_info(reply_tracking)")
@@ -1185,7 +1255,6 @@ class DB:
                 c.execute("ALTER TABLE group_stats ADD COLUMN chat_id INTEGER DEFAULT 0")
                 logger.info("✅ group_stats表已添加chat_id列")
 
-            # checkin_records 补充 current_streak 列
             try:
                 self.conn.execute("SELECT current_streak FROM checkin_records LIMIT 0")
             except Exception as e:
@@ -1194,6 +1263,8 @@ class DB:
                 logger.info("🔄 数据库迁移：checkin_records 补充 current_streak 列")
 
             # ── [v5.15.0新增] 问题追踪与FAQ蒸馏表 ──────
+            # 【修复v21.33】reply_tracking 单主键 → 复合主键迁移
+            # checkin_records 补充 current_streak 列
             # 用户问题记录表（记录每条用户提问，用于FAQ蒸馏和问题分析）
             c.execute("""CREATE TABLE IF NOT EXISTS user_questions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1261,6 +1332,13 @@ class DB:
             c.execute("CREATE INDEX IF NOT EXISTS idx_relay_admin_msg ON relay_sessions(admin_chat_id, admin_msg_id)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_relay_ts ON relay_sessions(ts)")
 
+            self.conn.commit()
+
+
+    def _init_tables_misc_5(self):
+        """建表分片 9/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             # 用户画像表（Telegram API 2026 适配 - 支持个性化播报）
             c.execute("""CREATE TABLE IF NOT EXISTS user_profiles (
                 user_id INTEGER PRIMARY KEY,
@@ -1312,8 +1390,6 @@ class DB:
                 deleted INTEGER DEFAULT 0
             )""")
 
-            # [TRAE SOLO CN] v5.19.0 新增：user_profiles 扩展 6 列（动态画像标签系统）
-            # ALTER TABLE ADD COLUMN 不支持 IF NOT EXISTS，用 PRAGMA 检查列存在性实现幂等
             self._safe_add_column(c, "user_profiles", "activity_score", "REAL DEFAULT 0.0")
             self._safe_add_column(c, "user_profiles", "flirt_affinity", "REAL DEFAULT 0.0")
             self._safe_add_column(c, "user_profiles", "spend_tendency", "REAL DEFAULT 0.0")
@@ -1321,16 +1397,18 @@ class DB:
             self._safe_add_column(c, "user_profiles", "peak_hours", "TEXT DEFAULT '[]'")
             self._safe_add_column(c, "user_profiles", "persona_tags", "TEXT DEFAULT '[]'")
 
-            # [v5.26.0] 用户生命周期阶段标签（New/Active/Silent/Churning/Lost）
             self._safe_add_column(c, "user_profiles", "lifecycle_stage", "TEXT DEFAULT 'New'")
 
-            # [v5.33] 对话轮次持久化（递进引导重启不重置）
-            # 注：SQLite 不允许 ALTER TABLE ADD COLUMN 带 CURRENT_TIMESTAMP 非常量默认值，
-            # 改为允许 NULL，由 update_conversation_turn() 在 UPDATE 时显式赋值。
             self._safe_add_column(c, "user_profiles", "conv_turn_count", "INTEGER DEFAULT 0")
             self._safe_add_column(c, "user_profiles", "conv_last_active", "TIMESTAMP")
 
             # ── [TRAE SOLO CN] v5.19.0 A/B 测试与 Telemetry 表 ──────
+            # [TRAE SOLO CN] v5.19.0 新增：user_profiles 扩展 6 列（动态画像标签系统）
+            # ALTER TABLE ADD COLUMN 不支持 IF NOT EXISTS，用 PRAGMA 检查列存在性实现幂等
+            # [v5.26.0] 用户生命周期阶段标签（New/Active/Silent/Churning/Lost）
+            # [v5.33] 对话轮次持久化（递进引导重启不重置）
+            # 注：SQLite 不允许 ALTER TABLE ADD COLUMN 带 CURRENT_TIMESTAMP 非常量默认值，
+            # 改为允许 NULL，由 update_conversation_turn() 在 UPDATE 时显式赋值。
             c.execute("""CREATE TABLE IF NOT EXISTS ab_experiments (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL DEFAULT '',
@@ -1429,6 +1507,13 @@ class DB:
                 UNIQUE(week_start, experiment_id)
             )""")
 
+            self.conn.commit()
+
+
+    def _init_tables_misc_6(self):
+        """建表分片 10/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS ab_guardian_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 experiment_id TEXT NOT NULL,
@@ -1486,11 +1571,11 @@ class DB:
                 scene TEXT NOT NULL DEFAULT 'chat'
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_reply_style_samples_active ON reply_style_samples(status, enabled, reviewed_at)")
-            # [Agent G] 兼容旧库：已存在的表缺 scene 列时幂等补列（配合 0005 迁移）
             self._safe_add_column(c, "reply_style_samples", "scene", "TEXT NOT NULL DEFAULT 'chat'")
             c.execute("CREATE INDEX IF NOT EXISTS idx_reply_style_samples_scene ON reply_style_samples(scene)")
 
             # ── [阶段3-E] RBAC 权限变更审批流表 ──────────────────
+            # [Agent G] 兼容旧库：已存在的表缺 scene 列时幂等补列（配合 0005 迁移）
             # 记录每次权限变更申请的完整生命周期：申请/审批/拒绝/取消
             # 审批通过后由 dashboard/rbac_approval.py 同步更新 user_roles 表
             c.execute("""CREATE TABLE IF NOT EXISTS permission_change_requests (
@@ -1605,6 +1690,13 @@ class DB:
             c.execute("CREATE INDEX IF NOT EXISTS idx_sec_events_ts ON security_events(ts)")
 
             # ── [v5.34.0] 托管管理表 ─────────────────────────────
+            self.conn.commit()
+
+
+    def _init_tables_misc_7(self):
+        """建表分片 11/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS managed_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER NOT NULL UNIQUE,
@@ -1727,6 +1819,13 @@ class DB:
             )""")
 
             # ── [v5.35.0] 新成员观察期表 ─────────────────────────────
+            self.conn.commit()
+
+
+    def _init_tables_misc_8(self):
+        """建表分片 12/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS new_member_probation (
                 chat_id INTEGER PRIMARY KEY,
                 duration INTEGER DEFAULT 300,
@@ -1824,6 +1923,13 @@ class DB:
             )""")
 
             # ── [v5.35.0] 群安全中心表 ─────────────────────────────
+            self.conn.commit()
+
+
+    def _init_tables_misc_9(self):
+        """建表分片 13/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS group_safety_center (
                 chat_id INTEGER PRIMARY KEY,
                 data TEXT DEFAULT '{}',
@@ -1898,6 +2004,13 @@ class DB:
                 created_at INTEGER
             )""")
 
+            self.conn.commit()
+
+
+    def _init_tables_misc_10(self):
+        """建表分片 14/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS group_registry (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 data TEXT DEFAULT '{}'
@@ -1980,6 +2093,13 @@ class DB:
                 created_at INTEGER
             )""")
 
+            self.conn.commit()
+
+
+    def _init_tables_misc_11(self):
+        """建表分片 15/15（逐字迁移自原 _init_tables）。"""
+        with _db_lock:
+            c = self.conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS user_exp (
                 user_id INTEGER PRIMARY KEY,
                 exp INTEGER DEFAULT 0
@@ -2046,6 +2166,12 @@ class DB:
 
             self.conn.commit()
 
+            self.conn.commit()
+
+
+    def _init_tables_performance_indexes(self):
+        """常用查询的性能索引（幂等）。"""
+        with _db_lock:
             # ── 性能索引（IF NOT EXISTS 幂等）【v4.2.8增强：添加replied索引防止全表扫描】─
             _indexes = [
                 "CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)",
@@ -2237,6 +2363,8 @@ class DB:
         'task_exec_history': 'task_exec_history',
         'ad_enforcement': 'ad_enforcement',
     }
+
+
 
     def _self_check_repo_methods(self):
         """启动时自检：扫描所有 Repo 实例的 public 方法，验证每个方法都在 _REPO_METHOD_MAP 中注册。

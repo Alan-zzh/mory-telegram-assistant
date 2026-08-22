@@ -160,7 +160,8 @@ def _get_anti_ai_style_hint() -> str:
         sample_size = len(recent)
 
         if sample_size >= 5:
-            # 铁律 #4：整段长度校验（≤2 行，每行 ≤15 字，总字数 ≤30）
+            # 铁律 #4：整段长度校验（≤2 行，总字数 ≤30；"每行 ≤15 字"未实现，
+            # 注释曾夸大门禁范围，现以实际检查为准）
             # 阈值：最近 5 条中超过 30% 违反即提示
             length_violations = 0
             for t in recent:
