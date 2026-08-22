@@ -249,7 +249,7 @@ def handle_vote_kick_callback(bot, call, config, db):
 
 
 def check_expired_votes(bot, config, db):
-    """检查并关闭过期投票（由auto_tasks定期调用）
+    """检查并关闭过期投票（由统一调度器定期调用）
 
     Args:
         bot: TeleBot实例

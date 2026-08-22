@@ -9,7 +9,7 @@ import pytest
 
 
 def test_persist_startup_heartbeat_writes_cross_process_state():
-    from modules.auto_tasks import _persist_startup_heartbeat
+    from tasks.task_scheduler import _persist_startup_heartbeat
 
     writes = []
     rm = SimpleNamespace(db=SimpleNamespace(set_system_state=lambda key, value: writes.append((key, value))))
@@ -22,7 +22,7 @@ def test_persist_startup_heartbeat_writes_cross_process_state():
 
 
 def test_startup_member_scan_runs_in_background(monkeypatch):
-    from modules import auto_tasks
+    from tasks import task_scheduler
     from tasks.maintenance.startup_history_cleanup_task import StartupHistoryCleanupTask
     from tasks.maintenance.startup_member_scan_task import StartupMemberScanTask
 
@@ -36,10 +36,10 @@ def test_startup_member_scan_runs_in_background(monkeypatch):
 
     monkeypatch.setattr(StartupMemberScanTask, "run", blocking_scan)
     monkeypatch.setattr(StartupHistoryCleanupTask, "run", lambda self: history_ran.set())
-    monkeypatch.setattr(auto_tasks, "_startup_maintenance_thread", None)
+    monkeypatch.setattr(task_scheduler, "_startup_maintenance_thread", None)
 
     begin = time.monotonic()
-    thread = auto_tasks._start_startup_maintenance(SimpleNamespace())
+    thread = task_scheduler._start_startup_maintenance(SimpleNamespace())
     elapsed = time.monotonic() - begin
 
     assert elapsed < 0.5
@@ -52,7 +52,7 @@ def test_startup_member_scan_runs_in_background(monkeypatch):
 
 
 def test_scheduler_starts_before_startup_maintenance(monkeypatch):
-    from modules import auto_tasks
+    from tasks import task_scheduler
     from tasks import task_scheduler
     from tasks.monitoring.watchdog_task import WatchdogTask
     from modules.triggers.cold_group import ColdGroupTrigger
@@ -78,19 +78,19 @@ def test_scheduler_starts_before_startup_maintenance(monkeypatch):
     monkeypatch.setattr(ColdGroupTrigger, "register", lambda self, scheduler, rm: None)
     monkeypatch.setattr(NightHintTrigger, "register", lambda self, scheduler, rm: None)
     monkeypatch.setattr(scheduler_monitor, "attach_to_scheduler", lambda scheduler, db=None: None)
-    monkeypatch.setattr(auto_tasks, "_persist_startup_heartbeat", lambda rm: events.append("heartbeat_persisted"))
-    monkeypatch.setattr(auto_tasks, "_start_startup_maintenance", lambda rm: events.append("maintenance_started"))
+    monkeypatch.setattr(task_scheduler, "_persist_startup_heartbeat", lambda rm: events.append("heartbeat_persisted"))
+    monkeypatch.setattr(task_scheduler, "_start_startup_maintenance", lambda rm: events.append("maintenance_started"))
 
-    auto_tasks._start_with_task_scheduler(SimpleNamespace(db=SimpleNamespace()))
+    task_scheduler._start_with_task_scheduler(SimpleNamespace(db=SimpleNamespace()))
 
-    assert auto_tasks._scheduler_instance is fake
+    assert task_scheduler._scheduler_instance is fake
     assert events.index("scheduler_started") < events.index("heartbeat_persisted")
     assert events.index("heartbeat_persisted") < events.index("watchdog_started")
     assert events.index("watchdog_started") < events.index("maintenance_started")
 
 
 def test_scheduler_monitor_attach_failure_prevents_start(monkeypatch):
-    from modules import auto_tasks
+    from tasks import task_scheduler
     from tasks import task_scheduler
     from modules.triggers.cold_group import ColdGroupTrigger
     from modules.triggers.night_hint import NightHintTrigger
@@ -118,7 +118,7 @@ def test_scheduler_monitor_attach_failure_prevents_start(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="listener broken"):
-        auto_tasks._start_with_task_scheduler(SimpleNamespace(db=SimpleNamespace()))
+        task_scheduler._start_with_task_scheduler(SimpleNamespace(db=SimpleNamespace()))
 
     assert fake.started is False
 

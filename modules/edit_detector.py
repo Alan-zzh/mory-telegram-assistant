@@ -153,8 +153,8 @@ def cleanup_old_snapshots(max_age: int = 86400):
 
 
 # ── APScheduler 定时任务注册 ──────────────────────────────────────────
-# 在 auto_tasks 中注册此函数，每小时清理一次过期快照
-# 使用方法：在 auto_tasks 的定时任务列表中添加：
+# 过期快照清理由统一调度器每小时任务调用
+# 历史注记：v5.38.69 前需在 auto_tasks 定时列表手工添加，现走 BaseTask 自动发现：
 #   ("edit_detector_cleanup", cleanup_old_snapshots, "interval", {"hours": 1})
 _CRON_JOBS = [
     {

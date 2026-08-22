@@ -8,7 +8,7 @@ core/metrics.py · Prometheus 业务指标定义与采集
   - llm_cost_cents (Gauge): LLM 成本熔断器当前累计成本（美分）
 
 采集方式：
-  由 auto_tasks 每 5 分钟调用 update_metrics() 刷新指标值
+  由 tasks/analytics/prometheus_metrics_task 调用 update_metrics() 刷新指标值
 """
 
 from core.logging_util import get_logger
@@ -63,7 +63,7 @@ except ImportError:
 
 def update_metrics():
     """
-    定期更新 Prometheus 指标（由 auto_tasks 定时任务调用）
+    定期更新 Prometheus 指标（由统一调度器定时任务调用）
 
     采集逻辑：
     1. conversion_total: 查询 conversion_events 表累计事件数并 set

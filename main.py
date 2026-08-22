@@ -292,7 +292,7 @@ def main():
     except Exception as e:
         logger.critical(f"❌ 机器人崩溃：{e}\n{traceback.format_exc()}")
         try:
-            from modules.auto_tasks import report_fault
+            from tasks.support.fault_reporter import report_fault
             report_fault("Bot崩溃退出", f"{type(e).__name__}: {str(e)[:200]}", "🚨")
         except Exception as e:
             logger.debug(f"操作异常: {e}")

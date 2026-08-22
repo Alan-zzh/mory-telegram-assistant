@@ -195,7 +195,7 @@ def _persist_ad_state(bot, db, chat_id: int, uid: int, reason: str, muted: bool)
             pass
         logger.warning(f"广告处置持久态事务失败并已回滚: uid={uid} err={e}")
         try:
-            from modules.auto_tasks import report_fault
+            from tasks.support.fault_reporter import report_fault
             report_fault("广告处置失败", f"持久态事务失败 uid={uid}: {e}", "🚨")
         except Exception as e2:
             logger.error(f"广告处置告警上报失败(persist_state): {e2}")

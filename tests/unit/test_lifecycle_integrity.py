@@ -6,21 +6,21 @@ from types import SimpleNamespace
 
 def test_background_start_reuses_the_same_resource_manager(monkeypatch):
     """重复启动必须返回同一锁域，不能再创建第二套 ResourceManager。"""
-    from modules import auto_tasks
+    from tasks import task_scheduler
 
-    monkeypatch.setattr(auto_tasks, "_scheduler_instance", None)
-    monkeypatch.setattr(auto_tasks, "_resource_manager_instance", None)
+    monkeypatch.setattr(task_scheduler, "_scheduler_instance", None)
+    monkeypatch.setattr(task_scheduler, "_resource_manager_instance", None)
 
     started_with = []
 
     def _start(rm):
         started_with.append(rm)
-        auto_tasks._scheduler_instance = SimpleNamespace(running=True)
+        task_scheduler._scheduler_instance = SimpleNamespace(running=True)
 
-    monkeypatch.setattr(auto_tasks, "_start_with_task_scheduler", _start)
+    monkeypatch.setattr(task_scheduler, "_start_with_task_scheduler", _start)
 
-    first = auto_tasks.start_background(object(), {}, object(), object(), lambda: None)
-    second = auto_tasks.start_background(object(), {}, object(), object(), lambda: None)
+    first = task_scheduler.start_background(object(), {}, object(), object(), lambda: None)
+    second = task_scheduler.start_background(object(), {}, object(), object(), lambda: None)
 
     assert first is second
     assert started_with == [first]
@@ -28,32 +28,16 @@ def test_background_start_reuses_the_same_resource_manager(monkeypatch):
 
 def test_background_start_preserves_injected_resource_manager(monkeypatch):
     """BotContext 与任务调度器必须共同持有初始化器创建的同一实例。"""
-    from modules import auto_tasks
+    from tasks import task_scheduler
 
-    monkeypatch.setattr(auto_tasks, "_scheduler_instance", None)
-    monkeypatch.setattr(auto_tasks, "_resource_manager_instance", None)
-    monkeypatch.setattr(auto_tasks, "_start_with_task_scheduler", lambda _rm: None)
+    monkeypatch.setattr(task_scheduler, "_scheduler_instance", None)
+    monkeypatch.setattr(task_scheduler, "_resource_manager_instance", None)
+    monkeypatch.setattr(task_scheduler, "_start_with_task_scheduler", lambda _rm: None)
     injected = SimpleNamespace()
 
-    assert auto_tasks.start_background(
+    assert task_scheduler.start_background(
         object(), {}, object(), object(), lambda: None, resource_manager=injected
     ) is injected
-
-
-def test_retry_never_falls_back_to_naked_thread_after_scheduler_shutdown(monkeypatch):
-    """调度拒绝时必须丢弃重试，不能绕过 drain 启动裸线程。"""
-    from modules import auto_tasks
-
-    class ClosedScheduler:
-        def add_job(self, *_args, **_kwargs):
-            raise RuntimeError("scheduler closed")
-
-    started = []
-    monkeypatch.setattr(auto_tasks, "_get_scheduler", lambda: ClosedScheduler())
-    monkeypatch.setattr(auto_tasks.threading.Thread, "start", lambda self: started.append(self))
-
-    assert auto_tasks._retry_task(object(), lambda _rm: None, "closed") is False
-    assert started == []
 
 
 def test_common_retry_never_starts_thread_without_scheduler(monkeypatch):

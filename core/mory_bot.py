@@ -97,7 +97,7 @@ class MoryBot:
             else:
                 logger.error(f"reply_and_track API异常：{e}")
                 try:
-                    from modules.auto_tasks import report_fault
+                    from tasks.support.fault_reporter import report_fault
                     report_fault("Telegram API异常", f"reply_and_track异常: {str(e)[:100]}", "⚠️",
                                  f"chat_id={cid}")
                 except Exception as e:

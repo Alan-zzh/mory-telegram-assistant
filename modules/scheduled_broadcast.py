@@ -405,7 +405,7 @@ def _try_ai_generate(bc: dict, ai_engine, broadcast_id: str) -> str:
 def execute_scheduled_broadcast(bot, chat_id, config: dict, db=None, target_broadcast_id: str = "", ai_engine=None):
     """
     执行定点播报
-    被 auto_tasks.py 定时任务调用
+    被 tasks/maintenance/scheduled_broadcast_task.py 调用
 
     [v5.32] 新增 ai_engine 参数：当 broadcast 配置 ai_generate=true 时，
     调用 AI 动态生成 content，失败自动回退静态 content。

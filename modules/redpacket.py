@@ -251,7 +251,7 @@ def handle_claim_redpacket(bot, call, config, db):
 
 
 def check_expired_redpackets(bot, config, db):
-    """检查过期红包，退回未领取积分（由auto_tasks定期调用）
+    """检查过期红包，退回未领取积分（由统一调度器定期调用）
 
     Args:
         bot: TeleBot实例

@@ -6,7 +6,7 @@ dashboard/api/quality_api.py · 内容质量评估 API
   GET /api/quality/scores  - 获取平均评分（最近 N 天）
   GET /api/quality/trend   - 获取评分趋势（按天聚合）
 
-数据来源：interaction_quality_scores 表（由 modules/auto_tasks.py 每日凌晨写入）
+数据来源：interaction_quality_scores 表（由质量评估任务每日凌晨写入）
 """
 from threading import RLock
 

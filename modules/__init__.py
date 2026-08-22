@@ -2,7 +2,6 @@
 """功能模块包"""
 
 __all__ = [
-    "auto_tasks",
     "slow_mode",
     "ranking",
     "group_mgr",

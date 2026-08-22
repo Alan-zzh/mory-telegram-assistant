@@ -372,7 +372,7 @@ def _is_job_disabled_by_config(job_id: str, config) -> bool:
 
     避免对管理员主动关闭的功能（如问候/播报）误报"未执行"告警。
 
-    判断规则（与 auto_tasks._is_greeting_enabled 保持一致）：
+    判断规则（与 tasks/support/critical_tasks._is_greeting_enabled 保持一致）：
     - greeting_morning  → GREETING_CONFIG.morning_enabled，回退 AUTO_GREETING
     - greeting_afternoon→ GREETING_CONFIG.afternoon_enabled，回退 AUTO_GREETING
     - greeting_evening  → GREETING_CONFIG.evening_enabled，回退 AUTO_GOODNIGHT / AUTO_GREETING
@@ -393,7 +393,7 @@ def _is_job_disabled_by_config(job_id: str, config) -> bool:
         return False  # 调用方未传 config，向后兼容（不跳过任何任务）
     try:
         if job_id.startswith("greeting_"):
-            # 与 auto_tasks._is_greeting_enabled 逻辑一致
+            # 与 tasks/support/critical_tasks._is_greeting_enabled 逻辑一致
             cfg = config.get("GREETING_CONFIG", {}) if isinstance(config, dict) else {}
             period = job_id[len("greeting_"):]  # morning / afternoon / evening
             key_map = {

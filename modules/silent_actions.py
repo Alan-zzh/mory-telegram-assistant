@@ -148,7 +148,7 @@ def _log_action(db, chat_id, operator_uid, target_uid, action):
     except Exception as e:
         logger.error(f"审计日志写入失败 action={action} chat={chat_id} target={target_uid}: {e}")
         try:
-            from modules.auto_tasks import report_fault
+            from tasks.support.fault_reporter import report_fault
             report_fault("silent_actions", f"审计日志写入失败: {e}", severity="⚠️")
         except Exception:
             pass

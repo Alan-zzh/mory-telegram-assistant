@@ -173,11 +173,11 @@ def test_is_task_executed_today_database_error_propagates():
 
 def test_health_check_labels_task_log_anomaly_without_claiming_sqlite_lock(monkeypatch):
     """task_log 重复是防重记录异常，不得冒充 SQLite database is locked。"""
-    import modules.auto_tasks as auto_tasks
+    import tasks.support.critical_tasks as critical_tasks
     import tasks.monitoring.health_check_task as health_module
     from tasks.base_task import TaskContext
 
-    monkeypatch.setattr(auto_tasks, "_build_critical_tasks", lambda config, today: [])
+    monkeypatch.setattr(critical_tasks, "_build_critical_tasks", lambda config, today: [])
     monkeypatch.setattr(
         health_module,
         "get_task_guard",
@@ -199,12 +199,12 @@ def test_health_check_labels_task_log_anomaly_without_claiming_sqlite_lock(monke
 
 
 def test_health_check_database_error_sends_no_false_missing_alert(monkeypatch):
-    import modules.auto_tasks as auto_tasks
+    import tasks.support.critical_tasks as critical_tasks
     import tasks.monitoring.health_check_task as health_module
     from tasks.base_task import TaskContext
 
     monkeypatch.setattr(
-        auto_tasks,
+        critical_tasks,
         "_build_critical_tasks",
         lambda config, today: [{
             "desc": "关键任务",
@@ -214,7 +214,7 @@ def test_health_check_database_error_sends_no_false_missing_alert(monkeypatch):
         }],
     )
     monkeypatch.setattr(
-        auto_tasks,
+        critical_tasks,
         "_missing_task_keys_today",
         lambda db, keys: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
     )
@@ -242,7 +242,7 @@ def test_health_check_database_error_sends_no_false_missing_alert(monkeypatch):
 def test_health_check_skips_dynamic_broadcasts_not_scheduled_today(
     frequency, date_field, date_value, today
 ):
-    from modules.auto_tasks import _build_critical_tasks
+    from tasks.support.critical_tasks import _build_critical_tasks
 
     broadcast = {
         "id": "not_today",
@@ -263,7 +263,7 @@ def test_health_check_skips_dynamic_broadcasts_not_scheduled_today(
 
 
 def test_health_check_fails_closed_when_due_broadcast_has_no_group():
-    from modules.auto_tasks import _build_critical_tasks
+    from tasks.support.critical_tasks import _build_critical_tasks
 
     config = {
         "AUTO_GREETING": False,
@@ -290,7 +290,7 @@ def test_health_check_fails_closed_when_due_broadcast_has_no_group():
     ],
 )
 def test_invalid_dynamic_broadcast_calendar_fails_closed(field, value, message):
-    from modules.auto_tasks import _is_broadcast_scheduled_for_date
+    from tasks.support.critical_tasks import _is_broadcast_scheduled_for_date
 
     with pytest.raises(ValueError, match=message):
         _is_broadcast_scheduled_for_date({field: value}, "2026-08-02")

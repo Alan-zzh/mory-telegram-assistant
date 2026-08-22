@@ -77,7 +77,7 @@ class HealthCheckTask(BaseTask):
 
             logger.info(f"🏥 [health_check] 开始检查，当前时间{current_hour}:00，检查日期{today}")
 
-            from modules.auto_tasks import (
+            from tasks.support.critical_tasks import (
                 _build_critical_tasks,
                 _is_deadline_reached,
                 _missing_task_keys_today,

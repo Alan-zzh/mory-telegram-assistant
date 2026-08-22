@@ -9,7 +9,7 @@
 ║    3. Top 5 毒点词汇提取 —— 流失用户对话中的负向触发词                   ║
 ║    4. 生成可读性报告 —— 供运营人员直接阅读并指导下一周期实验             ║
 ║                                                                        ║
-║  被调用：modules/auto_tasks.py 定时任务                                ║
+║  被调用：统一调度器（tasks/task_scheduler.py）定时任务                                ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 import time
@@ -170,7 +170,7 @@ class ABInsights:
 
 
 def run_weekly_ab_report_job(db, config: dict):
-    """供 auto_tasks.py 调用的周度分析任务入口"""
+    """周度分析任务入口（统一调度器调用）"""
     insights = ABInsights(db, config)
     reports = insights.run_weekly_analysis()
     logger.info(f"[AB Insights] 周度分析完成，生成 {len(reports)} 份报告")

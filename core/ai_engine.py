@@ -1145,7 +1145,7 @@ class AIEngine:
                 return
             logger.error(f"🚫 [{tier}] 所有模型均不可用")
             try:
-                from modules.auto_tasks import report_fault
+                from tasks.support.fault_reporter import report_fault
                 report_fault("层级池模型不可用", f"{tier}池所有模型均不可用", "⚠️")
             except Exception as e:
                 logger.debug(f"操作异常: {e}")
@@ -1286,7 +1286,7 @@ class AIEngine:
             # 所有模型都被拉黑或过期了
             logger.error(f"🚫 [{pool_name}] 所有模型均已拉黑或过期！请检查API余额或更新模型配置")
             try:
-                from modules.auto_tasks import report_fault
+                from tasks.support.fault_reporter import report_fault
                 report_fault("模型池全部拉黑", f"{pool_name}池所有模型均已拉黑或过期，请检查API余额", "🚨")
             except Exception as e:
                 logger.debug(f"操作异常: {e}")
@@ -2897,7 +2897,7 @@ class AIEngine:
             delattr(self, '_sanitize_retry_done')
         if quota_permission_failures:
             try:
-                from modules.auto_tasks import report_fault
+                from tasks.support.fault_reporter import report_fault
                 report_fault(
                     "AI模型额度或权限异常",
                     "检测到模型返回 402/403，已切到降级兜底回复",

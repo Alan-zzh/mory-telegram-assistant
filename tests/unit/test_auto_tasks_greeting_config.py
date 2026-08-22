@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 
 def test_greeting_time_reads_new_config():
-    from modules.auto_tasks import _get_greeting_time
+    from tasks.support.critical_tasks import _get_greeting_time
 
     cfg = {"GREETING_CONFIG": {"morning_time": "07:45", "evening_time": "22:30"}}
 
@@ -19,7 +19,7 @@ def test_greeting_time_reads_new_config():
 
 
 def test_greeting_enabled_compat_keys():
-    from modules.auto_tasks import _is_greeting_enabled
+    from tasks.support.critical_tasks import _is_greeting_enabled
 
     assert _is_greeting_enabled({"AUTO_GREETING": True}, "morning") is True
     assert _is_greeting_enabled({"AUTO_GREETING": False, "AUTO_GOODNIGHT": True}, "evening") is True
@@ -27,7 +27,7 @@ def test_greeting_enabled_compat_keys():
 
 
 def test_greeting_window_uses_config_time():
-    from modules.auto_tasks import _is_greeting_window
+    from tasks.support.critical_tasks import _is_greeting_window
 
     cfg = {"GREETING_CONFIG": {"afternoon_time": "14:20"}}
 

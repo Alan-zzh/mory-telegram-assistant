@@ -29,14 +29,6 @@ def count_py_non_init(rel_dir: str) -> int:
     )
 
 
-def count_jobs() -> int:
-    p = ROOT / "modules" / "auto_tasks.py"
-    if not p.exists():
-        return 0
-    return sum(1 for line in p.read_text(encoding="utf-8", errors="ignore").splitlines()
-               if re.match(r"^\s*def _job_", line))
-
-
 def count_db_tables() -> int:
     p = ROOT / "core" / "database.py"
     if not p.exists():
@@ -96,7 +88,6 @@ def compute_actual() -> dict[str, int]:
     return {
         "modules_py": count_py_non_init("modules"),
         "core_py": count_py_non_init("core"),
-        "job_count": count_jobs(),
         "db_tables": count_db_tables(),
         "dashboard_routes": count_routes(),
         "dispatch_funcs": count_dispatch_funcs(),
@@ -107,7 +98,6 @@ def compute_actual() -> dict[str, int]:
 KEY_LABELS = {
     "modules_py": "modules 业务 .py（不含 __init__）",
     "core_py": "core 业务 .py（不含 __init__）",
-    "job_count": "auto_tasks.py 中 _job_ 函数",
     "db_tables": "database.py CREATE TABLE 数",
     "dashboard_routes": "dashboard/api 路由装饰器数",
     "dispatch_funcs": "消息分发函数（含导入的 p10）",
@@ -237,7 +227,6 @@ def check_readme_metrics() -> tuple[list[str], int]:
     patterns = {
         "modules_py": r"modules 业务 .*? = (\d+)",
         "core_py": r"core 业务 .*? = (\d+)",
-        "job_count": r"_job_ = (\d+)",
         "db_tables": r"DB 表 = (\d+)",
         "dashboard_routes": r"Dashboard 路由 = (\d+)",
         "dispatch_funcs": r"消息分发函数 = (\d+)",

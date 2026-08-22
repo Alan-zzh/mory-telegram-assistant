@@ -367,7 +367,7 @@ class LLMCostGuard:
 
     def flush_to_db(self, db_conn):
         """
-        【v5.31.2 修复】定时刷盘到 llm_cost_logs 表（由 auto_tasks 每 5min 调用）。
+        【v5.31.2 修复】定时刷盘到 llm_cost_logs 表（由调度器 flush_alert_summary 任务每 5 分钟调用）。
 
         之前只建表不写数据，llm_cost_logs 永远为空，重启后熔断器累计清零。
         现在批量写入 _pending_logs 队列中的详细日志，写入后清空队列。

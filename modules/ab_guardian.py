@@ -9,7 +9,7 @@
 ║    3. 自动回滚 —— 触发阈值后自动将实验状态改为 rolled_back             ║
 ║    4. 管理员告警 —— 回滚时通知管理员并给出原因                           ║
 ║                                                                        ║
-║  被调用：modules/auto_tasks.py 定时任务                                ║
+║  被调用：统一调度器（tasks/task_scheduler.py）定时任务                                ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 import time
@@ -22,7 +22,7 @@ logger = get_logger("ab_guardian")
 
 def run_ab_guardian_job(bot, db, config: dict):
     """
-    供 auto_tasks.py 调用的守护巡检任务。
+    供统一调度器守护巡检任务调用。
     触发回滚后，通过 bot 通知管理员。
     """
     ab_cfg = config.get("AB_TEST_CONFIG", {})

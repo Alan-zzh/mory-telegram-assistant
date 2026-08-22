@@ -186,7 +186,7 @@ def preflight_check(cfg: dict, db_instance=None, ai_instance=None) -> dict:
     # 致命问题时通过 _FaultReporter 通知 admin
     if not result["ok"]:
         try:
-            from modules.auto_tasks import report_fault
+            from tasks.support.fault_reporter import report_fault
             report_fault(
                 "preflight启动检查失败",
                 "\n".join(result["fatal"]),
@@ -711,7 +711,7 @@ def initialize_bot() -> BotContext:
     # 16. 创建唯一资源锁域后启动后台任务。BotContext 与 TaskScheduler 必须
     # 持有同一 ResourceManager，否则共享 bot/ai/db 会各自加锁而产生并发裂缝。
     from core.resource_manager import ResourceManager
-    from modules.auto_tasks import start_background
+    from tasks.task_scheduler import start_background
     _save_cfg = lambda: save_config(cfg, db)
     resource_manager = ResourceManager(
         bot=bot,
@@ -974,7 +974,7 @@ def _restore_db_from_backup(db, cfg):
                 _load_dynamic_states(cfg, db)
                 logger.info("✅ 数据库从备份恢复成功！")
                 try:
-                    from modules.auto_tasks import report_fault
+                    from tasks.support.fault_reporter import report_fault
                     report_fault("数据库异常已自动恢复", f"从备份{_latest_backup}恢复成功", "⚠️")
                 except Exception as e:
                     # 【v5.31.2 修复】数据库恢复后管理员通知失败应告警
@@ -983,7 +983,7 @@ def _restore_db_from_backup(db, cfg):
                 logger.critical(f"❌ 数据库恢复失败：{restore_err}")
                 logger.critical("   → 请手动从 backup/ 目录恢复")
                 try:
-                    from modules.auto_tasks import report_fault
+                    from tasks.support.fault_reporter import report_fault
                     report_fault("数据库损坏且恢复失败", str(restore_err), "🚨")
                 except Exception as e:
                     # 【v5.31.2 修复】CRITICAL：数据库损坏+恢复失败+告警失败=三重故障，必须告警

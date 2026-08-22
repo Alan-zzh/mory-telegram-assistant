@@ -8,6 +8,7 @@ import importlib
 import inspect
 import pkgutil
 import threading
+import time
 from typing import Any, Dict, Optional
 
 from core.logging_util import get_logger
@@ -320,3 +321,133 @@ def create_scheduler(rm: ResourceManager, max_workers: int = 30) -> TaskSchedule
             logger.warning(f"关闭旧调度器失败: {e}")
     _scheduler_instance = TaskScheduler(rm, max_workers=max_workers)
     return _scheduler_instance
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  后台任务引擎启动（自 modules/auto_tasks.py v5.38.69 收敛迁移；
+#  原文件已拆除，本节是 start_background 唯一真相源）
+# ══════════════════════════════════════════════════════════════════════════
+
+_resource_manager_instance: Optional[ResourceManager] = None
+_startup_maintenance_thread: Optional[threading.Thread] = None
+_WATCHDOG_TIMEOUT_SEC = 900  # 15 分钟
+
+
+def start_background(
+    bot,
+    config: Dict[str, Any],
+    db,
+    ai,
+    save_config_fn,
+    resource_manager: Optional[ResourceManager] = None,
+):
+    """启动后台任务引擎并返回全局唯一的 ResourceManager。
+
+    调度器任务与消息分发必须共享同一把资源锁。调用方可以传入初始化阶段
+    已创建的实例；重复启动则返回正在服务的实例，绝不另建锁域。
+    """
+    from core.task_transaction import TaskTransactionManager
+    from tasks.support.fault_reporter import get_fault_reporter
+    from tasks.support.task_guard import get_task_guard
+
+    global _resource_manager_instance, _scheduler_instance
+    if _scheduler_instance is not None and getattr(_scheduler_instance, 'running', False):
+        logger.warning("⚠️ 后台任务引擎已在运行，跳过重复启动")
+        if _resource_manager_instance is None:
+            raise RuntimeError("后台调度器运行中但缺少共享 ResourceManager")
+        return _resource_manager_instance
+
+    rm = resource_manager or ResourceManager(
+        bot=bot,
+        ai=ai,
+        db=db,
+        config=config,
+        save_config_fn=save_config_fn,
+    )
+    _resource_manager_instance = rm
+    TaskTransactionManager.bind(rm)
+    get_task_guard().bind(rm)
+    get_fault_reporter().bind(rm)
+
+    try:
+        _start_with_task_scheduler(rm)
+    except Exception:
+        # 启动未完成时不保留半初始化锁域；下一次启动可重新创建。
+        if _scheduler_instance is None or not getattr(_scheduler_instance, 'running', False):
+            _resource_manager_instance = None
+        raise
+    return rm
+
+
+def _start_with_task_scheduler(rm):
+    """新调度器入口：自动发现并注册 tasks/ 下所有任务。"""
+    global _scheduler_instance
+
+    scheduler = create_scheduler(rm)
+    # 对外统一暴露带生命周期闸门的控制器；抽奖、签到、场景触发器与动态
+    # auto-delete/retry 不得绕过 active-job 计数后在关库阶段继续访问 SQLite。
+    _scheduler_instance = scheduler
+
+    # 场景化触发器注册（与热重载共用同一幂等入口）
+    from modules.triggers.base import refresh_trigger_jobs
+    from modules.triggers.cold_group import ColdGroupTrigger
+    from modules.triggers.night_hint import NightHintTrigger
+    refresh_trigger_jobs(
+        _scheduler_instance,
+        rm,
+        (ColdGroupTrigger, NightHintTrigger),
+    )
+
+    # 附加调度监控（监听 EXECUTED/ERROR/MISSED 事件）
+    from core.scheduler_monitor import attach_to_scheduler
+    attach_to_scheduler(scheduler.scheduler, db=rm.db)
+
+    # 注册/监控均成功后才启动并落跨进程心跳，再异步执行耗时的全员扫描。
+    # 否则数千人的 Telegram API 调用会在 scheduler.start() 前阻塞数分钟，
+    # Dashboard 将旧心跳判为 503，外部 watchdog 还会形成误重启循环。
+    scheduler.start()
+    _persist_startup_heartbeat(rm)
+
+    # 看门狗必须在 scheduler 与首个持久心跳成功后启动，失败则阻止残缺服务继续。
+    from tasks.monitoring.watchdog_task import WatchdogTask
+    WatchdogTask(rm).start(timeout_sec=_WATCHDOG_TIMEOUT_SEC)
+    _start_startup_maintenance(rm)
+
+
+def _persist_startup_heartbeat(rm):
+    """启动扫描前立即写入内存与数据库心跳。"""
+    now = int(time.time())
+    from tasks.monitoring.heartbeat_task import update_heartbeat
+    update_heartbeat()
+    rm.db.set_system_state("last_heartbeat", str(now))
+
+
+def _run_startup_maintenance(rm):
+    """后台串行执行启动扫描和历史清理，不阻塞 scheduler/polling。"""
+    try:
+        from tasks.maintenance.startup_member_scan_task import StartupMemberScanTask
+        StartupMemberScanTask(rm).run()
+    except Exception as e:
+        logger.warning(f"启动成员扫描失败: {e}")
+
+    try:
+        from tasks.maintenance.startup_history_cleanup_task import StartupHistoryCleanupTask
+        StartupHistoryCleanupTask(rm).run()
+    except Exception as e:
+        logger.warning(f"启动历史清理失败: {e}")
+
+
+def _start_startup_maintenance(rm):
+    """启动唯一的后台维护线程；返回线程供测试与诊断。"""
+    global _startup_maintenance_thread
+    if _startup_maintenance_thread is not None and _startup_maintenance_thread.is_alive():
+        logger.warning("启动维护线程已在运行，跳过重复启动")
+        return _startup_maintenance_thread
+    _startup_maintenance_thread = threading.Thread(
+        target=_run_startup_maintenance,
+        args=(rm,),
+        name="mory-startup-maintenance",
+        daemon=True,
+    )
+    _startup_maintenance_thread.start()
+    return _startup_maintenance_thread

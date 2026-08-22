@@ -16,7 +16,7 @@ core/alert_bot.py  ·  独立告警 Bot 通道（v5.25.0 阶段2-B 告警风暴�
 使用：
   from core.alert_bot import send_alert, get_alert_stats, flush_alert_summary
   send_alert("WARNING", "队列积压", "qsize=80", {"qsize": 80})
-  flush_alert_summary()  # 由 auto_tasks 每 5min 调用
+  flush_alert_summary()  # 由调度器 flush_alert_summary 任务每 5 分钟调用
 """
 
 import os
@@ -183,7 +183,7 @@ class _AlertBot:
     def flush_alert_summary(self) -> int:
         """
         定时汇总：遍历窗口内已过期的计数器，对 count>1 且未被抑制的告警
-        发送合并汇总消息，清空已汇总的计数器。由 auto_tasks 每 5min 调用。
+        发送合并汇总消息，清空已汇总的计数器。由调度器 flush_alert_summary 任务每 5 分钟调用。
         Returns: 本次发送的汇总条数
         """
         now = time.time()
@@ -305,7 +305,7 @@ def send_alert(level: str, title: str, message: str, context: dict = None) -> bo
 
 def flush_alert_summary() -> int:
     """
-    定时汇总告警（由 auto_tasks 每 5min 调用）。
+    定时汇总告警（由调度器 flush_alert_summary 任务每 5 分钟调用）。
     对窗口内 count>1 的告警发送合并汇总消息，清空已汇总计数器。
     Returns: 本次发送的汇总条数
     """

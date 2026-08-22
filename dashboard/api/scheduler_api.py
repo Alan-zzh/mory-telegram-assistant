@@ -101,7 +101,8 @@ def api_scheduler_jobs():
     """获取调度器当前所有任务列表（仅 admin）"""
     try:
         from core.scheduler_monitor import get_job_list
-        from modules.auto_tasks import _scheduler_instance
+        from tasks.task_scheduler import get_scheduler_instance
+        _scheduler_instance = get_scheduler_instance()
         jobs = get_job_list(_scheduler_instance) if _scheduler_instance else []
         source = "memory"
         if not jobs:

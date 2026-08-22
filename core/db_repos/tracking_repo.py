@@ -48,7 +48,7 @@ class TrackingRepo:
         except Exception as e:
             logger.error(f"📌 阅后即焚追踪失败：{e}")
             try:
-                from modules.auto_tasks import report_fault
+                from tasks.support.fault_reporter import report_fault
                 report_fault("阅后即焚追踪失败", f"bot_msg={bot_msg_id} chat={chat_id}: {str(e)[:80]}", "⚠️")
             except Exception as fault_err:
                 self._db._log_db_error("report_fault 调用", fault_err, "error", f"阅后即焚 bot_msg={bot_msg_id}")

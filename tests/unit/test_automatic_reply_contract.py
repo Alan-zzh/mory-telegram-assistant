@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import modules.auto_tasks as legacy
 import modules.group_mgr as group_mgr
 import tasks.interaction.cart_recovery_task as cart_module
 import tasks.interaction.leak_task as leak_module
@@ -102,15 +101,13 @@ def _patch_transactions(monkeypatch):
     monkeypatch.setattr(cart_module, "TaskTransactionManager", _ClaimedTransaction)
     monkeypatch.setattr(reactivate_module, "TaskTransactionManager", _ClaimedTransaction)
     monkeypatch.setattr(leak_module, "TaskTransactionManager", _ClaimedTransaction)
-    monkeypatch.setattr(legacy, "TaskTransactionManager", _ClaimedTransaction)
 
 
-def test_cart_recovery_disabled_blocks_modular_and_legacy(monkeypatch):
+def test_cart_recovery_disabled_blocks_module(monkeypatch):
     _patch_transactions(monkeypatch)
     rm = _RM({"CART_RECOVERY_CONFIG": {"enabled": False}})
 
     CartRecoveryTask(rm).execute(SimpleNamespace())
-    legacy._job_cart_recovery(rm)
 
     assert rm.db.pending_calls == 0
     assert rm.bot.sent == []
@@ -128,16 +125,7 @@ def test_cart_recovery_enabled_sends_once_then_cancels(monkeypatch):
     assert modular.db.cancelled == [101, 202]
     assert modular.db.advanced == []
 
-    legacy_rm = _RM(
-        {"CART_RECOVERY_CONFIG": {"enabled": True, "max_per_round": 10}},
-        db=_DB(pending=[(303, 1)]),
-    )
-    legacy._job_cart_recovery(legacy_rm)
-    assert [chat_id for chat_id, _text, _kw in legacy_rm.bot.sent] == [303]
-    assert legacy_rm.db.cancelled == [303]
-    assert legacy_rm.db.advanced == []
-
-    for _chat_id, text, _kwargs in modular.bot.sent + legacy_rm.bot.sent:
+    for _chat_id, text, _kwargs in modular.bot.sent:
         assert "@moryselect" in text.lower()
         assert "@morychannelbot" not in text.lower()
 
@@ -189,14 +177,12 @@ def test_reactivate_network_failure_is_not_expected_abort(monkeypatch):
         ReactivateTask(rm).execute(SimpleNamespace())
 
 
-def test_reactivate_and_leak_default_off_in_both_paths(monkeypatch):
+def test_reactivate_and_leak_default_off(monkeypatch):
     _patch_transactions(monkeypatch)
     rm = _RM({}, db=_DB(inactive=[(101, "u")]))
 
     ReactivateTask(rm).execute(SimpleNamespace())
     LeakTask(rm).execute(SimpleNamespace())
-    legacy._job_reactivate(rm)
-    legacy._job_leak(rm)
 
     assert rm.db.inactive_calls == 0
     assert rm.bot.sent == []
@@ -304,41 +290,19 @@ def test_persona_adapter_never_instructs_human_impersonation_or_aggressive_flirt
     assert "不声明自己是真人" in rendered
 
 
-def test_scheduled_commercial_broadcast_is_retargeted_to_preview_only():
-    original = {
-        "BROADCAST_TEMPLATE_VARIATION_ENABLED": True,
-        "SCHEDULED_BROADCASTS": [{
-            "id": "sale",
-            "content": "想订阅就去 @MorychannelBot",
-            "button_text": "自助下单",
-            "button_url": "https://t.me/MorychannelBot",
-        }],
-    }
-    safe = legacy._build_reply_contract_broadcast_config(original)
-    item = safe["SCHEDULED_BROADCASTS"][0]
-
-    assert safe["BROADCAST_TEMPLATE_VARIATION_ENABLED"] is False
-    assert item["content"] == "想订阅就去 @moryselect"
-    assert item["button_text"] == "🎞 查看当前预览"
-    assert item["button_url"] == "https://t.me/moryselect"
-    assert original["SCHEDULED_BROADCASTS"][0]["button_text"] == "自助下单"
-
-
-def test_adversarial_ai_output_falls_back_for_both_reactivate_and_cart_paths():
+def test_adversarial_ai_output_falls_back_for_reactivate_and_cart_paths():
     unsafe_reactivate = _AI("你是不是把我忘了？快来私聊我，下单还有最后名额。")
     unsafe_cart = _AI("仅剩最后名额，去 @moryselect 再去 @MorychannelBot 下单，私聊我。")
 
-    for generator in (reactivate_module._generate_reactivate_message, legacy._generate_reactivate_message):
-        text = generator(101, _RM({}, ai=unsafe_reactivate))
-        assert "@" not in text
-        assert "下单" not in text
-        assert "私聊" not in text
+    text = reactivate_module._generate_reactivate_message(101, _RM({}, ai=unsafe_reactivate))
+    assert "@" not in text
+    assert "下单" not in text
+    assert "私聊" not in text
 
-    for generator in (cart_module._generate_cart_recovery_message, legacy._generate_cart_recovery_message):
-        text = generator(101, _RM({}, ai=unsafe_cart))
-        assert text.lower().count("@moryselect") == 1
-        assert "@morychannelbot" not in text.lower()
-        assert "私聊" not in text
+    text = cart_module._generate_cart_recovery_message(101, _RM({}, ai=unsafe_cart))
+    assert text.lower().count("@moryselect") == 1
+    assert "@morychannelbot" not in text.lower()
+    assert "私聊" not in text
 
 
 def test_modular_scheduled_broadcast_sanitizes_virtual_life_and_order_conflicts(monkeypatch):

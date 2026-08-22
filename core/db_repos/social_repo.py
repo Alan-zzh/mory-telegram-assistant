@@ -80,7 +80,7 @@ class SocialRepo:
         except Exception as e:
             logger.error(f"寻宝积分操作失败 uid={uid}: {e}")
             try:
-                from modules.auto_tasks import report_fault
+                from tasks.support.fault_reporter import report_fault
                 report_fault("数据库操作失败", f"寻宝积分操作失败 uid={uid}: {str(e)[:80]}", "⚠️")
             except Exception as fault_err:
                 self._db._log_db_error("report_fault 调用", fault_err, "error", f"寻宝积分 uid={uid}")

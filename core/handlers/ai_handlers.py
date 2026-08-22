@@ -424,7 +424,7 @@ def handle_ai_reply(dctx, analysis: dict = None):
     if resp is None:
         resp = _final_ai_reply_fallback(mode, is_priv=is_priv)
         try:
-            from modules.auto_tasks import report_fault
+            from tasks.support.fault_reporter import report_fault
             report_fault("AI引擎故障", f"mode={mode}，AI重试耗尽，已发送降级兜底", "🚨" if mode != "normal" else "⚠️",
                          f"用户消息: {msg[:80]}")
         except Exception as notify_err:

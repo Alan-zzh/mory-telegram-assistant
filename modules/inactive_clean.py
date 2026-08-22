@@ -245,7 +245,7 @@ def handle_ghost_confirm(bot, call, config, db):
 
 
 def run_auto_inactive_clean(bot, config, db):
-    """定时自动清理不活跃用户（由auto_tasks定期调用）
+    """定时自动清理不活跃用户（由统一调度器定期调用）
 
     读取config["AUTO_KICK_INACTIVE_DAYS"]，>0时自动踢出超过该天数未活跃的用户。
     管理员豁免。

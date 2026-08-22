@@ -14,7 +14,7 @@
 ║    QUALITY_EVAL_ENABLED       - 总开关，默认 False                     ║
 ║                                                                        ║
 ║  依赖：core/ai_engine.py, core/database.py                             ║
-║  被调用：modules/auto_tasks.py → _job_evaluate_conversation_quality()  ║
+║  被调用：统一调度器质量评估任务  ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 

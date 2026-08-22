@@ -43,8 +43,8 @@ _CST = timezone(timedelta(hours=8))
 def _get_scheduler():
     """获取APScheduler实例"""
     try:
-        from modules.auto_tasks import _scheduler_instance
-        return _scheduler_instance
+        from tasks.task_scheduler import get_scheduler_instance
+        return get_scheduler_instance()
     except Exception:
         return None
 

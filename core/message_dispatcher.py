@@ -497,8 +497,8 @@ def master_handler(m, ctx: BotContext):
         logger.error(f"❌ 主分发器异常：{e}\n{traceback.format_exc()}")
         # 全局故障通知：任何未捕获异常都通知管理员
         try:
-            from modules.auto_tasks import _notify_admin_system_failure
-            _notify_admin_system_failure(ctx.resource_manager, "主分发器未捕获异常", f"{e}\n{traceback.format_exc()[:200]}", "🚨")
+            from tasks.support.fault_reporter import report_fault
+            report_fault("主分发器未捕获异常", f"{e}\n{traceback.format_exc()[:200]}", "🚨")
         except Exception as e:
             logger.debug(f"操作异常: {e}")
 def dispatch(m, ctx: BotContext):
@@ -528,8 +528,8 @@ def dispatch(m, ctx: BotContext):
         clear_logging_context()
         logger.error(f"❌ 分发器内部异常：{e}\n{traceback.format_exc()}")
         try:
-            from modules.auto_tasks import _notify_admin_system_failure
-            _notify_admin_system_failure(ctx.resource_manager, "分发器内部异常", f"{e}\n{traceback.format_exc()[:200]}", "🚨")
+            from tasks.support.fault_reporter import report_fault
+            report_fault("分发器内部异常", f"{e}\n{traceback.format_exc()[:200]}", "🚨")
         except Exception as e:
             logger.debug(f"操作异常: {e}")
 def do_dispatch(m, ctx: BotContext):
@@ -1300,9 +1300,9 @@ def _dispatch_p3_6_intent_routing(dctx: DispatchContext) -> bool:
                 and dctx.intent.get("confidence", 0.0) > 0.6
                 and dctx.intent.get("source") in ("rule", "llm")):
             try:
-                from modules.auto_tasks import _notify_admin_system_failure
-                _notify_admin_system_failure(
-                    ctx.resource_manager, "用户投诉预警",
+                from tasks.support.fault_reporter import report_fault
+                report_fault(
+                    "用户投诉预警",
                     f"uid={dctx.uid} name={dctx.uname} chat={dctx.chat_id}\n意图={dctx.intent}\n内容={dctx.text[:200]}",
                     "⚠️"
                 )

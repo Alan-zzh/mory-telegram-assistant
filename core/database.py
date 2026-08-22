@@ -176,7 +176,7 @@ class DB:
             logger.critical(msg)
             # 严重故障上报管理员
             try:
-                from modules.auto_tasks import report_fault
+                from tasks.support.fault_reporter import report_fault
                 report_fault("数据库严重错误", msg, "🚨")
             except Exception as e:
                 logger.debug(f"操作异常: {e}")
@@ -547,7 +547,7 @@ class DB:
                 # [v5.31.2 P0-2 加固] 索引创建失败会导致 claim_task 防重机制失效，不能静默吞掉
                 logger.error(f"🚨 task_log UNIQUE 索引创建失败，防重机制可能失效: {e}")
                 try:
-                    from modules.auto_tasks import report_fault
+                    from tasks.support.fault_reporter import report_fault
                     report_fault("task_log 索引异常", f"UNIQUE 索引创建失败: {e}", "🚨")
                 except Exception:
                     pass  # report_fault 不可用时不上报，但不阻塞启动
