@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.38.68**：修复普通私信/客服/加群等误封，新增根因保真的群内双按钮说明卡与本人安全复检解封。
+当前版本 **v5.38.69**：全仓深度优化——兑换/删档等资金与数据安全加固，41 个孤儿模块与 legacy 任务壳拆除，前端拆分为真实模板文件。
 
 ## 快速开始
 
@@ -115,10 +115,10 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 > 普通用户命令见 `/help`；管理员在私聊触发 `/help` 会额外附带上述清单。
 
 ## 目录结构
-- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（82 个业务 `.py`）。
-- `modules/`：139 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等默认关闭能力）。
+- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（77 个业务 `.py`）。
+- `modules/`：102 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等默认关闭能力）。
 - `dashboard/`：运营后台（`app` + `api`，163 路由，含人工审核风格样本 API）。
-- `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类；`auto_tasks.py` 为 legacy）。
+- `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类并承载 `start_background` 引擎）。
 - `scripts/`：工具脚本（含 `doc_consistency.py` 自检与默认只报告的 `scan_group.py` 全量成员扫描）。
 - `tests/`：单元测试。
 - `docs/`：技术(`technical`)、计划(`plans`)、愿景(`vision`)、归档(`archive`)。
@@ -127,7 +127,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `config/`：systemd 服务文件。
 
 ## 客观指标（2026-08-22 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 139，core 业务 `.py` = 82，`_job_` = 33，DB 表 = 175，Dashboard 路由 = 163，消息分发函数 = 10，model_router 映射 = 10。
+modules 业务 `.py` = 102，core 业务 `.py` = 77，DB 表 = 175，Dashboard 路由 = 163，消息分发函数 = 10，model_router 映射 = 10。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）
