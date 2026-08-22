@@ -29,10 +29,14 @@ def run_ssh(cmd, timeout=60, as_root=False):
 
     full_cmd = cmd
     if as_root:
-        full_cmd = f"echo '{PASS}' | sudo -S -p '' bash -c {cmd!r}"
+        # 密码经 stdin 写入（get_pty），不再拼进命令行，避免远端 ps 可见
+        full_cmd = f"sudo -S -p '' bash -c {cmd!r}"
 
     try:
         stdin, stdout, stderr = client.exec_command(full_cmd, timeout=timeout, get_pty=True)
+        if as_root and PASS:
+            stdin.write(PASS + "\n")
+            stdin.flush()
         out = stdout.read().decode("utf-8", errors="replace")
         err = stderr.read().decode("utf-8", errors="replace")
         exit_code = stdout.channel.recv_exit_status()

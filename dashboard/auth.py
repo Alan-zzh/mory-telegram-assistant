@@ -243,8 +243,11 @@ def init_auth(app):
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 
     # 【TRAE SOLO CN v5.18.3审计修复】ProxyFix：反向代理场景下正确获取客户端真实 IP
-    from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+    # 【v5.38.69 审计加固】默认不再无条件信任 X-Forwarded-For（可被伪造轮换 IP 绕过
+    # 登录锁定与限流）；仅在部署方显式声明前置了可信反代（DASHBOARD_TRUST_PROXY=true）时启用。
+    if os.environ.get('DASHBOARD_TRUST_PROXY', '').lower() == 'true':
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     # 【TRAE SOLO CN v5.18.3审计修复】安全响应头，防御 clickjacking / MIME 嗅探 / XSS
     @app.after_request

@@ -23,6 +23,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH, ssh_connect
 
+
+def _sudo_run(client, cmd: str, timeout: int = 60) -> str:
+    """执行需要 root 的命令：密码经 stdin 送入（get_pty），不出现在远端命令行/进程列表。"""
+    stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout, get_pty=True)
+    stdin.write(VPS_PASS + "\n")
+    stdin.flush()
+    return stdout.read().decode(errors="replace").strip()
+
 # 需要删除的文件（相对 VPS_PATH）
 FILES_TO_DELETE = [
     # 根目录临时文件
@@ -142,23 +150,23 @@ def main():
             # 上传到 /tmp 再 sudo mv
             remote_tmp = "/tmp/mory_logrotate.conf"
             sftp.put(tmp_path, remote_tmp)
-            stdin, stdout, stderr = client.exec_command(
-                f'echo {VPS_PASS} | sudo -S cp {remote_tmp} {logrotate_path} 2>&1; '
-                f'echo {VPS_PASS} | sudo -S chown root:root {logrotate_path} 2>&1; '
-                f'echo {VPS_PASS} | sudo -S chmod 644 {logrotate_path} 2>&1; '
+            out = _sudo_run(
+                client,
+                f'sudo -S cp {remote_tmp} {logrotate_path} 2>&1; '
+                f'sudo -S chown root:root {logrotate_path} 2>&1; '
+                f'sudo -S chmod 644 {logrotate_path} 2>&1; '
                 f'rm -f {remote_tmp}; '
                 f'echo LOGROTATE_DONE'
             )
-            out = stdout.read().decode().strip()
             if "LOGROTATE_DONE" in out:
                 print(f"  ✅ logrotate 配置已写入 {logrotate_path}")
             else:
                 print(f"  ⚠️ logrotate 配置结果：{out}")
             # 测试 logrotate 配置
-            stdin, stdout, stderr = client.exec_command(
-                f'echo {VPS_PASS} | sudo -S logrotate -d {logrotate_path} 2>&1 | tail -5'
+            test_out = _sudo_run(
+                client,
+                f'sudo -S logrotate -d {logrotate_path} 2>&1 | tail -5'
             )
-            test_out = stdout.read().decode().strip()
             if "error" in test_out.lower():
                 print(f"  ⚠️ logrotate 配置测试有警告：{test_out}")
             else:
@@ -168,10 +176,7 @@ def main():
 
         # ── 步骤 5：清理 systemd journal（保留 7 天）──
         print(f"\n[5/6] 清理 systemd journal 旧日志（保留 7 天）...")
-        stdin, stdout, stderr = client.exec_command(
-            f'echo {VPS_PASS} | sudo -S journalctl --vacuum-time=7d 2>&1 | tail -5'
-        )
-        out = stdout.read().decode().strip()
+        out = _sudo_run(client, 'sudo -S journalctl --vacuum-time=7d 2>&1 | tail -5')
         print(f"  {out}")
 
         sftp.close()
@@ -204,8 +209,7 @@ def main():
         # 服务状态最终确认
         print(f"\n  服务状态最终确认：")
         for svc in ['mory-assistant', 'mory-dashboard']:
-            stdin, stdout, stderr = client.exec_command(f'sudo systemctl is-active {svc}')
-            print(f"    {svc}: {stdout.read().decode().strip()}")
+            print(f"    {svc}: {_sudo_run(client, f'sudo -S systemctl is-active {svc}')}")
 
         print("\n" + "=" * 60)
         print(f"  ✅ VPS 清理完成！")
