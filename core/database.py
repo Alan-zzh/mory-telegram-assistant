@@ -2343,6 +2343,7 @@ class DB:
         'create_ad_enforcement_event': 'ad_enforcement',
         'get_ad_enforcement_event': 'ad_enforcement',
         'get_open_ad_root_event': 'ad_enforcement',
+        'claim_ad_group_notice': 'ad_enforcement',
         'get_active_ad_notice': 'ad_enforcement',
         'set_ad_event_enforcement': 'ad_enforcement',
         'set_ad_event_notice': 'ad_enforcement',

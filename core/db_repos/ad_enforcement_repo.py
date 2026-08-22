@@ -80,17 +80,52 @@ class AdEnforcementRepo:
             )
             return self._row_dict(cursor, cursor.fetchone())
 
-    def get_open_ad_root_event(self, user_id: int):
+    def get_open_ad_root_event(self, user_id: int, chat_id: int = 0):
         now = int(time.time())
         with self.lock:
+            sql = """SELECT * FROM ad_enforcement_events
+                     WHERE user_id=? AND event_id=root_event_id AND resolved_at=0
+                           AND expires_at>?"""
+            params = [int(user_id), now]
+            if int(chat_id or 0):
+                sql += " AND chat_id=?"
+                params.append(int(chat_id))
+            sql += " ORDER BY created_at ASC LIMIT 1"
+            cursor = self.conn.execute(sql, tuple(params))
+            return self._row_dict(cursor, cursor.fetchone())
+
+    def claim_ad_group_notice(self, event_id: str, chat_id: int, now: int = 0) -> dict:
+        """原子占用群级说明卡；同一群24小时内只允许一个发送者。"""
+        current = int(now or time.time())
+        with self.lock:
+            self.conn.execute("BEGIN IMMEDIATE")
             cursor = self.conn.execute(
                 """SELECT * FROM ad_enforcement_events
-                   WHERE user_id=? AND event_id=root_event_id AND resolved_at=0
-                         AND expires_at>?
+                   WHERE chat_id=? AND notice_message_id!=0 AND expires_at>?
                    ORDER BY created_at ASC LIMIT 1""",
-                (int(user_id), now),
+                (int(chat_id), current),
             )
-            return self._row_dict(cursor, cursor.fetchone())
+            existing = self._row_dict(cursor, cursor.fetchone())
+            if existing:
+                self.conn.commit()
+                message_id = int(existing.get("notice_message_id") or 0)
+                return {
+                    "status": "existing" if message_id > 0 else "pending",
+                    "notice_message_id": max(message_id, 0),
+                    "event": existing,
+                }
+            cursor = self.conn.execute(
+                """UPDATE ad_enforcement_events SET notice_message_id=-1
+                   WHERE event_id=? AND chat_id=? AND notice_message_id=0 AND expires_at>?""",
+                (str(event_id), int(chat_id), current),
+            )
+            if cursor.rowcount != 1:
+                self.conn.rollback()
+                return {"status": "unavailable", "notice_message_id": 0}
+            self.conn.commit()
+            return {
+                "status": "claimed", "notice_message_id": 0,
+            }
 
     def get_active_ad_notice(self, user_id: int, chat_id: int, root_event_id: str):
         now = int(time.time())

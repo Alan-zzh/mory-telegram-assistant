@@ -108,10 +108,79 @@ def test_p1_reassert_preserves_root_reason_and_deduplicates_notice(tmp_path):
     group_cards = [item for item in bot.sent if item[0] == -1001]
     assert len(group_cards) == 1
     markup = group_cards[0][2]["reply_markup"]
-    assert markup.keyboard[0][0].text == "🔓 已整改，一键复检解封"
+    assert markup.keyboard[0][0].text == "🔓 已整改，本人复检解封"
+    assert markup.keyboard[0][0].callback_data.startswith("ad_group_review:")
     assert markup.keyboard[0][1].url == "https://t.me/Moryfansbot"
     assert first["data"]["notice_message_id"] > 0
     assert second["data"]["notice_message_id"] == first["data"]["notice_message_id"]
+    db.close()
+
+
+def test_multiple_ambiguous_accounts_share_one_group_review_card(tmp_path):
+    from modules.ad_enforcement import enforce_ad_user
+
+    db = _db(tmp_path)
+    bot = _Bot()
+    config = {"AD_SELF_UNBAN_ENABLED": True, "AD_CLEANUP_REACTIONS": False}
+    results = []
+    for uid in (101, 102, 103):
+        results.append(enforce_ad_user(
+            bot, db, config, -1001, uid, "同名疑似账号", "歧义联系方式",
+            current_msg_id=uid, evidence=[{
+                "rule_id": "builtin.contact", "category": "marketing_contact",
+                "field": "message", "strength": "weak",
+            }], evidence_level="ambiguous", notify_admin=False,
+        ))
+
+    group_cards = [item for item in bot.sent if item[0] == -1001]
+    assert len(group_cards) == 1
+    assert "疑似广告限制 · 可自助复检" in group_cards[0][1]
+    assert len({item["data"]["notice_message_id"] for item in results}) == 1
+    assert results[0]["data"]["notice_message_id"] > 0
+    db.close()
+
+
+def test_confirmed_ad_accounts_are_silently_enforced_without_group_card(tmp_path):
+    from modules.ad_enforcement import enforce_ad_user
+
+    db = _db(tmp_path)
+    bot = _Bot()
+    config = {"AD_SELF_UNBAN_ENABLED": True, "AD_CLEANUP_REACTIONS": False}
+    for uid in (201, 202, 203):
+        result = enforce_ad_user(
+            bot, db, config, -1001, uid, "实锤广告号", "灰产广告",
+            current_msg_id=uid, evidence=[{
+                "rule_id": "builtin.gray", "category": "gray_industry",
+                "field": "message", "strength": "strong",
+            }], evidence_level="high", notify_admin=False,
+        )
+        assert result["data"]["muted"] is True
+        assert result["data"]["notice_message_id"] == 0
+
+    assert [item for item in bot.sent if item[0] == -1001] == []
+    db.close()
+
+
+def test_group_review_card_routes_to_clicking_users_own_event(tmp_path, detector):
+    from modules.ad_enforcement import self_review_ad_group_notice
+
+    db = _db(tmp_path)
+    bot = _Bot()
+    config = {"AD_SELF_UNBAN_ENABLED": True}
+    anchor = db.create_ad_enforcement_event(
+        900, -1001, evidence_level="high",
+        evidence=[{"rule_id": "builtin.gray", "category": "gray_industry", "field": "message", "strength": "strong"}],
+        expires_at=9999999999,
+    )
+    db.create_ad_enforcement_event(
+        42, -1001, evidence_level="ambiguous", evidence=[], expires_at=9999999999
+    )
+
+    missing = self_review_ad_group_notice(bot, db, config, anchor["event_id"], 99, detector)
+    assert missing["status"] == "not_found"
+    restored = self_review_ad_group_notice(bot, db, config, anchor["event_id"], 42, detector)
+    assert restored["status"] == "restored"
+    assert restored["data"]["permission_verified"] is True
     db.close()
 
 
@@ -232,6 +301,7 @@ def test_p1_signup_reassert_is_linked_and_never_marks_signup_as_ad(monkeypatch):
 def test_self_review_callback_is_registered_before_blacklist_interceptor():
     source = (Path(__file__).parents[2] / "core/handlers/callback_handlers.py").read_text(encoding="utf-8")
     assert source.index('startswith("ad_self_review:")') < source.index("def _is_blacklisted_callback")
+    assert source.index('startswith("ad_group_review:")') < source.index("def _is_blacklisted_callback")
 
 
 def test_replay_script_can_start_outside_project_root(tmp_path):

@@ -75,6 +75,34 @@ def register_callback_handlers(bot, ctx):
             except Exception:
                 pass
 
+    # 群内只保留一张共享复检卡；按钮按点击者本人和卡片所在群定位处置事件。
+    @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("ad_group_review:"))
+    def on_ad_group_review_callback(call):
+        actor_id = getattr(getattr(call, "from_user", None), "id", 0) or 0
+        try:
+            parts = str(call.data or "").split(":", 1)
+            if len(parts) != 2 or not parts[1]:
+                bot.answer_callback_query(call.id, text="复检参数无效", show_alert=True)
+                return
+            from modules.ad_enforcement import self_review_ad_group_notice
+            result = self_review_ad_group_notice(
+                bot=bot, db=ctx.db, config=ctx.config, notice_event_id=parts[1],
+                actor_id=actor_id, ad_detector=getattr(ctx, "ad_detector", None),
+            )
+            bot.answer_callback_query(
+                call.id, text=str(result.get("message") or "复检完成")[:180], show_alert=True
+            )
+            logger.info(
+                f"广告群共享复检回调: actor={actor_id} status={result.get('status')} "
+                f"ok={result.get('code') == 200}"
+            )
+        except Exception as e:
+            logger.error(f"广告群共享复检回调异常：{e}")
+            try:
+                bot.answer_callback_query(call.id, text="复检异常，请稍后再试", show_alert=True)
+            except Exception:
+                pass
+
     def _is_blacklisted_callback(call) -> bool:
         uid = getattr(getattr(call, "from_user", None), "id", 0) or 0
         if not uid:

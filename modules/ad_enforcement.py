@@ -3,7 +3,6 @@
 广告账号统一处置：不踢人，只永久禁言、删消息、双黑名单。
 """
 
-import html
 import json
 import time
 
@@ -824,6 +823,33 @@ def self_review_ad_event(bot, db, config: dict, event_id: str, actor_id: int,
         "message": "已恢复发言权限；历史被删除的消息无法恢复",
         "data": restored.get("data", {}),
     }
+
+
+def self_review_ad_group_notice(bot, db, config: dict, notice_event_id: str,
+                                actor_id: int, ad_detector=None) -> dict:
+    """共享群卡入口：按点击者本人和卡片所在群定位其根事件。"""
+    try:
+        notice_event = db.get_ad_enforcement_event(str(notice_event_id))
+    except Exception:
+        notice_event = None
+    if not notice_event or int(notice_event.get("expires_at") or 0) <= int(time.time()):
+        return {"code": 404, "status": "expired", "message": "按钮已超过24小时，请联系管理员"}
+    chat_id = int(notice_event.get("chat_id") or 0)
+    try:
+        actor_event = db.get_open_ad_root_event(int(actor_id), chat_id)
+    except Exception:
+        actor_event = None
+    if not actor_event:
+        return {
+            "code": 404, "status": "not_found",
+            "message": "你的账号在本群没有待复检的限制记录",
+        }
+    return self_review_ad_event(
+        bot=bot, db=db, config=config, event_id=str(actor_event.get("event_id") or ""),
+        actor_id=actor_id, ad_detector=ad_detector,
+    )
+
+
 def _derive_event_meta(reason: str, evidence=None, source_type: str = "detection",
                        reason_code: str = "", evidence_level: str = "") -> tuple[str, str]:
     categories = {str(item.get("category", "")) for item in (evidence or []) if isinstance(item, dict)}
@@ -899,12 +925,13 @@ def _create_enforcement_event(db, uid: int, chat_id: int, msg_id: int, reason: s
         return None
 
 
-def _build_self_review_markup(event_id: str):
+def _build_self_review_markup(event_id: str, shared_group: bool = False):
     try:
         from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
         keyboard = InlineKeyboardMarkup()
+        callback_prefix = "ad_group_review" if shared_group else "ad_self_review"
         keyboard.row(
-            InlineKeyboardButton("🔓 已整改，一键复检解封", callback_data=f"ad_self_review:{event_id}"),
+            InlineKeyboardButton("🔓 已整改，本人复检解封", callback_data=f"{callback_prefix}:{event_id}"),
             InlineKeyboardButton("👤 联系管理员", url="https://t.me/Moryfansbot"),
         )
         return keyboard
@@ -916,31 +943,31 @@ def _build_self_review_markup(event_id: str):
 def _send_self_review_notice(bot, db, config: dict, event: dict, uid: int, uname: str) -> int:
     if not (config or {}).get("AD_SELF_UNBAN_ENABLED", False) or not event:
         return 0
+    # 确证广告静默处置；群内自助卡只服务于存在误判可能的低风险/歧义事件。
+    if str(event.get("evidence_level") or "high") not in {"low", "ambiguous"}:
+        return 0
     chat_id = int(event.get("chat_id") or 0)
-    root_id = str(event.get("root_event_id") or event.get("event_id") or "")
     try:
-        existing = db.get_active_ad_notice(uid, chat_id, root_id)
-        if existing:
-            return int(existing.get("notice_message_id") or 0)
+        claim = db.claim_ad_group_notice(str(event.get("event_id") or ""), chat_id)
+        if claim.get("status") == "existing":
+            return int(claim.get("notice_message_id") or 0)
+        if claim.get("status") != "claimed":
+            return 0
     except Exception as e:
-        logger.debug(f"查询处置说明卡去重状态失败: uid={uid} err={e}")
-    try:
-        evidence = json.loads(event.get("evidence_json") or "[]")
-    except Exception:
-        evidence = []
-    categories = _event_categories(evidence)
-    category_text = "、".join(categories) if categories else "历史广告/黑名单记录"
+        logger.warning(f"占用群级处置说明卡失败: uid={uid} chat={chat_id} err={e}")
+        return 0
     text = (
-        f"⚠️ <b>{html.escape(uname or str(uid))} 已被限制发言</b>\n\n"
-        f"触发类别：{html.escape(category_text)}\n"
-        "可能来自本条消息、昵称、用户名、Bio、关联频道或外部反垃圾记录。\n"
-        "请先删除广告话术或联系方式，并整改昵称、用户名、Bio 和关联频道内容，再由本人点击复检。\n\n"
-        "低风险误判且当前资料复检干净会自动恢复；成人/灰产、收益+联系方式、外部黑名单或重复确证广告需管理员处理。"
+        "⚠️ <b>疑似广告限制 · 可自助复检</b>\n\n"
+        "本卡只用于证据存在歧义、可能误判的限制。被限制者请先清理消息、昵称、用户名、Bio "
+        "和关联频道中的广告或联系方式，再由本人点击下方复检。\n\n"
+        "复检干净会自动恢复；仍有风险内容请整改或联系管理员。"
     )
     try:
         sent = bot.send_message(
             chat_id, text, parse_mode="HTML",
-            reply_markup=_build_self_review_markup(str(event.get("event_id") or "")),
+            reply_markup=_build_self_review_markup(
+                str(event.get("event_id") or ""), shared_group=True
+            ),
         )
         message_id = int(getattr(sent, "message_id", 0) or 0)
         if message_id:
@@ -949,6 +976,10 @@ def _send_self_review_notice(bot, db, config: dict, event: dict, uid: int, uname
                 db.track_bot_message(chat_id, message_id)
         return message_id
     except Exception as e:
+        try:
+            db.set_ad_event_notice(str(event.get("event_id") or ""), 0)
+        except Exception:
+            pass
         logger.warning(f"发送广告处置说明卡失败: uid={uid} chat={chat_id} err={e}")
         return 0
 
