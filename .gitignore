@@ -113,6 +113,9 @@ Thumbs.db
 runtime/browser-scan/
 runtime/audit-reports/project-automation/*.json
 
+# task-report 图形化完工报告（本机交付产物，不进入版本库）
+reports/
+
 # ── AI 审查/分析产物（better-harness 等，不提交）────────────────────
 .qoder/
 .better-harness/
