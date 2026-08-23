@@ -109,7 +109,9 @@ def test_all_approved_source_assets_are_preserved_byte_for_byte():
 def test_random_pool_avoids_consecutive_asset_and_duplicate_message():
     db = FakeDB()
     bot = FakeMoryBot()
-    service = PrivatePresetMediaService(db, chooser=lambda items: items[0])
+    service = PrivatePresetMediaService(
+        db, chooser=lambda items: items[0], cooldown_seconds=0, daily_limit=0
+    )
 
     first = service.send_for_request(
         _message(message_id=101), bot, scene="photo_random"
@@ -123,6 +125,34 @@ def test_random_pool_avoids_consecutive_asset_and_duplicate_message():
 
     assert (first, duplicate, second) == ("sent", "duplicate", "sent")
     assert [event[1] for event in bot.events] == [PHOTO_POOL[0], PHOTO_POOL[1]]
+
+
+def test_rate_limit_blocks_rapid_refire_and_daily_overflow():
+    db = FakeDB()
+    bot = FakeMoryBot()
+    service = PrivatePresetMediaService(db, chooser=lambda items: items[0])
+
+    assert service.send_for_request(
+        _message(message_id=111), bot, scene="photo_random"
+    ) == "sent"
+    # 冷却期内换措辞重发（新 message_id）必须被拦截
+    assert service.send_for_request(
+        _message(message_id=112), bot, scene="photo_random"
+    ) == "rate_limited"
+
+    # 关闭冷却后，超过每日上限同样拦截（独立 DB，避免前段计数干扰）
+    open_service = PrivatePresetMediaService(
+        FakeDB(), chooser=lambda items: items[0], cooldown_seconds=0
+    )
+    results = []
+    for mid in range(120, 130):
+        results.append(open_service.send_for_request(
+            _message(message_id=mid), bot, scene="photo_random"
+        ))
+    assert all(r == "sent" for r in results)
+    assert open_service.send_for_request(
+        _message(message_id=999), bot, scene="photo_random"
+    ) == "rate_limited"
 
 
 def test_failed_send_is_fail_closed_without_consuming_random_asset():

@@ -21,7 +21,11 @@
 ══════════════════════════════════════════════════════════════════════════╝
 """
 
+from datetime import datetime, timezone, timedelta
+
 from core.logging_util import get_logger
+
+_CST = timezone(timedelta(hours=8))
 
 logger = get_logger("night_mode")
 
@@ -78,16 +82,27 @@ def send_night_mode_notification(bot, chat_id, config: dict, is_start: bool = Tr
     end_hour = night_config.get("end_hour", 7)
 
     if is_start:
+        # 实现是“非管理员消息拦截删除”，不是真正的 API 禁言；
+        # 文案必须如实描述，避免用户以为自己的发言权限被改了。
         msg = (
             f"🌙 夜间模式已开启！\n\n"
-            f"⏰ 禁言时间：{start_hour}:00 - {end_hour}:00\n"
-            f"🔇 非管理员已禁言，请好好休息～\n"
-            f"💤 管理员不受影响，可以正常发言"
+            f"⏰ 生效时间：{start_hour}:00 - {end_hour}:00\n"
+            f"🔇 该时段内非管理员的消息会被暂时拦下（并非修改账号权限）\n"
+            f"💤 管理员不受影响，请好好休息～"
         )
     else:
+        h = datetime.now(_CST).hour
+        if 5 <= h < 11:
+            greeting = "大家早上好～"
+        elif 11 <= h < 14:
+            greeting = "大家中午好～"
+        elif 14 <= h < 18:
+            greeting = "大家下午好～"
+        else:
+            greeting = "大家可以正常聊天啦～"
         msg = (
             f"☀️ 夜间模式已关闭！\n\n"
-            f" 大家早上好～可以正常聊天了！"
+            f" {greeting}可以正常聊天了！"
         )
 
     try:

@@ -16,7 +16,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 46 个 BaseTask 子类、47 个静态调度项；`start_background` 引擎同文件 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；legacy `modules/auto_tasks.py` 已于 v5.38.69 拆除收敛 |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 歧义联系方式仅作弱信号，需收益/招募/成人/灰产等独立强证据；处置事件保留首次根因，24小时说明卡支持本人限频复检，高风险/未知状态拒绝自动恢复；全量扫描默认只报告 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 137 个业务 `.py`；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
-| 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 商品/订单/销售漏斗/佣金，`SALES_CENTER_CONFIG.enabled` 开关 |
+| 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 仅管理员商品管理（/sales 别名 handle_admin_cmd），无用户侧触发；不在 Bot 内收款，咨询承接统一走单目标漏斗 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
 | 多群托管 | 默认关闭 | `modules/managed_groups.py` | 代运营/套餐管理/功能矩阵，`MANAGED_GROUPS_CONFIG.enabled` |
 | 内容排查增强 | 默认关闭 | `modules/content_audit.py` | 文本/链接/文件/违规日志，`CONTENT_AUDIT_CONFIG.enabled` |
@@ -38,19 +38,19 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.38.70（2026-08-22）· 实锤广告静默处置，仅疑似误判限制按群级聚合共享复检入口
+v5.39.0（2026-08-23）· 全板块对话治理：缓存串台、FAQ 兜底、销售宽词、深夜文案与死代码清理
 
-生产状态：**v5.38.70 已于 2026-08-22 16:39 部署：双服务 active、NRestarts=0、health 200；5 个受影响文件哈希与 main 一致。生产账本 6 张 high 旧卡中 5 张删除成功、1 张已不存在，high 通知占位归零；运行态 high 探针返回 0 发送。**
+生产状态：**本地 v5.39.0 未部署。生产仍为 v5.38.70（2026-08-22 16:39 部署，双服务 active、health 200）。**
 
 ## 最近 3 条大事
-1. 2026-08-22 v5.38.70：实锤广告零播报，仅疑似限制每群24小时一张共享复检卡。
-2. 2026-08-22 v5.38.69：全仓审计施工——兑换原子性、删档收紧、绕锁收敛、孤儿模块下线。
-3. 2026-08-22 v5.38.68：歧义联系方式误封修复，新增双按钮说明卡与本人安全复检。
+1. 2026-08-23 v5.39.0：全板块对话治理——缓存串台、FAQ 兜底、销售宽词、深夜文案与死代码清理。
+2. 2026-08-22 v5.38.70：实锤广告零播报，仅疑似限制每群24小时一张共享复检卡。
+3. 2026-08-22 v5.38.69：全仓审计施工——兑换原子性、删档收紧、绕锁收敛、孤儿模块下线。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=102
-core_py=77
+core_py=76
 db_tables=175
 dashboard_routes=163
 dispatch_funcs=10

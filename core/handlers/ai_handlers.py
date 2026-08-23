@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AI回复处理器 - P7/P8/P9/P10 优先级AI相关处理
+AI回复处理器 - P7/P8/P9 优先级AI相关处理
 
 包含：
 - P7 视奸雷达（价格关键词通知管理员）
@@ -11,10 +11,10 @@ AI回复处理器 - P7/P8/P9/P10 优先级AI相关处理
 - P9.3 天气/城市共情
 - P9.5 黑话/行话自动科普
 - P9.7 用户反馈/找Mory
-- P10 AI回复主逻辑（入口函数）
+- FAQ 匹配（供 ai_reply_handler 调用）
 
-P10内部子函数见 ai_reply_core.py：
-- 连续对话追踪、递进引导、深夜警告、FC工具等
+P10 AI 回复主链唯一入口：core/handlers/ai_reply_handler.py。
+（旧版 P10 入口 handle_ai_reply 与 ai_reply_core.py 已作为死代码移除。）
 """
 
 import random
@@ -24,15 +24,6 @@ from core.helpers import format_user_mention
 
 logger = get_logger("ai_handlers")
 
-
-def _final_ai_reply_fallback(mode: str, is_priv: bool = False) -> str:
-    """处理AI失败时给用户的兜底回复（旧版兼容）。
-
-    [Bug-01 修复] 兜底文案统一走 ai_engine.get_fallback_text()，
-    与 ai_engine._final_fallback_reply / ai_reply_handler._final_ai_reply_fallback 保持一致。
-    """
-    from core.ai_engine import get_fallback_text
-    return get_fallback_text(mode, is_priv=is_priv)
 
 # ═══════════════════════════════════════════════════════════════════════
 #  P8：固定彩蛋 + P8.8 成就检测 + P8.85 猜数字
@@ -320,119 +311,3 @@ def _try_faq_match(db, CONFIG, ai, msg: str, mode: str, analysis: dict) -> tuple
         # FAQ匹配任何异常均静默，绝不阻塞正常AI流程
         logger.debug(f"FAQ匹配异常(静默跳过): {e}")
         return None, 0
-
-
-# ═══════════════════════════════════════════════════════════════════════
-#  P10：AI回复主逻辑（入口函数）【DEPRECATED 旧版，新版见 ai_reply_handler.py】
-# ═══════════════════════════════════════════════════════════════════════
-
-def handle_ai_reply(dctx, analysis: dict = None):
-    """⚠️ DEPRECATED 旧版P10入口，已被 ai_reply_handler._dispatch_p10_ai 替代。
-    保留仅为兼容，新代码请勿调用。
-
-    包含：人格模式选择、Function Calling、连续对话追踪、
-    递进引导、拟人化延迟、私聊分段发送、深夜警告等
-
-    内部子函数见 ai_reply_core.py
-    """
-    from core.handlers.ai_reply_core import (
-        track_conversation, build_convert_hint, build_emotional_hint,
-        build_normal_hint, process_ai_response, generate_late_night_warning,
-        get_function_tools
-    )
-
-    m = dctx.msg
-    ctx = dctx.ctx
-    CONFIG = ctx.config
-    db = ctx.db
-    bot = ctx.bot
-    mory_bot = ctx.mory_bot
-    ai = ctx.ai
-    msg = dctx.text
-    uid = dctx.uid
-    uname = dctx.uname
-    chat_id = dctx.chat_id
-    is_priv = dctx.is_priv
-    is_group = dctx.is_group
-
-    # 获取analysis
-    if analysis is None:
-        analysis = extract_user_profile(dctx)
-
-    mode = analysis["mode"]
-    is_at = f"@{ctx.bot_username}" in msg
-    is_reply = m.reply_to_message and m.reply_to_message.from_user.id == ctx.bot_id
-
-    # 5%概率给普通消息附加运势签
-    fortune_bonus = False
-    if mode == "normal" and random.randint(1, 100) <= 5:
-        fortune_bonus = True
-
-    should_reply = (
-        is_priv
-        or is_at
-        or is_reply
-        or mode != "normal"
-        or random.randint(1, 100) <= CONFIG.get("REPLY_CHANCE", 10)
-    )
-
-    if not should_reply:
-        clear_logging_context()
-        return
-
-    # 生物钟警告（凌晨0-5点）
-    from modules.content import is_late_night
-    if is_late_night() and is_group:
-        late_night_text = generate_late_night_warning(ai, uname, is_group, uid)
-        mory_bot.reply_and_track(m, late_night_text)
-        clear_logging_context()
-        return
-
-    # 连续对话追踪（仅群聊 @/回复 机器人时计数）
-    conv_count = track_conversation(uid, is_group, is_at, is_reply, mode)
-
-    # 拟人化延迟：发送typing状态
-    bot.send_chat_action(chat_id, "typing")
-
-    # Function Calling 触发逻辑
-    use_tools = None
-    if is_group and mode == "normal":
-        use_tools = get_function_tools()
-
-    # 递进引导逻辑
-    stage_hint = ""
-    notify_admin_reason = ""
-
-    if mode == "convert":
-        stage_hint, notify_admin_reason = build_convert_hint(db, uid, conv_count)
-    elif mode in ("treehole", "dream"):
-        stage_hint, notify_admin_reason = build_emotional_hint(conv_count)
-    elif mode == "normal":
-        stage_hint, notify_admin_reason = build_normal_hint(conv_count)
-
-    # FAQ自动回复匹配（AI调用前拦截，节省API费用）
-    faq_resp, faq_id = _try_faq_match(db, CONFIG, ai, msg, mode, analysis)
-    if faq_resp is not None:
-        # FAQ命中，使用FAQ回复（已含AI润色），跳过AI调用
-        resp = faq_resp
-        logger.info(f"📋 FAQ自动回复命中 uid={uid} mode={mode} faq_id={faq_id}")
-    else:
-        # FAQ未命中，走正常AI回复流程
-        seed = random.randint(1, 999999)
-        resp = ai.ask(msg, mode=mode, tools=use_tools, is_priv=is_priv, stage_hint=stage_hint, user_profile=analysis, seed=seed)
-
-    if resp is None:
-        resp = _final_ai_reply_fallback(mode, is_priv=is_priv)
-        try:
-            from tasks.support.fault_reporter import report_fault
-            report_fault("AI引擎故障", f"mode={mode}，AI重试耗尽，已发送降级兜底", "🚨" if mode != "normal" else "⚠️",
-                         f"用户消息: {msg[:80]}")
-        except Exception as notify_err:
-            logger.error(f"故障通知发送失败: {notify_err}")
-
-    if resp:
-        process_ai_response(dctx, resp, mode, conv_count, fortune_bonus, notify_admin_reason, analysis)
-    else:
-        logger.warning(f"⚠️ AI未能生成回复 uid={uid}")
-
-    clear_logging_context()

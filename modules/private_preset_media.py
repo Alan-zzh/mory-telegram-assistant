@@ -11,6 +11,8 @@ import json
 import re
 import secrets
 import threading
+import time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -63,14 +65,24 @@ _MEDIA_FEEDBACK_RE = re.compile(
 
 _APPEND_MEDIA_TOPICS = frozenset({"福利", "内容", "VIP权益", "至臻全享"})
 
+# 触达频控：这是全链路唯一没有冷却的销售触达面，换措辞连发即可无限触发。
+# 冷却 + 每日上限双闸；持久化到 system_state，重启不重置。
+_RATE_COOLDOWN_SECONDS = 600
+_RATE_DAILY_LIMIT = 10
+_CST = timezone(timedelta(hours=8))
+
 
 class PrivatePresetMediaService:
     """同步发送私聊审核照片，并提供持久幂等与随机不连发保护。"""
 
-    def __init__(self, db, *, media_root: Path = MEDIA_ROOT, chooser=None):
+    def __init__(self, db, *, media_root: Path = MEDIA_ROOT, chooser=None,
+                 cooldown_seconds: int = _RATE_COOLDOWN_SECONDS,
+                 daily_limit: int = _RATE_DAILY_LIMIT):
         self.db = db
         self.media_root = Path(media_root)
         self._chooser = chooser or secrets.choice
+        self._cooldown_seconds = max(0, int(cooldown_seconds))
+        self._daily_limit = int(daily_limit)
         self._locks_guard = threading.Lock()
         self._user_locks: dict[int, threading.Lock] = {}
 
@@ -105,18 +117,80 @@ class PrivatePresetMediaService:
 
     @staticmethod
     def caption_for(scene: str) -> str:
+        # 称呼与搭讪链口径统一：温柔但不使用“宝宝”类亲昵称呼。
         if scene == "original_taste":
             return (
                 "原味定制的现有档位和说明在图里～需要哪一项可以去 "
                 "@MorychannelBot 选择；特殊定制把具体需求留言给我。"
             )
         if scene == "self_portrait":
-            return "宝宝是想看本人照片呀，先给你一张～"
-        return "想看照片呀，先给宝宝发一张～更多照片和视频预览在 @moryselect。"
+            return "是想看本人照片呀，先给你一张～"
+        return "想看照片呀，先给你一张～更多照片和视频预览在 @moryselect。"
 
     def _lock_for(self, user_id: int) -> threading.Lock:
         with self._locks_guard:
             return self._user_locks.setdefault(int(user_id), threading.Lock())
+
+    @staticmethod
+    def _rate_ts_key(user_id: int) -> str:
+        return f"private_preset_media:last_sent_ts:{int(user_id)}"
+
+    @staticmethod
+    def _rate_day_key(user_id: int) -> str:
+        return f"private_preset_media:daily_count:{int(user_id)}"
+
+    def _check_rate_limit(self, user_id: int) -> bool:
+        """返回 True 表示放行；冷却中或超每日上限时返回 False。"""
+        try:
+            now = time.time()
+            if self._cooldown_seconds > 0:
+                last_ts = float(self.db.get_system_state(self._rate_ts_key(user_id), 0) or 0)
+                if last_ts > 0 and now - last_ts < self._cooldown_seconds:
+                    logger.info(
+                        "私聊预设媒体冷却中 uid=%s 剩余=%ss",
+                        user_id,
+                        int(self._cooldown_seconds - (now - last_ts)),
+                    )
+                    return False
+            today = datetime.now(_CST).strftime("%Y-%m-%d")
+            raw = self.db.get_system_state(self._rate_day_key(user_id), "")
+            try:
+                decoded = json.loads(str(raw or ""))
+            except (TypeError, ValueError):
+                decoded = {}
+            if (
+                self._daily_limit > 0
+                and isinstance(decoded, dict)
+                and decoded.get("date") == today
+                and int(decoded.get("count") or 0) >= self._daily_limit
+            ):
+                logger.info("私聊预设媒体已达每日上限 uid=%s count=%s", user_id, decoded.get("count"))
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("私聊预设媒体频控检查失败 uid=%s: %s", user_id, exc)
+            return True
+
+    def _record_send_for_rate(self, user_id: int):
+        try:
+            self.db.set_system_state(self._rate_ts_key(user_id), time.time())
+            today = datetime.now(_CST).strftime("%Y-%m-%d")
+            raw = self.db.get_system_state(self._rate_day_key(user_id), "")
+            try:
+                decoded = json.loads(str(raw or ""))
+            except (TypeError, ValueError):
+                decoded = {}
+            count = (
+                int(decoded.get("count") or 0)
+                if isinstance(decoded, dict) and decoded.get("date") == today
+                else 0
+            )
+            self.db.set_system_state(
+                self._rate_day_key(user_id),
+                json.dumps({"date": today, "count": count + 1}, separators=(",", ":")),
+            )
+        except Exception as exc:
+            logger.debug("私聊预设媒体频控计数失败 uid=%s: %s", user_id, exc)
 
     @staticmethod
     def _message_id_from_state(raw_state: Any) -> str:
@@ -178,6 +252,10 @@ class PrivatePresetMediaService:
                 )
                 return "duplicate"
 
+            # 频控放在幂等重放之后：同一条消息的重试不算新触达。
+            if not self._check_rate_limit(user_id):
+                return "rate_limited"
+
             asset_name = self._choose_asset(scene, user_id)
             asset_path = self.media_root / asset_name
             if not asset_path.is_file() or asset_path.stat().st_size <= 0:
@@ -227,6 +305,7 @@ class PrivatePresetMediaService:
                     user_id,
                     exc,
                 )
+            self._record_send_for_rate(user_id)
             logger.info(
                 "私聊预设媒体发送成功 scene=%s uid=%s asset=%s bytes=%s token=0",
                 scene,

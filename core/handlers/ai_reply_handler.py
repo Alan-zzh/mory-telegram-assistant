@@ -110,8 +110,24 @@ _QUESTION_MARKERS = (
 
 _UNRESOLVED_REPLY_MARKERS = (
     "不确定", "不清楚", "不知道", "无法确认", "不能确认", "说不准",
+)
+
+# “转人工”类标记：只有出现在短回复或结尾 30 字内才视为未解决信号；
+# 正文顺带一句“也可以联系 mory”不应把整条正常回答劫持成交接班。
+_HUMAN_DEFERRAL_MARKERS = (
     "问mory", "问 mory", "联系mory", "联系 mory",
 )
+
+
+def _mentions_human_deferral(text: str) -> bool:
+    """判断回复是否在收尾处把问题推给人工（而非正文中途提及）。"""
+    lowered = str(text or "").lower()
+    if not lowered:
+        return False
+    if len(lowered) <= 40:
+        return any(marker in lowered for marker in _HUMAN_DEFERRAL_MARKERS)
+    tail = lowered[-30:]
+    return any(marker in tail for marker in _HUMAN_DEFERRAL_MARKERS)
 
 # [方案3] 调侃/玩笑性质的问题特征：短消息 + 疑问词 + 特定场景
 _JOKE_OR_TEASING_PATTERNS = (
@@ -123,6 +139,7 @@ _JOKE_OR_TEASING_PATTERNS = (
 _BUSINESS_QUESTION_MARKERS = (
     "价格", "多少钱", "费用", "收费", "会员", "订阅", "开通", "购买",
     "内容", "预览", "套餐", "定制", "权限", "频道",
+    "视频", "照片", "退款", "兑换", "下单", "支付", "发货", "售后",
 )
 
 
@@ -145,22 +162,23 @@ def _is_serious_question(msg: str) -> bool:
     
     msg_lower = msg.lower().strip()
     msg_len = len(msg_lower)
-    
-    # 1. 短消息 + 调侃性疑问词 → 调侃/玩笑
+
+    # 1. 包含具体业务词汇 → 真实问题（先于调侃判定：
+    #    “可不可以定制视频”是真实业务问，不能因为短+“可不可以”被判成玩笑）
+    for marker in _BUSINESS_QUESTION_MARKERS:
+        if marker in msg_lower:
+            return True
+
+    # 2. 短消息 + 调侃性疑问词 → 调侃/玩笑
     if msg_len < 15:
         for pattern in _JOKE_OR_TEASING_PATTERNS:
             if pattern in msg_lower:
                 return False
-    
-    # 2. 包含具体业务词汇 → 真实问题
-    for marker in _BUSINESS_QUESTION_MARKERS:
-        if marker in msg_lower:
-            return True
-    
+
     # 3. 消息较长（>= 20 字）→ 可能是真实问题
     if msg_len >= 20:
         return True
-    
+
     # 4. 其他情况：默认视为真实问题（避免误判）
     return True
 
@@ -330,7 +348,9 @@ def _should_offer_handoff(
         return False
     
     lowered = text.lower()
-    return any(marker in lowered for marker in _UNRESOLVED_REPLY_MARKERS)
+    if any(marker in lowered for marker in _UNRESOLVED_REPLY_MARKERS):
+        return True
+    return _mentions_human_deferral(text)
 
 
 def _build_unresolved_handoff_markup():
@@ -521,11 +541,37 @@ def _align_conversion_reply(
     *,
     conversion_target: str,
     conversion_reason: str,
+    entry_via: str = "text",
 ):
-    """保留模型的人设承接，只校正本轮唯一入口。"""
+    """保留模型的人设承接，只校正本轮唯一入口。
+
+    entry_via="text"：入口以正文 @ 句呈现（默认，兼容既有调用）。
+    entry_via="button"：入口由消息下方按钮承载，正文剥离所有入口句，
+    避免“文中一遍 @ + 按钮一遍”的双呈现推销观感（P7.5 搭讪使用）。
+    """
     if not isinstance(response, str):
         return response
     text = response.strip()
+    if entry_via == "button":
+        if conversion_target == "subscribe":
+            text = _strip_entry_sentence(
+                text,
+                ("morychannelbot", "moryselect", "自助下单", "自助订阅",
+                 "下单入口", "订阅入口", "预览群"),
+            )
+            if not text:
+                text = "想继续的话，入口就在下面，选合适的就行。"
+            return text
+        if conversion_target == "preview":
+            text = _strip_entry_sentence(
+                text,
+                ("morychannelbot", "moryselect", "自助下单", "自助订阅",
+                 "下单入口", "订阅入口", "预览群"),
+            )
+            if not text:
+                text = "想先了解的话，点下面的按钮看预览，没写清楚的再问我呀。"
+            return text
+        return text
     if not text:
         if conversion_target == "subscribe":
             return (
@@ -699,9 +745,9 @@ def _direct_access_reply(
             history,
         )
     return (
-        "预览：https://t.me/moryselect"
+        "想先了解的话，预览在这里：https://t.me/moryselect"
         if is_priv
-        else "预览群 @moryselect"
+        else "想先了解的话可以去预览群 @moryselect 看看，没写清楚的再问我呀。"
     )
 
 
@@ -759,8 +805,19 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     _cancel_cart_recovery_for_opt_out(db, uid, conversion_reason)
 
     fortune_bonus = False
+    # 运势签只挂在闲聊类回复后面；正经业务/咨询/情绪回答拼运势签会串台。
     if mode == "normal" and random.randint(1, 100) <= 5:
-        fortune_bonus = True
+        from core.ai_engine import AIEngine as _AE
+        _msg_lower = (msg or "").lower()
+        _strong_intents = {"flirt", "business", "help", "complaint"}
+        _hit_strong = any(
+            kw in _msg_lower
+            for _intent, _cfg in _AE._INTENT_KEYWORDS.items()
+            if _intent in _strong_intents
+            for kw in _cfg.get("keywords", [])
+        )
+        if not _hit_strong:
+            fortune_bonus = True
 
     # [v5.14.0] 显式列举非 normal 模式，确保 convert/tarot/treehole/dream/feedback/contact_mory
     # 模式都强制回复（不受 REPLY_CHANCE 限制），避免未来新增 mode 被误伤
@@ -1107,7 +1164,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
             # [TRAE SOLO CN v5.24.0 阶段3-A] 记录 assistant 回复到记忆缓冲
             try:
                 from core.memory_summarizer import record_message
-                record_message(uid, "assistant", resp)
+                record_message(uid, "assistant", resp, chat_id=chat_id)
             except Exception as e:
                 # 【v5.31.2 修复】记忆缓冲写入失败会导致长上下文记忆退化，必须 warning
                 logger.warning(f"记录 assistant 回复到记忆缓冲失败 uid={uid}: {e}")

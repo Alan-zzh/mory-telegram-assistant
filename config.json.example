@@ -435,7 +435,8 @@
   "LUCKY_WHEEL_CONFIG": {
     "enabled": false,
     "cost": 30,
-    "free_spins": 1
+    "free_spins": 1,
+    "paid_daily_limit": 20
   },
   "REDPACKET_CONFIG": {
     "enabled": false,
@@ -448,6 +449,7 @@
   "CHECKIN_CONFIG": {
     "enabled": false,
     "base_points": 5,
+    "send_card": false,
     "streak_bonus": {
       "3": 5,
       "7": 15

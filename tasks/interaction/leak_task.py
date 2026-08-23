@@ -35,7 +35,8 @@ class LeakTask(BaseTask):
             "job_id": "leak",
             "trigger": "cron",
             "day_of_week": "wed",
-            "hour": 0,
+            # 深夜 00:05 发互动话题时机欠妥，移到晚间活跃时段
+            "hour": 20,
             "minute": 5,
             "params": {},
             "options": {

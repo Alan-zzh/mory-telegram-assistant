@@ -237,7 +237,7 @@ def test_private_mystic_intent_does_not_hijack_general_discussion():
 
 def test_mystic_schedule_replaces_news_and_legacy_targeted_tarot_is_off():
     from tasks.broadcast.mystic_broadcast_task import MysticBroadcastTask
-    from tasks.broadcast.tarot_task import TarotTask
+    import tasks.broadcast as broadcast_pkg
 
     rm = SimpleNamespace(config=_config())
     schedule = MysticBroadcastTask(rm).schedule()
@@ -247,7 +247,8 @@ def test_mystic_schedule_replaces_news_and_legacy_targeted_tarot_is_off():
         "mystic_evening",
     ]
     assert all("news" not in item["job_id"] for item in schedule)
-    assert TarotTask(rm).schedule() == []
+    # 旧版定向塔罗搭讪（tarot_flirt）已整体移除，不再注册任何调度
+    assert not hasattr(broadcast_pkg, "TarotTask")
 
 
 def test_disabled_mystic_task_does_not_claim_or_send(monkeypatch):

@@ -16,7 +16,7 @@ from core.handlers.ai_reply_handler import (
     _dispatch_p10_ai,
 )
 from modules.content import handle_easter_eggs
-from modules.sales_center import handle_price_request
+from modules import sales_center
 
 
 class _Bot:
@@ -126,21 +126,24 @@ def test_p8_explicit_purchase_routes_to_subscribe_only():
     assert "@moryselect" not in reply.lower()
 
 
-def test_optional_sales_center_uses_same_single_target_contract():
-    config = {"SALES_CENTER_CONFIG": {"enabled": True}}
+def test_optional_sales_center_exposes_no_user_triggers_and_admin_entry_works():
+    """销售中心治理后：无用户侧触发处理，/sales 管理入口别名可用。"""
+    # 用户侧死代码已移除，不再有独立触发词抢答主链
+    assert not hasattr(sales_center, "handle_price_request")
+    assert not hasattr(sales_center, "handle_my_orders")
+    assert not hasattr(sales_center, "handle_callback")
 
-    preview_bot = _MoryBot()
-    assert handle_price_request(preview_bot, _message("价格表"), config, _Db()) is True
-    preview_reply = preview_bot.replies[0][0]
-    assert "@moryselect" in preview_reply
-    assert "@MorychannelBot" not in preview_reply
-    assert "¥" not in preview_reply
+    # command_handlers 按 handle_admin_cmd 导入，别名必须存在且指向同一实现
+    assert sales_center.handle_admin_cmd is sales_center.handle_admin_product_cmd
 
-    purchase_bot = _MoryBot()
-    assert handle_price_request(purchase_bot, _message("我要下单"), config, _Db()) is True
-    purchase_reply = purchase_bot.replies[0][0]
-    assert "@MorychannelBot" in purchase_reply
-    assert "@moryselect" not in purchase_reply.lower()
+    # 默认关闭时管理命令直接拒绝
+    class _M:
+        from_user = SimpleNamespace(id=1)
+        chat = SimpleNamespace(id=-100)
+
+    assert sales_center.handle_admin_cmd(
+        None, _M(), {"SALES_CENTER_CONFIG": {"enabled": False}}, _Db(), ["列表"]
+    ) is False
 
 
 def test_explicit_opt_out_cancels_pending_cart_recovery_with_failure_isolation():

@@ -2,7 +2,7 @@
 
 # Mory小助理 项目规则
 
-> 规则版本 v5.38.31（2026-08-13）| 本文件只保存长期决策与红线；技术步骤指向 `docs/technical/`，运行态结论必须重新取证。
+> 规则版本 v5.39.0（2026-08-23）| 本文件只保存长期决策与红线；技术步骤指向 `docs/technical/`，运行态结论必须重新取证。
 
 ---
 
@@ -16,7 +16,7 @@
 6. **按风险验证**：文档、配置、代码、数据库和部署分别使用 `docs/technical/runbook-ship-gate.md` 的对应门禁；相关测试先行，高风险或待部署代码再跑全仓 unit，不为纯文档改动浪费全仓测试。
 7. **诚实表达**：事实、推断、估算、未验证项分开写；没有真实 A/B 或业务回执时，不把“预计节省”“可能改善”写成已实现收益。
 8. **新功能默认关闭**：用 `config.get('KEY', False)`，测试通过后手动开启。
-9. **改配置三处同步**：`config.json.example` + 代码 `.get()` 默认值 + Dashboard 白名单，改后必跑 `python scripts/check_config_sync.py`（断言 example ↔ 白名单差集；代码默认值靠人工核对）。注释中文、变量英文；报错写入 `logs/`，不向用户甩 stack trace。
+9. **改配置三处同步**：`config.json.example` + 代码 `.get()` 默认值 + Dashboard 白名单，改后必跑 `python scripts/check_config_sync.py`（断言 example ↔ 白名单差集；代码默认值靠人工核对）。**新增调优键优先挂现有 `*_CONFIG` 组内**（如 `LUCKY_WHEEL_CONFIG.paid_daily_limit`），不新增顶层键，避免白名单与 example 双向扩散。注释中文、变量英文；报错写入 `logs/`，不向用户甩 stack trace。
 
 ---
 
@@ -62,6 +62,7 @@
 ### 验证门禁（部署前必过）
 - **改动必查集**（具体命令见 `docs/technical/runbook-ship-gate.md`）：目标测试；待部署/高风险代码再跑全仓 unit；新增 Repo 方法跑 `verify_db_methods.py`；文档跑 `doc_consistency.py`；配置跑 `check_config_sync.py`。
 - 涉及数据库：改 schema 必须同步 Alembic migration，部署后验证表结构。
+- **行为收紧类改动前置取证**：凡收紧匹配/兜底/门禁（如 FAQ 匹配、关键词表、缓存键）且依赖生产库现状时，部署前必须对生产库只读统计受影响条目并预估行为变化面，禁止只凭本地库推断。
 - **部署前置门禁**：`git status --porcelain` 干净（脏工作树禁止部署）；`version.py` == `VERSION.md` 首行 == 本次期望版本（bump 与代码改动同 commit）；增量清单必须含 `version.py` 与本次非 `.py` 资源。一键检查：`python scripts/check_deploy_ready.py`。
 - 单元测试命令：`python -m pytest tests/unit/ -q`；本地用 `.venv`（Python 3.12，与 CI 一致）。
 
@@ -78,9 +79,11 @@
 - CTA 状态互斥：普通聊天/拒绝/取消/概念咨询为 `none`；了解内容与权益先 `preview`（`@moryselect`）；明确购买/套餐/看过预览/定制才 `subscribe`（`@MorychannelBot`）。近 6 条已给入口不重复，用户明确再索要才重发。
 - 私聊正文可点击但不挂销售按钮；群聊每轮至多一个与正文一致的目标。禁止双入口、无关购物后继续推进或按固定轮数机械销售。
 - 敏感话题只使用管理员确认的合规承接，不评判、不教唆；风格进化仅允许人工审核后的 `approved + enabled + safe` 样本，自动蒸馏默认关闭。
+- **预设问答族豁免**（2026-08-23 老板特批）：`docs/technical/persona-qna-edit.md` 母版及生产库已审核的确定性问答（含人设化称呼、暧昧话术、销售引导、背景设定）为老板手笔内容，**不受上述合同与人设红线约束**；其新增/修改以老板确认为唯一门槛。AI 主链（P10 及其兜底）仍必须遵守本节全部红线——豁免仅覆盖确定性命中路径，审计时两类表面分开评判。
+- **后置门禁只降级不换义**：任何对 AI 回复的后置过滤/兜底（敌意降级、去舞台化、handoff、深夜警告）不得用宽匹配整条替换正常回答；改动必须附带"正常话术不被误杀"的反例测试，且不得中断消息分发主链。
 
 ### 数据库铁律
-- 新增表定义必须 `CREATE TABLE IF NOT EXISTS`；schema 变化同步 Alembic migration、幂等升级与回滚验证，普通 CRUD 不得夹带隐式建表。
+- 新增表定义必须 `CREATE TABLE IF NOT EXISTS` 且唯一落点在 `core/database.py`；schema 变化同步 Alembic migration、幂等升级与回滚验证，普通 CRUD 与业务模块内不得夹带隐式建表/改表（含 `ALTER TABLE` 兜底；存量兼容 shim 须登记为技术债并给迁移计划）。
 - **Repo 方法注册铁律**：新增任何 `core/db_repos/*.py` 的 public 方法，必须同步 `core/database.py` 的 `_REPO_METHOD_MAP` 和 `_REPO_ATTR_MAP`，否则启动直接失败；部署前跑 `python scripts/verify_db_methods.py`，输出"✅ DB 方法注册验证通过"才可上线。
 - 代码未部署 = 修改未生效。
 
@@ -102,7 +105,7 @@
 - 架构真相（媒体 Bot 在 `/opt/moryfansbot`，非本仓库）：`docs/technical/architecture-truth.md`。
 
 ### 广告治理（红线，详见 `docs/technical/ad-detection.md`）
-- 不踢人：永久禁言 + 删除消息 + `global_blacklist` + 历史清理；统一入口 `modules/ad_enforcement.py:enforce_ad_user()`。
+- 不踢人：永久禁言 + 删除消息 + `global_blacklist` + 历史清理；统一入口 `modules/ad_enforcement.py:enforce_ad_user()`。**边界澄清（2026-08-23）**："不踢人"限定广告治理链路；防 raid（`anti_raid.py`）、人机验证失败、联邦封禁等既有独立机制不受此条约束。
 - 回复、人设、预览、转化和文案优化不得直接或间接授权删除消息/禁言/写黑名单；治理动作必须经过独立的逐条证据门禁，行为追踪本身不是广告证据。
 - 确认误封时统一恢复 Telegram 发言权限，并清理 `blacklist`、`global_blacklist`、`mute_records`、`ad_suspicious_users`；恢复后重新查询四项持久态；已删消息无法恢复须明说，不得假报。
 

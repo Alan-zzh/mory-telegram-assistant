@@ -161,7 +161,10 @@ class SemanticCache:
     """
     
     # 这些模式的输出要求每次都不同，永远不缓存
-    NO_CACHE_MODES = {"hook", "nudge", "convert", "convert_soft"}
+    # treehole/dream 属于情感陪伴，同一句话命中同一份安慰会显得机械串台；
+    # memory_summary 是内部摘要调用，不得挤占业务缓存。
+    NO_CACHE_MODES = {"hook", "nudge", "convert", "convert_soft",
+                      "treehole", "dream", "memory_summary"}
     
     def __init__(self, ttl: int = 3600, max_entries: int = 200):
         self.ttl = ttl            # 缓存有效期（秒），默认1小时
@@ -378,10 +381,10 @@ class OptimizerManager:
         
         # 三个核心模块
         self.circuit = CircuitBreaker(threshold=3, cooldown=300)
-        self.cache = SemanticCache(ttl=86400, max_entries=200)
+        self.cache = SemanticCache(ttl=3600, max_entries=200)
         self.limiter = TokenBucket(capacity=10, refill_rate=2.0)
         
-        logger.info("⚡ 优化引擎初始化完成：熔断器 + 语义缓存(TTL=24h,200条) + 令牌桶(10桶/2每秒)")
+        logger.info("⚡ 优化引擎初始化完成：熔断器 + 语义缓存(TTL=1h,200条) + 令牌桶(10桶/2每秒)")
     
     def get_full_report(self) -> dict:
         """生成完整诊断报告（管理员指令用）"""

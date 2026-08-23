@@ -46,15 +46,17 @@ class TestProfileLearner(unittest.TestCase):
         self.assertIn("treehole", interests)
 
     def test_is_vip_user_by_level(self):
-        """等级 >= 5 视为 VIP。"""
-        self.assertTrue(is_vip_user("", 5))
-        self.assertTrue(is_vip_user("", 10))
+        """v5.39 治理：聊天轮次等级不再单独判 VIP（聊得多≠付过费）。"""
+        self.assertFalse(is_vip_user("", 5))
+        self.assertFalse(is_vip_user("", 10))
         self.assertFalse(is_vip_user("", 3))
 
     def test_is_vip_user_by_keyword(self):
         """关键词触发 VIP。"""
         self.assertTrue(is_vip_user("我想包年订阅", 0))
-        self.assertTrue(is_vip_user("999 至臻全享", 0))
+        self.assertTrue(is_vip_user("至臻全享", 0))
+        # “999/大客户”这类裸词不再判 VIP
+        self.assertFalse(is_vip_user("999", 0))
         self.assertFalse(is_vip_user("随便看看", 0))
 
     def test_is_high_value_user(self):

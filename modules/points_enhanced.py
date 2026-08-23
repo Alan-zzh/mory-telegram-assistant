@@ -25,18 +25,27 @@ logger = get_logger("points_enhanced")
 # 北京时间
 _CST = timezone(timedelta(hours=8))
 
-# 积分来源中文映射
+# 积分来源中文映射（缺项会在积分记录里直出英文 key）
 SOURCE_MAP = {
     "speech": "发言",
     "checkin": "签到",
     "invite": "邀请",
     "tip": "打赏",
     "exchange": "兑换",
-    "blindbox": "盲盒",
-    "wheel": "转盘",
+    "blindbox": "盲盒中奖",
+    "blindbox_cost": "盲盒",
+    "wheel": "转盘中奖",
+    "wheel_cost": "转盘",
+    "wheel_refund": "转盘退费",
     "transfer": "转账",
+    "transfer_refund": "转账退回",
     "quest": "任务",
+    "quest_bonus": "全勤任务奖励",
     "achievement": "成就",
+    "checkin_makeup": "补签",
+    "checkin_makeup_bonus": "补签补发奖励",
+    "coupon": "优惠券",
+    "redpacket": "红包",
     "system": "系统",
 }
 
@@ -126,6 +135,7 @@ def handle_transfer(bot, m, config, db, args=None):
 
     # 解析目标用户和金额
     target_uid = None
+    target_name = "用户"
     amount = None
 
     # 方式1：回复某人的消息 + "转账 金额"
@@ -231,6 +241,16 @@ def handle_transfer(bot, m, config, db, args=None):
         f"💰 金额：{amount}积分\n"
         f"💎 余额：{db.get_user_points(uid)}积分"
     )
+
+    # 私聊通知收款方（与 tip 行为一致；失败静默）
+    try:
+        bot.send_message(
+            target_uid,
+            f"💰 收到来自 {uname} 的转账 {amount} 积分，已到账～",
+        )
+    except Exception as e:
+        logger.debug(f"转账收款方通知失败 uid={target_uid}: {e}")
+
     # 检查接收方升级通知
     check_level_up(bot, m.chat.id, target_uid, target_name, _lv_result, config)
 
@@ -308,11 +328,11 @@ def handle_level_info(bot, m, config, db):
         level_titles = config.get("LEVEL_TITLES", {})
         title = level_titles.get(str(level), "未知")
 
-        # 计算下一等级所需积分
+        # 计算下一等级所需积分（与当前等级同一阈值真相源：配置覆盖版 _thresholds）
         max_level = len(_thresholds)
         if level < max_level:
             next_level = level + 1
-            next_threshold = LEVEL_THRESHOLDS.get(next_level, 0)
+            next_threshold = _thresholds[next_level - 1]
             need = next_threshold - points
             next_title = level_titles.get(str(next_level), "未知")
             progress = f"距离下一级（Lv{next_level} {next_title}）还需 {need} 积分"

@@ -42,8 +42,7 @@ def is_afk(db, uid):
 def handle_set_afk(bot, m, config, db, reason=None):
     """设置AFK状态"""
     uid = m.from_user.id
-    username = m.from_user.first_name
-    text = m.text or m.caption or ""
+    username = m.from_user.first_name or f\用户{m.from_user.id}\n    text = m.text or m.caption or ""
     if reason is None:
         # 去掉命令部分，提取原因
         parts = text.split(None, 1)
@@ -67,8 +66,7 @@ def handle_set_afk(bot, m, config, db, reason=None):
 def check_afk_on_message(bot, m, config, db):
     """检查AFK用户发送消息时自动解除AFK"""
     uid = m.from_user.id
-    username = m.from_user.first_name
-
+    username = m.from_user.first_name or f\用户{m.from_user.id}\n
     afk, reason, ts = is_afk(db, uid)
     if not afk:
         return
@@ -95,8 +93,7 @@ def check_afk_mention(bot, m, config, db, mentioned_uid):
     # 获取被提及用户的名称
     try:
         chat_member = bot.get_chat_member(m.chat.id, mentioned_uid)
-        username = chat_member.user.first_name
-    except Exception:
+        username = chat_member.user.first_name or f\用户{chat_member.user.id}\n    except Exception:
         username = str(mentioned_uid)
 
     duration = _format_duration(ts)

@@ -83,8 +83,16 @@ _STRONG_SUBSCRIBE_READY_MARKERS = (
     "怎麼下單", "如何下單", "下單入口", "下單連結",
     "怎麼訂閱", "如何訂閱", "在哪訂閱", "我要訂閱", "想訂閱", "訂閱入口", "訂閱連結",
     "怎麼開通", "如何開通", "我要開通", "開通入口", "開通連結",
-    "怎么解锁",
-    "我要解锁", "解锁吧", "充值", "续费",
+)
+
+# “充值/续费/解锁”这类动词同样适用于话费、游戏、视频网站等日常场景，
+# 不能作为裸强信号直判订阅；与通用购买动词一样必须配合业务对象或上下文。
+_CONTEXT_GATED_SUBSCRIBE_ACTION_MARKERS = (
+    "怎么解锁", "如何解锁", "在哪解锁",
+    "我要解锁", "想解锁", "解锁吧",
+    "怎么充值", "如何充值", "在哪充值", "我要充值", "想充值", "充值入口",
+    "怎么续费", "如何续费", "在哪续费", "我要续费", "想续费", "续费入口",
+    "充值", "续费", "解锁",
 )
 
 # 这些动作短语可用于任何日常商品，必须通过正向业务门禁才允许进入订阅。
@@ -119,10 +127,17 @@ _PREVIEW_SEEN_MARKERS = (
 )
 
 _PREVIEW_REQUEST_MARKERS = (
-    "预览", "试看", "样片", "照片", "自拍", "视频", "图集", "写真",
-    "什么内容", "有什么内容", "能看什么", "有多少", "先看看", "想看看", "想看",
+    "预览", "试看", "样片", "图集", "写真",
+    # “照片/自拍/视频/想看”这类裸词会把“有没有好看的视频推荐”“我想看
+    # 电影”等日常消息拖进销售漏斗，还可能旁路持久化退订；只保留组合词。
+    "看照片", "发照片", "来点照片", "照片看看", "看看照片", "有照片吗",
+    "发自拍", "看自拍", "自拍看看", "有自拍吗",
+    "看视频", "发视频", "视频看看", "看看视频", "有视频吗",
+    "视频预览", "预览视频", "试看视频",
+    "什么内容", "有什么内容", "能看什么", "里面有什么", "群里有什么",
+    "有多少视频", "多少个视频", "有多少内容",
     "靠谱吗", "不放心", "怕被骗", "多少钱", "价格", "贵不贵", "太贵",
-    "套餐", "档位", "权益", "区别", "群里有什么",
+    "套餐", "档位", "权益", "区别",
 )
 
 _PREVIEW_POSITIVE_MARKERS = (
@@ -307,7 +322,10 @@ def _is_explicit_generic_purchase_action(
 
     不能维护“咖啡/鞋/课程”等无穷黑名单：未知日常商品默认不是本业务购买。
     """
-    matches_generic = any(marker in compact for marker in _GENERIC_PURCHASE_ACTION_MARKERS)
+    matches_generic = (
+        any(marker in compact for marker in _GENERIC_PURCHASE_ACTION_MARKERS)
+        or any(marker in compact for marker in _CONTEXT_GATED_SUBSCRIBE_ACTION_MARKERS)
+    )
     if not matches_generic:
         return False
     if any(marker in compact for marker in _BUSINESS_OBJECT_MARKERS):
@@ -358,7 +376,10 @@ def resolve_conversion_target(
         for previous in prior_user_texts
     ) or _recent_assistant_has_entry(recent, "@moryselect", "预览群")
     has_business_context = recent_custom_context or recent_preview_context
-    generic_purchase_action = any(marker in compact for marker in _GENERIC_PURCHASE_ACTION_MARKERS)
+    generic_purchase_action = (
+        any(marker in compact for marker in _GENERIC_PURCHASE_ACTION_MARKERS)
+        or any(marker in compact for marker in _CONTEXT_GATED_SUBSCRIBE_ACTION_MARKERS)
+    )
     explicit_subscribe = (
         any(marker in compact for marker in _STRONG_SUBSCRIBE_READY_MARKERS)
         or _is_explicit_generic_purchase_action(compact, has_business_context=has_business_context)

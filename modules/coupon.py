@@ -29,30 +29,8 @@ def _generate_code(length: int = 8) -> str:
     return "".join(random.choices(chars, k=length))
 
 
-def _ensure_coupon_table(db):
-    """确保 coupon_claims 表存在（兼容旧数据库）"""
-    try:
-        c = db.conn.cursor()
-        c.execute("SELECT 1 FROM coupon_claims LIMIT 0")
-    except Exception:
-        c = db.conn.cursor()
-        c.execute("""CREATE TABLE IF NOT EXISTS coupon_claims (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT NOT NULL,
-            type TEXT NOT NULL DEFAULT 'points',
-            value INTEGER NOT NULL DEFAULT 0,
-            days INTEGER NOT NULL DEFAULT 0,
-            expires_at INTEGER NOT NULL DEFAULT 0,
-            claimed_by INTEGER DEFAULT 0,
-            claimed_at INTEGER DEFAULT 0,
-            used_at INTEGER DEFAULT 0,
-            created_at INTEGER NOT NULL,
-            UNIQUE(code)
-        )""")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_coupon_code ON coupon_claims(code)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_coupon_claimed_by ON coupon_claims(claimed_by)")
-        db.conn.commit()
-        logger.info("coupon_claims 表已自动创建")
+# coupon_claims 表结构唯一由 core/database.py 启动时幂等创建；
+# 模块内不再隐式建表（AGENTS.md 数据库铁律：普通 CRUD 不得夹带 DDL）。
 
 
 def handle_generate_coupon(bot, m, config: dict, db, args: str):
@@ -89,8 +67,6 @@ def handle_generate_coupon(bot, m, config: dict, db, args: str):
     if admin_uid not in admin_ids:
         bot.send_message(chat_id, "⛔ 只有管理员才能生成优惠券")
         return
-
-    _ensure_coupon_table(db)
 
     # 解析参数
     parts = args.strip().split()
@@ -195,8 +171,6 @@ def handle_claim_coupon(bot, m, config: dict, db, code: str):
     chat_id = m.chat.id
     uid = m.from_user.id
 
-    _ensure_coupon_table(db)
-
     code = code.strip().upper()
     if not code:
         bot.send_message(chat_id, "❌ 请输入优惠券码\n用法：领取优惠券 AB3K9M2X")
@@ -230,29 +204,22 @@ def handle_claim_coupon(bot, m, config: dict, db, code: str):
             bot.send_message(chat_id, "❌ 该优惠券已过期")
             return
 
-        # 领取优惠券
+        # 领取优惠券：带守卫的条件更新，防止并发双领
         c.execute(
-            "UPDATE coupon_claims SET claimed_by=?, claimed_at=? WHERE code=?",
+            "UPDATE coupon_claims SET claimed_by=?, claimed_at=? WHERE code=? AND claimed_by=0",
             (uid, now, code),
         )
+        if c.rowcount == 0:
+            bot.send_message(chat_id, "❌ 该优惠券刚刚已被他人领取")
+            return
 
         # 如果是积分类型，直接加积分
+        total_points = 0
         if coupon_type == "points":
-            c.execute("INSERT OR IGNORE INTO user_levels VALUES (?,1,0,?,?)", (uid, now, now))
-            c.execute("UPDATE user_levels SET points=points+?, last_active=? WHERE uid=?", (coupon_value, now, uid))
-            c.execute("SELECT points FROM user_levels WHERE uid=?", (uid,))
-            total_row = c.fetchone()
-            total_points = total_row[0] if total_row else 0
-
-            # 更新等级
-            level = 1
-            if total_points >= 500:
-                level = 4
-            elif total_points >= 100:
-                level = 3
-            elif total_points >= 20:
-                level = 2
-            c.execute("UPDATE user_levels SET level=? WHERE uid=?", (level, uid))
+            # 统一走 add_points：自动按十级制重算等级并写 points_log 审计，
+            # 禁止手写阈值直接 UPDATE user_levels（旧版会把高等级用户降级）。
+            db.add_points(uid, int(coupon_value or 0), source="coupon")
+            total_points = db.get_user_points(uid) or 0
 
         db.conn.commit()
 
@@ -314,8 +281,6 @@ def handle_redeem_coupon(bot, m, config: dict, db, code: str):
     if admin_uid not in admin_ids:
         bot.send_message(chat_id, "⛔ 只有管理员才能核销优惠券")
         return
-
-    _ensure_coupon_table(db)
 
     code = code.strip().upper()
     if not code:

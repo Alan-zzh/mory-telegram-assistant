@@ -110,15 +110,16 @@ def handle_blind_box(bot, m, config, db):
         if insufficient_reply:
             bot.reply_to(m, insufficient_reply)
             return
-            # 记录积分日志
-            try:
-                db.conn.execute(
-                    "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
-                    (uid, -cost, db.get_user_points(uid), "blindbox", int(time.time()))
-                )
-            except Exception as e:
-                logger.debug(f"操作异常: {e}")
+
+        # 记录扣费流水（旧版写在 return 之后从未执行，导致盲盒扣费无审计）
+        try:
+            db.conn.execute(
+                "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+                (uid, -cost, db.get_user_points(uid), "blindbox_cost", int(time.time()))
+            )
             db.conn.commit()
+        except Exception as e:
+            logger.warning(f"盲盒扣费流水记录失败 uid={uid}: {e}")
 
         # 抽取奖品
         prize_name, prize_value = _select_prize(db)

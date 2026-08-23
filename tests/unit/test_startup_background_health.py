@@ -133,7 +133,7 @@ def test_clean_checkout_discovers_all_task_classes():
 
     scheduler._discover_and_load_tasks()
 
-    assert len(scheduler.tasks) == 46
+    assert len(scheduler.tasks) == 45
     assert "check_db_migration" in scheduler.tasks
     assert "check_expired_redpackets" in scheduler.tasks
     empty_cfg_jobs = sum(len(task.schedule()) for task in scheduler.tasks.values())

@@ -34,7 +34,6 @@ from core.logging_util import get_logger
 from core.keyword_manager import (
     _DEFAULT_TAROT_CARDS,
     _DEFAULT_FORTUNE_TEXTS,
-    _DEFAULT_BADGES,
 )
 
 _CST = timezone(timedelta(hours=8))
@@ -80,19 +79,21 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
             f"✨ 扫完了。你和Mory契合度99.9%。没救了。💫")
         return True
 
-    # 大冒险
-    if "大冒险" in msg:
+    # 大冒险：仅精确“大冒险”才走 Mory 彩蛋；“真心话大冒险”让位给
+    # games.py 的完整题库（旧版子串匹配把游戏命令永久劫持成同 4 句彩蛋）。
+    if msg.strip() == "大冒险":
         dares = [
             f"🎲 说一句你最想对Mory说的话。",
-            f"🎲 老实交代，手机里存了几张Mory照片？",
-            f"🎲 梦到过Mory吗？描述一下。",
-            f"🎲 三个词，形容Mory。",
+            f"🎲 用三个词形容Mory。",
+            f"🎲 讲讲你最近觉得最有趣的一件事。",
+            f"🎲 夸一夸群里上一个发言的人。",
         ]
         mory_bot.reply_and_track(m, random.choice(dares))
         return True
 
-    # Mory密码彩蛋
-    if f"{bot_name}密码" in msg or "密码" == msg.strip():
+    # Mory密码彩蛋：只认“{bot_name}密码”精确触发；
+    # 裸“密码”会把问 WiFi 密码/群密码的用户也撩一遍。
+    if msg.strip() == f"{bot_name}密码":
         mory_bot.reply_and_track(m, f"🤫 被你发现了。💋 今天心情还行。")
         return True
 
@@ -147,20 +148,21 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
         db.log_conversion_event(uid, "interested")
         return True
 
-    # 我的等级查询
+    # 我的等级查询：与 points_enhanced 十级制同一真相源，
+    # 不再维护第二套 20/100/500 四级阈值。
     if msg.strip() in ("我的等级", "/level"):
-        # 【修复】直接查用户积分，不再依赖排行榜前100名限制
-        level_names = {1: "新人🌱", 2: "活跃⭐", 3: "VIP💎", 4: "至尊👑"}
+        from modules.points_enhanced import LEVEL_THRESHOLDS
         pts = db.get_user_points(uid)
         if pts is not None:
             level = 1
-            if pts >= 500: level = 4
-            elif pts >= 100: level = 3
-            elif pts >= 20: level = 2
+            for lv, threshold in sorted(LEVEL_THRESHOLDS.items()):
+                if pts >= threshold:
+                    level = lv
+            titles = (config or {}).get("LEVEL_TITLES", {}) or {}
+            title = titles.get(str(level)) or f"Lv{level}"
             mory_bot.reply_and_track(m,
-                f"🎖 你的当前等级：{level_names.get(level, '新人')}\n"
-                f"积分：{pts} 分\n\n"
-                f"发言+1分 | 购买+10分 | 邀请+5分")
+                f"🎖 你的当前等级：Lv{level} {title}\n"
+                f"积分：{pts} 分")
         else:
             mory_bot.reply_and_track(m, "🌱 新人，多说话攒积分。")
         return True
@@ -276,7 +278,7 @@ def _handle_user_photo_vision(bot, m, config: dict, img_bytes: bytes, ai):
         return
     
     # AI识图prompt
-    prompt = f"""你是Mory，嘴硬心软，有点傲娇。
+    prompt = f"""你是Mory小助理，温情底色，带一点俏皮。
 
 用户「{uname}」在群里发了一张照片，评价这张照片，可以调侃、吐槽、偶尔夸一句，不要撒娇卖萌。
 
@@ -285,7 +287,7 @@ def _handle_user_photo_vision(bot, m, config: dict, img_bytes: bytes, ai):
 2. 根据照片内容具体评价（不要泛泛而谈）
 3. 可以调侃、吐槽、偶尔夸一句
 4. 结尾要有emoji
-5. 绝对不要提"AI"、"识别"、"分析"等字眼
+5. 被直接问身份时如实说明是 Mory 小助理，不主动提也不隐瞒
 6. 不要重复相同的开头
 
 【图片】：用户发的照片"""
@@ -319,86 +321,6 @@ def is_late_night() -> bool:
     cst = timezone(timedelta(hours=8))
     h = datetime.now(cst).hour
     return 0 <= h < 5
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 【v4.3.0新增】活跃勋章系统
-# ═══════════════════════════════════════════════════════════════════════════
-
-# 勋章定义
-# 【重构】默认值已迁移到 core/keyword_manager.py + data/badges.json
-BADGES = _DEFAULT_BADGES
-
-
-def check_and_award_badges(uid: int, db, msg_count_today: int = 0) -> list:
-    """
-    【v4.3.0新增】检查并授予用户勋章
-    
-    Args:
-        uid: 用户ID
-        db: 数据库管理器
-        msg_count_today: 今日消息数（可选）
-    
-    Returns:
-        新获得的勋章列表（用于播报）
-    """
-    new_badges = []
-    now = datetime.now(_CST)
-    hour = now.hour
-    
-    # 早起鸟：8点前发消息
-    if hour < 8:
-        if db.earn_badge(uid, "early_bird"):
-            new_badges.append("early_bird")
-    
-    # 夜猫子：23点后发消息
-    if hour >= 23:
-        if db.earn_badge(uid, "night_owl"):
-            new_badges.append("night_owl")
-    
-    # 话痨：单日消息超过50条
-    if msg_count_today > 50:
-        if db.earn_badge(uid, "chatty_cathy"):
-            new_badges.append("chatty_cathy")
-    
-    # 社牛：群消息超过100条
-    if msg_count_today > 100:
-        if db.earn_badge(uid, "social_butterfly"):
-            new_badges.append("social_butterfly")
-    
-    return new_badges
-
-
-def format_badges_display(badges: list) -> str:
-    """格式化勋章展示"""
-    if not badges:
-        return ""
-    
-    lines = ["🏅 你的勋章墙："]
-    for badge_id, earned_at in badges:
-        badge = BADGES.get(badge_id, {})
-        emoji = badge.get("emoji", "🏅")
-        name = badge.get("name", badge_id)
-        lines.append(f"  {emoji} {name}")
-    
-    return "\n".join(lines)
-
-
-def get_badge_summary_text(db, uid: int) -> str:
-    """获取用户勋章汇总（用于/我的等级等命令）"""
-    badges = db.get_user_badges(uid)
-    
-    if not badges:
-        return "🏅 你还没有获得任何勋章，继续活跃吧！"
-    
-    lines = ["🏅 你的勋章墙："]
-    for badge_id, earned_at in badges[:5]:  # 最多显示5个
-        badge = BADGES.get(badge_id, {})
-        emoji = badge.get("emoji", "🏅")
-        name = badge.get("name", badge_id)
-        lines.append(f"  {emoji} {name}")
-    
-    if len(badges) > 5:
-        lines.append(f"\n...还有 {len(badges) - 5} 个勋章，发送「我的勋章」查看全部")
-    
-    return "\n".join(lines)
+# 勋章系统说明：check_and_award_badges / format_badges_display /
+# get_badge_summary_text 及 data/badges.json 为全仓零调用方的死功能，
+# 已于 v5.39.0 治理中整体移除；如需恢复以 achievement.py 为唯一成就体系。

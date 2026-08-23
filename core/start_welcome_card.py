@@ -50,6 +50,13 @@ _BUTTON_LABEL_PAIRS = (
 )
 
 
+_WELCOME_BRIDGES = (
+    "\n\n下方两个入口随时可用：想先了解就点免费预览，确认要办理时再用自助订阅。",
+    "\n\n下面的按钮是两个常用入口：预览用来先看内容，订阅入口留给需要自助办理的时候。",
+    "\n\n需要内容参考就点「预览」；已经了解清楚、想直接办的，用另一个入口自助完成即可。",
+)
+
+
 @dataclass(frozen=True)
 class StartWelcomeCard:
     """已渲染的欢迎卡及可测试元数据。"""
@@ -79,10 +86,13 @@ def normalize_display_name(value: object) -> str:
 
 
 def build_start_welcome_caption(display_name: object, *, rng=None) -> str:
-    """从等义业务接待文案池中随机选择一条，绝不生成陪聊式问题。"""
+    """从等义业务接待文案池中随机选择一条，并衔接下方双入口按钮。"""
     chooser = rng or random.SystemRandom()
     name = normalize_display_name(display_name)
-    return chooser.choice(_WELCOME_COPY).format(name=name)
+    body = chooser.choice(_WELCOME_COPY).format(name=name)
+    # 正文是纯事务口吻，与按钮原本零衔接；追加一句中性桥接句，
+    # 让“免费预览/自助订阅”两个按钮有上下文，不再像两个系统拼接。
+    return body + chooser.choice(_WELCOME_BRIDGES)
 
 
 def build_start_welcome_markup(config: Optional[dict] = None, *, rng=None):

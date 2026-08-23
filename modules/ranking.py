@@ -62,7 +62,7 @@ def _format_ranking(db, title: str, rows: list, value_formatter=None) -> str:
     return "\n".join(lines)
 
 
-def _ranking_points(db, limit: int = 10) -> list:
+def _ranking_points(db, limit: int = 10, chat_id: int = 0) -> list:
     """积分排行：从 user_levels 表读取"""
     try:
         c = db.conn.cursor()
@@ -78,7 +78,7 @@ def _ranking_points(db, limit: int = 10) -> list:
         return []
 
 
-def _ranking_checkin(db, limit: int = 10) -> list:
+def _ranking_checkin(db, limit: int = 10, chat_id: int = 0) -> list:
     """签到排行：从 checkin_records 表读取连续签到天数"""
     try:
         c = db.conn.cursor()
@@ -126,7 +126,7 @@ def _ranking_active(db, limit: int = 10, chat_id: int = 0) -> list:
         return []
 
 
-def _ranking_consume(db, limit: int = 10) -> list:
+def _ranking_consume(db, limit: int = 10, chat_id: int = 0) -> list:
     """消费排行：从 exchange_records 表读取兑换积分总额"""
     try:
         c = db.conn.cursor()
@@ -143,7 +143,7 @@ def _ranking_consume(db, limit: int = 10) -> list:
         return []
 
 
-def _ranking_invite(db, limit: int = 10) -> list:
+def _ranking_invite(db, limit: int = 10, chat_id: int = 0) -> list:
     """邀请排行：从 invite_records 表读取邀请人数"""
     try:
         c = db.conn.cursor()

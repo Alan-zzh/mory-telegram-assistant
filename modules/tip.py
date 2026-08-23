@@ -63,15 +63,17 @@ def handle_tip(bot, m, config, db, extra=""):
     if insufficient_reply:
         bot.reply_to(m, insufficient_reply)
         return
-        # 记录积分日志
-        try:
-            db.conn.execute(
-                "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
-                (tipper.id, -amount, db.get_user_points(tipper.id), "tip", int(time.time()))
-            )
-        except Exception as e:
-            logger.debug(f"操作异常: {e}")
+
+    # 记录打赏方扣费流水（旧版写在 return 之后从未执行，
+    # 导致“慷慨解囊”等依据 tip 流水的成就永不可解锁）
+    try:
+        db.conn.execute(
+            "INSERT INTO points_log (uid, change_amount, balance_after, source, ts) VALUES (?,?,?,?,?)",
+            (tipper.id, -amount, db.get_user_points(tipper.id), "tip", int(time.time()))
+        )
         db.conn.commit()
+    except Exception as e:
+        logger.warning(f"打赏扣费流水记录失败 uid={tipper.id}: {e}")
 
     # 执行打赏：增加接收者（add_points 内部自带锁与日志）
     _lv_result = db.add_points(recipient.id, amount, source="tip")

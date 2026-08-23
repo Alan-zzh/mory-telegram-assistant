@@ -33,7 +33,8 @@ def handle_weather_query(bot, m, config, db, city: str):
     """
     api_key = config.get("WEATHER_API_KEY", "")
     if not api_key:
-        bot.reply_to(m, "❌ 天气功能未配置API Key，请联系管理员在config中设置 WEATHER_API_KEY")
+        # 用户侧不暴露内部配置键名
+        bot.reply_to(m, "❌ 天气功能暂未开放，请联系管理员配置")
         return
 
     if not city.strip():
@@ -70,7 +71,7 @@ def handle_weather_query(bot, m, config, db, city: str):
         text = f"🌤 {loc_name}天气\n"
         text += f"━━━━━━━━━━━━━\n"
         text += f"🌡 温度：{now['temp']}°C\n"
-        text += f"🤗 体感：{now['feelsLike']}°C\n"
+        text += f"🌡 体感：{now['feelsLike']}°C\n"
         text += f"☁️ 天气：{now['text']}\n"
         text += f"💧 湿度：{now['humidity']}%\n"
         text += f"🌬 风向：{now['windDir']} {now['windScale']}级\n"

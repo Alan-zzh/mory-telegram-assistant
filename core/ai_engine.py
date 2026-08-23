@@ -405,25 +405,6 @@ class AIEngine:
             "不知道就坦白不确定，不脑补细节",
             "回复像即时聊天，不写旁白或心理活动",
         ],
-        "topic_hooks": [
-            "对了，你有没有遇到过那种…",
-            "说到这个我突然想起…",
-            "等一下，让我想想怎么跟你说…",
-            "你知道吗，我之前…",
-            "诶，我突然想到一个事…",
-            "你猜怎么着…",
-            "我跟你讲，这个真的绝了…",
-            "不是我说，这个事儿吧…",
-        ],
-        "endings": [
-            "…算了，你大概不会懂",
-            "…哎呀我说多了",
-            "…嗯，就那样吧",
-            "…你不会告诉别人吧？",
-            "…别笑我啊",
-            "…你懂的～",
-            "…嗯，没什么",
-        ],
         # 兼容旧配置字段，但不再注入肢体语言；人设只通过措辞和节奏表现。
         "body_language": [],
     }
@@ -540,12 +521,14 @@ class AIEngine:
     # ── [v5.19.0] 情绪桶触发规则（context → bucket）── [TRAE SOLO CN]
     _DEFAULT_EMOTION_TRIGGERS = {
         "soft": [   # 撒娇：私聊 + 熟人 + 深夜优先
-            {"is_priv": True, "intimacy_min": 2, "hour_in": [22, 23, 0, 1, 2, 3]},
+            # weight 必须 > cold 的底分 1.0，否则与 cold 平局时按 dict 序
+            # 永远选不中（历史上 soft 桶因此从未生效）。
+            {"is_priv": True, "intimacy_min": 2, "hour_in": [22, 23, 0, 1, 2, 3], "weight": 1.5},
         ],
         "savage": [  # 俏皮：调戏关键词 / 身份追问 / 重复确认
             {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝",
-                          "亲爱", "撩", "约", "陪我", "你是AI", "机器人",
-                          "是不是AI", "智能", "GPT", "骗人"], "weight": 2.0},
+                          "亲爱", "撩", "约吗", "陪我", "你是AI", "机器人",
+                          "是不是AI", "GPT", "骗人"], "weight": 2.0},
             {"message_max_len": 4, "weight": 0.5},  # 对方消息 ≤4 字疑似敷衍
         ],
         # cold 是默认兜底，无需触发器
@@ -581,21 +564,23 @@ class AIEngine:
 
     # ── 意图分类关键词映射（轻量规则引擎，不用额外模型）── [TRAE SOLO CN]
     _INTENT_KEYWORDS: dict = {
-        "flirt": {"keywords": ["想你", "喜欢", "爱你", "亲亲", "抱抱", "老婆", "宝贝", "亲爱", "好看", "漂亮", "美", "可爱", "心动", "撩", "约会", "一起", "陪", "撒娇"], "weight": 1.5},
+        # 注意：全部是子串匹配，禁止收录“美/一起/陪”这类单字或高频裸词，
+        # 否则“美国/完美”“一起加油”“陪家人”都会被误判成 flirt。
+        "flirt": {"keywords": ["想你", "喜欢你", "爱你", "亲亲", "抱抱", "老婆", "宝贝", "亲爱", "好看", "漂亮", "真美", "好美", "可爱", "心动", "撩我", "约会", "陪我聊", "撒娇"], "weight": 1.5},
         "business": {"keywords": ["多少钱", "价格", "会员", "VIP", "订阅", "付费", "开通", "购买", "下单", "支付", "怎么买", "收费", "至臻", "定制", "定做", "专属定制"], "weight": 2.0},
         "help": {"keywords": ["帮我", "怎么办", "求助", "不会", "教我", "怎么", "如何", "能不能", "可以吗", "请问"], "weight": 1.0},
-        "complaint": {"keywords": ["垃圾", "骗子", "骗", "差", "退款", "投诉", "举报", "垃圾", "恶心", "不满", "太差"], "weight": 1.5},
-        "bored": {"keywords": ["无聊", "嗯嗯", "哈哈", "哦", "好吧", "算了", "没事", "随便", "都行", "嗯"], "weight": 0.8},
+        "complaint": {"keywords": ["垃圾", "骗子", "骗人", "差评", "退款", "投诉", "举报", "恶心", "不满", "太差"], "weight": 1.5},
+        "bored": {"keywords": ["无聊", "嗯嗯", "哈哈", "好吧", "算了", "没事", "随便", "都行"], "weight": 0.8},
         "chat": {"keywords": [], "weight": 1.0},  # 默认兜底
     }
 
-    # ── 亲密度等级定义（5级递进）── [TRAE SOLO CN]
+    # ── 亲密度等级定义（5级递进；v1 合同下只用于熟悉度提示，措辞保持中性）── [TRAE SOLO CN]
     _INTIMACY_LEVELS = {
         "stranger": {"min_score": 0, "label": "陌生人", "style": "礼貌+好奇+适度距离感", "flirt_level": 0},
-        "acquaintance": {"min_score": 20, "label": "路人", "style": "俏皮+偶尔甜头+保持神秘", "flirt_level": 1},
-        "familiar": {"min_score": 50, "label": "熟人", "style": "自然+偶尔撒娇+偶尔吃醋", "flirt_level": 2},
-        "intimate": {"min_score": 80, "label": "暧昧", "style": "黏人+挑逗+专属感+欲擒故纵", "flirt_level": 3},
-        "close": {"min_score": 120, "label": "亲密", "style": "深度互动+主动撩+说悄悄话+偶尔脆弱", "flirt_level": 4},
+        "acquaintance": {"min_score": 20, "label": "眼熟", "style": "自然+稍微放松", "flirt_level": 1},
+        "familiar": {"min_score": 50, "label": "熟人", "style": "自然+更耐心", "flirt_level": 2},
+        "intimate": {"min_score": 80, "label": "老朋友", "style": "放松+更多共同话题", "flirt_level": 3},
+        "close": {"min_score": 120, "label": "常聊的人", "style": "深度互动+更了解彼此偏好", "flirt_level": 4},
     }
 
     # ── 交互语境库（只调整聊天节奏，不模拟现实画面）──
@@ -603,72 +588,31 @@ class AIEngine:
         "dawn_chat": {
             "trigger": {"hours": [5, 6, 7], "is_priv": True},
             "prompt": "【语境：清晨私聊】语气放轻、回复简短，先正常回应对方；不推断对方没睡，也不虚构自己刚醒或正在做什么。",
-            "flirt_boost": 1,
         },
         "lunch_break": {
             "trigger": {"hours": [12, 13], "is_priv": None},
             "prompt": "【语境：中午闲聊】语气轻松随意，围绕对方的话回应；不要主动编造吃饭、犯困或偷懒。",
-            "flirt_boost": 0,
         },
         "afternoon_tea": {
             "trigger": {"hours": [15, 16], "is_priv": None},
             "prompt": "【语境：下午闲聊】可以活泼一点、自然接梗，但不要虚构下午茶或个人行程。",
-            "flirt_boost": 0,
         },
         "evening_wind": {
             "trigger": {"hours": [18, 19], "is_priv": None},
             "prompt": "【语境：傍晚闲聊】语气稍微温柔一点，不主动虚构天气、景色或今天发生的小事。",
-            "flirt_boost": 1,
         },
         "late_night": {
             "trigger": {"hours": [22, 23], "is_priv": True},
             "prompt": "【语境：夜间私聊】可以更耐心、更走心，但不替对方判断状态，也不声称自己失眠或正在陪伴。",
-            "flirt_boost": 2,
         },
         "midnight_confession": {
             "trigger": {"hours": [0, 1, 2, 3], "is_priv": True},
             "prompt": "【语境：深夜倾诉】先接住对方的真实内容，表达可以柔和克制；不要编造自己的脆弱、秘密或内心戏。",
-            "flirt_boost": 3,
         },
         "alone_moment": {
             "trigger": {"hours": None, "is_priv": True},
             "prompt": "【语境：一对一私聊】可以比群聊更亲近，仍然只回应已知内容；不虚构独处画面、私密经历或现实动作。",
-            "flirt_boost": 2,
         },
-    }
-
-    # ── 挑逗话术库（按亲密度等级分层）── [TRAE SOLO CN]
-    _FLIRT_TEMPLATES = {
-        0: [],  # 陌生人：不挑逗
-        1: [  # 路人：微甜头
-            "你挺有趣的～",
-            "嗯？你这个人有点意思",
-            "跟你聊天还挺开心的",
-            "你继续说，我在听",
-        ],
-        2: [  # 熟人：偶尔撒娇
-            "你怎么才来找我～",
-            "我等你好久了知道吗",
-            "哼，你肯定在跟别人聊",
-            "你今天怎么这么会说话",
-            "别走嘛，再聊一会儿",
-        ],
-        3: [  # 暧昧：欲擒故纵
-            "你刚才那句话…我可记住了",
-            "有个秘密想告诉你…还是下次吧",
-            "你是不是喜欢我？承认吧～",
-            "别装了，你这点心思挺明显的",
-            "我刚才想说什么来着…算了你猜",
-            "你这么会撩，我有点招架不住",
-        ],
-        4: [  # 亲密：主动撩拨
-            "你不在的时候我都在想你…才怪，是真的",
-            "今晚…你能不能别走",
-            "我偷偷跟你说个事…算了，先不说",
-            "你知不知道你这样我会忍不住的",
-            "我好像…有点离不开你了",
-            "你什么时候来找我…我等你",
-        ],
     }
 
     # ── 去AI化词汇替换表 ── [TRAE SOLO CN]
@@ -692,26 +636,6 @@ class AIEngine:
         "非常感谢": "谢啦",
         "如果您": "你要是",
         "希望能够": "希望能",
-    }
-
-    # ── 转化引导话术（自然植入，不硬推）── [TRAE SOLO CN]
-    # 【TRAE SOLO CN v5.18.3审计修复】去掉"至臻"产品名，改为模糊暗示，符合 SYSTEM_PROMPT 红线
-    _CONVERSION_HOOKS = {
-        "tease": [  # 挑逗式引导
-            "我还有更好看的…不过只给特别的人看～",
-            "你想看更多？那你得让我心动才行",
-            "我偷偷藏了点东西在更私密的地方…你不想看看吗",
-        ],
-        "exclusive": [  # 专属感引导
-            "这个我只跟你说哦…更私密的地方有惊喜",
-            "你对我这么好，我偷偷告诉你个秘密…有个地方更适合我们",
-            "我觉得你跟别人不一样…有些东西是我给特别的人准备的",
-        ],
-        "curiosity": [  # 好奇心引导
-            "你不想知道我藏了什么吗～",
-            "有人看了跟我说…脸红了",
-            "我最近发了点东西…你敢看吗",
-        ],
     }
 
     def __init__(self, config: dict):
@@ -798,6 +722,7 @@ class AIEngine:
             "hook": "llm_light", "nudge": "llm_light", "convert_soft": "llm_light",
             "leak": "llm_light", "fortune": "llm_light",
             "wakeup": "llm_light", "reactivate": "llm_light", "convert_hook": "llm_light",
+            "memory_summary": "llm_light",
             "normal": "llm_standard", "tarot": "llm_standard", "treehole": "llm_standard",
             "dream": "llm_standard", "rules": "llm_standard", "convert": "llm_standard",
             "cart_recovery": "llm_standard", "tarot_interpret": "llm_standard",
@@ -1707,7 +1632,7 @@ class AIEngine:
         return (current, info.get("label", ""), info.get("style", ""), info.get("flirt_level", 0))
 
     def _get_intimacy_prompt(self, user_profile: dict | None, seed: int = 0) -> str:
-        """根据亲密度等级生成追加prompt"""
+        """根据亲密度等级生成追加prompt（只调节耐心和措辞，不注入挑逗话术）"""
         score = self._calc_intimacy_score(user_profile)
         level_name, label, style, flirt_level = self._get_intimacy_level(score)
         if self._uses_reply_contract_v1():
@@ -1715,18 +1640,7 @@ class AIEngine:
                 f"\n【熟悉度：{label}】熟悉度只影响耐心和措辞："
                 "群聊保持短而克制；私聊可以稍微亲近，但不主动暧昧、不使用占有或依赖式表达。"
             )
-        rng = random.Random(seed + 3333 if seed else int(time.time()))
-
-        parts = [f"\n【亲密度：{label}（{score}分）】与对方互动风格：{style}"]
-
-        # 挑逗话术：亲密度>=2时，20%概率追加一条挑逗话术
-        flirt_templates = self.config.get("FLIRT_TEMPLATES", {}) or self._FLIRT_TEMPLATES
-        if flirt_level >= 2 and rng.random() < 0.2:
-            flirt_pool = flirt_templates.get(flirt_level, [])
-            if flirt_pool:
-                parts.append(f"此刻可以自然说出：{rng.choice(flirt_pool)}")
-
-        return "\n".join(parts)
+        return f"\n【亲密度：{label}（{score}分）】与对方互动风格：{style}"
 
     def _get_rhythm_hint(self, message: str, message_len: int = 0) -> str:
         """对话节奏感知：根据消息特征给出节奏提示"""
@@ -1779,10 +1693,6 @@ class AIEngine:
         rng = random.Random(seed + 5555 if seed else int(time.time()))
         chosen = rng.choice(matched)
         return f"\n{chosen.get('prompt', '')}"
-
-    def _get_conversion_hook(self, intent: str, flirt_level: int, seed: int = 0) -> str:
-        """成交由 handler 的唯一目标决定，不能由亲密度或随机钩子越级触发。"""
-        return ""
 
     def _get_anti_ai_hint(self) -> str:
         """提示自然聊天，不伪造身份。"""
@@ -1858,10 +1768,11 @@ class AIEngine:
             return text
         import re
         patterns = [
-            (r'我不能帮', '我不太想'),
-            (r'我无法帮', '我不太好弄'),
-            (r'我不能提供', '我不太方便'),
-            (r'我无法提供', '我不太好弄'),
+            # 中性承接，不产生“我不太想”这类被动攻击语感。
+            (r'我不能帮', '这个我帮不了'),
+            (r'我无法帮', '这个我帮不了'),
+            (r'我不能提供', '这个我不方便提供'),
+            (r'我无法提供', '这个我不方便提供'),
         ]
         for pat, rep in patterns:
             text = re.sub(pat, rep, text, flags=re.IGNORECASE)
@@ -1891,11 +1802,19 @@ class AIEngine:
         factual_markers = (
             "会", "可能", "容易", "导致", "需要", "请", "属于",
             "是指", "指的是", "时应", "之后", "以后",
+            # 业务词白名单：防止“发送【积分商城】”“（见预览频道）”这类
+            # 正常说明被当成舞台旁白删掉。
+            "商城", "频道", "按钮", "点击", "发送", "链接", "预览",
+            "订阅", "积分", "客服", "服务", "说明", "活动", "奖励",
+            "提示", "入口", "群", "菜单", "命令", "指令",
         )
 
         def _remove_if_stage(match):
             body = match.group("body")
             compact = re.sub(r"\s+", "", body)
+            # 强舞台线索（托腮/看窗外/回过神…）无条件剥离，业务词白名单不豁免
+            if any(cue in compact for cue in strong_cues):
+                return ""
             if any(marker in compact for marker in factual_markers):
                 return match.group(0)
             normalized_start = re.sub(
@@ -1903,9 +1822,13 @@ class AIEngine:
                 "",
                 compact,
             )
+            # leading_cues 只在很短且无字母数字的纯描写括号里生效，
+            # 避免“（微笑服务）”这类正常短语被整段吃掉。
+            has_alnum = any(ch.isascii() and ch.isalnum() for ch in compact)
             is_stage = (
-                any(cue in compact for cue in strong_cues)
-                or normalized_start.startswith(leading_cues)
+                len(compact) <= 12
+                and not has_alnum
+                and normalized_start.startswith(leading_cues)
             )
             return "" if is_stage else match.group(0)
 
@@ -1999,8 +1922,10 @@ class AIEngine:
             r"自己不会",
             r"你是不是(?:傻|蠢)",
             r"去别处",
+            # 只保留带明确敌意措辞的“好坏你自己分辨”变体；
+            # 泛化的“自己…看/判断”会把“可以去 @moryselect 自己看看”这类
+            # 正常引导整条误杀（曾导致回复被替换成答非所问的确认话术）。
             r"好坏你自己(?:分辨|判断)(?:就行)?",
-            r"自己(?:去)?.{0,30}(?:看|分辨|判断)(?:就行)?",
         )
         if not any(re.search(pattern, text, re.IGNORECASE) for pattern in hostile_patterns):
             return text, False
@@ -2063,7 +1988,9 @@ class AIEngine:
             return "\n【当前处于新年假期：可以简短问候，不索要红包、不编造活动或福利。】"
         elif m == 6 and d == 1:
             return "\n【今天是儿童节：可以轻松一点，但保持 Mory 小助理身份。】"
-        elif m == 8 and d == 7:
+        elif m == 8 and d == 19 and now.year == 2026:
+            # 七夕是农历节日，公历日期逐年漂移；只对已核实的年份生效，
+            # 避免像旧版把 08-07 写死成“每年七夕”。
             return "\n【今天是七夕：可以自然提一句节日，但不默认恋爱关系、不黏人、不调情。】"
         return ""
 
@@ -2244,13 +2171,6 @@ class AIEngine:
         if scene_prompt:
             persona += scene_prompt
 
-        # [v5.3] 转化引导
-        intent = self._classify_intent(message) if message else "chat"
-        _, _, _, flirt_level = self._get_intimacy_level(self._calc_intimacy_score(user_profile))
-        conversion_hook = self._get_conversion_hook(intent, flirt_level, seed)
-        if conversion_hook:
-            persona += conversion_hook
-
         # [v5.3] 去AI化铁律
         persona += self._get_anti_ai_hint()
 
@@ -2407,9 +2327,13 @@ class AIEngine:
 
         # 仅接受 user/assistant 角色，并限制为最近 6 条，避免把遥测字段或超长内容注入模型。
         normalized_history, _history_ctx_key = self._normalize_history(conversation_history)
-        cache_question = question
+        # 缓存按“用户×表面”隔离：同一问句在不同用户、私聊/群聊之间
+        # 不共享回复，避免 24h TTL 内跨用户拿到一字不差的同一答复。
+        _cache_uid = (user_profile or {}).get("user_id", 0) if isinstance(user_profile, dict) else 0
+        _cache_scope = f"u{_cache_uid or 0}|{'priv' if is_priv else 'group'}"
+        cache_question = f"{_cache_scope}:::{question}"
         if _history_ctx_key:
-            cache_question = f"{_history_ctx_key}\ncurrent:{question}"
+            cache_question = f"{_cache_scope}:::{_history_ctx_key}\ncurrent:{question}"
 
         # ── [v5.19.0] 人设引擎：设置情绪桶 context（供 _select_emotion_bucket 读取）──
         self._ctx_is_priv = is_priv
@@ -2938,9 +2862,9 @@ def get_fallback_text(reason: str = "default", is_priv: bool = False) -> str:
         # 具体入口由调用方依据本轮 none/preview/subscribe 单目标补齐；
         # 此处不能再次把预览与下单混在一起。
         return (
-            "这条我不乱说，你按当前问题继续看对应入口。"
+            "这个我不乱说，你看下对应入口，有疑问随时问我。"
             if is_priv
-            else "这条我不乱说，按当前问题看对应入口就行。"
+            else "这个我不乱说，你看下对应入口，有疑问再问我。"
         )
     if reason == "contact_mory":
         return (

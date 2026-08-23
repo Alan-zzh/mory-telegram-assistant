@@ -38,7 +38,8 @@ def handle_my_achievements(bot, m, config, db):
         if aid in unlocked_ids:
             lines.append(f"  ✅ {info['icon']} {info['name']}")
         else:
-            lines.append(f"  🔒 {info['name']}")
+            # 未解锁也展示解锁条件，用户才知道要做什么
+            lines.append(f"  🔒 {info['name']}（{info['desc']}）")
 
     total = len(ACHIEVEMENT_DEFS)
     lines.append(f"\n📊 已解锁 {len(unlocked_ids)}/{total} 个成就")
@@ -85,7 +86,14 @@ def unlock_achievement(bot, chat_id, db, uid, achievement_id, config):
 
     # 检查升级通知
     from modules.points_enhanced import check_level_up
-    _ach_uname = f"用户{uid}"  # achievement模块没有uname，用uid代替
+    # 升级通知需要用户名：查 users 表真名，避免群里出现“用户123456789”
+    try:
+        _name_row = db.conn.execute(
+            "SELECT name FROM users WHERE uid = ?", (uid,)
+        ).fetchone()
+    except Exception:
+        _name_row = None
+    _ach_uname = (_name_row[0] if _name_row and _name_row[0] else "") or f"用户{uid}"
     check_level_up(bot, chat_id, uid, _ach_uname, _lv_result, config)
 
     logger.info(f"用户 {uid} 解锁成就: {achievement_id}")
@@ -133,23 +141,24 @@ def check_achievements_for_user(bot, chat_id, db, uid, config):
         ).fetchone()
         invite_count = row[0] if row else 0
 
-        # blindbox_10: 开盲盒次数
+        # blindbox_10: 开盲盒次数（按扣费流水计，中奖流水只是其中一部分）
         row = db.conn.execute(
-            "SELECT COUNT(*) FROM points_log WHERE uid = ? AND source = 'blindbox'",
+            "SELECT COUNT(*) FROM points_log WHERE uid = ? AND source = 'blindbox_cost'",
             (uid,)
         ).fetchone()
         blindbox_count = row[0] if row else 0
 
-        # tip_5: 打赏次数（change_amount < 0）
+        # tip_5: 打赏次数（打赏方扣费流水 source='tip' 且 change_amount < 0）
         row = db.conn.execute(
             "SELECT COUNT(*) FROM points_log WHERE uid = ? AND source = 'tip' AND change_amount < 0",
             (uid,)
         ).fetchone()
         tip_count = row[0] if row else 0
 
-        # wheel_10: 转盘次数
+        # wheel_10: 转盘次数（按实际转动次数计：lucky_wheel_results 一天一行，
+        # 旧行数统计把“转10次”算成“转10天”）
         row = db.conn.execute(
-            "SELECT COUNT(*) FROM lucky_wheel_results WHERE uid = ?",
+            "SELECT COALESCE(SUM(spin_count), 0) FROM lucky_wheel_results WHERE uid = ?",
             (uid,)
         ).fetchone()
         wheel_count = row[0] if row else 0

@@ -23,39 +23,35 @@ _CST = timezone(timedelta(hours=8))
 # A/B 群承接话术模板：了解阶段先预览，明确购买才进入自助。
 # 【Agent F】走心化：先回应关切、再自然带唯一入口，不催单、不虚假承诺、无客服腔。
 _FALLBACK_TEMPLATES = [
-    "{uname}，你说的情况我懂，想先踏实看看的话，@moryselect 里有预览，看完心里就有数了。",
-    "{uname}，我在听，别急。@moryselect 的预览可以先慢慢看，看完还想聊随时找我。",
-    "嗯，我明白你问的是啥，具体内容 @moryselect 里都有预览，你先看看合不合眼缘。",
+    "{uname}，你说的情况我懂，先踏实看看实际内容再判断，入口在下面。",
+    "{uname}，我在听，别急。先看看预览合不合眼缘，看完还想聊随时找我。",
+    "嗯，我明白你问的是啥，具体内容点下面按钮就能看到。",
 ]
 
 _FALLBACK_BY_INTENT = {
     "price": [
-        "{uname}，价格的事我懂你在意，先看 @moryselect 的预览把内容弄清楚，心里有数了再聊也不迟。",
-        "钱的事不急着定，先看看 @moryselect 里的预览值不值，你看完我们再慢慢说。",
+        "{uname}，价格的事我懂你在意，先把内容弄清楚，心里有数了再聊也不迟，入口在下面。",
+        "钱的事不急着定，先看看值不值，你看完我们再慢慢说。",
     ],
     "rights": [
-        "{uname}，内容区别一两句说不清，@moryselect 里的预览会更直观，你看了就知道差别在哪。",
-        "你在意的点我记下了，@moryselect 有实际内容预览，你对比着看会更安心。",
+        "{uname}，内容区别一两句说不清，下面的入口里会更直观，你看了就知道差别在哪。",
+        "你在意的点我记下了，点下面看看实际内容，对比着看会更安心。",
     ],
     "trial": [
-        "{uname}，想先看看当然可以，@moryselect 就是给你看预览的地方，看完有什么想细问的再来找我。",
-        "预览看完再决定就好，@moryselect 里都有，我不催你。",
+        "{uname}，想先看看当然可以，入口就在下面，看完有什么想细问的再来找我。",
+        "预览看完再决定就好，我不催你。",
     ],
     "payment": [
-        "{uname}，想继续的话，@MorychannelBot 里有当前可选的内容和档位，按提示自助完成就行。",
-        "入口给你放这啦，@MorychannelBot 看看当前选项，按提示操作，有问题随时来找我。",
-    ],
-    "repeat": [
-        "{uname}，你说的我记着呢，不用重复发入口，继续说你在意的细节就好。",
-        "接着刚才的话聊就行，我在这听着，不催你。",
+        "{uname}，想继续的话，点下面的按钮查看当前可选的内容和档位，按提示自助完成就行。",
+        "入口给你放下面啦，选好按提示操作，有问题随时来找我。",
     ],
 }
 
 _DEFAULT_BUSINESS_ENGAGE_PROMPT = (
     "【商业搭讪模式 · Mory 人设】：你是温情清冷、有点俏皮的 Mory 小助理。\n"
     "1. 先承接用户刚才说的商品、定制或购买需求，回应他的原话和关切；\n"
-    "2. 再按本轮唯一目标自然带一个入口：了解/价格/内容阶段只给 @moryselect 预览，"
-    "明确下单才给 @MorychannelBot，每轮只出现一个入口；\n"
+    "2. 本轮唯一目标已由系统决定，入口用消息下方的按钮承载；"
+    "正文中不要出现 @ 链接、@频道名或“去某处看”的入口句；\n"
     "3. 不要引导私聊，不催促、不虚假承诺、不称对方“老板”，不讽刺、不挖苦、不责怪；\n"
     "4. 不写动作、场景、镜头或内心旁白，只用可直接发送的聊天正文说话。"
 )
@@ -87,13 +83,15 @@ class ProactiveEngage:
 
     # ────────────────────────── 公开 API ──────────────────────────
 
-    def should_engage(self, uid: int, msg: str, is_admin: bool) -> Tuple[bool, str]:
+    def should_engage(self, uid: int, msg: str, is_admin: bool,
+                      chat_id: int = 0) -> Tuple[bool, str]:
         """判断是否应该搭讪该用户
 
         Args:
             uid: 用户ID
             msg: 消息文本
             is_admin: 是否管理员
+            chat_id: 群 ID（用于读取持久化退订状态，避免宽词旁路 opt_out）
 
         Returns:
             (should_engage, matched_keyword)
@@ -119,8 +117,16 @@ class ProactiveEngage:
             if not matched_kw:
                 return (False, "")
 
-            from core.growth_optimizer import resolve_conversion_target
-            target, _ = resolve_conversion_target(msg, mode="convert")
+            from core.growth_optimizer import (
+                get_conversion_state,
+                resolve_conversion_target,
+            )
+            # 与 dispatcher 主链同源：带持久化状态判定，
+            # 防止已退订用户因“视频/看看”等宽词被旁路重新搭讪。
+            state = get_conversion_state(self.db, uid, chat_id) if chat_id else {}
+            target, _ = resolve_conversion_target(
+                msg, mode="convert", state=state or None,
+            )
             if target == "none":
                 return (False, "")
 
@@ -146,10 +152,15 @@ class ProactiveEngage:
             True 表示搭讪成功执行，False 表示执行失败（但已静默处理）
         """
         try:
-            from core.growth_optimizer import resolve_conversion_target
+            from core.growth_optimizer import (
+                get_conversion_state,
+                resolve_conversion_target,
+            )
+            state = get_conversion_state(self.db, uid, chat_id)
             conversion_target, conversion_reason = resolve_conversion_target(
                 msg,
                 mode="convert",
+                state=state or None,
             )
             if conversion_target == "none":
                 return False
@@ -171,7 +182,7 @@ class ProactiveEngage:
             self._notify_admin_if_needed(uname, uid, msg, matched_keyword)
             self._persist_engage(uid, chat_id, uname, msg, matched_keyword, reply_text)
             self._set_cooldown(uid)
-            self._add_conversion_button(sent_msg, conversion_target)
+            self._add_conversion_button(sent_msg, conversion_target, reply_text)
             logger.info(
                 f"💬 商业搭讪成功 uid={uid} uname={uname} chat={chat_id} "
                 f"keyword={matched_keyword} len={len(reply_text)}"
@@ -238,11 +249,22 @@ class ProactiveEngage:
         except Exception as e:
             logger.debug(f"proactive_engage 转化事件记录失败: {e}")
 
-    def _add_conversion_button(self, sent_msg, conversion_target: str):
-        """群内商业承接只挂一个与正文目标一致的按钮。"""
+    def _add_conversion_button(self, sent_msg, conversion_target: str, reply_text: str = ""):
+        """群内商业承接只挂一个与正文目标一致的按钮。
+
+        正文已经自然带出对应入口（@handle）时不再补挂按钮，
+        避免“文中一遍 + 按钮一遍”的双呈现推销观感。
+        """
         if not (sent_msg and hasattr(sent_msg, "chat") and hasattr(sent_msg, "message_id")):
             return
         try:
+            entry = (
+                "@morychannelbot" if conversion_target == "subscribe"
+                else "@moryselect" if conversion_target == "preview"
+                else ""
+            )
+            if entry and entry in str(reply_text or "").lower():
+                return
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
             bot = self.mory_bot.bot if hasattr(self.mory_bot, "bot") else None
             if not bot:
@@ -290,11 +312,10 @@ class ProactiveEngage:
             )
         if conversion_target == "none":
             return ""
-        target_entry = "@MorychannelBot" if conversion_target == "subscribe" else "@moryselect"
         target_rule = (
-            "用户已明确要继续，只给 @MorychannelBot 查看当前可选内容和档位并按提示自助完成。"
+            "用户已明确要继续，入口按钮将指向 @MorychannelBot 自助下单。"
             if conversion_target == "subscribe"
-            else "用户仍在了解阶段，只给 @moryselect 预览，不催下单。"
+            else "用户仍在了解阶段，入口按钮将指向 @moryselect 预览，不催下单。"
         )
         # 优先尝试 AI 生成
         try:
@@ -312,7 +333,7 @@ class ProactiveEngage:
                     f"{sys_prompt}\n"
                     f"用户咨询阶段：{stage_hint}；问题类型：{intent}；命中关键词：{matched_keyword}。\n"
                     f"本轮唯一目标：{target_rule}\n"
-                    f"先直接回应用户原话，再自然带一次 {target_entry}。"
+                    "先直接回应用户原话；入口由消息下方的按钮承载，正文不要出现 @ 链接或入口句。"
                     "用30-50字自然短句，不称“老板”，不引导私聊，不同时出现两个入口，"
                     "不承诺未确认的定制能力、价格或交付。"
                     "语气延续 Mory 人设：温柔清冷、不端着、不营销腔。"
@@ -332,9 +353,16 @@ class ProactiveEngage:
                         text,
                         conversion_target=conversion_target,
                         conversion_reason=conversion_reason,
+                        entry_via="button",
                     )
                     if len(text) > 300:
-                        text = text[:300]
+                        # 按句子边界截断，避免把句子截成半截。
+                        cut = text.rfind("。", 200, 300)
+                        for punct in ("！", "？", "!", "?", "~", "～"):
+                            pos = text.rfind(punct, 200, 300)
+                            if pos > cut:
+                                cut = pos
+                        text = text[:cut + 1] if cut > 0 else text[:300]
                     return text
         except Exception as e:
             logger.debug(f"proactive_engage AI 生成失败，使用 fallback: {e}")

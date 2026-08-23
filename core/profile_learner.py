@@ -30,14 +30,17 @@ INTEREST_KEYWORDS = {
     "photo": [r"图集", r"写真", r"图片", r"photo", r"图片集", r"美图"],
 }
 
-# VIP 关键词（用户表达消费意愿强烈）
-VIP_KEYWORDS = [r"包年", r"年卡", r"长期订阅", r"高级会员", r"vip", r"VIP", r"全享", r"至臻全享", r"999", r"大客户", r"回头客"]
+# VIP 关键词（用户表达消费意愿强烈）。
+# “999/大客户/回头客”这类裸词与付费事实无关（聊过=VIP 会误导话术强度），
+# 已移除；等级阈值也不再单独触发 VIP，需同时命中明确套餐词。
+VIP_KEYWORDS = [r"包年", r"年卡", r"长期订阅", r"高级会员", r"全享", r"至臻全享"]
 
-# 高价值用户关键词
-HIGH_VALUE_KEYWORDS = [r"再来一份", r"续费", r"加单", r"加群", r"再买", r"上次", r"上次买", r"之前买", r"老用户", r"老粉"]
+# 高价值用户关键词。“加群/上次”是日常高频词，不能当高价值信号。
+HIGH_VALUE_KEYWORDS = [r"再来一份", r"续费", r"加单", r"再买", r"上次买", r"之前买", r"老用户", r"老粉"]
 
 # [TRAE SOLO CN] v5.19.0 新增：抗拒词模式（用于 resistance_idx 计算）
-_RESISTANCE_PATTERN = re.compile(r"不要|算了|太贵|不买|没钱|再看看|不需要|不用了|下次吧|考虑下|贵了|划不来|不值", re.IGNORECASE)
+# “不要”必须与拒绝对象组合出现，“我不要你觉得”不再误计为抗拒。
+_RESISTANCE_PATTERN = re.compile(r"不要了|算了|太贵|不买|没钱|再看看|不需要|不用了|下次吧|考虑下|贵了|划不来|不值", re.IGNORECASE)
 
 # [TRAE SOLO CN] v5.19.0 新增：消费意向词（用于 spend_tendency 计算）
 _SPEND_PATTERN = re.compile(r"下单|购买|续费|加单|包年|年卡|月卡|季卡|至臻|全享|订阅|怎么买|多少钱|价格|付费|支付", re.IGNORECASE)
@@ -58,9 +61,11 @@ def detect_interests(text: str) -> List[str]:
 
 
 def is_vip_user(text: str, level: int = 0) -> bool:
-    """判断是否为 VIP 用户（基于文本关键词或等级）。"""
-    if level >= 5:
-        return True
+    """判断是否为 VIP 用户（基于明确套餐关键词）。
+
+    聊天轮次达到 5 不再单独判 VIP：聊得多≠付过费，错误的 VIP 标签
+    会直接放大 growth_ctx 话术强度。
+    """
     if not text or not isinstance(text, str):
         return False
     text_lower = text.lower()

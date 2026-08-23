@@ -289,9 +289,12 @@ class QuestionRepo:
                     if pattern.strip() == question_text.strip():
                         is_match = True
                 # 分类匹配：mode/intent映射到question_category
-                if not is_match and mode and cat == mode:
+                # 只允许“未配置 pattern”的条目做纯分类兜底；有 pattern 的条目
+                # 必须先通过 keyword/exact 命中，否则整类消息都会被同 category
+                # 的固定答案抢答（结构性答非所问）。
+                if not is_match and mode and cat == mode and not (pattern or "").strip():
                     is_match = True
-                if not is_match and intent and cat == intent:
+                if not is_match and intent and cat == intent and not (pattern or "").strip():
                     is_match = True
 
                 if is_match:

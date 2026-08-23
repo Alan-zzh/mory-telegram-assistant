@@ -41,13 +41,19 @@ _recent_summaries = {}
 _recent_lock = threading.Lock()
 
 # [v5.24.0 阶段3-A] 每用户消息缓冲 + 会话追踪
-# _user_msg_buffer: uid → deque([{role, content, ts}])
-# _user_last_ts:    uid → 上次消息时间戳
-# _user_rounds:     uid → 当前会话轮数（user+assistant 各算一轮的一半，这里按 user 消息计数）
+# 会话键为 (uid, chat_id)：同一用户在群 A、群 B 和私聊的消息是不同会话，
+# 混进同一个摘要会把跨场景对话串成一段"连续关系"，再注入所有表面。
+# _user_msg_buffer: (uid, chat_id) → deque([{role, content, ts}])
+# _user_last_ts:    (uid, chat_id) → 上次消息时间戳
+# _user_rounds:     (uid, chat_id) → 当前会话轮数（按 user 消息计数）
 _user_msg_buffer = {}
 _user_last_ts = {}
 _user_rounds = {}
 _session_lock = threading.Lock()
+
+
+def _session_key(uid: int, chat_id: int = 0) -> tuple:
+    return (int(uid or 0), int(chat_id or 0))
 
 # [v5.24.0 阶段3-C] 摘要质量校验统计（线程安全）
 _validation_stats = {
@@ -99,46 +105,48 @@ def mark_summarized(uid: int):
             del _recent_summaries[k]
 
 
-def record_message(uid: int, role: str, content: str):
-    """[v5.24.0 阶段3-A] 记录单条消息到用户缓冲，更新会话追踪状态
+def record_message(uid: int, role: str, content: str, chat_id: int = 0):
+    """[v5.24.0 阶段3-A] 记录单条消息到会话缓冲，更新会话追踪状态
 
     Args:
         uid: 用户 ID
         role: "user" 或 "assistant"
         content: 消息文本（将截断到 200 字）
+        chat_id: 会话 ID；群聊/私聊分开缓冲，防止跨群记忆串台
     """
     if not uid or not content:
         return
     try:
         content = str(content)[:200]
         now = time.time()
+        key = _session_key(uid, chat_id)
         with _session_lock:
             # 初始化缓冲
-            if uid not in _user_msg_buffer:
-                _user_msg_buffer[uid] = deque(maxlen=_MAX_BUFFER_PER_USER)
-                _user_rounds[uid] = 0
-                _user_last_ts[uid] = 0
+            if key not in _user_msg_buffer:
+                _user_msg_buffer[key] = deque(maxlen=_MAX_BUFFER_PER_USER)
+                _user_rounds[key] = 0
+                _user_last_ts[key] = 0
 
             # 静默期检测：若距上次消息 >30min，视为新会话开始，重置轮数
-            gap = now - _user_last_ts.get(uid, 0)
-            if _user_last_ts[uid] > 0 and gap > _IDLE_THRESHOLD:
-                _user_rounds[uid] = 0
-                logger.debug(f"[MEMORY_TRIGGER] uid={uid} 静默 {int(gap)}s，重置会话轮数")
+            gap = now - _user_last_ts.get(key, 0)
+            if _user_last_ts[key] > 0 and gap > _IDLE_THRESHOLD:
+                _user_rounds[key] = 0
+                logger.debug(f"[MEMORY_TRIGGER] uid={uid} chat={chat_id} 静默 {int(gap)}s，重置会话轮数")
 
             # 记录消息
-            _user_msg_buffer[uid].append({
+            _user_msg_buffer[key].append({
                 "role": role,
                 "content": content,
                 "ts": int(now),
             })
-            _user_last_ts[uid] = now
+            _user_last_ts[key] = now
             if role == "user":
-                _user_rounds[uid] = _user_rounds.get(uid, 0) + 1
+                _user_rounds[key] = _user_rounds.get(key, 0) + 1
     except Exception as e:
         logger.debug(f"记录消息失败 uid={uid}: {e}")
 
 
-def check_and_trigger(uid: int, db=None) -> bool:
+def check_and_trigger(uid: int, db=None, chat_id: int = 0) -> bool:
     """[v5.24.0 阶段3-A] 检查双重触发条件，命中则异步摘要
 
     触发条件（满足任一即触发）：
@@ -152,9 +160,10 @@ def check_and_trigger(uid: int, db=None) -> bool:
         True 表示已投递异步摘要任务
     """
     try:
+        key = _session_key(uid, chat_id)
         with _session_lock:
-            rounds = _user_rounds.get(uid, 0)
-            buffer = list(_user_msg_buffer.get(uid, []))
+            rounds = _user_rounds.get(key, 0)
+            buffer = list(_user_msg_buffer.get(key, []))
 
         # 条件 B：轮数阈值
         if rounds < _ROUND_THRESHOLD:
@@ -165,18 +174,18 @@ def check_and_trigger(uid: int, db=None) -> bool:
             return False
 
         # 命中阈值触发，投递异步摘要
-        logger.info(f"[MEMORY_TRIGGER] uid={uid} 轮数={rounds}≥{_ROUND_THRESHOLD}，触发异步摘要")
+        logger.info(f"[MEMORY_TRIGGER] uid={uid} chat={chat_id} 轮数={rounds}≥{_ROUND_THRESHOLD}，触发异步摘要")
         summarize_user_memory_async(uid, buffer, db)
         # 触发后重置轮数，避免同一会话重复触发
         with _session_lock:
-            _user_rounds[uid] = 0
+            _user_rounds[key] = 0
         return True
     except Exception as e:
         logger.debug(f"触发检查失败 uid={uid}: {e}")
         return False
 
 
-def trigger_idle_summary(uid: int, db=None) -> bool:
+def trigger_idle_summary(uid: int, db=None, chat_id: int = 0) -> bool:
     """[v5.24.0 阶段3-A] 静默期触发：由定时任务调用，检测用户是否已静默 >30min
 
     若用户已静默且缓冲区有 ≥3 条消息且冷却期外，触发摘要。
@@ -186,27 +195,28 @@ def trigger_idle_summary(uid: int, db=None) -> bool:
     """
     try:
         now = time.time()
+        key = _session_key(uid, chat_id)
         with _session_lock:
-            last_ts = _user_last_ts.get(uid, 0)
+            last_ts = _user_last_ts.get(key, 0)
             if last_ts == 0:
                 return False
             gap = now - last_ts
             if gap < _IDLE_THRESHOLD:
                 return False
-            buffer = list(_user_msg_buffer.get(uid, []))
-            rounds = _user_rounds.get(uid, 0)
+            buffer = list(_user_msg_buffer.get(key, []))
+            rounds = _user_rounds.get(key, 0)
 
         if len(buffer) < 3 or rounds < 2:
             return False
         if not should_summarize(uid):
             return False
 
-        logger.info(f"[MEMORY_TRIGGER] uid={uid} 静默 {int(gap)}s≥{_IDLE_THRESHOLD}s，触发异步摘要")
+        logger.info(f"[MEMORY_TRIGGER] uid={uid} chat={chat_id} 静默 {int(gap)}s≥{_IDLE_THRESHOLD}s，触发异步摘要")
         summarize_user_memory_async(uid, buffer, db)
         # 清空缓冲，避免下次重复摘要
         with _session_lock:
-            _user_msg_buffer[uid].clear()
-            _user_rounds[uid] = 0
+            _user_msg_buffer[key].clear()
+            _user_rounds[key] = 0
         return True
     except Exception as e:
         logger.debug(f"静默触发失败 uid={uid}: {e}")
@@ -214,7 +224,7 @@ def trigger_idle_summary(uid: int, db=None) -> bool:
 
 
 def scan_idle_users(db=None, max_check: int = 50) -> int:
-    """[v5.24.0 阶段3-A] 扫描所有缓冲中的用户，触发已静默 >30min 的摘要
+    """[v5.24.0 阶段3-A] 扫描所有会话缓冲，触发已静默 >30min 的摘要
 
     由定时任务每 5 分钟调用一次。
 
@@ -224,9 +234,10 @@ def scan_idle_users(db=None, max_check: int = 50) -> int:
     triggered = 0
     try:
         with _session_lock:
-            uids = list(_user_last_ts.keys())
-        for uid in uids[:max_check]:
-            if trigger_idle_summary(uid, db):
+            session_keys = list(_user_last_ts.keys())
+        for key in session_keys[:max_check]:
+            uid, chat_id = key
+            if trigger_idle_summary(uid, db, chat_id=chat_id):
                 triggered += 1
     except Exception as e:
         logger.debug(f"静默扫描异常: {e}")
@@ -391,8 +402,8 @@ def _call_cheap_llm(prompt: str) -> str:
         if not ai:
             return ""
 
-        # 用 light 模型（最廉价）
-        result = ai.ask(prompt, mode="normal")
+        # 内部摘要调用走独立 mode：路由到廉价池，且不写业务语义缓存
+        result = ai.ask(prompt, mode="memory_summary")
         return result or ""
     except Exception as e:
         logger.debug(f"LLM 调用失败: {e}")
@@ -465,6 +476,12 @@ def seed_initial_memory(uid: int, first_message: str, db=None) -> bool:
     if not uid or not first_message or not db:
         return False
     try:
+        # 噪声防呆：过短或纯符号/emoji 的首条消息不生成种子画像，
+        # 避免“嗯”“哈哈”这类噪声给 AI 定下错误的第一印象（撑到 15 轮才被覆盖）。
+        cleaned = re.sub(r"[\s\W\u3000-\u303f\uff00-\uffef]+", "", str(first_message), flags=re.UNICODE)
+        if len(cleaned) < 4:
+            return False
+
         # 幂等检查：已有 memory_summary 则跳过
         existing_profile = db.get_user_persona_profile(uid)
         if existing_profile and (existing_profile.get("memory_summary") or "").strip():

@@ -332,11 +332,12 @@ def test_old_private_prompt_is_invalidated_and_reply_follows_single_target():
     assert ai.calls[0][0] == "订阅多少钱"
     assert ai.calls[0][1] == "convert"
     assert "不要引导私聊" in ai.calls[0][2]["stage_hint"]
-    assert "@moryselect" in preview_reply
+    # v5.39 治理：入口由按钮承载，正文不再出现 @ 链接（去双呈现）
+    assert "@moryselect" not in preview_reply.lower()
     assert "@MorychannelBot" not in preview_reply
 
     order_reply = pe._generate_reply("我要下单", "下单", "测试用户")
-    assert "@MorychannelBot" in order_reply
+    assert "@MorychannelBot" not in order_reply
     assert "@moryselect" not in order_reply.lower()
 
 

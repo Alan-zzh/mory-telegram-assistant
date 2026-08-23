@@ -1189,11 +1189,16 @@ class KeywordTrigger:
 
     @staticmethod
     def _is_usable_polish(reply, rule=None) -> bool:
-        """拒绝过短、过长、降级话术和内部说明，安全回退业务底稿。"""
+        """拒绝过短、过长、降级话术和内部说明，安全回退业务底稿。
+
+        上限 200：冷场族要求“140到180个汉字”，标点/emoji 也计入 len()，
+        旧上限 180 与之边界相切，AI 多写一个标点整段报废回退模板，
+        同一问题随机出现两种画风。
+        """
         if not isinstance(reply, str):
             return False
         text = reply.strip()
-        if not 6 <= len(text) <= 180:
+        if not 6 <= len(text) <= 200:
             return False
         if any(marker in text for marker in _UNUSABLE_POLISH_MARKERS):
             return False

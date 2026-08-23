@@ -155,7 +155,15 @@ def handle_claim_redpacket(bot, call, config, db):
 
         # 计算金额
         if mode == "average":
-            amount = total // count
+            # 均分模式：整除部分平分，余数退回发送者（旧版余数直接蒸发）
+            per = total // count
+            remainder = total - per * count
+            amount = max(1, per)
+            if remainder > 0:
+                try:
+                    db.add_points(sender_id, remainder, source=f"红包余数退回:{rp_id}")
+                except Exception as e:
+                    logger.warning(f"红包均分余数退回失败 rp_id={rp_id}: {e}")
         else:
             # 随机模式：保证每人至少1积分
             claimed_total = db.conn.execute(
@@ -223,15 +231,27 @@ def handle_claim_redpacket(bot, call, config, db):
             _rp_uname = call.from_user.first_name or "用户"
             check_level_up(bot, chat_id, uid, _rp_uname, _lv_result, config)
 
-        # 检查是否抢完
-        new_remaining = remaining - 1
+        # 检查是否抢完：读锁内的最新 remaining（旧版用锁外旧快照，
+        # 两人并发把 2 抢到 0 时双方都算出 new_remaining=1，没人公布明细）
+        with _db_lock:
+            latest = db.conn.execute(
+                "SELECT remaining FROM redpackets WHERE id=?", (rp_id,)
+            ).fetchone()
+            new_remaining = latest[0] if latest else 0
         if new_remaining <= 0:
-            # 更新消息，公布明细
+            # 更新消息，公布明细（昵称优先，查不到再显示 uid 后四位）
             claims = db.conn.execute(
                 "SELECT uid, amount FROM redpacket_claims WHERE redpacket_id=? ORDER BY ts",
                 (rp_id,)
             ).fetchall()
-            detail = "\n".join([f"👤 uid={c_uid} → {c_amt}积分" for c_uid, c_amt in claims])
+            detail_lines = []
+            for c_uid, c_amt in claims:
+                name_row = db.conn.execute(
+                    "SELECT name FROM users WHERE uid=?", (c_uid,)
+                ).fetchone()
+                label = (name_row[0] if name_row and name_row[0] else f"…{str(c_uid)[-4:]}")
+                detail_lines.append(f"👤 {label} → {c_amt}积分")
+            detail = "\n".join(detail_lines)
             try:
                 bot.edit_message_text(
                     f"🧧 红包已抢完！\n💰 总额：{total}积分 | {count}份\n\n{detail}",

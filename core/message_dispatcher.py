@@ -339,18 +339,20 @@ def _generate_late_night_warning(ai, uname, is_group, uid):
     try:
         seed = uid + int(time.time()) % 3600  # 每小时一个seed区间
         prompt = (
-            f"你是Mory，一个贴心又有点小调皮的小姐姐。\n\n"
+            f"你是 Mory 小助理。\n\n"
             f"现在是凌晨，用户{uname}还在群里发消息不睡觉。\n"
             f"你要用关心但不说教的方式提醒他去睡觉。\n\n"
             f"要求：\n"
-            f"1. 20-30字，像闺蜜私聊一样自然\n"
-            f"2. 带点小撒娇/小关心\n"
-            f"3. 可以暗示：熬夜会变丑/对身体不好/明天没精神\n"
+            f"1. 20-30字，像朋友随口提醒一样自然\n"
+            f"2. 带一点温和的关心，不撒娇、不暧昧、不假设关系\n"
+            f"3. 可以提到：熬夜伤身/明天没精神/早点休息\n"
             f"4. 结尾要有emoji（😴💤🌙✨选一个）\n"
             f"5. seed={seed}，每次必须不同\n\n"
             f"禁止：\n"
             f"- 不要说教式语气（如'你应该'、'你必须'）\n"
-            f"- 不要出现'老板'这个词（不在回复里使用任何'老板'称谓）\n"
+            f"- 不用'哥哥/姐姐/宝宝'等称呼，直接叫名字或省略称呼\n"
+            f"- 不写'梦里找我玩''在等谁'之类暧昧或虚构陪伴的话\n"
+            f"- 不冒充真人，不编造自己正在休息或刚睡醒\n"
             f"- 控制在30字以内"
         )
         ai_reply = ai.ask(prompt, mode="normal")
@@ -364,18 +366,18 @@ def _generate_late_night_warning(ai, uname, is_group, uid):
 
 
 def _get_late_night_fallback(uname):
-    """备用深夜文案库（高度随机化）"""
+    """备用深夜文案库（高度随机化；温和关心，不暧昧、不假设关系）"""
     templates = [
-        f"哎呀{uname}～这么晚还不睡呀？熬夜会掉头发的哦～快去被窝里躲着吧 💤",
-        f"诶嘿～{uname}还在活跃呀？月亮都困得打哈欠了，你也快去休息嘛～🌙",
-        f"{uname}哥哥～再熬下去明天要变熊猫眼了啦！快去梦里找我玩～😴",
-        f"偷偷告诉你哦{uname}～熬夜会变笨的！小Mory可不想明天看到迷糊的你～✨",
-        f"呜呼{uname}～深夜不睡觉是在等谁呀？快闭眼休息啦，明天见～💤",
-        f"{uname}～你是在偷偷熬夜刷手机吗？小心被小Mory抓包哦～快去睡！😴",
-        f"嘿{uname}～夜深啦～星星都困得眨眼了，你也该去被窝里躲着啦～🌙",
-        f"{uname}哥哥～再晚下去要错过好运了！快去睡吧，梦里啥都有～✨",
-        f"哎呀呀{uname}～这么精神呀？小Mory都打哈欠了，你也快去休息嘛～💤",
-        f"{uname}～深夜是皮肤修复的黄金时间哦！快去睡美容觉吧～😴",
+        f"{uname}，这么晚还不睡呀？早点休息，明天才有精神～💤",
+        f"夜深啦～{uname}也该休息了，晚安 🌙",
+        f"{uname}，再熬下去明天该没精神了，快去睡吧 😴",
+        f"这么晚了{uname}还醒着呀？早点休息，晚安～✨",
+        f"{uname}，凌晨了该睡了，身体要紧，晚安 💤",
+        f"{uname}～夜深了，手机放下睡个好觉吧 🌙",
+        f"嘿{uname}，都这个点啦，早些休息，明天见～😴",
+        f"{uname}，熬夜伤身呀，快去睡吧，晚安 ✨",
+        f"哎呀{uname}，这么精神？也该休息啦，晚安～💤",
+        f"{uname}，深夜记得早点睡，皮肤和精力都会感谢你的 😴",
     ]
     return random.choice(templates)
 
@@ -714,9 +716,9 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     # 每条 user 消息都入缓冲；非首次欢迎消息达到 15 轮阈值时才允许异步摘要。
     try:
         from core.memory_summarizer import record_message, check_and_trigger
-        record_message(uid, "user", msg_text)
+        record_message(uid, "user", msg_text, chat_id=chat_id)
         if not skip_memory_summary:
-            check_and_trigger(uid, db)
+            check_and_trigger(uid, db, chat_id=chat_id)
     except Exception as e:
         logger.debug(f"记忆触发检查失败 uid={uid}: {e}")
 
@@ -1767,29 +1769,34 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
         and _is_convert_message(msg, keyword_manager)
         and not is_direct_custom_order
     ):
-        now_radar = time.time()
-        with _radar_lock:
-            last_trigger = _radar_cooldown.get(uid, 0)
-            should_notify = now_radar - last_trigger > _RADAR_COOLDOWN
+        # 宽词表（看看/有没有/几号…）命中≠商业意图：只有真正解析出
+        # preview/subscribe 目标才通报管理员并写入漏斗。
+        # 注意：none 目标只跳过雷达/漏斗，绝不能 return 中断分发——
+        # 否则这类日常消息会连 P8 彩蛋和 P10 AI 都到不了（v5.39 曾引入此回归）。
+        if getattr(dctx, "conversion_target", "none") != "none":
+            now_radar = time.time()
+            with _radar_lock:
+                last_trigger = _radar_cooldown.get(uid, 0)
+                should_notify = now_radar - last_trigger > _RADAR_COOLDOWN
+                if should_notify:
+                    _radar_cooldown[uid] = now_radar
+
             if should_notify:
-                _radar_cooldown[uid] = now_radar
+                try:
+                    bot.send_message(
+                        CONFIG["ADMIN_ID"],
+                        f"👀 视奸雷达\n👤 {format_user_mention(uid, uname)} 提到了费用相关词\n💡 该用户可能对付费服务有兴趣",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.warning(f"视奸雷达通知失败：{e}")
 
-        if should_notify:
-            try:
-                bot.send_message(
-                    CONFIG["ADMIN_ID"],
-                    f"👀 视奸雷达\n👤 {format_user_mention(uid, uname)} 提到了费用相关词\n💡 该用户可能对付费服务有兴趣",
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                logger.warning(f"视奸雷达通知失败：{e}")
+            # 留资打捞不受冷却限制
+            db.set_cart(uid)
+            db.log_conversion_event(uid, "touched")
 
-        # 留资打捞不受冷却限制
-        db.set_cart(uid)
-        db.log_conversion_event(uid, "touched")
-
-        # [v5.14.0] 设置搭讪标志位，供 P7.5 主动搭讪层消费
-        dctx.proactive_eligible = True
+            # [v5.14.0] 设置搭讪标志位，供 P7.5 主动搭讪层消费
+            dctx.proactive_eligible = True
 
     # P8：固定彩蛋响应
     from modules.content import handle_easter_eggs
@@ -1832,8 +1839,15 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
         db.set_cart(uid)
         db.log_conversion_event(uid, "interested")
 
-    # P9.3：天气/城市共情（命中后停止，避免与 P10 AI 双回复）
-    if analysis.get("weather_empathy") and is_group:
+    # P9.3：天气/城市共情
+    # 只有“消息很短、明显在聊天气”时才直接回复；
+    # “我下周去上海出差”这类正经内容不再被固定共情句顶掉，
+    # 直接放行给 P10 AI 正常承接。
+    if (
+        analysis.get("weather_empathy")
+        and is_group
+        and len(msg.strip()) <= 8
+    ):
         mory_bot.reply_and_track(m, analysis["weather_empathy"])
         clear_logging_context()
         return True
@@ -2000,6 +2014,7 @@ def _dispatch_p7_5_proactive_engage(dctx: DispatchContext) -> bool:
             uid=dctx.uid,
             msg=dctx.text,
             is_admin=is_admin_user,
+            chat_id=dctx.chat_id,
         )
         if not should:
             return False

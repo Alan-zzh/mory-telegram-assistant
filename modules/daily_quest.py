@@ -23,6 +23,13 @@ def _today_str():
     return datetime.now(_CST).strftime("%Y-%m-%d")
 
 
+def _day_bounds_ts():
+    """返回今天（CST）的起始/结束 Unix 时间戳 [start, end)"""
+    now = datetime.now(_CST)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return (int(start.timestamp()), int(start.timestamp()) + 86400)
+
+
 def _init_daily_quests(db, uid, today):
     """确保今日任务记录存在"""
     for q in QUEST_DEFS:
@@ -52,16 +59,27 @@ def get_quest_progress(db, uid, quest_type, config=None):
         return row[0] if row else 0
 
     elif quest_type == "tip":
+        # points_log 没有 date 列（旧版按 date 查询是潜伏崩溃分支），
+        # 改用当日时间戳范围统计打赏方扣费流水。
+        import time as _time
+        day_start, day_end = _day_bounds_ts()
         row = db.conn.execute(
-            "SELECT COUNT(*) FROM points_log WHERE uid=? AND date=? AND source='tip'",
-            (uid, today),
+            "SELECT COUNT(*) FROM points_log WHERE uid=? AND source='tip' AND change_amount<0 AND ts>=? AND ts<?",
+            (uid, day_start, day_end),
         ).fetchone()
         return row[0] if row else 0
 
     elif quest_type == "shop":
+        # exchange_records 同样没有 date 列，改按 created_at/ts 兜底查询
+        import time as _time
+        cols = {desc[0] for desc in db.conn.execute("SELECT * FROM exchange_records LIMIT 0").description}
+        ts_col = "created_at" if "created_at" in cols else ("ts" if "ts" in cols else None)
+        if ts_col is None:
+            return 0
+        day_start, day_end = _day_bounds_ts()
         row = db.conn.execute(
-            "SELECT COUNT(*) FROM exchange_records WHERE uid=? AND date=?",
-            (uid, today),
+            f"SELECT COUNT(*) FROM exchange_records WHERE uid=? AND {ts_col}>=? AND {ts_col}<?",
+            (uid, day_start, day_end),
         ).fetchone()
         return row[0] if row else 0
 

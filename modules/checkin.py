@@ -252,8 +252,11 @@ def handle_checkin(bot, m, config, db):
         logger.error(f"签到升级通知异常: {e}")
 
     # 尝试生成签到卡片
+    # 卡片信息（连续天数/积分/余额）与文本回复完全重复，默认关闭；
+    # 文本+图片+原消息三连发再集体删除的观感较差。需要时配置开启。
     try:
-        if current_points is not None:
+        _send_card = (config.get("CHECKIN_CONFIG", {}) or {}).get("send_card", False)
+        if _send_card and current_points is not None:
             generate_checkin_card(bot, m, config, db, uid, uname, continuous, earned, current_points)
     except Exception as e:
         logger.error(f"签到卡片生成异常: {e}")
@@ -353,18 +356,38 @@ def handle_makeup_checkin(bot, m, config, db):
         # 重新计算今日连续天数
         today_continuous = yesterday_continuous + 1
         today_streak = yesterday_streak + 1
+
+        # 补签恢复了连续天数，但今日签到时只按断签基础档发奖；
+        # 这里按恢复后的连续档补发差额，消除“恢复连续却不补奖励”的矛盾。
+        makeup_bonus = 0
+        for days, pts in sorted(_configured_bonus_days(checkin_cfg).items()):
+            if today_continuous >= days:
+                makeup_bonus = pts
+        today_row = db.conn.execute(
+            "SELECT points_earned FROM checkin_records WHERE uid=? AND date=?",
+            (uid, today)
+        ).fetchone()
+        base_earned = today_row[0] if today_row else 0
+        expected_earned = checkin_cfg.get("base_points", 10) + makeup_bonus
+        bonus_gap = max(0, expected_earned - base_earned)
+
         with _db_lock:
             db.conn.execute(
-                "UPDATE checkin_records SET continuous_days=?, current_streak=? WHERE uid=? AND date=?",
-                (today_continuous, today_streak, uid, today)
+                "UPDATE checkin_records SET continuous_days=?, current_streak=?, points_earned=? WHERE uid=? AND date=?",
+                (today_continuous, today_streak, base_earned + bonus_gap, uid, today)
             )
             db.conn.commit()
 
-        bot.reply_to(
-            m,
+        if bonus_gap > 0:
+            db.add_points(uid, bonus_gap, source="checkin_makeup_bonus")
+
+        reply_text = (
             f"✅ 补签成功！\n💰 消耗积分：{cost}\n📅 连续签到：{today_streak}天"
         )
-        logger.info(f"补签: uid={uid} 消耗{cost}积分 连续{today_streak}天")
+        if bonus_gap > 0:
+            reply_text += f"\n🎁 恢复连续奖励：补发{bonus_gap}积分"
+        bot.reply_to(m, reply_text)
+        logger.info(f"补签: uid={uid} 消耗{cost}积分 连续{today_streak}天 补发{bonus_gap}积分")
 
     except Exception as e:
         logger.error(f"补签异常: {e}")
