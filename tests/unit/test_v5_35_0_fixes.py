@@ -102,7 +102,7 @@ def test_no_broken_import_pattern_remains():
     broken_patterns = [
         'from core.settings import config',
         'from core.database import db_manager',
-        'from core.telebot_compat import TelebotCompat',
+        'from core.telegram_send_utils import TelebotCompat',
         'from utils.logger import get_logger',
     ]
     import glob

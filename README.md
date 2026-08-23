@@ -4,7 +4,33 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.40.0**：三时段传统文化栏目内容丰富——易经经典句、黄历值神/吉时现代化、塔罗框架轮换、免责尾注、私聊占卜敏感分流、节气问候注入（均默认关闭，待逐项开启）。
+当前版本 **v5.41.0**：全仓治理——凭据唯一存 .env（config.json 落盘剥离 TOKEN/API_KEY）、配置/告警状态原子写、TG 发送瞬态重试、write_queue 空壳及假监控拆除、Docker 岔路删除、异常卫生 CI 闸门、四个误导命名模块改名。
+
+## 默认关闭功能货架
+
+以下能力均已接线、默认关闭，由 Dashboard 设置页或 config 对应开关开启：
+
+| 功能 | 模块 | 说明 |
+|---|---|---|
+| NSFW 图片检测 | modules/nsfw_detect.py | 入群/私聊图片本地审核 |
+| 天气查询 | modules/weather.py | 群聊天气问答 |
+| 小游戏（真心话/骰子等） | modules/games.py | 群互动娱乐 |
+| 红包 | modules/redpacket.py | 积分红包玩法 |
+| 抽奖 | modules/lottery.py | 群抽奖 |
+| 盲盒 | modules/blind_box.py | 积分盲盒 |
+| 僵尸号清理 | modules/zombie_clean.py | 注销号识别清理 |
+| 防删除 | modules/antidelete.py | 删消息留痕 |
+| 翻译 | modules/translate.py | 消息翻译 |
+| 汇率 | modules/exchange_rate.py | 汇率查询 |
+| 二维码 | modules/qr_code.py | 二维码生成 |
+| 计算器 | modules/calculator.py | 群内计算 |
+| Telegraph | modules/telegraph.py | 长文转 telegraph |
+| 短链接 | modules/url_shortener.py | 链接缩短 |
+| 贴纸工具 | modules/sticker_tools.py | 贴纸处理 |
+| 花字 | modules/fancy_text.py | 特殊字体文本 |
+| AB 守护 | modules/ab_guardian.py | A/B 实验护栏 |
+| PNG 数据面板 | modules/image_dashboard.py | 群数据图片报告 |
+
 
 ## 快速开始
 
@@ -36,7 +62,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 
 ### 依赖安装失败
 - 优先 `pip install -r requirements.lock`（锁定版本，与生产一致）。
-- 锁文件安装失败时回退 `pip install -r requirements.txt`，并记录差异以便后续修复 lock。
+- 锁文件安装失败时回退 `pip install -r requirements.in`（无哈希的源清单），并记录差异以便后续修复 lock。
 
 ### Telegram Bot Token 未设置
 - 复制 `.env.example` 为 `.env`，填写 `TG_TOKEN`（从 [@BotFather](https://t.me/BotFather) 获取）。

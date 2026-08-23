@@ -32,15 +32,27 @@ def test_dashboard_teardown_filter_is_exact_and_preserves_real_errors():
 
 
 def test_dashboard_runtime_probe_uses_exact_lock_versions():
+    """探针命令必须使用 requirements.lock 的精确版本（独立解析 lock，不硬编码）。"""
+    import re
+    from pathlib import Path
+
     import deploy_vps
 
     versions = deploy_vps._locked_dashboard_versions()
     command = deploy_vps._dashboard_runtime_probe_command()
 
-    assert versions == {"gunicorn": "21.2.0", "gevent": "24.11.1"}
+    lock_text = (Path(deploy_vps.ROOT) / "requirements.lock").read_text(encoding="utf-8")
+    expected = {}
+    for pkg in ("gunicorn", "gevent"):
+        match = re.search(rf"^{pkg}==([0-9][\w.]*)", lock_text, re.MULTILINE)
+        assert match, f"{pkg} 必须在 requirements.lock 中有精确钉版"
+        expected[pkg] = match.group(1)
+
+    assert versions == expected
     assert "DASHBOARD_RUNTIME_LOCK_OK" in command
-    assert "gunicorn" in command and "21.2.0" in command
-    assert "gevent" in command and "24.11.1" in command
+    for pkg, ver in expected.items():
+        assert pkg in command
+        assert ver in command
 
 
 def test_safe_merge_config_keeps_protected_fields_from_vps():

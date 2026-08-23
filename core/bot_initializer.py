@@ -9,6 +9,7 @@ core/bot_initializer.py  ·  Bot初始化工厂
 - initialize_bot() 工厂函数
 """
 
+import logging
 import os, sys, json, time, logging, subprocess, threading
 from threading import Lock
 from dataclasses import dataclass, field
@@ -321,8 +322,9 @@ def save_config(cfg: dict, db_instance=None):
                 if _loaded_config_mtime and current_mtime > _loaded_config_mtime:
                     logger.warning("检测到磁盘配置比当前进程更新，跳过本次保存以避免旧内存覆盖新配置")
                     return False
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(compact_runtime_config(cfg), f, ensure_ascii=False, indent=2)
+            # 【v5.41.0】原子写：临时文件 + os.replace，杜绝写一半崩溃损坏 config.json
+            from core.helpers import atomic_write_json
+            atomic_write_json(CONFIG_FILE, compact_runtime_config(cfg), indent=2)
             _loaded_config_mtime = os.path.getmtime(CONFIG_FILE)
         except Exception as e:
             logger.error(f"配置保存失败：{e}")
@@ -657,7 +659,7 @@ def initialize_bot() -> BotContext:
 
     # 10. 创建TeleBot
     import telebot
-    from core.telebot_compat import (
+    from core.telegram_send_utils import (
         TelegramPollingExceptionHandler,
         preserve_telegram_extra_fields,
     )
@@ -1035,8 +1037,8 @@ def _test_db_write():
         if test_conn is not None:
             try:
                 test_conn.close()
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
 
 def _init_keyword_triggers(db):

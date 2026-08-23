@@ -7,6 +7,7 @@ changes production configuration, sends messages, or installs capabilities.
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import hashlib
@@ -362,8 +363,8 @@ printf 'WATCHDOG_HEARTBEAT_OK age_seconds=%s secure=%s\n' "$age" "$secure"
     finally:
         try:
             client.close()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
     return checks
 
 
@@ -514,8 +515,8 @@ PYEOF"""
     finally:
         try:
             client.close()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
     return checks
 
 

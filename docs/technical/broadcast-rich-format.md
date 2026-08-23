@@ -184,7 +184,7 @@ PERIOD_STYLES = {
 
 ### 5. 新参数兼容
 
-当前项目通过 `core/telebot_compat.py` 兼容以下 Telegram Bot API 新参数：
+当前项目通过 `core/telegram_send_utils.py` 兼容以下 Telegram Bot API 新参数：
 
 - `show_caption_above_media`
 - `allow_paid_broadcast`
@@ -472,7 +472,7 @@ PERIOD_STYLES = {
 
 可通过 `TELEGRAM_ALLOWED_UPDATES` 追加自定义更新类型；项目会自动合并默认必需事件，避免旧配置误删关键入口。设为 `"all"` 时不限制更新类型。
 
-注意：`allowed_updates` 只代表 Telegram 会推送这些事件，不代表当前 pyTelegramBotAPI 会自动分发。项目已在 `core/telebot_compat.py` 里补 `patch_telebot_business_update_dispatch()`，把 SDK 未分发的新事件交给 `core/handlers/business_handlers.py`。
+注意：`allowed_updates` 只代表 Telegram 会推送这些事件，不代表当前 pyTelegramBotAPI 会自动分发。项目已在 `core/telegram_send_utils.py` 里补 `patch_telebot_business_update_dispatch()`，把 SDK 未分发的新事件交给 `core/handlers/business_handlers.py`。
 
 Business 事件处理策略：
 

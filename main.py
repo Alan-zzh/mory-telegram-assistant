@@ -282,7 +282,7 @@ def main():
     logger.info("=" * 60)
 
     try:
-        from core.telebot_compat import get_allowed_updates
+        from core.telegram_send_utils import get_allowed_updates
         # 轮询异常由 TelegramPollingExceptionHandler 分级退避；40秒连接上限避免
         # 上游连接挂死时整整阻塞60秒，30秒长轮询仍保持低请求频率。
         bot.infinity_polling(timeout=40, long_polling_timeout=30,

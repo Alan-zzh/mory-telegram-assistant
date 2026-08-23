@@ -5,6 +5,7 @@
 对话，避免把明确的办事入口生成成陪聊式开场。管理员和群聊继续保留各自入口。
 """
 
+import logging
 from core.logging_util import get_logger
 
 logger = get_logger("start_help_handler")
@@ -181,8 +182,8 @@ def handle_help_command(bot, message, ctx):
                 logger.warning(f"主动私聊用户帮助失败 uid={uid}: {e}")
                 try:
                     bot.reply_to(message, "📖 完整帮助已私聊你；如未收到，请先私聊我发送 /start 后再试。")
-                except Exception:
-                    pass
+                except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                    logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
             else:
                 # 私聊成功才回复"已私聊"
                 bot.reply_to(message, "📖 完整帮助已私聊你，请查看私聊窗口。")

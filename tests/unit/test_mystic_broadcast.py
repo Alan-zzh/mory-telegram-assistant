@@ -267,7 +267,7 @@ def test_disabled_mystic_task_does_not_claim_or_send(monkeypatch):
 
 
 def test_rich_mystic_send_and_single_markup_are_tracked(monkeypatch):
-    import core.telebot_compat as telebot_compat
+    import core.telegram_send_utils as telegram_send_utils
     import tasks.broadcast.mystic_broadcast_task as mystic_task
 
     events = []
@@ -314,7 +314,7 @@ def test_rich_mystic_send_and_single_markup_are_tracked(monkeypatch):
         events.append(("send", gid, rich, len(markup.keyboard)))
         return SimpleNamespace(message_id=88)
 
-    monkeypatch.setattr(telebot_compat, "send_rich_message_compat", fake_send)
+    monkeypatch.setattr(telegram_send_utils, "send_rich_message_compat", fake_send)
     mystic_task.execute_mystic_broadcast_task(
         rm, "mystic_morning", "morning"
     )

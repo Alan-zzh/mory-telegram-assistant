@@ -71,8 +71,8 @@ def test_register_business_handlers_installs_hook():
     assert db.deleted == [(-1003, 31)]
 
 
-def test_telebot_compat_dispatches_deleted_business_messages_to_hook():
-    from core.telebot_compat import preserve_telegram_extra_fields
+def test_telegram_send_utils_dispatches_deleted_business_messages_to_hook():
+    from core.telegram_send_utils import preserve_telegram_extra_fields
     from telebot import TeleBot, types
 
     preserve_telegram_extra_fields()

@@ -421,7 +421,7 @@ def test_personal_channel_normal_vehicle_team_notice_is_not_ad():
 
 
 def test_telebot_user_keeps_emoji_status_extra_field():
-    from core.telebot_compat import preserve_user_extra_fields
+    from core.telegram_send_utils import preserve_user_extra_fields
     from telebot import types
 
     preserve_user_extra_fields()

@@ -1,8 +1,0 @@
-{
-  "success": true,
-  "output": "仅补充准确docstring，使CI interrogate门禁恢复通过。",
-  "error": "",
-  "artifacts": ["modules/ad_blocker.py", "modules/auto_rules.py", "modules/entertainment_games.py", "modules/group_members.py", "modules/group_todo.py"],
-  "evidence": ["interrogate: 80.2% PASS", "py_compile 34 target modules: pass"],
-  "metadata": {"agent_type": "execute", "agent_name": "developer", "claimed_actions": ["edit", "test"], "duration_ms": 0, "tool_calls": 0, "fallback_triggered": false}
-}

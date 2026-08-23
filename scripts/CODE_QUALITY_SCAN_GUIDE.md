@@ -13,8 +13,8 @@
 # 安装 vulture 和 radon
 pip install vulture>=2.0 radon>=5.1.0
 
-# 或者从 requirements.txt 安装
-pip install -r requirements.txt
+# 或者从 requirements.in 安装
+pip install -r requirements.in
 ```
 
 ## 基本用法

@@ -19,7 +19,7 @@ from datetime import datetime, timezone, timedelta
 from core.broadcast_formatter import build_broadcast_html, looks_like_html
 from core.database import _db_lock
 from core.logging_util import get_logger
-from core.telebot_compat import send_message_compat
+from core.telegram_send_utils import send_message_compat
 
 logger = get_logger("scheduled_msg")
 

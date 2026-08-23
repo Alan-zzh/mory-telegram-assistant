@@ -3,12 +3,13 @@
 广告账号统一处置：不踢人，只永久禁言、删消息、双黑名单。
 """
 
+import logging
 import json
 import time
 
 from core.helpers import format_user_mention
 from core.logging_util import get_logger
-from core.telebot_compat import delete_all_message_reactions_compat, restrict_chat_member_compat
+from core.telegram_send_utils import delete_all_message_reactions_compat, restrict_chat_member_compat
 
 logger = get_logger("ad_enforcement")
 
@@ -190,8 +191,8 @@ def _persist_ad_state(bot, db, chat_id: int, uid: int, reason: str, muted: bool)
     except Exception as e:
         try:
             db.conn.rollback()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         logger.warning(f"广告处置持久态事务失败并已回滚: uid={uid} err={e}")
         try:
             from tasks.support.fault_reporter import report_fault
@@ -203,8 +204,8 @@ def _persist_ad_state(bot, db, chat_id: int, uid: int, reason: str, muted: bool)
         if lock:
             try:
                 lock.release()
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
 
 def _remove_blacklists(db, uid: int) -> bool:
@@ -223,16 +224,16 @@ def _remove_blacklists(db, uid: int) -> bool:
     except Exception as e:
         try:
             db.conn.rollback()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         ok = False
         logger.warning(f"移除广告黑名单失败: uid={uid} err={e}")
     finally:
         if lock:
             try:
                 lock.release()
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
     return ok
 
 
@@ -292,8 +293,8 @@ def _verify_persistent_state_cleared(db, uid: int) -> tuple[bool, dict]:
         if lock:
             try:
                 lock.release()
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
     return all(count == 0 for count in counts.values()), counts
 
 
@@ -379,7 +380,7 @@ def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int
     # 仅在已解封（restored=True）后发送，确保用户已恢复发言权限。
     if (config or {}).get("EPHEMERAL_MESSAGE_ENABLED", False) and confirmed and chat_id:
         try:
-            from core.telebot_compat import send_ephemeral_message_compat
+            from core.telegram_send_utils import send_ephemeral_message_compat
             from core.broadcast_formatter import build_alert_card_html
             user_card = build_alert_card_html(
                 title="你的群内发言权限已恢复",
@@ -425,8 +426,8 @@ def _admin_ids(config: dict) -> set:
     if admin_id:
         try:
             admin_ids.add(int(admin_id))
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
     return admin_ids
 
 
@@ -596,8 +597,8 @@ def handle_unban_command(bot, message, config: dict, db, ad_detector=None) -> bo
     if actor_id not in _admin_ids(config or {}):
         try:
             bot.reply_to(message, "只有管理员可以解封。")
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         return True
 
     token = _extract_unban_token(message)
@@ -611,8 +612,8 @@ def handle_unban_command(bot, message, config: dict, db, ad_detector=None) -> bo
                 "没找到要解封的人。请回复被误封用户发送 /unban，或发送 /unban 用户ID / /unban @username / 解封 显示名。重名时请用用户ID。"
                 + extra,
             )
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         return True
 
     chat_id = getattr(getattr(message, "chat", None), "id", 0) or 0
@@ -978,8 +979,8 @@ def _send_self_review_notice(bot, db, config: dict, event: dict, uid: int, uname
     except Exception as e:
         try:
             db.set_ad_event_notice(str(event.get("event_id") or ""), 0)
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         logger.warning(f"发送广告处置说明卡失败: uid={uid} chat={chat_id} err={e}")
         return 0
 

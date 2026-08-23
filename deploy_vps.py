@@ -1,3 +1,4 @@
+import logging
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -119,12 +120,12 @@ def _upload_files_resilient(client, sftp, files, *, chunk_size=40, max_attempts=
             except Exception as e:
                 try:
                     sftp.close()
-                except Exception:
-                    pass
+                except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                    logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
                 try:
                     client.close()
-                except Exception:
-                    pass
+                except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                    logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
                 if attempt >= max_attempts:
                     raise RuntimeError(
                         f"上传批次 {offset + 1}-{offset + len(chunk)} 连续失败 {max_attempts} 次"
@@ -404,8 +405,8 @@ def _restart_services_fresh():
     finally:
         try:
             client.close()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
 
 
 def _signal_handler(signum, frame):
@@ -449,8 +450,8 @@ def main() -> bool:
     try:
         signal.signal(signal.SIGTERM, _signal_handler)
         signal.signal(signal.SIGINT, _signal_handler)
-    except Exception:
-        pass
+    except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+        logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
 
     # 1. 前置检查
     if not VPS_HOST or (not VPS_PASS and not VPS_KEY_FILES):
@@ -521,8 +522,8 @@ def main() -> bool:
             bak_stdin, bak_stdout, bak_stderr = client.exec_command(
                 "mkdir -p " + VPS_PATH + "/backups", timeout=15)
             bak_stdout.channel.recv_exit_status()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
         backup_cmd = (
             f"cd {VPS_PATH} && "
             "tar --exclude='./mory.db' --exclude='./.venv' --exclude='./logs' "
@@ -594,7 +595,7 @@ def main() -> bool:
         ensure_remote_dir(sftp, f"{VPS_PATH}/config")
 
         # 上传其他非Python文件。requirements.lock 存在时一并上传，生产环境优先使用锁定依赖。
-        for extra in ["requirements.lock", "requirements.txt", "requirements.in", "Dockerfile", "docker-compose.yml"]:
+        for extra in ["requirements.lock", "requirements.in"]:
             local_extra = ROOT / extra
             if local_extra.exists():
                 try:
@@ -765,8 +766,8 @@ def main() -> bool:
             try:
                 ac = client.exec_command("systemctl is-active mory-assistant mory-dashboard", timeout=10)
                 active_out = ac[1].read().decode("utf-8", errors="replace").strip()
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
             both_active = active_out.count("active") >= 2
             if code == "200" and both_active:
                 print(f"  ✅ health=200 且双服务 active（第 {attempt+1} 次轮询）")
@@ -808,8 +809,8 @@ def main() -> bool:
         # 关闭主 SSH（忽略任何错误，主连接可能在中断中已部分损坏）
         try:
             client.close()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
     # ── 输出最终结果 ──
     if deploy_ok:
         print("\n" + "=" * 60)

@@ -1,7 +1,7 @@
 """
 tasks/support/fault_reporter.py - 统一故障通知中心
 
-将 auto_tasks.py 中内嵌的 _FaultReporter 提取为独立模块，供所有任务模块共享。
+统一故障通知中心（v5.38.69 自已拆除的 auto_tasks.py 内嵌 _FaultReporter 迁出），供所有任务模块共享。
 """
 
 import json
@@ -80,10 +80,10 @@ class FaultReporter:
             self._last_alert = {}
 
     def _save_dedup_state(self):
-        """持久化去重状态到文件。"""
+        """持久化去重状态到文件（v5.41.0 改原子写，防写一半崩溃导致重复轰炸）。"""
         try:
-            with open(self._DEDUP_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._last_alert, f)
+            from core.helpers import atomic_write_json
+            atomic_write_json(self._DEDUP_STATE_FILE, self._last_alert)
         except Exception as e:
             logger.warning(f"告警去重状态持久化失败: {e}")
 

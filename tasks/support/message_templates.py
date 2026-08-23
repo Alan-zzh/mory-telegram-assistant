@@ -1,7 +1,7 @@
 """
 tasks/support/message_templates.py - 消息文案资源池
 
-集中管理 auto_tasks.py 中散落的话术池，避免巨型文件混合文案与逻辑。
+集中管理播报话术池（v5.38.69 自已拆除的 auto_tasks.py 迁出），避免巨型文件混合文案与逻辑。
 """
 
 import random

@@ -1,7 +1,7 @@
 """
 tasks/support/task_guard.py - 任务执行守卫
 
-将 auto_tasks.py 中内嵌的 _TaskGuard 提取为独立模块，用于并发异常检测与预警。
+任务并发异常检测与预警（v5.38.69 自已拆除的 auto_tasks.py 内嵌 _TaskGuard 迁出）。
 """
 
 import threading

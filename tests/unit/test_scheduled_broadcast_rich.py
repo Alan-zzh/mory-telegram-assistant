@@ -18,7 +18,7 @@ def test_failed_broadcast_surfaces_original_error_when_lock_release_returns_fals
 
     assert "未删除锁" in caplog.text
 from core.broadcast_formatter import build_greeting_html
-from core.telebot_compat import (
+from core.telegram_send_utils import (
     get_allowed_updates,
     preserve_message_extra_fields,
     restrict_chat_member_compat,
@@ -283,7 +283,7 @@ def test_build_markup_receives_config_for_colored_button(monkeypatch):
         from telebot import types
         return types.InlineKeyboardButton(text=text, url=url)
 
-    monkeypatch.setattr("core.telebot_compat.create_colored_button", fake_create_colored_button)
+    monkeypatch.setattr("core.telegram_send_utils.create_colored_button", fake_create_colored_button)
 
     markup = scheduled_broadcast._build_markup(
         {
@@ -327,7 +327,7 @@ def test_send_photo_compat_falls_back_to_raw_request(monkeypatch):
         calls["params"] = params
         return SimpleNamespace(message_id=303)
 
-    monkeypatch.setattr("core.telebot_compat._make_raw_request", fake_raw_request)
+    monkeypatch.setattr("core.telegram_send_utils._make_raw_request", fake_raw_request)
 
     result = send_photo_compat(
         _Bot(),
@@ -353,7 +353,7 @@ def test_send_rich_message_compat_calls_raw_api(monkeypatch):
         calls["params"] = params
         return SimpleNamespace(message_id=404)
 
-    monkeypatch.setattr("core.telebot_compat._make_raw_request", fake_raw_request)
+    monkeypatch.setattr("core.telegram_send_utils._make_raw_request", fake_raw_request)
 
     result = send_rich_message_compat(
         _Bot(),
@@ -381,7 +381,7 @@ def test_send_poll_compat_uses_raw_api_for_new_poll_fields(monkeypatch):
         calls["params"] = params
         return SimpleNamespace(message_id=405)
 
-    monkeypatch.setattr("core.telebot_compat._make_raw_request", fake_raw_request)
+    monkeypatch.setattr("core.telegram_send_utils._make_raw_request", fake_raw_request)
 
     result = send_poll_compat(
         _Bot(),
@@ -408,7 +408,7 @@ def test_send_checklist_compat_calls_raw_api(monkeypatch):
         calls["params"] = params
         return SimpleNamespace(message_id=406)
 
-    monkeypatch.setattr("core.telebot_compat._make_raw_request", fake_raw_request)
+    monkeypatch.setattr("core.telegram_send_utils._make_raw_request", fake_raw_request)
 
     result = send_checklist_compat(
         _Bot(),
@@ -626,7 +626,7 @@ def test_preserve_message_extra_fields_keeps_bot_api_10_fields():
 
 
 def test_business_message_update_enters_message_pipeline():
-    from core.telebot_compat import preserve_telegram_extra_fields
+    from core.telegram_send_utils import preserve_telegram_extra_fields
     from telebot import types
 
     preserve_telegram_extra_fields()
@@ -648,7 +648,7 @@ def test_business_message_update_enters_message_pipeline():
 
 
 def test_edited_business_message_update_enters_edited_pipeline():
-    from core.telebot_compat import preserve_telegram_extra_fields
+    from core.telegram_send_utils import preserve_telegram_extra_fields
     from telebot import types
 
     preserve_telegram_extra_fields()
@@ -680,7 +680,7 @@ def test_restrict_chat_member_compat_passes_new_permission_fields_to_raw(monkeyp
         calls["params"] = params
         return True
 
-    monkeypatch.setattr("core.telebot_compat._make_raw_result", fake_raw_result)
+    monkeypatch.setattr("core.telegram_send_utils._make_raw_result", fake_raw_result)
 
     ok = restrict_chat_member_compat(
         _Bot(),

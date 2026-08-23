@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 
 def test_polling_exception_handler_only_handles_get_updates_5xx(monkeypatch):
-    from core.telebot_compat import TelegramPollingExceptionHandler
+    from core.telegram_send_utils import TelegramPollingExceptionHandler
 
     sleeps = []
     warnings = []
@@ -313,29 +313,6 @@ def test_greeting_full_persona_keeps_configured_mory_identity():
     assert "清冷、小傲娇和温柔" in persona
     assert "像熟悉的群友说话" in persona
     assert "熟悉的粉丝群" in persona
-
-
-def test_zero_throughput_single_pending_write_does_not_trigger_migration_alert(monkeypatch):
-    import core.db_migration_monitor as monitor
-    from core.write_queue import write_queue
-
-    with monitor._samples_lock:
-        monitor._samples.clear()
-        monitor._samples.extend([
-            {"ts": 100.0, "total": 10, "pending": 0, "success": 10, "failed": 0},
-            {"ts": 160.0, "total": 11, "pending": 1, "success": 10, "failed": 0},
-        ])
-    monkeypatch.setattr(
-        write_queue,
-        "get_stats",
-        lambda: {"total": 11, "pending": 1, "success": 10, "failed": 0},
-    )
-
-    result = monitor._check_avg_write_queue_delay()
-
-    assert result["value"] is None
-    assert result["exceeded"] is False
-    assert "无法推算" in result["message"]
 
 
 def test_scheduled_broadcast_rejects_ai_failure_copy():

@@ -20,7 +20,7 @@
 git clone <repo> /opt/mory_assistant
 cd /opt/mory_assistant
 python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.in
 pip install locust  # 压测工具
 ```
 

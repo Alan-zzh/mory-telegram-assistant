@@ -90,7 +90,7 @@ SCORE_THRESHOLD = 3
 
 截图中“名称旁边有看我简介”的情况，本质可能是 Telegram Premium emoji 状态贴纸。处理链路：
 
-1. `core/telebot_compat.py:preserve_user_extra_fields()` 保留 pyTelegramBotAPI 未显式支持的新字段，尤其是 `emoji_status_custom_emoji_id`。
+1. `core/telegram_send_utils.py:preserve_user_extra_fields()` 保留 pyTelegramBotAPI 未显式支持的新字段，尤其是 `emoji_status_custom_emoji_id`。
 2. `modules/ad_profile_signals.py:detect_profile_ad_signal()` 合并检测：
    - first_name / last_name / username
    - BIO
@@ -137,7 +137,7 @@ SCORE_THRESHOLD = 3
 | 头像检测 | [modules/avatar_detector.py](../../modules/avatar_detector.py) | 色情头像识别 |
 | Emoji 面具 | [modules/emoji_mask_detector.py](../../modules/emoji_mask_detector.py) | emoji 绕过检测 |
 | 资料状态检测 | [modules/ad_profile_signals.py](../../modules/ad_profile_signals.py) | 用户名/BIO/Premium emoji 状态元数据 + OCR |
-| SDK 兼容补丁 | [core/telebot_compat.py](../../core/telebot_compat.py) | 保存 `User` 未知字段，防止 `emoji_status_custom_emoji_id` 被丢弃 |
+| SDK 兼容补丁 | [core/telegram_send_utils.py](../../core/telegram_send_utils.py) | 保存 `User` 未知字段，防止 `emoji_status_custom_emoji_id` 被丢弃 |
 
 ### 五、敏感词存储
 

@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """配置兼容与规范化工具。"""
 
+# 凭据唯一存 .env（AGENTS.md 红线）：任何落盘配置不得携带明文凭据。
+# 启动时由 bot_initializer 以 TG_TOKEN / DASHSCOPE_KEY 环境变量覆盖注入，
+# 因此落盘前剥离不影响运行，仅防止"运行时保存把环境变量里的密钥写回文件"。
+SECRET_CONFIG_KEYS = ("TOKEN", "API_KEY")
+
 
 def _ensure_dict(cfg: dict, key: str) -> dict:
     """确保指定键为 dict。"""
@@ -130,8 +135,16 @@ def normalize_runtime_config(cfg: dict | None) -> dict:
 
 
 def compact_runtime_config(cfg: dict | None) -> dict:
-    """压缩为适合落盘的主键结构，避免把兼容别名都写回文件。"""
+    """压缩为适合落盘的主键结构，避免把兼容别名都写回文件。
+
+    【v5.41.0】落盘前剥离明文凭据（TOKEN/API_KEY）：凭据唯一存 .env，
+    运行值由环境变量在启动时注入，写回文件只会造成凭据常驻磁盘。
+    """
     cfg = normalize_runtime_config(dict(cfg or {}))
+
+    for secret_key in SECRET_CONFIG_KEYS:
+        if cfg.get(secret_key):
+            cfg[secret_key] = ""
 
     for section_key, alias_keys in {
         "REPORT_CONFIG": ["enable"],

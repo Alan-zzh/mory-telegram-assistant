@@ -20,6 +20,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
+import logging
 import os
 import sqlite3
 import threading
@@ -475,6 +476,6 @@ def close_shared_conn():
             try:
                 _shared_conn.close()
                 logger.info("✅ 共享数据库连接已关闭")
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
             _shared_conn = None

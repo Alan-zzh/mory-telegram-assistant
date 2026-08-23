@@ -77,6 +77,9 @@ runtime/demo_*.png
 # 验收/排查过程产物（证据脚本与中间载荷，不提交）
 runtime/wait_*_evidence.py
 runtime/*_payload_b64.txt
+# 【v5.41.0】运行时目录整体不入库：历史审计/验证/子代理产物与一次性脚本
+# 本地磁盘保留作证据（AGENTS.md 审计报告落点不变），git 不再跟踪。
+runtime/*
 
 # 临时诊断/运维脚本（含硬编码VPS路径/Token/群ID，不提交）
 scripts/vps_*.py

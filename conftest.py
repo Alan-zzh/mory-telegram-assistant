@@ -20,8 +20,9 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 
-# 确保项目根目录在 sys.path
-PROJECT_ROOT = Path(__file__).parent.parent
+# 确保项目根目录在 sys.path（conftest 位于仓库根，parent 即仓库根；
+# 修复：此前误写 parent.parent 把仓库父目录插进了搜索路径）
+PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 

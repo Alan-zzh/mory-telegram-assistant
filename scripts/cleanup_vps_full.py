@@ -16,6 +16,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
+import logging
 import sys
 from pathlib import Path
 
@@ -194,8 +195,8 @@ def main():
                     remaining.append(rel_path)
                 finally:
                     sftp.close()
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         if remaining:
             print(f"  ⚠️ 以下文件仍存在：{remaining}")
         else:
@@ -221,8 +222,8 @@ def main():
     finally:
         try:
             client.close()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
 
 if __name__ == "__main__":

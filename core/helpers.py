@@ -134,3 +134,34 @@ def is_permanently_gone_chat_error(err: Exception) -> bool:
     """
     s = str(err).lower()
     return any(kw in s for kw in _PERMANENT_CHAT_GONE_KEYWORDS)
+
+
+# ── 原子写文件（v5.41.0 统一收口）────────────────────────────────────────
+# 先写同目录临时文件再 os.replace 原子替换，杜绝"写一半崩溃损坏状态文件"。
+# 既有实现（dashboard/helpers、settings_panel、broadcast_image_card）已各自
+# 原子化；本工具供其余写入点统一复用。
+
+
+def atomic_write_json(path: str, data, indent: int | None = None) -> None:
+    """原子写入 JSON 文件：临时文件 + os.replace。
+
+    失败时临时文件残留不影响原文件；replace 在同一文件系统内为原子操作。
+    """
+    import json
+    import os
+    import tempfile
+
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".tmp_", suffix=".json", dir=directory
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=indent)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise

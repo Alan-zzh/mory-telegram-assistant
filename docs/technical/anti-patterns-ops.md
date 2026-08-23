@@ -70,7 +70,7 @@
 |---|------|---------|
 | 8.1 | **chown 检查** 每次部署前自动 | `find /home/ubuntu/mory_assistant/{core,modules,dashboard} ! -user ubuntu` |
 | 8.2 | **服务文件 owner** | `ls -la /etc/systemd/system/mory-*.service` |
-| 8.3 | **依赖完整性** 部署后 `pip install -r requirements.txt` | `pip check` |
+| 8.3 | **依赖完整性** 部署后 `pip install -r requirements.in` | `pip check` |
 | 8.4 | **deploy_vps.py 必跑** | `python deploy_vps.py --check` |
 | 8.5 | **mory.db 不覆盖** VPS 数据库与本地不同步 | `ls -la /home/ubuntu/mory_assistant/mory.db` |
 

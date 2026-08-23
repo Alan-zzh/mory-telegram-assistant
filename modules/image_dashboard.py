@@ -1,5 +1,5 @@
 """
-modules/visual_dashboard.py · 可视化数据面板
+modules/image_dashboard.py · 可视化数据面板
 
 功能：
   handle_group_dashboard(bot, m, config, db)    - 群数据面板（800x600图片）
@@ -27,7 +27,7 @@ except ImportError:
     _HAS_PIL = False
 
 _CST = timezone(timedelta(hours=8))
-logger = get_logger("visual_dashboard")
+logger = get_logger("image_dashboard")
 
 # 等级称号映射（config中的LEVEL_TITLES优先，此为默认回退）
 _DEFAULT_LEVEL_TITLES = {"1": "萌新", "2": "常客", "3": "达人", "4": "大佬"}

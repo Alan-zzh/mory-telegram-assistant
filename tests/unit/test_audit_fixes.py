@@ -4,7 +4,7 @@
 覆盖目标：
 1. dashboard/auth.py:_verify_password - 双模式密码校验（sha256 + 明文）
 2. core/ai_engine.py:get_fallback_text - 统一兜底文案入口
-3. core/write_queue.py:enqueue_batch - 批量入队
+3. （v5.41.0 已移除）core/write_queue.py:enqueue_batch - 批量入队（写队列已删除）
 4. core/db_repos/tracking_repo.py:cleanup_channel_tracking_orphan - channel_tracking 孤儿清理
 5. core/llm_cost_guard.py:check_before_call step 6 - 全局 24h 熔断
 

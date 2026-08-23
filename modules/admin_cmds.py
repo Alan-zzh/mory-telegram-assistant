@@ -57,7 +57,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from core.broadcast_formatter import build_broadcast_html, looks_like_html
 from core.logging_util import get_logger
-from core.telebot_compat import send_checklist_compat, send_message_compat, send_poll_compat
+from core.telegram_send_utils import send_checklist_compat, send_message_compat, send_poll_compat
 from modules.natural_cmd import handle_natural_admin
 
 logger = get_logger("admin_cmds")

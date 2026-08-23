@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-播报多样性引擎 v2.0 - 主题轮换 + 语气匹配（[v5.32] 重构）。
+播报主题词池（v5.41.0 自 theme_engine.py 改名：本模块只提供 THEME_POOL /
+TONE_POOL 两组 prompt 词池与轮换逻辑，不承载引擎调度）。
 
 重构说明（用户反馈"再加的东西特别尬"、"记流水账一样没有实际"）：
 - 移除 SLANG_TEMPLATES / PHOTO_HINT_TEMPLATES / CONVERSION_TEMPLATES

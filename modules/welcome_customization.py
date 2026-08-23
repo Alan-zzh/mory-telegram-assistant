@@ -71,26 +71,27 @@ def get_welcome_config(db, chat_id: int) -> dict:
 
 
 def set_welcome_config(db, chat_id: int, **kwargs):
-    """设置群组欢迎配置"""
+    """设置群组欢迎配置（v5.41.0 补全局写锁，与其他 Repo 写路径一致）"""
     config = get_welcome_config(db, chat_id)  # 获取当前配置
     # 更新配置
     for key, value in kwargs.items():
         if key in config:
             config[key] = value
 
-    with db.conn:
-        db.conn.execute("""
-            INSERT OR REPLACE INTO welcome_configs
-            (chat_id, welcome_text, goodbye_text, rules_text,
-             enable_welcome, enable_goodbye, enable_rules,
-             clean_welcome, media_file_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            chat_id, config["welcome_text"], config["goodbye_text"], config["rules_text"],
-            config["enable_welcome"], config["enable_goodbye"], config["enable_rules"],
-            config["clean_welcome"], config["media_file_id"]
-        ))
-        db.conn.commit()
+    with db.lock:
+        with db.conn:
+            db.conn.execute("""
+                INSERT OR REPLACE INTO welcome_configs
+                (chat_id, welcome_text, goodbye_text, rules_text,
+                 enable_welcome, enable_goodbye, enable_rules,
+                 clean_welcome, media_file_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                chat_id, config["welcome_text"], config["goodbye_text"], config["rules_text"],
+                config["enable_welcome"], config["enable_goodbye"], config["enable_rules"],
+                config["clean_welcome"], config["media_file_id"]
+            ))
+            db.conn.commit()
 
 
 def format_welcome_message(template: str, user, chat_id: int) -> str:

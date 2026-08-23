@@ -157,3 +157,53 @@ def test_model_index_is_not_restored_from_or_written_to_database(tmp_path):
     finally:
         bi.CONFIG_FILE = original_path
         bi._loaded_config_mtime = original_mtime
+
+
+def test_compact_runtime_config_strips_plaintext_secrets():
+    """凭据唯一存 .env：落盘配置不得携带明文 TOKEN/API_KEY（v5.41.0 红线回归）。"""
+    from core.config_compat import compact_runtime_config
+
+    cfg = {
+        "TOKEN": "123456:ABC-real-secret",
+        "API_KEY": "sk-real-llm-key",
+        "GROUP_ID": -100123,
+        "REPORT_CONFIG": {"enabled": True},
+    }
+
+    compacted = compact_runtime_config(cfg)
+
+    assert compacted["TOKEN"] == ""
+    assert compacted["API_KEY"] == ""
+    # 非敏感键不受影响
+    assert compacted["GROUP_ID"] == -100123
+    assert compacted["REPORT_CONFIG"]["enabled"] is True
+
+
+def test_save_config_writes_atomically_and_never_persists_secrets(tmp_path):
+    """save_config 必须原子写（无 .tmp 残留）且不把环境注入的凭据写回磁盘。"""
+    import json
+
+    import core.bot_initializer as bi
+
+    original_path = bi.CONFIG_FILE
+    original_mtime = bi._loaded_config_mtime
+    try:
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"TOKEN": "", "API_KEY": ""}', encoding="utf-8")
+        bi.CONFIG_FILE = str(config_path)
+        bi._loaded_config_mtime = config_path.stat().st_mtime
+
+        ok = bi.save_config(
+            {"TOKEN": "123456:ABC-runtime-env", "API_KEY": "sk-runtime-env"}
+        )
+
+        assert ok is True
+        on_disk = json.loads(config_path.read_text(encoding="utf-8"))
+        assert on_disk["TOKEN"] == ""
+        assert on_disk["API_KEY"] == ""
+        # 原子写：同目录不得残留临时文件
+        residues = [p.name for p in tmp_path.iterdir() if p.name.startswith(".tmp_")]
+        assert residues == []
+    finally:
+        bi.CONFIG_FILE = original_path
+        bi._loaded_config_mtime = original_mtime

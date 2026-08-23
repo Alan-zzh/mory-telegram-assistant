@@ -8,6 +8,7 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-08-23 | 治理 | v5.41.0 全仓治理：凭据唯一存 .env、配置/告警原子写、TG 发送重试、拆 write_queue 假监控与 Docker 岔路、异常卫生 CI 闸门、四模块改名、修 AFK 损坏暗病。 | bot_initializer、config_compat、mory_bot、database、deploy_vps 等 |
 | 2026-08-23 | 部署 | v5.40.0 已部署生产：双服务 active/health 200/版本直读一致，关键 hash MATCH，三栏目+开关双态探针全过，启动窗口无 ERROR。 | deploy_vps、生产探针 |
 | 2026-08-23 | 新增 | v5.40.0 三栏目丰富：易经经典一句、黄历值神/吉时、塔罗框架轮换与扩词、免责尾注、私聊敏感分流、节气问候，均默认关闭。 | mystic_content、ai_engine、broadcast_formatter 等 |
 | 2026-08-23 | 部署 | v5.39.0 已部署生产：双服务 active/health 200/版本直读一致，关键 hash MATCH，转盘期望实测 8.87，远端死壳手动清除。 | deploy_vps、生产库取证 |

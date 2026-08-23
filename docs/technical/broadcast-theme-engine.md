@@ -6,7 +6,7 @@
 
 ## 1. 概述
 
-播报多样性引擎（theme_engine.py）是 Mory 小助理播报系统的核心组件，负责解决播报内容同质化、转化率低的问题。通过主题轮换、语气轮换、黑话软植入、图片关键词暗示和转化引导五大机制，实现播报内容的多样化和软营销。
+播报多样性引擎（theme_pools.py）是 Mory 小助理播报系统的核心组件，负责解决播报内容同质化、转化率低的问题。通过主题轮换、语气轮换、黑话软植入、图片关键词暗示和转化引导五大机制，实现播报内容的多样化和软营销。
 
 ### 1.1 核心能力
 
@@ -31,7 +31,7 @@
 
 ```
 core/
-├── theme_engine.py              # 多样性引擎（主题+语气+黑话+图片+转化）
+├── theme_pools.py              # 多样性引擎（主题+语气+黑话+图片+转化）
 ├── broadcast_formatter.py       # 富文本排版（HTML卡片构建）
 └── scheduled_broadcast.py       # 定时播报（集成引擎）
 ```
@@ -45,7 +45,7 @@ core/
    ↓
 3. 调用 build_broadcast_context() 构建播报上下文
    ↓
-4. theme_engine 生成：
+4. theme_pools 生成：
    - 主题（theme）
    - 语气（tone）
    - 黑话暗示（slang_hint）
@@ -326,7 +326,7 @@ def _render_broadcast_text(item: dict, user_profile: dict = None, config: dict =
 ### 10.1 语法检查
 
 ```bash
-python -m py_compile core/theme_engine.py
+python -m py_compile core/theme_pools.py
 python -m py_compile modules/scheduled_broadcast.py
 ```
 
@@ -350,7 +350,7 @@ python -m py_compile modules/scheduled_broadcast.py
 
 ### 11.1 新增文件
 
-- `core/theme_engine.py`（300行）
+- `core/theme_pools.py`（300行）
 
 ### 11.2 修改文件
 
@@ -359,7 +359,7 @@ python -m py_compile modules/scheduled_broadcast.py
 
 ### 11.3 部署步骤
 
-1. 上传 `core/theme_engine.py` 到 VPS
+1. 上传 `core/theme_pools.py` 到 VPS
 2. 更新 `modules/scheduled_broadcast.py`
 3. 更新 `config.json`（新增 `BROADCAST_THEME_ENABLED: true`）
 4. 重启 Bot 服务

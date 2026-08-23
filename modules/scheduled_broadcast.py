@@ -34,9 +34,9 @@ from core.broadcast_formatter import (
 )
 from core.broadcast_image_card import build_broadcast_image_card, resolve_theme_options
 from core.broadcast_image_payload import build_scheduled_image_payload
-from core.telebot_compat import send_checklist_compat, send_message_compat, send_photo_compat, send_poll_compat, send_rich_message_compat
+from core.telegram_send_utils import send_checklist_compat, send_message_compat, send_photo_compat, send_poll_compat, send_rich_message_compat
 from core.logging_util import get_logger
-from core.theme_engine import build_broadcast_context
+from core.theme_pools import build_broadcast_context
 
 logger = get_logger("scheduled_broadcast")
 
@@ -230,7 +230,7 @@ def _build_markup(item: dict, config: dict = None, combo: dict = None):
 
     # 用户已配置按钮：兼容旧版彩色按钮参数
     if config and config.get("BUTTON_STYLE_ENABLED", False):
-        from core.telebot_compat import create_colored_button
+        from core.telegram_send_utils import create_colored_button
         button_style = item.get("button_style", "primary")
         button_emoji_id = item.get("button_emoji_id")
         button = create_colored_button(
@@ -812,8 +812,8 @@ def _log_broadcast_attribution(db, chat_id: int, broadcast_id: str, content_type
     """
     try:
         from datetime import datetime
-        from core.growth_optimizer import _ensure_conversion_columns
-        # 先确保 source/campaign_id 等扩展列存在（与 growth_optimizer._insert_conversion 一致）
+        from core.conversion_glue import _ensure_conversion_columns
+        # 先确保 source/campaign_id 等扩展列存在（与 conversion_glue._insert_conversion 一致）
         _ensure_conversion_columns(db.conn)
 
         campaign_id = f"{broadcast_id}_{datetime.now(_CST).strftime('%Y%m%d')}"

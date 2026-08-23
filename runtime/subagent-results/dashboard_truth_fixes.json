@@ -1,8 +1,0 @@
-{
-  "success": true,
-  "output": "修复Dashboard播报PUT和异常日志二次崩溃路径。",
-  "error": "",
-  "artifacts": ["dashboard/api/features_api.py", "dashboard/api/models_api.py", "dashboard/api/stats_api.py", "dashboard/audit.py", "tests/unit/test_dashboard_api_regressions.py"],
-  "evidence": ["pytest dashboard API regressions: 6 passed", "py_compile assigned modules: pass"],
-  "metadata": {"agent_type": "execute", "agent_name": "developer", "claimed_actions": ["edit", "test"], "duration_ms": 0, "tool_calls": 0, "fallback_triggered": false}
-}

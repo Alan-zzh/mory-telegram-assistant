@@ -6,6 +6,7 @@
   /smute @用户 时长 → handle_smute
   /skick @用户 → handle_skick
 """
+import logging
 import time
 from core.logging_util import get_logger
 from core.database import _db_lock
@@ -150,5 +151,5 @@ def _log_action(db, chat_id, operator_uid, target_uid, action):
         try:
             from tasks.support.fault_reporter import report_fault
             report_fault("silent_actions", f"审计日志写入失败: {e}", severity="⚠️")
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')

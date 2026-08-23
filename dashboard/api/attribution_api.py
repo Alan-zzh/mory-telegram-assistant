@@ -220,7 +220,7 @@ def api_attribution_growth_summary():
     try:
         days = min(int(request.args.get("days", 7)), 90)
         from dashboard.helpers import get_db
-        from core.growth_optimizer import summarize_growth
+        from core.conversion_glue import summarize_growth
         db = get_db()
         data = summarize_growth(db, days=days)
         return jsonify({"ok": True, "data": data, "count": len(data), "days": days})

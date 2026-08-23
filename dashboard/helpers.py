@@ -86,7 +86,11 @@ _CONFIG_CACHE_TTL = 5  # 秒
 
 
 def read_config():
-    """读取config.json配置（带5秒TTL缓存，避免高频请求重复读文件）"""
+    """读取config.json配置（带5秒TTL缓存，避免高频请求重复读文件）
+
+    【v5.41.0】凭据唯一存 .env：config.json 不再保存明文 TOKEN/API_KEY，
+    读取时与 bot_initializer 相同口径用环境变量覆盖注入（TG_TOKEN / DASHSCOPE_KEY）。
+    """
     now = time.time()
     cfg_path = os.path.join(_MORY_ROOT, "config.json")
     try:
@@ -99,6 +103,11 @@ def read_config():
         # 缓存未命中：重新读取
         with open(cfg_path, "r", encoding="utf-8") as f:
             data = normalize_runtime_config(json.load(f))
+        # 凭据环境变量优先（与 bot_initializer 同口径；config.json 落盘值恒为空）
+        if os.environ.get("TG_TOKEN"):
+            data["TOKEN"] = os.environ["TG_TOKEN"]
+        if os.environ.get("DASHSCOPE_KEY"):
+            data["API_KEY"] = os.environ["DASHSCOPE_KEY"]
         _config_cache["data"] = data
         _config_cache["mtime"] = mtime
         _config_cache["loaded_at"] = now

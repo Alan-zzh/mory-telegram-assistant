@@ -25,41 +25,11 @@ from core.alert_bot import send_alert
 logger = get_logger("alert_rules")
 
 # 阈值常量
-_QSIZE_WARN = 50
-_QSIZE_CRIT = 150
 # 调度失败告警：只看最近 _SCHED_FAIL_WINDOW 秒内主动失败的任务
 # （v5.38.14 修复：原 total_fail 累计值不重置，导致任一历史失败永久误告警）
 _SCHED_FAIL_WINDOW = 1800       # 30 分钟窗口
 _SCHED_FAIL_ACTIVE_THRESHOLD = 1  # 窗口内主动失败任务数 >= 此值才告警
 _DASH_RESTART_THRESHOLD = 3  # Dashboard 重启次数告警阈值
-
-
-def check_write_queue_backlog() -> Optional[dict]:
-    """
-    检查 WriteQueue 积压。
-    qsize > 150 → CRITICAL；> 50 → WARNING；否则 None。
-    """
-    try:
-        from core.write_queue import write_queue
-        stats = write_queue.get_stats()
-        qsize = stats.get("pending", 0)
-        if qsize > _QSIZE_CRIT:
-            return {
-                "level": "CRITICAL",
-                "title": "WriteQueue 严重积压",
-                "message": f"队列待处理任务 {qsize} 条（阈值 {_QSIZE_CRIT}），存在写入阻塞风险",
-                "context": {"qsize": qsize, "stats": stats},
-            }
-        if qsize > _QSIZE_WARN:
-            return {
-                "level": "WARNING",
-                "title": "WriteQueue 积压告警",
-                "message": f"队列待处理任务 {qsize} 条（阈值 {_QSIZE_WARN}）",
-                "context": {"qsize": qsize, "stats": stats},
-            }
-    except Exception as e:
-        logger.error(f"[check_write_queue_backlog 异常] {type(e).__name__}: {e}")
-    return None
 
 
 def check_scheduler_failures() -> Optional[dict]:
@@ -203,7 +173,6 @@ def check_anomaly_metrics() -> Optional[dict]:
 
 # 健康检查函数注册表（无参数 check）
 _HEALTH_CHECKS: list = [
-    check_write_queue_backlog,
     check_scheduler_failures,
     check_dashboard_restarts,
     check_anomaly_metrics,

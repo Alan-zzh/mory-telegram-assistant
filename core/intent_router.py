@@ -44,7 +44,7 @@ class IntentRouter:
             return {"intent": "chat", "confidence": 0.0, "source": "rule"}
 
         try:
-            from core.growth_optimizer import is_contextual_purchase_intent
+            from core.conversion_glue import is_contextual_purchase_intent
             from core.keyword_manager import is_convert_rejection_message
             if is_convert_rejection_message(text):
                 return {

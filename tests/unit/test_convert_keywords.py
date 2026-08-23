@@ -23,7 +23,7 @@ from core.handlers.ai_reply_handler import (
     _is_order_access_request,
     _should_offer_proactive_preview,
 )
-from core.growth_optimizer import resolve_conversion_target
+from core.conversion_glue import resolve_conversion_target
 
 
 def test_original_keywords_still_work():
@@ -274,7 +274,7 @@ def test_contextual_purchase_reply_skips_preview_and_closes_order():
 
 
 def test_rejection_variants_stop_conversion_and_model_claims_are_removed():
-    from core.growth_optimizer import resolve_conversion_target
+    from core.conversion_glue import resolve_conversion_target
     from core.handlers.ai_reply_handler import _sanitize_unverified_sales_claims
     from core.keyword_manager import is_convert_rejection_message
 

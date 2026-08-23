@@ -67,8 +67,10 @@ class TestCascadeSuppression(CascadeSuppressionTestBase):
     def test_01_database_lock_cascade_suppression(self):
         """
         故障注入：SYSTEM_DATABASE_LOCKED 根因告警活跃时，
-        立即触发 10 个 SCHEDULER_JOB_FAILED + 5 个 WRITE_QUEUE_BACKLOG，
+        立即触发 15 个 SCHEDULER_JOB_FAILED（下游），
         断言下游 15 条全部被抑制，根因告警正常发送。
+        （v5.41.0：WRITE_QUEUE_BACKLOG 类型随 write_queue 删除而移除，
+        下游样例统一改用仍存在的 SCHEDULER_JOB_FAILED。）
         """
         # 1) 发送根因告警：数据库锁定（标题归一化为 SYSTEM_DATABASE_LOCKED）
         ok = alert_bot.send_alert(
@@ -81,16 +83,10 @@ class TestCascadeSuppression(CascadeSuppressionTestBase):
             "根因告警应写入 _active_root_causes",
         )
 
-        # 2) 立即发送 10 个 SCHEDULER_JOB_FAILED（下游，标题归一化匹配）
-        for i in range(10):
+        # 2) 立即发送 15 个 SCHEDULER_JOB_FAILED（下游，标题归一化匹配）
+        for i in range(15):
             alert_bot.send_alert(
                 "CRITICAL", "调度任务失败", f"job_{i} error", {"job": f"j{i}"}
-            )
-
-        # 3) 立即发送 5 个 WRITE_QUEUE_BACKLOG（下游，标题归一化匹配）
-        for i in range(5):
-            alert_bot.send_alert(
-                "WARNING", "WriteQueue 积压", f"qsize={60 + i}", {"qsize": 60 + i}
             )
 
         stats = self._stats()

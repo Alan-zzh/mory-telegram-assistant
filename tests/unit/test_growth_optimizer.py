@@ -3,7 +3,7 @@ import threading
 import time
 
 from core.intent_router import IntentRouter
-from core.growth_optimizer import (
+from core.conversion_glue import (
     assign_variant,
     build_stage_hint,
     is_contextual_purchase_intent,
@@ -301,7 +301,7 @@ def test_structured_cta_dedup_survives_reload_when_raw_telemetry_is_off():
 def test_recent_conversation_is_scoped_to_same_chat_and_age(monkeypatch):
     db = DummyDB()
     now = 2_000_000
-    monkeypatch.setattr("core.growth_optimizer.time.time", lambda: now)
+    monkeypatch.setattr("core.conversion_glue.time.time", lambda: now)
     db.conn.executemany(
         """
         INSERT INTO business_conversation_context

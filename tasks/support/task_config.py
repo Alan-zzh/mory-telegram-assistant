@@ -1,9 +1,10 @@
 """
 tasks/support/task_config.py - 任务相关配置解析
 
-集中管理 auto_tasks 中散落的时间配置解析逻辑，避免各任务模块重复实现。
+集中管理时间配置解析逻辑（v5.38.69 自已拆除的 auto_tasks.py 迁出），避免各任务模块重复实现。
 """
 
+import logging
 from typing import Tuple
 
 from core.logging_util import get_logger
@@ -22,8 +23,8 @@ def parse_hhmm(value, default_hour: int, default_minute: int) -> Tuple[int, int]
                 return hour_i, minute_i
         if isinstance(value, int) and 0 <= value <= 23:
             return value, default_minute
-    except Exception:
-        pass
+    except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+        logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
     return default_hour, default_minute
 
 

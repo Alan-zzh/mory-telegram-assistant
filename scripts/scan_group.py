@@ -30,7 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.bot_initializer import _load_dynamic_states, load_config  # noqa: E402
 from core.database import DB  # noqa: E402
 from core.logging_util import get_logger  # noqa: E402
-from core.telebot_compat import preserve_telegram_extra_fields  # noqa: E402
+from core.telegram_send_utils import preserve_telegram_extra_fields  # noqa: E402
 from modules.member_ad_scan import (  # noqa: E402
     MemberAdEvaluator,
     configured_exempt_ids,
@@ -98,7 +98,8 @@ def _build_runtime():
 
     import telebot
 
-    token = str(config.get("TOKEN", "") or "")
+    # 凭据唯一存 .env：环境变量优先，config.json 仅作回退（v5.41.0 落盘值恒为空）
+    token = str(os.environ.get("TG_TOKEN") or config.get("TOKEN", "") or "")
     group_id = int(config.get("GROUP_ID", 0) or 0)
     if not token or not group_id:
         raise RuntimeError("TOKEN_or_GROUP_ID_missing")

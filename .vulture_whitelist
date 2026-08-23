@@ -1,16 +1,14 @@
-# vulture 白名单（v5.28.0 重写，仅保留经验证有效的条目）
+# vulture 白名单（v5.28.0 重写；2026-08-23 v5.41.0 修剪失效条目）
 # 格式：Python 文件，引用的名称会被 vulture 视为"已使用"
-# 验证日期：2026-06-20，基于实际代码库 grep 验证
 
 # === Handler 注册函数（main.py 动态 import 调用） ===
-# main.py:115-128 通过 from ... import + 直接调用注册
 register_member_handlers
 register_callback_handlers
 register_media_handlers
 register_business_handlers
 
-# === 配置函数（模块级，可能被动态读取） ===
-# core/settings.py:323, core/bot_initializer.py:252
+# === 配置函数（模块级，动态读取） ===
+# core/settings.py、core/bot_initializer.py
 get_config
 load_config
 
@@ -23,7 +21,7 @@ on_lottery_callback
 on_vote_kick_callback
 
 # === APScheduler 定时任务回调 ===
-# modules/scheduled_msg.py:97，被 modules/auto_tasks.py:4288 动态 import 调用
+# modules/scheduled_msg.py，由统一调度器动态 import 调用
 run_scheduled_messages
 
 # === 魔术方法（Python 框架隐式调用） ===

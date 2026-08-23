@@ -254,7 +254,7 @@ def test_send_rich_first_then_html_fallback(monkeypatch):
         raise RuntimeError("rich 不可用")
 
     monkeypatch.setattr(
-        "core.telebot_compat.send_rich_message_compat", fake_rich
+        "core.telegram_send_utils.send_rich_message_compat", fake_rich
     )
 
     message = _message(text="福利在哪")

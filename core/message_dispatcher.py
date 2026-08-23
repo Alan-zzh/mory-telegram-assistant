@@ -508,25 +508,6 @@ def dispatch(m, ctx: BotContext):
     try:
         do_dispatch(m, ctx)
     except Exception as e:
-        # [v5.25.0 阶段1-B] WriteQueue 背压降级：核心写入队列满时返回友好文案
-        if "WriteQueueFullError" in type(e).__name__:
-            clear_logging_context()
-            logger.warning(f"⚠️ WriteQueue 背压降级：{e}")
-            try:
-                uid = getattr(m, "from_user", None)
-                uid = uid.id if uid else 0
-                chat_id = getattr(m, "chat", None)
-                chat_id = chat_id.id if chat_id else 0
-                if uid and chat_id:
-                    # 人设内降级文案（傲娇风格）
-                    ctx.bot.send_message(
-                        chat_id,
-                        "Mory 脑子现在有点乱，等本姑娘三秒钟再试嘛~ 💭",
-                        reply_to_message_id=getattr(m, "message_id", None),
-                    )
-            except Exception as send_err:
-                logger.debug(f"降级文案发送失败: {send_err}")
-            return
         clear_logging_context()
         logger.error(f"❌ 分发器内部异常：{e}\n{traceback.format_exc()}")
         try:
@@ -661,7 +642,7 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
     # 当前轮进入意图路由和 AI 前，先读取同一用户、同一聊天的最近真实对话。
     # 不能只把历史写进摘要缓冲却不给本轮判断/模型使用。
     try:
-        from core.growth_optimizer import (
+        from core.conversion_glue import (
             is_contextual_purchase_intent,
             load_recent_conversation,
         )
@@ -1712,7 +1693,7 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
 
     # 转化状态前置：关键词早路由也需遵守 opt_out / 近期 CTA 抑制
     try:
-        from core.growth_optimizer import (
+        from core.conversion_glue import (
             get_conversion_state,
             persist_conversion_decision,
             resolve_conversion_target,
@@ -1760,7 +1741,7 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
     # P7：视奸雷达（v5.14.0 扩展：使用扩展的 convert 关键词 + 标志位供 P7.5 消费）
     _cleanup_radar_cooldown()
     from modules.group_mgr import _is_convert_message
-    from core.growth_optimizer import is_direct_custom_order_request
+    from core.conversion_glue import is_direct_custom_order_request
     keyword_manager = getattr(dctx.ctx, 'keyword_manager', None)
     is_direct_custom_order = is_direct_custom_order_request(msg)
     if (
@@ -1992,7 +1973,7 @@ def _dispatch_p7_5_proactive_engage(dctx: DispatchContext) -> bool:
         # 明确购买/订阅必须进入 P10 统一成交链：那里会结合真实历史、
         # 生成当前人设正文并挂唯一自助下单按钮。P7.5 只保留了解阶段搭讪，
         # 否则旧旁路会在模型超时或发送失败时截断真正的成交回复。
-        from core.growth_optimizer import (
+        from core.conversion_glue import (
             get_conversion_state,
             resolve_conversion_target,
         )

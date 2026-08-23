@@ -630,7 +630,7 @@ def _should_offer_proactive_preview(
     state = conversion_state or {}
     if state.get("opt_out"):
         return False
-    from core.growth_optimizer import resolve_conversion_target
+    from core.conversion_glue import resolve_conversion_target
     _, reason = resolve_conversion_target(str(text or ""), history, mode=mode, state=state)
     if reason in {"user_opt_out", "persisted_opt_out"}:
         return False
@@ -787,7 +787,7 @@ def _dispatch_p10_ai(dctx: DispatchContext):
     is_reply = bool(reply_user and reply_user.id == ctx.bot_id)
 
     conversation_history = getattr(dctx, "conversation_history", [])
-    from core.growth_optimizer import (
+    from core.conversion_glue import (
         get_conversion_state,
         persist_conversion_decision,
         resolve_conversion_target,
@@ -997,9 +997,9 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         logger.debug(f"操作异常: {e}")
 
     growth_ctx = None
-    if CONFIG.get("GROWTH_OPTIMIZER_ENABLED", True):
+    if CONFIG.get("conversion_glue_ENABLED", True):
         try:
-            from core.growth_optimizer import build_growth_context
+            from core.conversion_glue import build_growth_context
             growth_ctx = build_growth_context(dctx, mode, conv_count, user_profile=user_profile)
             if growth_ctx and growth_ctx.stage_hint:
                 stage_hint += growth_ctx.stage_hint
@@ -1255,14 +1255,14 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         # 与 raw_event_text 关闭时的遥测分离：仅保留 30 分钟、截断的业务承接，
         # 既用于重启后自然对话，也用于 CTA 去重和拒绝状态，不进入进化样本。
         try:
-            from core.growth_optimizer import record_business_reply_context
+            from core.conversion_glue import record_business_reply_context
             record_business_reply_context(db, dctx, msg, resp, _intent_label)
         except Exception as e:
             logger.debug(f"短期业务上下文写入失败 uid={uid}: {e}")
 
         if growth_ctx:
             try:
-                from core.growth_optimizer import record_growth_reply
+                from core.conversion_glue import record_growth_reply
                 record_growth_reply(
                     db,
                     dctx,

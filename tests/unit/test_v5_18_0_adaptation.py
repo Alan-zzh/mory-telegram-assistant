@@ -172,27 +172,27 @@ class TestBroadcastFormatterUserProfile(unittest.TestCase):
         self.assertNotIn("精选推荐", result)
 
 
-# 测试 core/telebot_compat 彩色按钮
+# 测试 core/telegram_send_utils 彩色按钮
 class TestColoredButton(unittest.TestCase):
     """测试彩色按钮工具函数。"""
 
     def test_create_colored_button_callback(self):
         """创建 callback 按钮。"""
-        from core.telebot_compat import create_colored_button
+        from core.telegram_send_utils import create_colored_button
         btn = create_colored_button(text="购买", callback_data="buy", style="success")
         self.assertEqual(btn.text, "购买")
         self.assertEqual(btn.callback_data, "buy")
 
     def test_create_colored_button_url(self):
         """创建 url 按钮。"""
-        from core.telebot_compat import create_colored_button
+        from core.telegram_send_utils import create_colored_button
         btn = create_colored_button(text="访问", url="https://t.me/MorychannelBot")
         self.assertEqual(btn.text, "访问")
         self.assertEqual(btn.url, "https://t.me/MorychannelBot")
 
     def test_create_colored_markup(self):
         """创建彩色按钮布局。"""
-        from core.telebot_compat import create_colored_markup
+        from core.telegram_send_utils import create_colored_markup
         markup = create_colored_markup([
             [{"text": "购买", "callback_data": "buy", "style": "success"}],
             [{"text": "取消", "callback_data": "cancel", "style": "danger"}],
@@ -202,7 +202,7 @@ class TestColoredButton(unittest.TestCase):
 
     def test_apply_button_style_from_config_disabled(self):
         """关闭时不应用样式。"""
-        from core.telebot_compat import apply_button_style_from_config
+        from core.telegram_send_utils import apply_button_style_from_config
         from telebot import types
         btn = types.InlineKeyboardButton(text="测试", callback_data="test")
         result = apply_button_style_from_config(btn, "buy", {"BUTTON_STYLE_ENABLED": False})

@@ -165,7 +165,7 @@ Mory 小助理部署到腾讯云硅谷 VPS（43.159.168.175, ubuntu@22.04）。�
   ```
 - **修复**：
   ```bash
-  cd /home/ubuntu/mory_assistant && pip3 install -r requirements.txt
+  cd /home/ubuntu/mory_assistant && pip3 install -r requirements.in
   ```
 
 ### 三、部署前 checklist

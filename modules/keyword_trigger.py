@@ -737,7 +737,7 @@ class KeywordTrigger:
         # 早路由绝不能抢走明确购买或泛定制的统一判定。只有规则声明的目标
         # 与 resolve_conversion_target 一致时才允许静态/润色回复。
         try:
-            from core.growth_optimizer import resolve_conversion_target
+            from core.conversion_glue import resolve_conversion_target
             conversion_target, conversion_reason = resolve_conversion_target(text, mode="normal")
         except Exception as exc:
             logger.debug("关键词早路由转化判定跳过: %s", exc)
@@ -1115,7 +1115,7 @@ class KeywordTrigger:
         if rich_html and is_rich_message_enabled(self.config):
             raw_bot = getattr(self.mory_bot, "_bot", None) or bot
             try:
-                from core.telebot_compat import send_rich_message_compat
+                from core.telegram_send_utils import send_rich_message_compat
 
                 sent = send_rich_message_compat(
                     raw_bot,

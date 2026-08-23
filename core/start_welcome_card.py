@@ -228,7 +228,7 @@ def send_start_welcome(
                 reply_markup=markup,
             )
         else:
-            from core.telebot_compat import send_photo_compat
+            from core.telegram_send_utils import send_photo_compat
 
             sent = send_photo_compat(
                 bot,

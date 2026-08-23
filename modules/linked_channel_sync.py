@@ -306,7 +306,7 @@ def build_comment_button(target: str, config: dict):
         return None
     try:
         from telebot import types
-        from core.telebot_compat import create_colored_button
+        from core.telegram_send_utils import create_colored_button
         url = _DEFAULT_URLS.get(target, "")
         if not url:
             return None
@@ -384,7 +384,7 @@ def _send_comment_reply(
     sent = None
     if media_path is not None:
         try:
-            from core.telebot_compat import send_photo_compat
+            from core.telegram_send_utils import send_photo_compat
 
             sent = send_photo_compat(
                 bot,

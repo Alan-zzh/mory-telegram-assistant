@@ -1,8 +1,0 @@
-{
-  "success": true,
-  "output": "对当前完整diff做只读挑刺复审；修订后的工作树无剩余代码级P1，提交前仅dirty worktree阻断部署。",
-  "error": "",
-  "artifacts": [],
-  "evidence": ["targeted 58 passed", "doc/config/db gates passed", "check_deploy_ready仅dirty worktree失败"],
-  "metadata": {"agent_type": "reviewer", "agent_name": "reviewer", "claimed_actions": ["review-code"], "duration_ms": 0, "tool_calls": 0, "fallback_triggered": false}
-}

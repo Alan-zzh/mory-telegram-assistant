@@ -25,6 +25,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
+import logging
 import sqlite3
 from threading import RLock
 from datetime import timedelta, timezone
@@ -67,8 +68,8 @@ class DB:
         # WAL + busy_timeout=30s + synchronous=NORMAL 已足够应对单 VPS 群组助手的并发量。
         # 写队列的 4 层抽象（WriteQueue + DBConnectionProxy + _FakeCursor + 核心表区分）
         # 超出场景需要，且非技术维护者无法理解"非核心写被静默丢弃"的语义。
-        # 监控代码（alert_rules/db_migration_monitor/metrics）通过 write_queue.get_stats()
-        # 获取统计，write_queue 保留为空壳兼容层。
+        # 【v5.41.0】write_queue 空壳兼容层及其监控消费点已全部删除；
+        # 写负载观测以 task_execution_history 与 WAL checkpoint 尺寸为准。
         self._real_conn = self.conn  # 保留引用兼容（部分代码用 db._real_conn 访问真实连接）
         # 初始化8个Repo实例
         from core.db_repos import UserRepo, GroupRepo, PointsRepo, TrackingRepo, ConfigRepo, SocialRepo, QuestionRepo, RelayRepo, ABTestRepo, SalesRepo, ReplyEvolutionRepo, ConversationContextRepo, TaskExecHistoryRepo, AdEnforcementRepo
@@ -118,8 +119,8 @@ class DB:
         except Exception as e:
             try:
                 logger.debug(f"操作异常: {e}")
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
     def reconnect(self):
         """关闭后重新连接数据库（用于备份恢复后重建连接）。

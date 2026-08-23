@@ -44,8 +44,9 @@ _RECENT_ALERTS_MAXLEN = 100
 # ── 级联抑制规则 ──────────────────────────────────────────────
 # 根因告警类型 → [被抑制的下游告警类型]
 # 当根因告警活跃（5min 内有触发）时，下游告警自动 mute（仅计数不发送）
+# 【v5.41.0】WRITE_QUEUE_BACKLOG 类型随 write_queue 删除而移除
 _SUPPRESSION_MAP: dict = {
-    "SYSTEM_DATABASE_LOCKED": ["SCHEDULER_JOB_FAILED", "WRITE_QUEUE_BACKLOG"],
+    "SYSTEM_DATABASE_LOCKED": ["SCHEDULER_JOB_FAILED"],
 }
 
 
@@ -59,9 +60,6 @@ def _normalize_alert_type(title: str) -> str:
         return "SYSTEM_DATABASE_LOCKED"
     if "database" in t and "lock" in t:
         return "SYSTEM_DATABASE_LOCKED"
-    # 写入队列积压：WRITE_QUEUE_BACKLOG
-    if "writequeue" in t or "队列积压" in title or "写入队列" in title:
-        return "WRITE_QUEUE_BACKLOG"
     # 调度任务失败：SCHEDULER_JOB_FAILED
     if "调度" in title and "失败" in title:
         return "SCHEDULER_JOB_FAILED"

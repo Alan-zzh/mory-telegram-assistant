@@ -15,6 +15,7 @@
 - 编辑消息检测处理器
 """
 
+import logging
 from core.logging_util import get_logger
 
 logger = get_logger("callback_handlers")
@@ -72,8 +73,8 @@ def register_callback_handlers(bot, ctx):
             logger.error(f"广告自助复检回调异常：{e}")
             try:
                 bot.answer_callback_query(call.id, text="复检异常，请稍后再试", show_alert=True)
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
     # 群内只保留一张共享复检卡；按钮按点击者本人和卡片所在群定位处置事件。
     @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("ad_group_review:"))
@@ -100,8 +101,8 @@ def register_callback_handlers(bot, ctx):
             logger.error(f"广告群共享复检回调异常：{e}")
             try:
                 bot.answer_callback_query(call.id, text="复检异常，请稍后再试", show_alert=True)
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
     def _is_blacklisted_callback(call) -> bool:
         uid = getattr(getattr(call, "from_user", None), "id", 0) or 0
@@ -160,8 +161,8 @@ def register_callback_handlers(bot, ctx):
             logger.error(f"广告解封回调异常：{e}")
             try:
                 bot.answer_callback_query(call.id, text="解封异常，请看日志", show_alert=True)
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
     # ── 反馈按钮回调（fb_like / fb_dislike）──────────────────────────
     @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith("fb_"))

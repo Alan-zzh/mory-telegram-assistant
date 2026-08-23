@@ -7,6 +7,8 @@ requests>=2.31.0,<3.0.0
 apscheduler>=3.10.0,<4.0.0
 python-dotenv>=1.0.0,<2.0.0
 cnlunar==0.2.4
+# 拼音归一化（ad_detector/ai_engine 关键词匹配用；v5.41.0 起为正式依赖）
+pypinyin>=0.53.0
 
 # Image processing
 Pillow>=10.0.0,<12.0.0
@@ -18,9 +20,11 @@ opencv-python-headless>=4.13.0.92,<5.0.0
 paramiko>=3.3.0,<4.0.0
 
 # Dashboard
-flask>=3.0.0,<3.1.0
+# v5.41.0 升钉：gunicorn 21.x 存在已修复的请求走私 CVE-2024-1135/CVE-2024-6827（22.x 修复），
+# flask 3.0 分支停更；两者升级均为向后兼容版本线。
+flask>=3.1.0,<3.2.0
 flasgger>=0.9.5
-gunicorn>=21.2.0,<22.0.0
+gunicorn>=23.0.0,<24.0.0
 gevent>=24.2.0,<25.0.0
 
 # Observability
@@ -43,3 +47,4 @@ mypy>=1.5.0
 interrogate>=1.5.0
 vulture>=2.0
 radon>=5.1.0
+flake8>=7.0.0

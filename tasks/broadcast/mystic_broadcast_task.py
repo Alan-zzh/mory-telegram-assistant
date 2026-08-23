@@ -12,7 +12,7 @@ from core.broadcast_image_card import build_broadcast_image_card, resolve_theme_
 from core.broadcast_image_payload import build_mystic_image_payload
 from core.logging_util import get_logger
 from core.task_transaction import TaskTransactionManager
-from core.telebot_compat import send_photo_compat
+from core.telegram_send_utils import send_photo_compat
 from tasks.base_task import BaseTask, TaskContext
 from tasks.support.common import (
     TaskAbort,
@@ -163,7 +163,7 @@ def execute_mystic_broadcast_task(rm, task_name: str, period: str) -> None:
 
             if sent is None and rich_enabled and format_version in {"rich", "auto"}:
                 try:
-                    from core.telebot_compat import send_rich_message_compat
+                    from core.telegram_send_utils import send_rich_message_compat
 
                     with rm.locked("bot"):
                         sent = send_rich_message_compat(

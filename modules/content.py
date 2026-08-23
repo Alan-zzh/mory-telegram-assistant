@@ -133,7 +133,7 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
 
     # 价格/购买入口：在 P8 早返回阶段也必须遵守 ReplyContract v1。
     if msg.strip() in ("价格表", "价格", "多少钱", "怎么买", "门槛"):
-        from core.growth_optimizer import resolve_conversion_target
+        from core.conversion_glue import resolve_conversion_target
 
         target, _ = resolve_conversion_target(msg, mode="convert")
         if target == "subscribe":

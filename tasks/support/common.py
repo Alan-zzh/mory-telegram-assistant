@@ -1,7 +1,7 @@
 """
 tasks/support/common.py - 任务模块通用工具函数
 
-将 auto_tasks.py 中可被多个任务复用的工具函数集中到这里。
+多任务复用的工具函数集（v5.38.69 自已拆除的 auto_tasks.py 迁出）。
 """
 
 import os
@@ -13,7 +13,7 @@ from core.helpers import can_delete_message, get_broadcast_auto_delete_config
 from core.logging_util import get_logger
 from core.resource_manager import ResourceManager
 from core.task_transaction import TaskTransactionManager
-from core.telebot_compat import send_message_compat, send_photo_compat
+from core.telegram_send_utils import send_message_compat, send_photo_compat
 from tasks.support.fault_reporter import get_fault_reporter
 from telebot import types
 
@@ -79,7 +79,7 @@ def build_mory_contact_markup(period: str = "", config: dict = None):
     markup = types.InlineKeyboardMarkup()
     button_style_enabled = bool((config or {}).get("BUTTON_STYLE_ENABLED", False))
     if button_style_enabled:
-        from core.telebot_compat import create_colored_button
+        from core.telegram_send_utils import create_colored_button
         markup.add(create_colored_button(text=label, url=url, style="primary"))
     else:
         markup.add(types.InlineKeyboardButton(label, url=url))
@@ -155,7 +155,7 @@ def send_greeting(
         if rich_enabled and rich_text and format_version in ("rich", "auto"):
             try:
                 with rm.locked('bot'):
-                    from core.telebot_compat import send_rich_message_compat
+                    from core.telegram_send_utils import send_rich_message_compat
                     sent = send_rich_message_compat(
                         rm.bot,
                         chat_id,

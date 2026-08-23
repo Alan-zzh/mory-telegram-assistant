@@ -289,27 +289,29 @@ _CRITICAL_JOBS = {
     # 播报：早 10:00 / 午 14:30 / 晚 19:00 / 夜 22:30 — 所有播报最晚 23:00 前应执行
     # 【v5.31.2 hotfix P1-1】job_id 必须与 config.json.example SCHEDULED_BROADCASTS.id 一致：
     #   bc_id=morning_nudge / afternoon_tease / evening_warm / night_hook
-    #   实际注册的 job_id = "broadcast_" + bc_id（见 auto_tasks._register_scheduled_broadcasts）
+    #   实际注册的 job_id = "broadcast_" + bc_id（v5.38.69 前由 auto_tasks 注册，现见
+    #   tasks/broadcast/greeting_task.py 与 modules/scheduled_broadcast 的统一调度链）
     "broadcast_morning_nudge": {"deadline_hour": 11, "deadline_minute": 0, "desc": "晨间播报(10:00)"},
     "broadcast_afternoon_tease": {"deadline_hour": 15, "deadline_minute": 30, "desc": "下午茶播报(14:30)"},
     "broadcast_evening_warm": {"deadline_hour": 20, "deadline_minute": 0, "desc": "傍晚播报(19:00)"},
     "broadcast_night_hook": {"deadline_hour": 23, "deadline_minute": 30, "desc": "夜间播报(22:30)"},
     # 【v5.31.2 P1-Task07】业务关键任务
-    # 【v5.31.2 审计复扫修复】以下 3 项监控模式与实际调度对齐：
-    #   - cart_recovery: auto_tasks.py:4627 实际是 cron minute="*/5"（每5分钟），原 deadline 03:00 会导致监控盲区 13h
-    #   - backup: auto_tasks.py:4628 实际是 cron minute=15（每小时:15），原 deadline 04:00 监控了错误任务
-    #   - daily_backup: auto_tasks.py:4584 实际是 cron hour=3,minute=0（每日03:00），原 _CRITICAL_JOBS 未监控此任务
-    #   - health_check: auto_tasks.py:4674 实际是 cron hour="10,16,22"（每日3次），原 interval=5 会导致每天误报
+    # 【v5.31.2 审计复扫修复】监控模式与实际调度对齐（行号指向 v5.38.69 已拆除的 auto_tasks.py，
+    #   仅作历史依据注记；现行调度真相以 tasks/ 各任务 schedule() 为准）：
+    #   - cart_recovery: 每5分钟（cron minute="*/5"），原 deadline 03:00 会导致监控盲区 13h
+    #   - backup: 每小时:15，原 deadline 04:00 监控了错误任务
+    #   - daily_backup: 每日03:00，原 _CRITICAL_JOBS 未监控此任务
+    #   - health_check: 每日3次（10/16/22点），原 interval=5 会导致每天误报
     "cart_recovery": {"interval_minutes": 5, "desc": "购物车挽回(每5分钟)"},
     "backup": {"interval_minutes": 60, "desc": "每小时备份(:15)"},
     "daily_backup": {"deadline_hour": 4, "deadline_minute": 0, "desc": "每日数据库备份(03:00)"},
     "health_check": {"deadline_hour": 23, "deadline_minute": 50, "desc": "健康检查(每日10/16/22点)"},
     # 【v5.31.2 hotfix P1-2】删除不存在的 job_id (ad_cleanup/write_queue_flush/llm_cost_flush)，
-    #   这三个任务在 auto_tasks.py 中没有对应的 _job_ 函数和 add_job 调用，
+    #   这三个任务在旧 auto_tasks.py 中没有对应的 _job_ 函数和 add_job 调用，
     #   保留会导致每天 false alarm。
     # 【v5.31.2 hotfix P1-2】补加真实存在的 interval 模式任务：
-    #   - sync_scheduler_metrics (auto_tasks.py:4790, 每5分钟刷调度指标到 DB)
-    #   - flush_alert_summary (auto_tasks.py:4821, 每5分钟刷告警摘要)
+    #   - sync_scheduler_metrics (每5分钟刷调度指标到 DB)
+    #   - flush_alert_summary (每5分钟刷告警摘要)
     "sync_scheduler_metrics": {"interval_minutes": 5, "desc": "调度指标刷盘(每5分钟)"},
     "flush_alert_summary": {"interval_minutes": 5, "desc": "告警摘要刷盘(每5分钟)"},
 }
@@ -472,7 +474,8 @@ def check_critical_jobs_health(scheduler=None, config=None, db=None):
 
     # 广播任务监控项动态生成：SCHEDULED_BROADCASTS 的 id 随管理员配置变化，
     # 硬编码 _CRITICAL_JOBS 里的 broadcast_* 会与生产 id 错位造成监控盲区。
-    # job_id = "broadcast_" + bc_id（见 auto_tasks._register_scheduled_broadcasts）
+    # job_id = "broadcast_" + bc_id（历史：v5.38.69 前 auto_tasks._register_scheduled_broadcasts；
+    # 现行注册链见 tasks/maintenance/scheduled_broadcast_task.py）
     jobs = dict(_CRITICAL_JOBS)
     if isinstance(config, dict):
         mystic_cfg = config.get("MYSTIC_BROADCAST_CONFIG", {}) or {}

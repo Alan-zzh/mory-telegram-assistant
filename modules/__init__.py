@@ -53,7 +53,7 @@ __all__ = [
     "translate",
     "cmd_control",
     "games",
-    "visual_dashboard",
+    "image_dashboard",
     "anti_raid",
     "scheduled_msg",
     "vote_kick",

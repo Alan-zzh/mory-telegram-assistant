@@ -97,6 +97,12 @@ jobs:
           # 检查所有 Python 文件是否能正常编译
           python -m compileall core/ modules/ dashboard/ -q
 
+      # 步骤 7.4：异常卫生扫描（v5.41.0 新增，AI_DEBUG_HISTORY 6.9/6.15 防复发闸门）
+      - name: 异常卫生扫描（check_exception_hygiene）
+        run: |
+          # 禁止裸 except 与未留痕的宽捕获静默 pass；豁免需行内 hygiene-allow 标注
+          python scripts/check_exception_hygiene.py
+
       # 步骤 7.5：DB 方法注册验证（AGENTS.md 部署前必跑门禁）
       - name: DB 方法注册验证（verify_db_methods）
         run: |

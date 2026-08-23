@@ -58,19 +58,20 @@ def _save_session_to_db(db, chat_id, user_id, session_data):
         _warn_db_none_once()
         return
     try:
-        with db.conn:
-            db.conn.execute("""
-                INSERT OR REPLACE INTO verification_sessions
-                (chat_id, user_id, answer, attempts, max_attempts, timeout_ts,
-                 msg_id, mode, user_name, started_ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                chat_id, user_id, session_data.get("answer", ""),
-                session_data.get("attempts", 0), session_data.get("max_attempts", 3),
-                session_data.get("timeout_ts", 0.0), session_data.get("msg_id"),
-                session_data.get("mode", "button"), session_data.get("user_name", ""),
-                int(session_data.get("started_ts", time.time())),
-            ))
+        with db.lock:
+            with db.conn:
+                db.conn.execute("""
+                    INSERT OR REPLACE INTO verification_sessions
+                    (chat_id, user_id, answer, attempts, max_attempts, timeout_ts,
+                     msg_id, mode, user_name, started_ts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    chat_id, user_id, session_data.get("answer", ""),
+                    session_data.get("attempts", 0), session_data.get("max_attempts", 3),
+                    session_data.get("timeout_ts", 0.0), session_data.get("msg_id"),
+                    session_data.get("mode", "button"), session_data.get("user_name", ""),
+                    int(session_data.get("started_ts", time.time())),
+                ))
     except Exception as e:
         logger.error(f"保存验证会话到 SQLite 失败 chat={chat_id} uid={user_id}: {e}")
 
@@ -109,11 +110,12 @@ def _delete_session_from_db(db, chat_id, user_id):
     if db is None:
         return
     try:
-        with db.conn:
-            db.conn.execute(
-                "DELETE FROM verification_sessions WHERE chat_id=? AND user_id=?",
-                (chat_id, user_id),
-            )
+        with db.lock:
+            with db.conn:
+                db.conn.execute(
+                    "DELETE FROM verification_sessions WHERE chat_id=? AND user_id=?",
+                    (chat_id, user_id),
+                )
     except Exception as e:
         logger.error(f"从 SQLite 删除验证会话失败 chat={chat_id} uid={user_id}: {e}")
 

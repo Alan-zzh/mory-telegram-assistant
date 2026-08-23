@@ -88,7 +88,7 @@ ask(question, is_priv, user_profile, stage_hint, ...)
 
 ## 5. 成交边界
 
-`core.growth_optimizer.resolve_conversion_target()` 是成交目标唯一判定源：
+`core.conversion_glue.resolve_conversion_target()` 是成交目标唯一判定源：
 
 - 普通聊天、拒绝、取消、情绪陪伴：`none`
 - 价格、内容、权益、真假和了解阶段：`preview`

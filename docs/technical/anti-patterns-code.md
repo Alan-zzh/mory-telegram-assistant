@@ -214,7 +214,7 @@ except AttributeError:
 - `python3 -c "import telegram"` 必须成功
 - `python3 -c "import apscheduler"` 必须成功
 - `python3 -c "import flask"` 必须成功
-- 缺依赖时 `pip install -r requirements.txt` 自动补
+- 缺依赖时 `pip install -r requirements.in` 自动补
 
 ### 铁律 8.4：deploy_vps.py 必须验证
 

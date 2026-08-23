@@ -19,7 +19,7 @@ from core.logging_util import get_logger
 from core.keyword_manager import is_convert_rejection_message
 from core.telemetry import _detect_sentiment
 
-logger = get_logger("growth_optimizer")
+logger = get_logger("conversion_glue")
 
 
 EXPERIMENTS: dict[str, str] = {
@@ -439,7 +439,7 @@ def is_contextual_purchase_intent(text: str, history: list[dict[str, Any]] | Non
 
 def is_enabled(config: dict[str, Any] | None) -> bool:
     cfg = config or {}
-    return bool(cfg.get("GROWTH_OPTIMIZER_ENABLED", True))
+    return bool(cfg.get("conversion_glue_ENABLED", True))
 
 
 def assign_variant(uid: int, experiment_id: str, config: dict[str, Any] | None = None) -> str:

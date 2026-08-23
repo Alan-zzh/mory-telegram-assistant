@@ -117,7 +117,7 @@ class ProactiveEngage:
             if not matched_kw:
                 return (False, "")
 
-            from core.growth_optimizer import (
+            from core.conversion_glue import (
                 get_conversion_state,
                 resolve_conversion_target,
             )
@@ -152,7 +152,7 @@ class ProactiveEngage:
             True 表示搭讪成功执行，False 表示执行失败（但已静默处理）
         """
         try:
-            from core.growth_optimizer import (
+            from core.conversion_glue import (
                 get_conversion_state,
                 resolve_conversion_target,
             )
@@ -305,7 +305,7 @@ class ProactiveEngage:
         intent = self._classify_intent(msg, matched_keyword)
         consult_count = self._get_recent_consult_count_from_db(uid)
         if conversion_target is None:
-            from core.growth_optimizer import resolve_conversion_target
+            from core.conversion_glue import resolve_conversion_target
             conversion_target, conversion_reason = resolve_conversion_target(
                 msg,
                 mode="convert",

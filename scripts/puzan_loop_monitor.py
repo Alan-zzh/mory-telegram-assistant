@@ -17,6 +17,7 @@
 
 铁律：只读、不重启、不上传 db/config、凭据从 .env、异常先查病历。
 """
+import logging
 import os
 import sys
 import time
@@ -206,8 +207,8 @@ def l1_vps_check(client):
                     idle_val = float(idle_match[0].strip().split()[0])
                     cpu_usage = f"{100.0 - idle_val:.1f}%"
                     details["cpu_usage"] = cpu_usage
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
         mem_avail_pct = ""
         if free_m:
@@ -807,8 +808,8 @@ def run_single_round(round_no, total_rounds, log_file):
     finally:
         try:
             client.close()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
     # 腾讯云（独立，不依赖 SSH）
     try:

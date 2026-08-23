@@ -56,7 +56,7 @@ def prometheus_metrics():
         logger.error("❌ prometheus-client 未安装，无法暴露指标端点")
         return jsonify({
             "ok": False,
-            "msg": "prometheus-client 未安装，请在 requirements.txt 中启用该依赖"
+            "msg": "prometheus-client 未安装，请在 requirements.in 中启用该依赖"
         }), 501
 
     except Exception as e:

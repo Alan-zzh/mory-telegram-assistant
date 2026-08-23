@@ -18,6 +18,7 @@
 """
 
 from __future__ import annotations
+import logging
 from typing import TYPE_CHECKING
 
 from core.logging_util import get_logger, clear_logging_context
@@ -677,8 +678,8 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
             logger.error(f"销售中心命令异常: {e}")
             try:
                 bot.send_message(m.chat.id, "❌ 销售中心命令执行失败，请稍后重试或联系管理员")
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         clear_logging_context()
         return True
     if msg.startswith("/security"):
@@ -689,8 +690,8 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
             logger.error(f"安全中心命令异常: {e}")
             try:
                 bot.send_message(m.chat.id, "❌ 安全中心命令执行失败，请稍后重试或联系管理员")
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         clear_logging_context()
         return True
     if msg.startswith("/managed"):
@@ -701,8 +702,8 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
             logger.error(f"多群托管命令异常: {e}")
             try:
                 bot.send_message(m.chat.id, "❌ 多群托管命令执行失败，请稍后重试或联系管理员")
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         clear_logging_context()
         return True
     if msg.startswith("/content_audit"):
@@ -713,8 +714,8 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
             logger.error(f"内容审核命令异常: {e}")
             try:
                 bot.send_message(m.chat.id, "❌ 内容审核命令执行失败，请稍后重试或联系管理员")
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         clear_logging_context()
         return True
     if msg.startswith("/analytics"):
@@ -725,8 +726,8 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
             logger.error(f"新成员分析命令异常: {e}")
             try:
                 bot.send_message(m.chat.id, "❌ 新成员分析命令执行失败，请稍后重试或联系管理员")
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         clear_logging_context()
         return True
     if msg.startswith("/membership"):
@@ -737,8 +738,8 @@ def _handle_admin_feature_commands(dctx: DispatchContext) -> bool:
             logger.error(f"会员管理命令异常: {e}")
             try:
                 bot.send_message(m.chat.id, "❌ 会员管理命令执行失败，请稍后重试或联系管理员")
-            except Exception:
-                pass
+            except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+                logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         clear_logging_context()
         return True
 
@@ -1278,12 +1279,12 @@ def _handle_group_admin_commands(dctx: DispatchContext) -> bool:
 
     # 可视化数据面板
     if msg in ("数据面板", "/dashboard"):
-        from modules.visual_dashboard import handle_group_dashboard
+        from modules.image_dashboard import handle_group_dashboard
         handle_group_dashboard(bot, m, CONFIG, db)
         clear_logging_context()
         return True
     if msg == "我的数据":
-        from modules.visual_dashboard import handle_personal_dashboard
+        from modules.image_dashboard import handle_personal_dashboard
         handle_personal_dashboard(bot, m, CONFIG, db)
         clear_logging_context()
         return True

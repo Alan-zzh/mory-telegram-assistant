@@ -67,6 +67,36 @@ def count_model_router_mappings() -> int:
     ))
 
 
+def count_base_task_subclasses() -> int:
+    """AST 统计 tasks/ 下直接继承 BaseTask 的子类数（v5.41.0 新增断言面）。
+
+    背景：snapshot 曾写 46 个任务类而实际 45，旧脚本未覆盖该数字导致漂移。
+    """
+    import ast
+
+    d = ROOT / "tasks"
+    if not d.exists():
+        return 0
+    n = 0
+    for p in d.rglob("*.py"):
+        if "__pycache__" in p.parts:
+            continue
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for b in node.bases:
+                if (isinstance(b, ast.Name) and b.id == "BaseTask") or (
+                    isinstance(b, ast.Attribute) and b.attr == "BaseTask"
+                ):
+                    n += 1
+                    break
+    return n
+
+
 def parse_declared(snapshot_text: str) -> dict[str, int]:
     m = re.search(r"<!--\s*METRICS:BEGIN\s*-->(.*?)<!--\s*METRICS:END\s*-->", snapshot_text, re.S)
     if not m:
@@ -92,6 +122,7 @@ def compute_actual() -> dict[str, int]:
         "dashboard_routes": count_routes(),
         "dispatch_funcs": count_dispatch_funcs(),
         "model_router_mappings": count_model_router_mappings(),
+        "base_task_subclasses": count_base_task_subclasses(),
     }
 
 
@@ -102,6 +133,7 @@ KEY_LABELS = {
     "dashboard_routes": "dashboard/api 路由装饰器数",
     "dispatch_funcs": "消息分发函数（含导入的 p10）",
     "model_router_mappings": "model_router 任务类型映射数",
+    "base_task_subclasses": "tasks/ BaseTask 子类数（AST）",
 }
 
 # ────────────────────────── 文档卫生校验（v5.38.25 新增） ──────────────────────────

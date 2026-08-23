@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """
+Telegram 发送工具箱（v5.41.0 自 telebot_compat.py 改名：
+除兼容补丁外，本模块还承载富文本/彩色按钮/HTML 转换/poll 与 checklists
+等 raw API 兜底，原名"compat"名不符实）。
+
 [Codex] pyTelegramBotAPI 兼容补丁。
 
 当前依赖版本的 telebot.types.User 会接收 **kwargs 但不保存，导致
@@ -347,7 +351,7 @@ def patch_telebot_business_update_dispatch():
         return False
 
     original_process = TeleBot.process_new_updates
-    logger = logging.getLogger("telebot_compat")
+    logger = logging.getLogger("telegram_send_utils")
 
     def patched_process_new_updates(self, updates):
         hook = getattr(self, "_mory_business_update_handler", None)

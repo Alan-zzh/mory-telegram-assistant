@@ -560,7 +560,7 @@ def build_cta_markup(cta: dict, config: dict = None):
         return markup
 
     if button_style_enabled:
-        from core.telebot_compat import create_colored_button
+        from core.telegram_send_utils import create_colored_button
         style = cta.get("style", "default")
         button = create_colored_button(text=label, url=url, style=style)
     else:
@@ -613,7 +613,7 @@ def build_cta_markup_combo(combo: dict, config: dict = None):
                 # 旧版本 SDK 没有 web_app，回退 URL 按钮
                 button = types.InlineKeyboardButton(text=label, url=url or mini_app["url"])
         elif button_style_enabled:
-            from core.telebot_compat import create_colored_button
+            from core.telegram_send_utils import create_colored_button
             button = create_colored_button(text=label, url=url, style=cta.get("style", "default"))
         else:
             button = types.InlineKeyboardButton(text=label, url=url)

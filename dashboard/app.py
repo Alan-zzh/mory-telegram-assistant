@@ -5,6 +5,7 @@ Mory Assistant - 私域可视化面板
 v6.0 - 全新设计（深色主题/数据可视化/实时监控/专业级UI）
 Build: 2026-04-26
 """
+import logging
 import os
 import sys
 from functools import wraps
@@ -155,8 +156,8 @@ def create_app():
         try:
             from core.logging_util import clear_logging_context
             clear_logging_context()
-        except Exception:
-            pass
+        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
+            logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
         return response
 
     # [阶段3-F] DB 驱动权限映射：启动时幂等初始化 role_permissions 表

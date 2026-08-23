@@ -11,7 +11,7 @@
 
 from core.logging_util import get_logger
 from core.helpers import format_user_mention
-from core.telebot_compat import delete_all_message_reactions_compat, delete_message_reaction_compat
+from core.telegram_send_utils import delete_all_message_reactions_compat, delete_message_reaction_compat
 
 logger = get_logger("media_handlers")
 
