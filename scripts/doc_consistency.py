@@ -239,6 +239,59 @@ def check_readme_metrics() -> tuple[list[str], int]:
     return problems, (0 if not problems else 1)
 
 
+# ────────────────────────── snapshot 表行防漂移断言 ──────────────────────────
+# 背景：模块状态表行内的数字与文件引用不在 METRICS 断言面内，曾出现
+# 「137 个业务 .py」（实际 102）与已拆除 modules/auto_tasks.py 入口引用长期存活。
+# 两类断言：① 行内数量必须等于 METRICS 同名值；② 反引号引用的相对路径必须存在，
+# 已删除文件仅允许白名单内的历史陈述（"已于 vX 拆除"类语境）。
+
+SNAPSHOT_INLINE_NUMBER_PATTERNS = {
+    "modules_py": r"(\d+)\s*个业务",
+    "db_tables": r"(\d+)\s*张表",
+    "dashboard_routes": r"(\d+)\s*个路由",
+}
+
+HISTORICAL_SNAPSHOT_REFS = {
+    "modules/auto_tasks.py",
+    "auto_tasks.py",
+}
+
+
+def check_snapshot_inline_numbers(snapshot_text: str | None = None) -> tuple[list[str], int]:
+    """snapshot 模块状态表行内数量必须等于 METRICS 同名值。"""
+    p = ROOT / "project_snapshot.md"
+    if not p.exists():
+        return [], 0
+    text = snapshot_text if snapshot_text is not None else p.read_text(encoding="utf-8", errors="ignore")
+    declared = parse_declared(text)
+    problems = []
+    for key, pattern in SNAPSHOT_INLINE_NUMBER_PATTERNS.items():
+        expected = declared.get(key)
+        if expected is None:
+            continue  # METRICS 未声明该指标时无法交叉核对，不误报
+        values = sorted({int(m.group(1)) for m in re.finditer(pattern, text)})
+        bad = [v for v in values if v != expected]
+        if bad:
+            problems.append(f"{key}: 表行数字 {bad} ≠ METRICS {expected}")
+    return problems, (0 if not problems else 1)
+
+
+def check_snapshot_file_refs(snapshot_text: str | None = None) -> tuple[list[str], int]:
+    """snapshot 反引号引用的 .py/.md 相对路径必须真实存在；白名单内为显式历史陈述放行。"""
+    p = ROOT / "project_snapshot.md"
+    if not p.exists():
+        return [], 0
+    text = snapshot_text if snapshot_text is not None else p.read_text(encoding="utf-8", errors="ignore")
+    problems = []
+    refs = sorted(set(re.findall(r"`([A-Za-z0-9_][A-Za-z0-9_/]*\.(?:py|md))`", text)))
+    for ref in refs:
+        if ref in HISTORICAL_SNAPSHOT_REFS or Path(ref).name in HISTORICAL_SNAPSHOT_REFS:
+            continue
+        if not (ROOT / ref).exists():
+            problems.append(f"snapshot 引用不存在: `{ref}`")
+    return problems, (0 if not problems else 1)
+
+
 def run_hygiene_checks() -> tuple[list[tuple[str, str]], int]:
     """运行全部文档卫生校验，返回 [(名称, 状态/问题)], 退出码。"""
     results = []
@@ -249,6 +302,8 @@ def run_hygiene_checks() -> tuple[list[tuple[str, str]], int]:
         ("CHANGELOG 条目长度", check_changelog_entry_length),
         ("snapshot 最近大事条数", check_snapshot_events),
         ("README 指标一致性", check_readme_metrics),
+        ("snapshot 表行数字=METRICS", check_snapshot_inline_numbers),
+        ("snapshot 文件引用存在性", check_snapshot_file_refs),
     ]:
         problems, rc = fn()
         if problems:

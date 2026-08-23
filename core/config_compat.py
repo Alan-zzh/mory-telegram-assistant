@@ -95,6 +95,10 @@ def normalize_runtime_config(cfg: dict | None) -> dict:
     cfg["GREETING_HOUR"] = greeting_cfg["morning_time"]
     cfg["AFTERNOON_GREETING_HOUR"] = greeting_cfg["afternoon_time"]
     cfg["GOODNIGHT_HOUR"] = greeting_cfg["evening_time"]
+    # 新能力默认关闭（v5.39 内容丰富计划）：节气提示注入 greeting prompt
+    greeting_cfg["solar_term_hint_enabled"] = bool(
+        greeting_cfg.get("solar_term_hint_enabled", False)
+    )
 
     mystic_cfg = _ensure_dict(cfg, "MYSTIC_BROADCAST_CONFIG")
     mystic_cfg["enabled"] = bool(mystic_cfg.get("enabled", False))
@@ -110,6 +114,16 @@ def normalize_runtime_config(cfg: dict | None) -> dict:
     mystic_cfg["evening_mode"] = "iching"
     mystic_cfg["legacy_targeted_tarot_enabled"] = bool(
         mystic_cfg.get("legacy_targeted_tarot_enabled", False)
+    )
+    # 新能力默认关闭（v5.39 内容丰富计划）：免责尾注 / 塔罗牌阵轮换 / 敏感分流
+    mystic_cfg["disclaimer_note_enabled"] = bool(
+        mystic_cfg.get("disclaimer_note_enabled", False)
+    )
+    mystic_cfg["tarot_spread_rotation_enabled"] = bool(
+        mystic_cfg.get("tarot_spread_rotation_enabled", False)
+    )
+    mystic_cfg["private_sensitive_guard_enabled"] = bool(
+        mystic_cfg.get("private_sensitive_guard_enabled", False)
     )
 
     return cfg

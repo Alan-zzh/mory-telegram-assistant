@@ -69,12 +69,10 @@ class KeywordManager:
         ).get("word", _DEFAULT_CONVERT_WORD)
 
         # 从 data/*.json 加载静态内容（文件不存在则用内置默认值）
-        self._cache["tarot_cards"] = self._load_json_file(
-            "tarot_cards.json", _DEFAULT_TAROT_CARDS
-        )
-        self._cache["fortune_texts"] = self._load_json_file(
-            "fortune_texts.json", _DEFAULT_FORTUNE_TEXTS
-        )
+        # [v5.39 清理] tarot_cards.json / fortune_texts.json 死链路已移除：
+        # 唯一读取入口 get_tarot_cards()/get_fortune_texts() 全仓零调用，
+        # 塔罗与运势彩蛋实际消费的是 _DEFAULT_TAROT_CARDS/_DEFAULT_FORTUNE_TEXTS
+        # 常量（modules/content.py 的 draw_tarot()/get_fortune()）
         self._cache["badges"] = self._load_json_file(
             "badges.json", _DEFAULT_BADGES
         )
@@ -85,8 +83,6 @@ class KeywordManager:
             f"mute={len(self._cache['auto_mute_names'])} "
             f"convert_substr={len(self._cache['convert_keywords_substr'])} "
             f"convert_word={len(self._cache['convert_keywords_word'])} "
-            f"tarot={len(self._cache['tarot_cards'])} "
-            f"fortune={len(self._cache['fortune_texts'])} "
             f"badges={len(self._cache['badges'])}"
         )
 
@@ -123,13 +119,9 @@ class KeywordManager:
         """获取商业转化关键词（全词匹配）"""
         return self._cache.get("convert_keywords_word", _DEFAULT_CONVERT_WORD)
 
-    def get_tarot_cards(self) -> dict:
-        """获取塔罗牌库"""
-        return self._cache.get("tarot_cards", _DEFAULT_TAROT_CARDS)
-
-    def get_fortune_texts(self) -> list:
-        """获取运势签库"""
-        return self._cache.get("fortune_texts", _DEFAULT_FORTUNE_TEXTS)
+    # [v5.40 清理] get_tarot_cards()/get_fortune_texts() 已移除：全仓零调用的
+    # 死 getter；塔罗与运势内容请使用 modules/content.py 的
+    # draw_tarot()/get_fortune()（内置常量池）。
 
     def get_badges(self) -> dict:
         """获取勋章定义"""

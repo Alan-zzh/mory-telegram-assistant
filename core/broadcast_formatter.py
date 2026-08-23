@@ -490,6 +490,9 @@ def build_mystic_html(payload: dict) -> str:
     closing = cta.get("closing") if isinstance(cta, dict) else ""
     if closing:
         parts.extend(["", f"💬 {escape_html_text(closing)}"])
+    note = str(payload.get("note", "") or "")
+    if note:
+        parts.extend(["", f"<i>{escape_html_text(note)}</i>"])
     parts.extend(["", f"<i>{BROADCAST_SENDER_HANDLE}</i>"])
     return "\n".join(parts)
 
@@ -519,6 +522,10 @@ def build_rich_mystic_card_message(payload: dict) -> str:
     closing = cta.get("closing") if isinstance(cta, dict) else ""
     if closing:
         parts.append(f"<p>💬 {escape_html_text(closing)}</p>")
+    note = str(payload.get("note", "") or "")
+    if note:
+        # 免责尾注用小字段落而非 h3 区块，保持 blocks 数与 <h3> 数一致
+        parts.append(f"<p><i>{escape_html_text(note)}</i></p>")
     parts.extend(["<hr>", f"<footer>{BROADCAST_SENDER_HANDLE}</footer>"])
     return "\n".join(parts)
 

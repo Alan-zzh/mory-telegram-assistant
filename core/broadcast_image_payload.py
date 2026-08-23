@@ -78,6 +78,16 @@ def _almanac_style_detector(heading: str, lines: List[Tuple[str, str]]) -> str:
     return "list"
 
 
+def _append_disclaimer_footer(payload: dict, mystic_payload: dict) -> None:
+    """免责尾注并入图片卡 footer_lines（不新增 block，不影响区块结构）。"""
+    note = str(mystic_payload.get("note", "") or "")
+    if not note:
+        return
+    footer = list(payload.get("footer_lines") or [])
+    footer.append(("说明", note))
+    payload["footer_lines"] = footer
+
+
 def build_almanac_image_payload(mystic_payload: dict) -> dict:
     """把黄历 mystic payload 转成图片卡 payload。"""
     raw_blocks = mystic_payload.get("blocks", []) or []
@@ -110,6 +120,7 @@ def build_almanac_image_payload(mystic_payload: dict) -> dict:
             payload["footer_lines"].append(("财神方位", wealth))
         if joy:
             payload["footer_lines"].append(("喜神方位", joy))
+    _append_disclaimer_footer(payload, mystic_payload)
 
     return payload
 
@@ -159,7 +170,9 @@ def build_tarot_image_payload(mystic_payload: dict) -> dict:
             tarot_cards.append((str(role), name, position, keywords))
     if tarot_cards:
         extra["tarot_cards"] = tarot_cards
-    return _build_base_mystic_payload(mystic_payload, "午间 · 三张塔罗", blocks, extra)
+    payload = _build_base_mystic_payload(mystic_payload, "午间 · 三张塔罗", blocks, extra)
+    _append_disclaimer_footer(payload, mystic_payload)
+    return payload
 
 
 def _extract_moving_line(raw_blocks: List[dict]) -> Optional[int]:
@@ -188,7 +201,9 @@ def build_iching_image_payload(mystic_payload: dict) -> dict:
         rng = random.Random(zlib.crc32(seed_src.encode("utf-8")))
         extra["hexagram_lines"] = [rng.randint(0, 1) for _ in range(6)]
         extra["moving_line"] = moving_line
-    return _build_base_mystic_payload(mystic_payload, "晚间 · 易经一卦", blocks, extra)
+    payload = _build_base_mystic_payload(mystic_payload, "晚间 · 易经一卦", blocks, extra)
+    _append_disclaimer_footer(payload, mystic_payload)
+    return payload
 
 
 def build_mystic_image_payload(mystic_payload: dict) -> dict:

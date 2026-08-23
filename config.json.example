@@ -640,13 +640,17 @@
     "evening_time": "23:05",
     "night_enabled": false,
     "night_time": "22:30",
-    "image_card_enabled": false
+    "image_card_enabled": false,
+    "solar_term_hint_enabled": false
   },
   "MYSTIC_BROADCAST_CONFIG": {
     "enabled": false,
     "cta_enabled": true,
     "private_reply_enabled": false,
     "image_card_enabled": false,
+    "disclaimer_note_enabled": false,
+    "tarot_spread_rotation_enabled": false,
+    "private_sensitive_guard_enabled": false,
     "morning_time": "09:05",
     "morning_mode": "almanac",
     "afternoon_time": "13:05",

@@ -653,7 +653,7 @@ class KeywordTrigger:
 
             user = getattr(message, "from_user", None)
             user_id = int(getattr(user, "id", 0) or 0)
-            reply = build_private_mystic_reply(text, user_id)
+            reply = build_private_mystic_reply(text, user_id, config=self.config)
             if not reply:
                 return False
             if self.mory_bot:

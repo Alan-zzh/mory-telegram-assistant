@@ -38,6 +38,8 @@ def _get_greeting_config(cfg: dict) -> dict:
     raw.setdefault("night_enabled", False)  # 深夜问候：新功能默认关闭
     raw.setdefault("night_time", _normalize_hhmm("22:30", "22:30"))
     raw.setdefault("image_card_enabled", False)
+    # 新能力默认关闭：节气提示注入 greeting prompt
+    raw.setdefault("solar_term_hint_enabled", False)
     raw["broadcast_image_card_enabled"] = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
     raw["morning_time"] = _normalize_hhmm(raw.get("morning_time"), "08:05")
     raw["afternoon_time"] = _normalize_hhmm(raw.get("afternoon_time"), "12:35")
@@ -53,6 +55,10 @@ def _get_mystic_config(cfg: dict) -> dict:
     raw.setdefault("cta_enabled", False)
     raw.setdefault("private_reply_enabled", False)
     raw.setdefault("image_card_enabled", False)
+    # 新能力默认关闭：免责尾注 / 塔罗牌阵轮换 / 私聊占卜敏感分流
+    raw.setdefault("disclaimer_note_enabled", False)
+    raw.setdefault("tarot_spread_rotation_enabled", False)
+    raw.setdefault("private_sensitive_guard_enabled", False)
     raw["broadcast_image_card_enabled"] = bool(cfg.get("BROADCAST_IMAGE_CARD_ENABLED", False))
     defaults = {
         "morning": ("09:05", "almanac"),

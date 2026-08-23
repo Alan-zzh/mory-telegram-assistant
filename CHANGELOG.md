@@ -8,6 +8,7 @@
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-08-23 | 新增 | v5.40.0 三栏目丰富：易经经典一句、黄历值神/吉时、塔罗框架轮换与扩词、免责尾注、私聊敏感分流、节气问候，均默认关闭。 | mystic_content、ai_engine、broadcast_formatter 等 |
 | 2026-08-23 | 部署 | v5.39.0 已部署生产：双服务 active/health 200/版本直读一致，关键 hash MATCH，转盘期望实测 8.87，远端死壳手动清除。 | deploy_vps、生产库取证 |
 | 2026-08-23 | 治理 | 规则 v5.39.0：预设问答族豁免人设合同、后置门禁只降级不换义入红线；修复雷达中断分发链、转盘多次转绕过日上限两处回归。 | AGENTS.md、message_dispatcher、lucky_wheel |
 | 2026-08-23 | 治理 | v5.39.0 全板块对话治理：修缓存串台、FAQ 兜底、销售宽词误触、深夜文案越界与互动经济漏洞；删六处死代码。 | ai_engine、growth_optimizer、proactive_engage、keyword_trigger 等 |

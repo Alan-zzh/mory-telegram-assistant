@@ -1994,6 +1994,60 @@ class AIEngine:
             return "\n【今天是七夕：可以自然提一句节日，但不默认恋爱关系、不黏人、不调情。】"
         return ""
 
+    # greeting 节气提示当日缓存（date_key -> hint），防重复计算与无限增长
+    _SOLAR_TERM_HINT_CACHE: dict = {}
+
+    def _get_solar_term_hint(self) -> str:
+        """greeting 节气提示（GREETING_CONFIG.solar_term_hint_enabled，默认关闭）。
+
+        复用在产依赖 cnlunar 计算真实节气（与 mystic 黄历同一来源），
+        只注入日期事实：交节日名 / 距下一节气天数；不虚构天气景物，
+        不改变问候的字数与人设约束。失败静默返回空串。
+        """
+        cfg = self.config.get("GREETING_CONFIG", {}) if isinstance(self.config, dict) else {}
+        if not (isinstance(cfg, dict) and bool(cfg.get("solar_term_hint_enabled", False))):
+            return ""
+        now = datetime.now(_CST)
+        date_key = now.strftime("%Y-%m-%d")
+        cache = AIEngine._SOLAR_TERM_HINT_CACHE
+        if date_key in cache:
+            return cache[date_key]
+        hint = ""
+        try:
+            import cnlunar
+
+            lunar = cnlunar.Lunar(now.replace(tzinfo=None), godType="8char")
+            today_term = str(getattr(lunar, "todaySolarTerms", "无") or "无")
+            if today_term != "无":
+                hint = (
+                    f"\n【今日交节·{today_term}：语气里可以自然带一点节气意象，"
+                    "但不虚构天气、景物或Mory的见闻。】"
+                )
+            else:
+                next_term = str(getattr(lunar, "nextSolarTerm", "") or "")
+                next_date = getattr(lunar, "nextSolarTermDate", None)
+                if next_term and next_date:
+                    target = datetime(
+                        now.year, int(next_date[0]), int(next_date[1]), tzinfo=_CST
+                    )
+                    if target <= now:
+                        target = datetime(
+                            now.year + 1, int(next_date[0]), int(next_date[1]), tzinfo=_CST
+                        )
+                    days_left = (target - now).days
+                    hint = (
+                        f"\n【距下一节气{next_term}还有{days_left}天：语气可带一点时令感，"
+                        "但不虚构天气或景物。】"
+                    )
+        except Exception as exc:
+            logger.debug(f"solar term hint unavailable: {exc}")
+            hint = ""
+        if len(cache) > 60:
+            for stale in [key for key in cache if key != date_key][:30]:
+                cache.pop(stale, None)
+        cache[date_key] = hint
+        return hint
+
     def _get_mode_persona(self, mode: str, seed: int = 0, stage_hint: str = "") -> tuple:
         """根据模式返回prompt文本。返回 (text, is_full_replacement)
         stage_hint: 递进引导提示词，由main.py根据对话轮次动态生成
@@ -2028,7 +2082,14 @@ class AIEngine:
         if mode not in modes:
             return ("", False)
         if mode in ("leak", "rules", "morning", "afternoon", "evening", "night"):
-            return (modes[mode].replace("{seed_hint}", seed_hint), True)
+            text_out = modes[mode].replace("{seed_hint}", seed_hint)
+            if mode in self._GREETING_PROMPT_MODES:
+                # greeting 节气注入（开关默认关闭）：只追加日期事实提示，
+                # 不改变问候字数与人设约束
+                solar_hint = self._get_solar_term_hint()
+                if solar_hint:
+                    text_out += "\n" + solar_hint.strip()
+            return (text_out, True)
         elif mode == "convert":
             return (modes[mode].replace("{convert_stage_hint}", stage_hint), False)
         else:

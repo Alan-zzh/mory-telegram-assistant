@@ -224,6 +224,9 @@ DEAD_REMOTE_FILES = [
     "core/trendradar_news.py",
     "modules/predictive_patrol.py",
     "modules/stats_report.py",
+    # v5.40.0 死链路清理：JSON 加载后唯一 getter 全仓零调用，内容消费走内置常量池
+    "data/tarot_cards.json",
+    "data/fortune_texts.json",
     # 旧健康/自动回滚入口会把 health 200 当整体健康并自动改生产，已由只读巡检控制面取代。
     "scripts/health_check.py",
     "scripts/auto_rollback.py",
