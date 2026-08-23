@@ -50,7 +50,7 @@ v5.41.0（2026-08-23）· 全仓治理：凭据唯一存 .env、原子写、TG �
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=102
-core_py=76
+core_py=77
 db_tables=175
 dashboard_routes=163
 dispatch_funcs=10
