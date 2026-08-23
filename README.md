@@ -153,7 +153,7 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 - `config/`：systemd 服务文件。
 
 ## 客观指标（2026-08-22 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 102，core 业务 `.py` = 76，DB 表 = 175，Dashboard 路由 = 163，消息分发函数 = 10，model_router 映射 = 10。
+modules 业务 `.py` = 102，core 业务 `.py` = 77，DB 表 = 175，Dashboard 路由 = 163，消息分发函数 = 10，model_router 映射 = 10，BaseTask 任务类 = 45。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）
