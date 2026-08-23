@@ -40,7 +40,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.41.0（2026-08-23）· 全仓治理：凭据唯一存 .env、原子写、TG 重试、write_queue/Docker 删除、异常卫生闸门、误导命名改名、AFK 暗病修复
 
-生产状态：**生产仍运行 v5.40.0（2026-08-23 部署）：双服务 active/NRestarts=0、health 200、版本直读 v5.40.0。本地 v5.41.0 治理批次已过全部门禁，尚未部署——部署需老板单独授权，走 deploy_vps.py 增量发布并复跑双服务探针。**
+生产状态：**v5.41.0 已于 2026-08-23 部署：双服务 active/NRestarts=0、health 200、版本直读 v5.41.0；gunicorn 23.0.0 按新 lock 运行、启动窗口 journal 无 ERROR；生产 config.json TOKEN/API_KEY 已收敛为空（凭据唯一存 .env 红线在生产落地，Bot 在线即环境变量加载活证明）；业务探针 almanac payload=True、pypinyin=0.55.0、afk.py 编译通过、card_canvas 字体加载成功。部署器曾触发一次保险重启，取证确认最终态稳定。evidence_gap：群内真实用户可见效果待下一播报周期人工确认。**
 
 ## 最近 3 条大事
 1. 2026-08-23 v5.41.0：全仓治理——凭据搬家、原子写、发送重试、假监控拆除、卫生闸门。
