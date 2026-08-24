@@ -3,11 +3,12 @@
 # 变更日志（一行一条）
 
 > 格式：`日期 | 类型[新增/修复/清理/文档/治理] | 一句话（≤100 字） | 涉及文件（≤5 个+等）`
-> 2026-07-05 及之前的历史已归档至 `docs/archive/CHANGELOG_archive_20260707.md`；v5.38.15 及之前已归档至 `docs/archive/CHANGELOG_v5.38.15_and_before.md`。
+> 2026-07-05 及之前的历史已归档至 `docs/archive/CHANGELOG_archive_20260707.md`；v5.38.15 及之前与 v5.38.15.1~v5.38.16 分别归档至 `docs/archive/CHANGELOG_v5.38.15_and_before.md`、`docs/archive/CHANGELOG_v5.38.16_and_before_extension.md`。
 > 触发式更新：仅用户可感知改动（升版/事故修复/配置或部署变化）写条目；验收证据写 commit message，详细报告落 `runtime/audit-reports/`。
 
 | 日期 | 类型 | 一句话 | 涉及文件 |
 |------|------|--------|----------|
+| 2026-08-24 | 部署 | v5.41.1 已部署生产并补删 20:19 广告：双服务、health、哈希、限制和持久态均读回通过。 | deploy_vps、广告处置与生产探针 |
 | 2026-08-24 | 修复 | v5.41.1 扩充设备挂机收益广告及私密群 Bio 招揽变体，保留反诈与正常电脑讨论。 | 广告检测、资料检测与回归测试 |
 | 2026-08-23 | 部署 | v5.41.0 已部署生产：双服务 active、health 200、版本直读一致，生产 config 凭据收敛，四项业务探针全过。 | deploy_vps、生产探针 |
 | 2026-08-23 | 治理 | v5.41.0 全仓治理：凭据唯一存 .env、配置/告警原子写、TG 发送重试、拆 write_queue 假监控与 Docker 岔路、异常卫生 CI 闸门、四模块改名、修 AFK 损坏暗病。 | bot_initializer、config_compat、mory_bot、database、deploy_vps 等 |
@@ -76,5 +77,3 @@
 | 2026-08-04 | 修复/安全加固/测试 | v5.38.19 Graph 第三轮：状态日志明文脱敏 + 回退裸 except 留痕 + 4 项静态 smoke。 | \core/bot_initializer.py\、\	ests/unit/test_log_sanitization_and_trace_smoke.py\ 等 |
 | 2026-08-04 | 修复/安全加固/测试 | v5.38.18 Graph 第二轮 19 处加固：metrics str(e) 修复、裸 except 留痕、白名单补键。验收：pytest 861。 | \dashboard/api/metrics_api.py\、\core/ai_engine.py\ 等 |
 | 2026-08-04 | 修复/清理/安全加固 | v5.38.17：AI 超时/重试默认值与 example 三处同步对齐；wave_tilde 裸 except 留痕；deploy 补路径黑名单+EXCLUDE_NAMES 双防线。 | `core/ai_engine.py`、`deploy_vps.py` 等 |
-| 2026-08-04 | 新增/优化 | v5.38.16 播报图片卡 7 项优化+20 smoke：helper 去重、CTA 强绑定、四套时段池、font LRU、deploy 上限。 | \core/broadcast_image_payload.py\、\core/broadcast_cta.py\、\deploy_vps.py\ 等 |
-| 2026-08-04 | 修复 | v5.38.15.1 PIL 图片卡 Linux 汉字豆腐块根治：字体池平台分支+仓库楷体兜底；deploy 补 assets 扫描；清理 12 个孤儿临时脚本。 | `core/broadcast_image_card.py`、`deploy_vps.py` 等 |
