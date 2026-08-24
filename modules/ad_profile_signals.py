@@ -24,6 +24,15 @@ _INVITE_TEASER_RE = re.compile(
     r"(?:给(?:自己|你)?多(?:一条|条)?路|多(?:一条|条)?路)(?:试试|看看|了解|选择)",
     re.IGNORECASE,
 )
+_INVITE_OPPORTUNITY_ANCHOR_RES = (
+    re.compile(r"(?:小白|新人|新手).{0,5}(?:必做|可做|能做|也能做|可上手|入门必看)", re.IGNORECASE),
+    re.compile(r"(?:勤快|肯干|努力|执行力|自律).{0,8}(?:来|加入|进群|联系|了解|做)", re.IGNORECASE),
+    re.compile(r"(?:懒人|闲人|非诚).{0,2}勿扰", re.IGNORECASE),
+)
+_INVITE_IDLE_PROJECT_RE = re.compile(
+    r"(?:电脑|手机|主机).{0,6}(?:挂机|自动).{0,6}(?:项目|赚钱|进账|印钞)",
+    re.IGNORECASE,
+)
 _PROFILE_CTA_RE = re.compile(
     r"(?:都|来|先|可以|直接)?(?:tmd)?(?:看我|看头像|看简介|看主页|点我)",
     re.IGNORECASE,
@@ -199,7 +208,19 @@ def _detect_invite_teaser_ad(bio: str) -> str:
         return ""
     compact = _compact_profile_text(raw)
     match = _INVITE_TEASER_RE.search(compact)
-    return match.group() if match else ""
+    if match:
+        return match.group()
+    novice_opportunity = all(
+        pattern.search(compact) for pattern in _INVITE_OPPORTUNITY_ANCHOR_RES
+    )
+    idle_project = (
+        _INVITE_IDLE_PROJECT_RE.search(compact)
+        and _INVITE_OPPORTUNITY_ANCHOR_RES[1].search(compact)
+        and _INVITE_OPPORTUNITY_ANCHOR_RES[2].search(compact)
+    )
+    if novice_opportunity or idle_project:
+        return "小白必做+勤快来+懒人勿扰"
+    return ""
 
 
 def _detect_profile_name_bot_invite_ad(display: str, username: str, bio: str) -> str:

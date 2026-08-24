@@ -178,6 +178,57 @@ def _check_crypto_overlap() -> None:
 _check_crypto_overlap()
 
 
+# “电脑/手机挂机就能印钞、躺赚、养活全家”类收益广告必须依赖组合语义；
+# 同时保留新闻、反诈和教学引用，避免单个“挂机/电脑/赚钱”词误封。
+_IDLE_INCOME_TOPIC_RE = re.compile(
+    r"(?:挂机|赚钱机器|印钞(?:机器|工厂)|"
+    r"(?:电脑|手机|主机).{0,12}养活.{0,4}(?:你|我|全)?家|"
+    r"(?:睡觉|躺着).{0,12}(?:进账|收入|赚钱))",
+    re.IGNORECASE,
+)
+_IDLE_INCOME_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"(?:挂机|放着跑|开着不管|自动运行).{0,12}(?:印钞|躺赚|赚钱|进账|收入|养活(?:你|我|全)?家)",
+        r"(?:电脑|手机|主机|设备).{0,10}(?:赚钱|印钞)(?:机器|工厂|工具)",
+        r"(?:睡觉|躺着|不用操作|无需操作).{0,12}(?:挂机|电脑|手机|主机).{0,12}(?:赚|进账|收入|印钞)",
+        r"(?:电脑|手机|主机).{0,8}(?:24小时|全天|一直开着).{0,8}(?:赚|进账|收入|印钞)",
+        r"(?:电脑|手机|主机).{0,10}养活.{0,4}(?:你|我|全)?家.{0,12}(?:挂机|印钞|赚钱)",
+    )
+)
+_IDLE_INCOME_REPORT_PREFIX_RE = re.compile(
+    r"(?:反诈(?:提示|提醒|科普)?|警方|新闻(?:曝光|报道)?|媒体报道|教学案例|所谓|揭露)"
+)
+_IDLE_INCOME_CONDEMN_RE = re.compile(
+    r"(?:(?:是|属于|实为|就是|系).{0,4}(?:诈骗|骗局|虚假宣传)|"
+    r"(?:诈骗|骗局|虚假宣传)(?:话术|广告|宣传)?|(?:不要|别)信|警惕)"
+)
+_IDLE_INCOME_NEGATED_CONDEMN_RE = re.compile(
+    r"(?:不是|并非|绝非|不算|并不属于).{0,8}(?:诈骗|骗局|虚假宣传)"
+)
+
+
+def _is_idle_income_report_context(text: str) -> bool:
+    """仅放行明确谴责该广告话术的新闻/反诈引用；“不是骗局”不能借此逃逸。"""
+    raw = str(text or "")
+    if not _IDLE_INCOME_TOPIC_RE.search(raw):
+        return False
+    if _IDLE_INCOME_NEGATED_CONDEMN_RE.search(raw):
+        return False
+    return bool(
+        _IDLE_INCOME_REPORT_PREFIX_RE.search(raw)
+        and _IDLE_INCOME_CONDEMN_RE.search(raw)
+    )
+
+
+def _is_idle_income_spam(text: str) -> bool:
+    """识别设备挂机/自动运行与收益承诺的高置信组合。"""
+    raw = str(text or "")
+    if _is_idle_income_report_context(raw):
+        return False
+    return any(pattern.search(raw) for pattern in _IDLE_INCOME_PATTERNS)
+
+
 # 彩票交易灰产：围绕彩票代称取局部窗口，不把消息开头当作唯一锚点。
 _LOTTERY_SEP = r"[0-9A-Za-z\s/.,，、·・:：;；_!*#@|+?？~～\-]{0,3}"
 _LOTTERY_IDENTIFIER_RE = re.compile(
@@ -921,7 +972,10 @@ class AdDetector:
         total = 0
         hit_dimensions = []
         evidence = []
+        idle_income_report = _is_idle_income_report_context(msg)
         for group_name, group_cfg in BUILTIN_KEYWORD_GROUPS.items():
+            if group_name == "money_promise" and idle_income_report:
+                continue
             patterns = group_cfg.get("patterns", [])
             weight = group_cfg.get("weight", 1)
             label = group_cfg.get("label", group_name)
@@ -946,6 +1000,17 @@ class AdDetector:
                         break  # 每个维度只计一次最高分
                 except re.error:
                     pass
+        if _is_idle_income_spam(msg) and not any(
+            dimension.startswith("赚钱承诺") for dimension in hit_dimensions
+        ):
+            weight = BUILTIN_KEYWORD_GROUPS["money_promise"]["weight"]
+            total += weight
+            hit_dimensions.append(f"赚钱承诺(+{weight})")
+            evidence.append({
+                "rule_id": "combo.idle_income", "category": "money_promise",
+                "field": field, "strength": "strong",
+            })
+            logger.info("[AD] 设备挂机收益组合命中: 权重=+%s, 消息=%s", weight, msg[:80])
         if _is_lottery_trade_slang(msg) and not any(
             dimension.startswith("灰色产业") for dimension in hit_dimensions
         ):

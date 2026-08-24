@@ -142,6 +142,26 @@ def test_evasive_ad_name_and_bot_invite_bio_block_at_join_and_delayed_review(mon
     assert len(enforced) == 2
 
 
+def test_invite_opportunity_bio_blocks_at_join_and_delayed_review(monkeypatch):
+    from core.handlers import member_handlers
+
+    user = _User("fanbai", username="")
+    bio = "https://t.me/+yZILbWYkW9hiMTg1 小白必做🫐勤快你就来懒人勿扰"
+    enforced = []
+    monkeypatch.setattr(
+        member_handlers,
+        "_enforce_member_ad",
+        lambda *args, **kwargs: enforced.append((args, kwargs)),
+    )
+
+    for stage in ("join", "delayed_30s"):
+        assert member_handlers._review_member_profile(
+            _Bot(bio), user, bio, {}, object(), -1003004701688, stage=stage
+        ) is True
+
+    assert len(enforced) == 2
+
+
 def test_verify_release_does_not_enforce_normal_smith_name(monkeypatch):
     """截图回归：验证码放行后的真实入口不得把 Smith 中的 Sm 当色情引流。"""
     from core.handlers import member_handlers

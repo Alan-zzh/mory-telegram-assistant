@@ -127,6 +127,30 @@ def test_profile_bio_invite_teaser_exact_incident_is_ad():
     assert result["source"] == "bio_invite_teaser"
 
 
+@pytest.mark.parametrize(
+    "bio",
+    [
+        "https://t.me/+yZILbWYkW9hiMTg1 小白必做🫐勤快你就来懒人勿扰",
+        "https://t.me/+AbCdEfGhIjKlMnOp 新人可做，肯干就加入，闲人勿扰",
+        "https://t.me/+AbCdEfGhIjKlMnOp 新手可上手，执行力强的联系，非诚勿扰",
+        "https://t.me/+AbCdEfGhIjKlMnOp 电脑挂机赚钱项目，努力的来，懒人勿扰",
+    ],
+)
+def test_profile_bio_invite_opportunity_variants_are_ad(bio):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="fanbai", status_id=""),
+        bio,
+        {},
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert result["source"] == "bio_invite_teaser"
+
+
 def test_same_city_prostitution_profile_name_is_direct_ad():
     from modules.ad_profile_signals import detect_profile_ad_signal
 
@@ -208,6 +232,28 @@ def test_normal_group_invite_without_teaser_is_not_ad():
 
     assert result["is_ad"] is False
     assert result["score"] == 0
+
+
+@pytest.mark.parametrize(
+    "bio",
+    [
+        "小白必做🫐勤快你就来懒人勿扰",
+        "摄影小白入门资料，勤快练习就来：https://t.me/+AbCdEfGhIjKlMnOp",
+        "小白必做摄影教程，欢迎来交流：https://t.me/+AbCdEfGhIjKlMnOp",
+        "勤快练习就来，懒人勿扰：https://t.me/+AbCdEfGhIjKlMnOp",
+    ],
+)
+def test_invite_opportunity_rule_requires_link_and_all_three_recruitment_anchors(bio):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="摄影学习", status_id=""),
+        bio,
+        {},
+    )
+
+    assert result["is_ad"] is False
 
 
 def test_profile_bio_explicit_promotion_with_link_is_ad():
@@ -640,6 +686,47 @@ def test_evasive_ad_name_and_bot_invite_bio_block_on_first_short_message():
     assert check_ad_detection(dctx) is True
     assert bot.deleted == [(-1001, 88)]
     assert bot.restricted[0][0:2] == (-1001, 42)
+
+
+def test_invite_opportunity_bio_and_money_message_are_enforced_and_marked():
+    from core.handlers.security_handlers import check_ad_detection
+    from modules.ad_detector import AdDetector
+
+    bot = _FakePersonalChannelBot("", "", "")
+    bot.user_chat.personal_chat = None
+    bot.user_chat.bio = "https://t.me/+yZILbWYkW9hiMTg1 小白必做🫐勤快你就来懒人勿扰"
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.from_user = _FakeUser(first_name="fanbai", status_id="")
+    msg.text = "一台电脑养活你全家！挂机=印钞工厂！"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": AdDetector(config={}, db=None),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": msg.from_user.first_name,
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
+    assert db.ad_marked == [(-1001, 88)]
 
 
 def test_invite_teaser_and_look_at_me_message_are_enforced_and_marked():

@@ -266,6 +266,46 @@ def test_same_city_pc_guarantee_incident_is_direct_ad(detector):
 @pytest.mark.parametrize(
     "text",
     [
+        "一台电脑养活你全家！挂机=印钞工厂！",
+        "普通电脑变赚钱机器！挂机就是抢钱！",
+        "手机放着挂机，睡觉也在进账",
+        "电脑24小时开着，躺着也能赚钱",
+        "挂机就能养活全家，懒人项目",
+        "不用操作，电脑自己印钞",
+    ],
+)
+def test_computer_idle_income_variants_are_direct_ad(detector, text):
+    result = detector.detect("fanbai", text)
+
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "电脑挂机后风扇很吵，怎么修？",
+        "所谓印钞工厂是诈骗宣传，大家不要信。",
+        "这台电脑是我工作用的，养活全家不容易。",
+        "反诈提示：电脑挂机赚钱是骗局，大家不要信。",
+        "新闻曝光：电脑挂机印钞工厂属于诈骗宣传。",
+    ],
+)
+def test_computer_idle_printing_money_rule_preserves_normal_context(detector, text):
+    assert detector.detect("", text)["is_ad"] is False
+
+
+def test_idle_income_not_a_scam_evasion_stays_ad(detector):
+    result = detector.detect("", "所谓电脑挂机印钞工厂不是骗局，肯干就来")
+
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "同城PC电脑维修，师傅人工审核后上门服务",
         "这家平台担保交易靠谱吗？大家注意拒绝被骗",
         "老师正在人工审核作业，PC电脑请保持开机",
