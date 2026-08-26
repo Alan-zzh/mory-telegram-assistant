@@ -55,6 +55,32 @@ _EXPLICIT_INCOME_AMOUNT_RE = re.compile(
     r"[0-9零一二三四五六七八九十百千万wWkK]{1,8}",
     re.IGNORECASE,
 )
+_SMUGGLED_TRADE_RE = re.compile(
+    r"(?:卖|出售|售卖|出货|供货|批发|拿货).{0,6}走私"
+    r"|走私.{0,8}(?:出售|售卖|出货|供货|批发|拿货)",
+    re.IGNORECASE,
+)
+_SMUGGLED_PRODUCT_RE = re.compile(
+    r"(?:苹果|手机|香烟|烟酒|雪茄|奢侈品|名表|化妆品|货源)",
+    re.IGNORECASE,
+)
+_SMUGGLED_BIO_TRADE_RE = re.compile(
+    r"(?:进群|加群|预订|订购|下单|购买|拿货|批发|合作|找我|私聊)",
+    re.IGNORECASE,
+)
+_SMUGGLED_FICTION_RE = re.compile(r"(?:小说|电影|游戏|纪录片|剧本)", re.IGNORECASE)
+_SMUGGLED_REPORT_SOURCE_RE = re.compile(
+    r"(?:反诈|海关|警方|法院|案件|新闻|报道|科普|宣传|调查|研究)",
+    re.IGNORECASE,
+)
+_SMUGGLED_REPORT_RESULT_RE = re.compile(
+    r"(?:查获|查处|打击|判刑|违法|犯罪|曝光|提醒|危害|被捕|判决)",
+    re.IGNORECASE,
+)
+_SMUGGLED_MESSAGE_CONTINUATION_RE = re.compile(
+    r"(?:便宜|特价|水果机|卖手机|买手机|手机店|预订|订购|拿货|批发|合作|找我|私聊)",
+    re.IGNORECASE,
+)
 
 
 def _iter_status_ids(user) -> list:
@@ -236,6 +262,39 @@ def _detect_invite_teaser_ad(bio: str) -> str:
     ):
         return "加群项目+明确收益"
     return ""
+
+
+def _detect_smuggled_goods_profile_ad(display: str, username: str, bio: str) -> str:
+    """识别资料名明确售卖走私货，或走私商品名与 Bio 订购群的组合。"""
+    compact_name = _compact_profile_text(" ".join((display, username)))
+    compact_bio = _compact_profile_text(bio)
+    if "走私" not in compact_name:
+        return ""
+    if _SMUGGLED_FICTION_RE.search(compact_name):
+        return ""
+    if (
+        _SMUGGLED_REPORT_SOURCE_RE.search(compact_name)
+        and _SMUGGLED_REPORT_RESULT_RE.search(compact_name)
+    ):
+        return ""
+    if _SMUGGLED_TRADE_RE.search(compact_name):
+        return "姓名明确售卖走私货"
+    if (
+        _SMUGGLED_PRODUCT_RE.search(compact_name)
+        and _TELEGRAM_INVITE_RE.search(str(bio or ""))
+        and _SMUGGLED_BIO_TRADE_RE.search(compact_bio)
+    ):
+        return "走私商品姓名+Bio订购群"
+    return ""
+
+
+def has_smuggled_goods_message_bridge(
+    message_text: str, display: str, username: str, bio: str
+) -> bool:
+    """资料已确认售卖走私货时，只把明确交易续句标为逐条广告。"""
+    if not _detect_smuggled_goods_profile_ad(display, username, bio):
+        return False
+    return bool(_SMUGGLED_MESSAGE_CONTINUATION_RE.search(_compact_profile_text(message_text)))
 
 
 def has_avatar_profile_bridge(avatar_reason: str, avatar_meta: dict, bio: str) -> bool:
@@ -438,6 +497,17 @@ def detect_profile_ad_signal(
             "score": 3,
             "reason": f"广告化姓名与Bio Bot拉新链接组合命中: {name_link_hit}",
             "source": "profile_name_bot_invite",
+            "status_ids": status_ids,
+            "status_text": status_text,
+        }
+
+    smuggled_trade_hit = _detect_smuggled_goods_profile_ad(display, username, bio)
+    if smuggled_trade_hit:
+        return {
+            "is_ad": True,
+            "score": 3,
+            "reason": f"资料命中走私商品交易组合: {smuggled_trade_hit}",
+            "source": "profile_smuggled_goods_trade",
             "status_ids": status_ids,
             "status_text": status_text,
         }

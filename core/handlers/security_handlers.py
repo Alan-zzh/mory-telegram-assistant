@@ -277,6 +277,7 @@ def check_ad_detection(dctx) -> bool:
         from modules.ad_profile_signals import (
             detect_profile_ad_signal,
             has_profile_message_bridge,
+            has_smuggled_goods_message_bridge,
         )
         profile_result = detect_profile_ad_signal(
             bot, m.from_user, user_bio, CONFIG, chat_info=profile_chat_info
@@ -285,8 +286,15 @@ def check_ad_detection(dctx) -> bool:
         if profile_result.get("is_ad"):
             from modules.ad_enforcement import enforce_ad_user
             message_is_ad = (
-                _has_direct_message_ad_evidence(ad_detector, ad_text)
-                or has_profile_message_bridge(ad_text, user_bio)
+                has_profile_message_bridge(ad_text, user_bio)
+                or has_smuggled_goods_message_bridge(
+                    ad_text,
+                    (getattr(m.from_user, "first_name", "") or "")
+                    + (getattr(m.from_user, "last_name", "") or ""),
+                    getattr(m.from_user, "username", "") or "",
+                    user_bio,
+                )
+                or _has_direct_message_ad_evidence(ad_detector, ad_text)
             )
             enforce_ad_user(
                 bot=bot,
@@ -510,7 +518,12 @@ def check_ad_detection(dctx) -> bool:
     consecutive_result = ad_detector.check_consecutive_patterns(uid, chat_id, bot)
     if consecutive_result["is_spam"]:
         logger.warning(f"连续消息模式检测: uid={uid} reason={consecutive_result['reason']}")
-        if consecutive_result.get("behavior_only"):
+        tracked_direct = any(
+            bool(item.get("direct_message_is_ad") or item.get("is_ad"))
+            for item in (track_result.get("messages") or [])
+            if isinstance(item, dict)
+        )
+        if consecutive_result.get("behavior_only") and not tracked_direct:
             from modules.ad_enforcement import delete_repeated_spam_messages
             cleanup = delete_repeated_spam_messages(
                 bot, db, consecutive_result.get("messages", [])
@@ -523,11 +536,27 @@ def check_ad_detection(dctx) -> bool:
             # 即使 Telegram 某条删除失败，本轮也必须在 P10 AI 前停止，避免机器人接话。
             clear_logging_context()
             return True
+        if tracked_direct:
+            logger.warning(
+                f"[AD] 重复刷屏包含逐条广告直证，升级统一处置: uid={uid} chat={chat_id}"
+            )
         # 创建广告结果并处理
         ad_result["is_ad"] = True
         ad_result["action"] = "ban"
         ad_result["score"] = consecutive_result["score"]
-        ad_result["reason"] = consecutive_result["reason"]
+        ad_result["reason"] = (
+            f"{consecutive_result['reason']}；窗口内存在逐条广告直证"
+            if tracked_direct else consecutive_result["reason"]
+        )
+        if tracked_direct:
+            ad_result["evidence"] = list(direct_result.get("evidence") or []) + [{
+                "rule_id": "behavior.repeat_with_direct_ad",
+                "category": "repeated_direct_ad",
+                "field": "message",
+                "strength": "strong",
+            }]
+            ad_result["reason_code"] = "repeat_with_direct_ad"
+            ad_result["evidence_level"] = "high"
         if _handle_immediate_ad(dctx, ad_result):
             return True
 

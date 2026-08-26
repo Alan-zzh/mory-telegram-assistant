@@ -167,6 +167,57 @@ def test_profile_bio_invite_project_income_rule_preserves_normal_profiles(bio):
 
 
 @pytest.mark.parametrize(
+    ("display", "bio"),
+    [
+        ("重·生之*卖走私*苹果17*手机", "进群预订苹果18 https://t.me/+ggr6Eoj7VLUxNTRk"),
+        ("批发走·私苹果手机", ""),
+        ("走私苹果手机供货", ""),
+        ("走私苹果17手机", "https://t.me/+AbCdEfGhIjKlMnOp 进群预订"),
+    ],
+)
+def test_smuggled_goods_trade_profile_variants_are_ads(display, bio):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None, _FakeUser(first_name=display, status_id=""), bio, {}
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert result["source"] == "profile_smuggled_goods_trade"
+
+
+@pytest.mark.parametrize(
+    ("display", "bio"),
+    [
+        ("反走私宣传志愿者", ""),
+        ("海关查获走私苹果手机违法案件", ""),
+        ("小说《卖走私苹果手机的人》", ""),
+        ("二手苹果手机店", "https://t.me/+AbCdEfGhIjKlMnOp 进群交流"),
+        ("走私案件研究", "https://t.me/+AbCdEfGhIjKlMnOp 学术讨论"),
+    ],
+)
+def test_smuggled_goods_profile_rule_preserves_normal_contexts(display, bio):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None, _FakeUser(first_name=display, status_id=""), bio, {}
+    )
+
+    assert result["is_ad"] is False
+
+
+def test_smuggled_goods_profile_message_bridge_requires_trade_continuation():
+    from modules.ad_profile_signals import has_smuggled_goods_message_bridge
+
+    display = "重生之卖走私苹果17手机"
+    bio = "进群预订苹果18 https://t.me/+ggr6Eoj7VLUxNTRk"
+    assert has_smuggled_goods_message_bridge("寻手机店合作", display, "", bio) is True
+    assert has_smuggled_goods_message_bridge("便宜", display, "", bio) is True
+    assert has_smuggled_goods_message_bridge("今天天气不错", display, "", bio) is False
+
+
+@pytest.mark.parametrize(
     "bio",
     [
         "https://t.me/+yZILbWYkW9hiMTg1 小白必做🫐勤快你就来懒人勿扰",
@@ -792,6 +843,117 @@ def test_exact_wechat_collection_incident_is_deleted_restricted_and_marked():
         "db": db,
         "config": {"ENABLE_MESSAGE_DELETION": False},
         "ad_detector": AdDetector(config={}, db=None),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": msg.from_user.first_name,
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
+    assert db.ad_marked == [(-1001, 88)]
+
+
+def test_exact_smuggled_phone_profile_incident_is_blocked_on_first_message():
+    from core.handlers.security_handlers import check_ad_detection
+    from modules.ad_detector import AdDetector
+
+    bot = _FakePersonalChannelBot("", "", "")
+    bot.user_chat.personal_chat = None
+    bot.user_chat.bio = "进群预订苹果18 https://t.me/+ggr6Eoj7VLUxNTRk"
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.from_user = _FakeUser(
+        first_name="重·生之*卖走私*苹果17*手机", status_id=""
+    )
+    msg.text = "寻·手‧机店‧合作"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": AdDetector(config={}, db=None),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": msg.from_user.first_name,
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
+    assert db.ad_marked == [(-1001, 88)]
+
+
+def test_repeat_spam_with_direct_ad_evidence_uses_unified_enforcement():
+    from core.handlers.security_handlers import check_ad_detection
+
+    class _RepeatWithDirectDetector(_FakeAdDetector):
+        def detect(self, **kwargs):
+            if kwargs.get("username"):
+                return {
+                    "is_ad": False, "action": "delete", "score": 0,
+                    "reason": "未命中规则", "ad_text": kwargs.get("msg", ""),
+                }
+            return {
+                "is_ad": True, "action": "ban", "score": 2,
+                "reason": "AI复核广告", "evidence": [],
+            }
+
+        def track_suspicious_user(self, *args, **kwargs):
+            return {
+                "action": "none",
+                "total_score": 0,
+                "messages": [{"direct_message_is_ad": True, "is_ad": False}],
+            }
+
+        def check_consecutive_patterns(self, *_args, **_kwargs):
+            return {
+                "is_spam": True,
+                "behavior_only": True,
+                "score": 3,
+                "reason": "一小时重复刷屏：同文或极近内容累计3次",
+                "messages": [],
+            }
+
+    bot = _FakePersonalChannelBot("", "", "")
+    bot.user_chat.personal_chat = None
+    bot.user_chat.bio = ""
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.from_user = _FakeUser(first_name="普通用户", status_id="")
+    msg.text = "寻手机店合作"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": _RepeatWithDirectDetector(),
     })()
     dctx = type("Dctx", (), {
         "is_group": True,
