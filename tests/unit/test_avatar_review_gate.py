@@ -287,3 +287,39 @@ def test_member_avatar_gate_never_consults_legacy_color_heuristic(monkeypatch):
         _Bot(), user, {}, object(), -1001
     ) is False
     assert enforced == []
+
+
+def test_member_avatar_and_invite_income_bio_enforce_as_combined_evidence(monkeypatch):
+    from core.handlers import member_handlers
+    from modules import avatar_detector
+
+    user = SimpleNamespace(id=42, first_name="xiaozhu", last_name="")
+    enforced = []
+    monkeypatch.setattr(
+        member_handlers,
+        "_enforce_member_ad",
+        lambda *args, **kwargs: enforced.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_avatar_marketing",
+        lambda *args: (
+            True,
+            "OCR命中营销话术: 看我简介",
+            2,
+            {"type": "unknown"},
+        ),
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_avatar_similarity",
+        lambda *args: (False, "无相似头像", []),
+    )
+
+    result = member_handlers._review_member_avatar(
+        _Bot(), user, {}, object(), -1001,
+        bio="https://t.me/+s6EHxGHP9NgwYjk1 加群看项目 一天赚8千",
+    )
+
+    assert result is True
+    assert len(enforced) == 1

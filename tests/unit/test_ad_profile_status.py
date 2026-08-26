@@ -130,6 +130,45 @@ def test_profile_bio_invite_teaser_exact_incident_is_ad():
 @pytest.mark.parametrize(
     "bio",
     [
+        "https://t.me/+s6EHxGHP9NgwYjk1 加群看项目 一天赚8千！💰",
+        "https://t.me/+AbCdEfGhIjKlMnOp 进群做副业，每天挣九千",
+        "https://t.me/+AbCdEfGhIjKlMnOp 加入接单项目，日入1w",
+    ],
+)
+def test_profile_bio_invite_project_income_variants_are_ads(bio):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None, _FakeUser(first_name="xiaozhu", status_id=""), bio, {}
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert result.get("source", "profile_rule") in {"bio_invite_teaser", "profile_rule"}
+
+
+@pytest.mark.parametrize(
+    "bio",
+    [
+        "https://t.me/+AbCdEfGhIjKlMnOp 摄影项目交流群",
+        "今天项目营业额8千，群里同步报表",
+        "https://t.me/+AbCdEfGhIjKlMnOp 加群看开源项目",
+        "摄影副业经验分享，一天拍8千张照片",
+    ],
+)
+def test_profile_bio_invite_project_income_rule_preserves_normal_profiles(bio):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None, _FakeUser(first_name="摄影学习", status_id=""), bio, {}
+    )
+
+    assert result["is_ad"] is False
+
+
+@pytest.mark.parametrize(
+    "bio",
+    [
         "https://t.me/+yZILbWYkW9hiMTg1 小白必做🫐勤快你就来懒人勿扰",
         "https://t.me/+AbCdEfGhIjKlMnOp 新人可做，肯干就加入，闲人勿扰",
         "https://t.me/+AbCdEfGhIjKlMnOp 新手可上手，执行力强的联系，非诚勿扰",
@@ -706,6 +745,47 @@ def test_invite_opportunity_bio_and_money_message_are_enforced_and_marked():
     msg = _FakeShortMessage()
     msg.from_user = _FakeUser(first_name="fanbai", status_id="")
     msg.text = "一台电脑养活你全家！挂机=印钞工厂！"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": AdDetector(config={}, db=None),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": msg.from_user.first_name,
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
+    assert db.ad_marked == [(-1001, 88)]
+
+
+def test_exact_wechat_collection_incident_is_deleted_restricted_and_marked():
+    from core.handlers.security_handlers import check_ad_detection
+    from modules.ad_detector import AdDetector
+
+    bot = _FakePersonalChannelBot("", "", "")
+    bot.user_chat.personal_chat = None
+    bot.user_chat.bio = "https://t.me/+s6EHxGHP9NgwYjk1 加群看项目 一天赚8千！💰 💰"
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.from_user = _FakeUser(first_name="xiaozhu", status_id="")
+    msg.text = "来微信收米 赚9千"
     db = _FakeDB()
     ctx = type("Ctx", (), {
         "bot": bot,

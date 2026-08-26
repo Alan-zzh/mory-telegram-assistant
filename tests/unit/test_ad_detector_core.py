@@ -345,6 +345,41 @@ def test_screenshot_wechat_proxy_receipt_income_is_immediate_ad(detector, text):
     assert result["score"] >= SCORE_THRESHOLD
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "来微信收米 赚9千",
+        "薇 信来收款，挣八千",
+        "VX帮收钱收益1w",
+        "wechat代收日入9000",
+    ],
+)
+def test_wechat_collection_income_variants_are_immediate_ads(detector, text):
+    result = detector.detect(username="xiaozhu", msg=text)
+    assert result["is_ad"] is True
+    assert result["action"] == "ban"
+    assert result["score"] >= SCORE_THRESHOLD
+    assert any(
+        item["rule_id"] == "combo.wechat_collection_income"
+        for item in result["evidence"]
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "来微信聊聊这次活动",
+        "快递代收点今天收了9千件",
+        "公司微信代收货款，一天利润9千",
+        "门店微信收款，今天营业额9千",
+    ],
+)
+def test_wechat_collection_income_combo_preserves_normal_contexts(detector, text):
+    result = detector.detect(username="正常用户", msg=text)
+    assert result["is_ad"] is False
+    assert result["score"] < SCORE_THRESHOLD
+
+
 @pytest.mark.parametrize("text", ["我每天跑1万米", "微信业务怎么迁移", "一天跑1w米太累了"])
 def test_income_shorthand_rule_does_not_match_normal_context(detector, text):
     """L3: 正常运动与微信业务讨论不因新规则被误判"""

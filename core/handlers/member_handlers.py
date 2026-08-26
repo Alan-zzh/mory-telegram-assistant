@@ -211,9 +211,9 @@ def _review_member_profile(
 
 
 def _review_member_avatar(
-    bot, user, config, db, chat_id, stage="join", check_similarity=False
+    bot, user, config, db, chat_id, stage="join", check_similarity=False, bio=""
 ):
-    """审核头像并记录辅助证据；头像或相似头像不得单信号封禁。"""
+    """审核头像；单头像仅记证据，与明确邀请收益 Bio 组合后才处置。"""
     user_id = user.id
     user_display = (user.first_name or "") + (user.last_name or "")
     try:
@@ -230,6 +230,17 @@ def _review_member_avatar(
                 f"⚠️ [入群头像审核] stage={stage} uid={user_id} score={avatar_score} "
                 f"ai_type={ai_result.get('type', 'none')} outcome=evidence_only reason={avatar_reason[:120]}"
             )
+            from modules.ad_profile_signals import has_avatar_profile_bridge
+            if has_avatar_profile_bridge(avatar_reason, ai_result, bio):
+                logger.warning(
+                    f"🚫 [入群头像审核] stage={stage} uid={user_id} score={avatar_score} "
+                    f"outcome=block reason=avatar_profile_bridge"
+                )
+                _enforce_member_ad(
+                    bot, db, config, chat_id, user_id, user_display,
+                    f"入群头像与Bio组合审核({stage}): {avatar_reason[:160]}",
+                )
+                return True
 
         if check_similarity:
             similar, similarity_reason, _ = check_avatar_similarity(bot, user_id, chat_id, db)
@@ -372,7 +383,8 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
 
             # 步骤2.5：明确头像视觉/OCR证据 + 批量相似头像。
             if _review_member_avatar(
-                bot, user, config, db, chat_id, stage="join", check_similarity=True
+                bot, user, config, db, chat_id, stage="join", check_similarity=True,
+                bio=user_bio,
             ):
                 continue
 
@@ -477,7 +489,8 @@ def _handle_chat_member_update(bot, update, config, db, ctx=None):
                 ):
                     return
                 _review_member_avatar(
-                    bot, user, config, db, chat_id, stage="verify_release", check_similarity=False
+                    bot, user, config, db, chat_id, stage="verify_release",
+                    check_similarity=False, bio=bio,
                 )
                 if not bio:
                     _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx=ctx)

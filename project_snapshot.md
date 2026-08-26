@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-24。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-26。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标。风格参考仅限当前场景，含价格、权益、联系方式、保证性事实或 CTA 的样本不进入普通 AI 提示 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 当前唯一池为9个文本型号+`qwen3.5-ocr`；严格按到期日升序且同日保留配置顺序；思考型按声明调用。超时、限流和服务异常仅进程内熔断并自动回首选，只有明确额度耗尽永久拉黑；当前索引只认配置，不从数据库复活旧值 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类（AST 实测，doc_consistency 断言）；`start_background` 引擎同文件 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；legacy `modules/auto_tasks.py` 已于 v5.38.69 拆除收敛 |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 歧义联系方式仅作弱信号；设备挂机收益组合及私密群 Bio 三锚点招揽直接处置，明确反诈与正常电脑讨论放行；处置事件保留首次根因，24小时说明卡支持本人限频复检，高风险/未知状态拒绝自动恢复 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 歧义联系方式仅作弱信号；微信收米收益正文、邀请项目收益 Bio 及看简介头像组合直接处置，正常公司货款/门店流水/普通项目群放行；处置事件保留首次根因，24小时说明卡支持本人限频复检 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 102 个业务 `.py`（含子目录，与 METRICS 一致）；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 仅管理员商品管理（/sales 别名 handle_admin_cmd），无用户侧触发；不在 Bot 内收款，咨询承接统一走单目标漏斗 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
@@ -38,12 +38,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.41.1（2026-08-24）· 设备挂机收益广告与私密群 Bio 招揽变体热修
+v5.41.2（2026-08-26）· 微信收米收益正文、邀请收益 Bio 与看简介头像组合热修
 
-生产状态：**v5.41.1 已于 2026-08-24 部署：339/339 文件上传，双服务 active/NRestarts=0、health 200，广告检测关键哈希一致；20:19 消息 69923 已删除并标记广告，UID 8993979428 已限制发言且双黑名单/禁言记录持久化。启动窗无真实 ERROR/CRITICAL，journal 凭据扫描 0 命中。**
+生产状态基线：**v5.41.1 于 2026-08-26 取证时双服务 active、health 200、数据库完整；v5.41.2 须以本次部署后的 release manifest、服务稳定窗和业务回执为准。**
 
 ## 最近 3 条大事
-1. 2026-08-24 v5.41.1：设备挂机收益广告与私密群 Bio 招揽热修已部署，历史广告已补删并限制账号。
+1. 2026-08-26 v5.41.2：微信收米收益正文、邀请项目收益 Bio 与看简介头像组合热修，增加端到端删除/限制/快照回归。
 2. 2026-08-23 v5.41.0：全仓治理——凭据搬家、原子写、发送重试、假监控拆除、卫生闸门。
 3. 2026-08-23 v5.40.0：三栏目内容丰富——易经经典句、黄历值神/吉时、塔罗框架轮换、免责尾注、敏感分流，均默认关闭。
 

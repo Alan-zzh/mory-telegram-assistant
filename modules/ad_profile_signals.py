@@ -46,6 +46,15 @@ _PROFILE_NAME_FREE_LISTING_RE = re.compile(
     r"(?:同城|同程|老师).{0,8}免费.{0,6}上榜|免费.{0,6}上榜.{0,8}(?:同城|同程|老师)",
     re.IGNORECASE,
 )
+_INVITE_GROUP_ACTION_RE = re.compile(r"(?:加群|进群|入群|群里|群内|加入)", re.IGNORECASE)
+_INVITE_PROJECT_RE = re.compile(
+    r"(?:项目|兼职|副业|赚钱|赚米|收益|佣金|招募|接单|合作)", re.IGNORECASE
+)
+_EXPLICIT_INCOME_AMOUNT_RE = re.compile(
+    r"(?:一天|一日|每天|日入|日赚|赚|挣|收益|利润).{0,4}"
+    r"[0-9零一二三四五六七八九十百千万wWkK]{1,8}",
+    re.IGNORECASE,
+)
 
 
 def _iter_status_ids(user) -> list:
@@ -220,7 +229,26 @@ def _detect_invite_teaser_ad(bio: str) -> str:
     )
     if novice_opportunity or idle_project:
         return "小白必做+勤快来+懒人勿扰"
+    if (
+        _INVITE_GROUP_ACTION_RE.search(compact)
+        and _INVITE_PROJECT_RE.search(compact)
+        and _EXPLICIT_INCOME_AMOUNT_RE.search(compact)
+    ):
+        return "加群项目+明确收益"
     return ""
+
+
+def has_avatar_profile_bridge(avatar_reason: str, avatar_meta: dict, bio: str) -> bool:
+    """高置信营销头像与邀请收益 Bio 联合时授权处置，头像单信号仍不定罪。"""
+    if not _detect_invite_teaser_ad(bio):
+        return False
+    avatar_type = str((avatar_meta or {}).get("type", "") or "").lower()
+    compact_reason = _compact_profile_text(avatar_reason)
+    cta_text = any(
+        anchor in compact_reason
+        for anchor in ("看我简介", "看简介", "看我主页", "看主页")
+    )
+    return cta_text or avatar_type in {"marketing", "qr"}
 
 
 def _detect_profile_name_bot_invite_ad(display: str, username: str, bio: str) -> str:

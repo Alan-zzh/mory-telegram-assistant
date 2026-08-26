@@ -229,6 +229,25 @@ def _is_idle_income_spam(text: str) -> bool:
     return any(pattern.search(raw) for pattern in _IDLE_INCOME_PATTERNS)
 
 
+def _is_wechat_collection_income_ad(text: str) -> bool:
+    """识别“微信/变体 + 收米/收款 + 明确收益金额”的三锚点灰产广告。"""
+    compact = re.sub(r"[\W_]+", "", str(text or "").lower(), flags=re.UNICODE)
+    if not compact:
+        return False
+    if re.search(
+        r"(?:公司|门店|商户|客户|财务|快递|货物|货款|账款|发票|营业额|销售额|流水|对公)",
+        compact,
+    ):
+        return False
+    contact = re.search(r"(?:微信|薇信|威信|v信|vx|wechat)", compact, re.IGNORECASE)
+    collection = re.search(r"(?:收米|收款|收钱|代收|帮收|跑分|收码)", compact)
+    income = re.search(
+        r"(?:赚|挣|日入|日赚|收益|利润)[0-9零一二三四五六七八九十百千万wWkK]{1,8}",
+        compact,
+    )
+    return bool(contact and collection and income)
+
+
 # 彩票交易灰产：围绕彩票代称取局部窗口，不把消息开头当作唯一锚点。
 _LOTTERY_SEP = r"[0-9A-Za-z\s/.,，、·・:：;；_!*#@|+?？~～\-]{0,3}"
 _LOTTERY_IDENTIFIER_RE = re.compile(
@@ -1011,6 +1030,22 @@ class AdDetector:
                 "field": field, "strength": "strong",
             })
             logger.info("[AD] 设备挂机收益组合命中: 权重=+%s, 消息=%s", weight, msg[:80])
+        if _is_wechat_collection_income_ad(msg):
+            already_scored = any(
+                dimension.startswith("加密货币/洗钱") for dimension in hit_dimensions
+            )
+            weight = BUILTIN_KEYWORD_GROUPS["crypto_money"]["weight"]
+            if not already_scored:
+                total += weight
+                hit_dimensions.append(f"加密货币/洗钱(+{weight})")
+            evidence.append({
+                "rule_id": "combo.wechat_collection_income",
+                "category": "crypto_money", "field": field, "strength": "strong",
+            })
+            logger.info(
+                "[AD] 微信收款收益三锚点命中: 权重=+%s, 消息=%s",
+                0 if already_scored else weight, msg[:80],
+            )
         if _is_lottery_trade_slang(msg) and not any(
             dimension.startswith("灰色产业") for dimension in hit_dimensions
         ):
