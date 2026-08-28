@@ -1,6 +1,6 @@
 # Mory小助理 测试目录
 
-> **最后整理**：2026-08-23（v5.41.0 重写为真实结构）
+> **最后整理**：2026-08-24（按真实目录与 CI 分层重写）
 > **总原则**：所有测试代码统一放 `tests/`，根目录**禁止**出现 `_*.py` 临时测试文件
 
 ---
@@ -10,21 +10,19 @@
 ```
 tests/
 ├── README.md        # 本文件
-├── unit/            # 单元测试（87 个文件，pytest tests/unit/ 全量入口）
+├── unit/            # 默认离线单元测试，pytest tests/unit/ 全量入口
 ├── alert/           # 告警链路测试（级联抑制等故障注入）
-├── attribution/     # 转化归因测试（含离线回放）
-├── integration/     # 集成测试（端到端、多模块协作）
-├── load/            # Locust 压测（locustfile.py + analyze_results.py）
-├── persona/         # 人设一致性测试
-├── perf/            # （已并入 load，v5.41.0 删除独立 perf 目录）
+├── persona/         # 离线人设合同；真实模型评测使用 live_llm marker
 └── security/        # 安全面测试
 ```
+
+归因离线回放是审计 CLI，不是 pytest：`python scripts/attribution_offline_replay.py --help`。旧 WriteQueue Locust 脚本随 WriteQueue 退役删除；需要新压测时必须按当前 WAL + busy_timeout 架构重新建基线。
 
 运行方式（与 CI 一致）：
 
 ```bash
-.venv/Scripts/python -m pytest tests/unit/ -q          # Windows
-python -m pytest tests/unit/ -q                        # Linux / CI
+.venv/Scripts/python -m pytest tests/unit/ tests/security/ tests/alert/ -q  # Windows
+python -m pytest tests/unit/ tests/security/ tests/alert/ -q                # Linux / CI
 ```
 
 ## 🧹 历史清理说明
@@ -38,7 +36,7 @@ python -m pytest tests/unit/ -q                        # Linux / CI
 | 类型 | 位置 | 命名 |
 |------|------|------|
 | 单元测试 | `tests/unit/test_xxx.py` | `test_xxx.py` |
-| 集成测试 | `tests/integration/` | `test_xxx_integration.py` |
+| 安全/告警测试 | `tests/security/` 或 `tests/alert/` | `test_xxx.py` |
 | 端到端验证 | `scripts/verify_xxx.py` | `verify_*.py` |
 
 共享 fixture 在根目录 [conftest.py](../conftest.py)：

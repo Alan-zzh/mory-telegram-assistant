@@ -41,7 +41,7 @@ python scripts/doc_consistency.py     # METRICS + 版本五源一致 + 行数 + 
 |---|---|---|
 | `core/ai_engine.py` | `_get_dynamic_llm_params` / `_select_emotion_bucket` | `tests/unit/test_v5_19_0_persona_engine.py` |
 | `core/ai_engine.py` | `_sanitize_reply_v2` | `tests/unit/test_ai_engine_resilience.py`、`tests/unit/test_full_persona_tone_contract.py` |
-| `modules/auto_tasks.py` | 问候/定时任务配置函数 | `tests/unit/test_auto_tasks_greeting_config.py`；播报任务另见 `tests/unit/test_scheduled_broadcast_rich.py` |
+| `tasks/broadcast/greeting_task.py` / `tasks/task_scheduler.py` | 问候任务与调度注册 | `tests/unit/test_night_greeting_schedule.py`、`tests/unit/test_startup_background_health.py`；播报另见 `tests/unit/test_scheduled_broadcast_rich.py` |
 | `core/database.py` | `DB.__init__` / `reconnect` / `_safe_add_column` | `tests/unit/test_v5_35_0_fixes.py` |
 | `modules/ad_detector.py` | `AdDetector` / `check_username_suspicious` / `SCORE_THRESHOLD` | `tests/unit/test_ad_detector_core.py` |
 | `modules/admin_cmds.py` | `_parse_feed_scene` / `_parse_and_feed_pairs` | `tests/unit/test_feed_sample_command.py` |

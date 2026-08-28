@@ -19,6 +19,7 @@
 import time
 import math
 import threading
+from contextlib import nullcontext
 from typing import Optional, Dict, Any
 
 from core.logging_util import get_logger
@@ -38,6 +39,17 @@ _buffer_lock = threading.Lock()
 _last_flush_ts = 0.0
 _FLUSH_INTERVAL = 60.0   # 60 秒刷盘一次
 _FLUSH_BATCH_SIZE = 100  # 单次最多刷 100 条
+_bound_db = None
+
+
+def bind_db(db) -> None:
+    """显式绑定 Bot 运行时数据库。
+
+    A/B 指标由 AI 主链异步累计，不能通过导入 ``main`` 猜测某个进程全局变量。
+    Dashboard 查询可在调用时传入自己的请求级 SQLite 连接。
+    """
+    global _bound_db
+    _bound_db = db
 
 
 def is_enabled(config: dict) -> bool:
@@ -130,61 +142,73 @@ def record_ab_metric(uid: int, group: str, model: str, latency_ms: float,
 
 
 def _get_db():
-    """获取数据库实例（延迟导入避免循环依赖）
-
-    优先从 main.py 获取 DB 类实例（含 conn/lock），
-    失败则返回 None。
-    """
-    try:
-        from main import db
-        if db and hasattr(db, "conn"):
-            return db
-    except Exception as e:
-        logger.debug(f"获取 db 实例失败: {e}")
-    return None
+    """返回已显式绑定的 Bot 数据库；不导入任何进程全局变量。"""
+    return _bound_db
 
 
-def flush_metrics():
+def _connection_for(db):
+    """兼容 Bot 的 DB 门面和 Dashboard 的请求级 sqlite 连接。"""
+    return getattr(db, "conn", db)
+
+
+def _db_lock_for(db):
+    """Bot DB 有共享锁；Dashboard 请求连接本身不需要跨请求复用锁。"""
+    return getattr(db, "lock", None) or nullcontext()
+
+
+def flush_metrics(db=None) -> bool:
     """将内存缓冲区的指标刷盘到 ab_test_metrics 表
 
-    失败不抛异常，仅记录日志。线程安全由 _buffer_lock + db.lock 保证。
+    失败不抛异常且不从缓冲删除。线程安全由 _buffer_lock + db.lock 保证。
     """
     global _last_flush_ts
     try:
+        # 刷盘期间保持缓冲锁，防止两个触发器拿到同一批记录重复写入。
+        # 只有 commit 成功后才移除已持久化记录，避免 db 暂不可用时静默丢数。
         with _buffer_lock:
             if not _metrics_buffer:
-                return
-            batch = _metrics_buffer[:_FLUSH_BATCH_SIZE]
-            del _metrics_buffer[:len(batch)]
-            _last_flush_ts = time.time()
+                return True
+            batch = list(_metrics_buffer[:_FLUSH_BATCH_SIZE])
+            active_db = _get_db() if db is None else db
+            if active_db is None:
+                logger.debug("A/B 指标刷盘跳过：db 不可用，保留缓冲等待重试")
+                return False
 
-        db = _get_db()
-        if not db:
-            logger.debug("A/B 指标刷盘跳过：db 不可用")
-            return
-
-        # 使用 db.lock 保证写入线程安全
-        with getattr(db, "lock", threading.Lock()):
-            c = db.conn.cursor()
-            for m in batch:
-                try:
-                    c.execute(
+            connection = _connection_for(active_db)
+            try:
+                with _db_lock_for(active_db):
+                    connection.executemany(
                         "INSERT INTO ab_test_metrics "
                         "(uid, group_name, model, latency_ms, cost, converted, ts) "
                         "VALUES (?,?,?,?,?,?,?)",
-                        (m["uid"], m["group"], m["model"], m["latency_ms"],
-                         m["cost"], m["converted"], m["ts"])
+                        [
+                            (
+                                metric["uid"], metric["group"], metric["model"],
+                                metric["latency_ms"], metric["cost"],
+                                metric["converted"], metric["ts"],
+                            )
+                            for metric in batch
+                        ],
                     )
-                except Exception as e:
-                    logger.debug(f"A/B 指标写入失败: {e}")
-                    break
-            db.conn.commit()
+                    connection.commit()
+            except Exception as exc:
+                try:
+                    connection.rollback()
+                except Exception as rollback_exc:
+                    logger.warning(f"A/B 指标刷盘回滚失败: {rollback_exc}")
+                logger.warning(f"A/B 指标刷盘失败，已保留 {len(batch)} 条缓冲: {exc}")
+                return False
+
+            del _metrics_buffer[:len(batch)]
+            _last_flush_ts = time.time()
             logger.info(f"✅ A/B 指标刷盘完成: {len(batch)} 条")
+            return True
     except Exception as e:
-        logger.debug(f"A/B 指标刷盘异常（不影响主流程）: {e}")
+        logger.warning(f"A/B 指标刷盘异常，缓冲已保留: {e}")
+        return False
 
 
-def get_report(days: int = 7) -> list:
+def get_report(days: int = 7, db=None) -> list:
     """聚合查询 A/B 测试报表（供 Dashboard API 调用）
 
     Args:
@@ -194,12 +218,12 @@ def get_report(days: int = 7) -> list:
         [{group, model, sample_count, avg_latency, p95_latency,
           avg_cost, conversion_rate}, ...]
     """
-    db = _get_db()
-    if not db:
+    active_db = _get_db() if db is None else db
+    if active_db is None:
         return []
     try:
         cutoff = int(time.time()) - days * 86400
-        c = db.conn.cursor()
+        c = _connection_for(active_db).cursor()
         # 先按 group+model 聚合基础统计
         c.execute("""
             SELECT group_name, model,
@@ -436,7 +460,7 @@ def calculate_statistical_significance(
         }
 
 
-def get_significance_report(days: int = 7, alpha: float = 0.05) -> Dict[str, Any]:
+def get_significance_report(days: int = 7, alpha: float = 0.05, db=None) -> Dict[str, Any]:
     """生成 A/B 测试统计显著性报告（供 Dashboard API 调用）
 
     Args:
@@ -455,8 +479,8 @@ def get_significance_report(days: int = 7, alpha: float = 0.05) -> Dict[str, Any
             "generated_at": 生成时间戳
         }
     """
-    db = _get_db()
-    if not db:
+    active_db = _get_db() if db is None else db
+    if active_db is None:
         return {
             "period_days": days,
             "alpha": alpha,
@@ -467,7 +491,7 @@ def get_significance_report(days: int = 7, alpha: float = 0.05) -> Dict[str, Any
 
     try:
         cutoff = int(time.time()) - days * 86400
-        c = db.conn.cursor()
+        c = _connection_for(active_db).cursor()
 
         # 查询 A/B 两组的详细统计指标
         c.execute("""

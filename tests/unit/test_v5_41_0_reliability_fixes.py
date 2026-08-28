@@ -4,7 +4,7 @@
 覆盖：
 1. core/helpers.atomic_write_json - 原子写 JSON（成功替换 / 无临时残留 / 失败不损坏原文件）
 2. tasks/support/fault_reporter 去重状态原子落盘
-3. core/mory_bot._send_with_network_retry - 瞬态网络错误重试一次 / API 语义错误不重试
+3. core/mory_bot - Telegram 写操作遇到结果不确定错误时不盲重发、不降级补发
 
 设计原则：不连真实 DB / 不连真实 Telegram / 每用例独立可单跑。
 """
@@ -12,9 +12,6 @@
 import json
 import os
 import sys
-from pathlib import Path
-from unittest.mock import MagicMock
-
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -82,62 +79,96 @@ def test_fault_reporter_dedup_state_saved_atomically(tmp_path, monkeypatch):
     assert json.loads(state_file.read_text(encoding="utf-8")) == {"⚠️_cat": 1234567890}
 
 
-# ── 3. Telegram 发送瞬态网络重试 ─────────────────────────────────────────
+# ── 3. Telegram 写入不盲重发 ─────────────────────────────────────────────
 
-class _FlakyBot:
-    """前 N 次调用抛瞬态网络错误，之后成功。"""
+class _UncertainWriteTeleBot:
+    """模拟请求超时：服务端可能已经送达，客户端无法安全重试。"""
 
-    def __init__(self, transient_failures: int):
-        self.transient_failures = transient_failures
-        self.calls = 0
+    def __init__(self):
+        self.reply_calls = 0
+        self.photo_calls = 0
+        self.fallback_calls = 0
 
-    def __call__(self, *args, **kwargs):
+    def reply_to(self, *args, **kwargs):
         import requests
 
-        self.calls += 1
-        if self.calls <= self.transient_failures:
-            raise requests.exceptions.ConnectionError("connection reset")
-        return MagicMock(message_id=42)
+        self.reply_calls += 1
+        raise requests.exceptions.Timeout("response lost")
+
+    def send_photo(self, *args, **kwargs):
+        import requests
+
+        self.photo_calls += 1
+        raise requests.exceptions.ConnectionError("response lost")
+
+    def send_message(self, *args, **kwargs):
+        self.fallback_calls += 1
+        raise AssertionError("不应对未知结果自动补发")
+
+    def delete_message(self, *args, **kwargs):
+        return True
+
+    def get_me(self):
+        return object()
+
+    def send_chat_action(self, *args, **kwargs):
+        return True
 
 
-class _ApiSemanticError(Exception):
-    """模拟 ApiTelegramException（API 语义错误，绝不可重试）。"""
+class _TrackDB:
+    def __init__(self):
+        self.tracked = []
+
+    def track_reply(self, *args):
+        self.tracked.append(args)
+
+    def track_channel_message(self, *args):
+        self.tracked.append(args)
 
 
-def test_send_retry_recovers_after_transient_network_error():
-    from core.mory_bot import _send_with_network_retry
+def _message(chat_id=-1001):
+    from types import SimpleNamespace
 
-    flaky = _FlakyBot(transient_failures=1)
-    sent = _send_with_network_retry(flaky, "chat", "text")
-
-    assert sent is not None
-    assert flaky.calls == 2
+    return SimpleNamespace(chat=SimpleNamespace(id=chat_id), message_id=77)
 
 
-def test_send_retry_gives_up_after_second_transient_failure(monkeypatch):
-    from core import mory_bot
+def test_reply_without_track_does_not_retry_or_fallback_after_uncertain_write():
+    from core.mory_bot import MoryBot
 
-    monkeypatch.setattr(mory_bot.time, "sleep", lambda *_: None)
-    flaky = _FlakyBot(transient_failures=99)
+    telebot = _UncertainWriteTeleBot()
+    result = MoryBot(telebot, _TrackDB(), {}).reply_without_track(_message(), "hello")
 
-    with pytest.raises(Exception):
-        mory_bot._send_with_network_retry(flaky, "chat", "text")
-    assert flaky.calls == 2
+    assert result is None
+    assert telebot.reply_calls == 1
+    assert telebot.fallback_calls == 0
 
 
-def test_send_retry_never_retries_api_semantic_errors():
-    """4xx 类语义错误（如消息已删除）重试只会重复失败或重复发送，禁止重试。"""
-    calls = {"n": 0}
+def test_reply_and_track_does_not_retry_uncertain_write(monkeypatch):
+    from core.mory_bot import MoryBot
+    from tasks.support import fault_reporter
 
-    def semantic_fail(*args, **kwargs):
-        calls["n"] += 1
-        raise _ApiSemanticError("message to be replied not found")
+    fault_reports = []
+    monkeypatch.setattr(fault_reporter, "report_fault", lambda *args, **kwargs: fault_reports.append(args))
+    telebot = _UncertainWriteTeleBot()
+    db = _TrackDB()
 
-    with pytest.raises(_ApiSemanticError):
-        from core.mory_bot import _send_with_network_retry
-        _send_with_network_retry(semantic_fail, "chat", "text")
+    result = MoryBot(telebot, db, {}).reply_and_track(_message(), "hello")
 
-    assert calls["n"] == 1
+    assert result is None
+    assert telebot.reply_calls == 1
+    assert telebot.fallback_calls == 0
+    assert db.tracked == []
+    assert len(fault_reports) == 1
+
+
+def test_reply_photo_and_track_does_not_retry_uncertain_write():
+    from core.mory_bot import MoryBot
+
+    telebot = _UncertainWriteTeleBot()
+    result = MoryBot(telebot, _TrackDB(), {}).reply_photo_and_track(_message(), b"image")
+
+    assert result is None
+    assert telebot.photo_calls == 1
 
 
 # ── 4. pypinyin 正式依赖（v5.41.0 删手写映射表回退）─────────────────────

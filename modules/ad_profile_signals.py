@@ -310,6 +310,19 @@ def has_avatar_profile_bridge(avatar_reason: str, avatar_meta: dict, bio: str) -
     return cta_text or avatar_type in {"marketing", "qr"}
 
 
+def has_avatar_personal_channel_bridge(
+    avatar_reason: str, recruitment_anchors
+) -> bool:
+    """仅允许“看资料”头像与绑定频道的规避式群演招募三锚点联合定罪。"""
+    compact_reason = _compact_profile_text(avatar_reason)
+    explicit_profile_cta = any(
+        anchor in compact_reason
+        for anchor in ("看我简介", "看简介", "看我主页", "看主页", "点我简介", "点我主页")
+    )
+    required = {"招聘动作", "群演岗位", "应召引导"}
+    return explicit_profile_cta and required.issubset(set(recruitment_anchors or []))
+
+
 def _detect_profile_name_bot_invite_ad(display: str, username: str, bio: str) -> str:
     """识别广告化姓名与 Bot 拉新深链的高置信跨字段组合。
 
@@ -378,6 +391,36 @@ def _detect_personal_channel_ad(parts: list[str]) -> dict:
         or ("换资" in text and "车队" in text and ("有码" in text or "码商" in text))
     )
     return {"is_ad": strong, "anchors": anchors}
+
+
+def _detect_personal_channel_avatar_bridge_candidate(parts: list[str]) -> dict:
+    """识别需与“看我简介”头像联合的规避式群演招募频道。
+
+    频道单独不处置；必须同时具备招聘动作、群演岗位和应召引导三个语义锚点，
+    再由头像中的明确资料 CTA 完成跨字段证据闭环。
+    """
+    text = _compact_profile_text(" ".join(str(part or "") for part in parts))
+    if not text:
+        return {"is_candidate": False, "anchors": []}
+
+    groups = {
+        "招聘动作": (
+            "招聘", "招募", "招人", "诚聘", "誠聘", "高聘", "急聘", "聘群演", "聘演员", "聘演員",
+        ),
+        "群演岗位": (
+            "群演", "群众演员", "群眾演員", "演员", "演員",
+        ),
+        "应召引导": (
+            "有时间来", "有時間來", "有空来", "有空來", "随时来", "隨時來",
+            "想来的", "想來的", "来报名", "來報名",
+            "来联系", "來聯繫", "来私聊", "來私聊",
+        ),
+    }
+    anchors = [name for name, words in groups.items() if any(word in text for word in words)]
+    return {
+        "is_candidate": set(groups).issubset(set(anchors)),
+        "anchors": anchors,
+    }
 
 
 def _personal_channel_parts(
@@ -524,6 +567,7 @@ def detect_profile_ad_signal(
         }
 
     personal_result = _detect_personal_channel_ad(personal_parts)
+    recruitment_result = _detect_personal_channel_avatar_bridge_candidate(personal_parts)
     if personal_result["is_ad"]:
         anchor_text = "+".join(personal_result["anchors"])
         return {
@@ -577,6 +621,10 @@ def detect_profile_ad_signal(
             "status_text": status_text,
             "ocr_text": ocr_text,
             "no_vision_model": no_vl_flag,
+            "personal_chat_id": personal_chat_id,
+            "personal_chat_anchors": personal_result["anchors"],
+            "avatar_bridge_candidate": recruitment_result["is_candidate"],
+            "personal_chat_recruitment_anchors": recruitment_result["anchors"],
         }
 
     return {
@@ -587,4 +635,6 @@ def detect_profile_ad_signal(
         "status_text": "",
         "personal_chat_id": personal_chat_id,
         "personal_chat_anchors": personal_result["anchors"],
+        "avatar_bridge_candidate": recruitment_result["is_candidate"],
+        "personal_chat_recruitment_anchors": recruitment_result["anchors"],
     }

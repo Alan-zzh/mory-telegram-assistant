@@ -58,25 +58,6 @@ class FunnelStateMachine:
         """
         self._db = db
         self._default_bot_id = _get_default_bot_id()
-        self._ensure_bot_id_column()
-
-    def _ensure_bot_id_column(self):
-        """【v5.24.0 阶段2-C】幂等添加 bot_id 列并迁移现有数据"""
-        try:
-            with self.lock:
-                c = self.conn.cursor()
-                # 检查列是否存在
-                c.execute("PRAGMA table_info(funnel_state)")
-                cols = [row[1] for row in c.fetchall()]
-                if "bot_id" not in cols:
-                    c.execute("ALTER TABLE funnel_state ADD COLUMN bot_id TEXT DEFAULT 'mory'")
-                    # 迁移现有数据
-                    c.execute("UPDATE funnel_state SET bot_id=? WHERE bot_id IS NULL OR bot_id=''",
-                              (self._default_bot_id,))
-                    self.conn.commit()
-                    logger.info(f"✅ funnel_state 已添加 bot_id 列，默认值: {self._default_bot_id}")
-        except Exception as e:
-            logger.debug(f"bot_id 列检查/添加异常: {e}")
 
     @property
     def conn(self):
@@ -309,13 +290,6 @@ class FunnelStateMachine:
 
     # ── 内部方法 ──
 
-    def _ensure_conversion_column(self, column: str, definition: str):
-        c = self.conn.cursor()
-        c.execute("PRAGMA table_info(conversion_events)")
-        existing_cols = {row[1] for row in c.fetchall()}
-        if column not in existing_cols:
-            self.conn.execute(f"ALTER TABLE conversion_events ADD COLUMN {column} {definition}")
-
     def _log_event(self, uid: int, event: str, mode: str = "", source: str = "", campaign_id: str = "",
                    is_memory_assisted: bool = False):
         """写入 conversion_events 日志表（兼容现有查询）
@@ -330,15 +304,6 @@ class FunnelStateMachine:
         is_memory_assisted: 本次转化是否由记忆系统辅助（memory_summary 注入）
         """
         try:
-            # [v5.23.0] 幂等添加归因列（兼容旧表结构）
-            self._ensure_conversion_column("source", "TEXT DEFAULT ''")
-            self._ensure_conversion_column("campaign_id", "TEXT DEFAULT ''")
-            # [阶段3-E] 幂等添加时间衰减归因列
-            self._ensure_conversion_column("attribution_model", "TEXT DEFAULT ''")
-            self._ensure_conversion_column("weight", "REAL DEFAULT 0")
-            # [阶段3-A] 幂等添加记忆辅助归因列
-            self._ensure_conversion_column("is_memory_assisted", "INTEGER DEFAULT 0")
-
             _mem_flag = 1 if is_memory_assisted else 0
             self.conn.execute(
                 "INSERT INTO conversion_events(uid, event, ts, mode, source, campaign_id, is_memory_assisted) "

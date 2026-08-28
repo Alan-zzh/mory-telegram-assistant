@@ -778,6 +778,107 @@ def test_evasive_ad_name_and_bot_invite_bio_block_on_first_short_message():
     assert bot.restricted[0][0:2] == (-1001, 42)
 
 
+def test_avatar_cta_and_bound_recruitment_channel_block_exact_short_probe(monkeypatch):
+    """真实漏判：看我简介头像 + 绑定群演招募频道 + 2Qoo+ 必须统一删除并限制。"""
+    from core.handlers.security_handlers import check_ad_detection
+    from modules import avatar_detector
+
+    bot = _FakePersonalChannelBot(
+        "聘群演有时间来",
+        "别人准备干你说不好干，别人赚钱了你说人家干得早",
+        "gzy_9911636179_1_6627",
+    )
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_avatar_marketing",
+        lambda *args, **kwargs: (
+            True,
+            "OCR命中营销话术: 看我简介",
+            2,
+            {"type": "unknown"},
+        ),
+    )
+
+    msg = _FakeShortMessage()
+    msg.text = "2Qoo+"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": _FakeAdDetector(),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": "琚家可祚",
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
+    assert db.ad_marked == []
+
+
+def test_bound_recruitment_channel_without_profile_cta_avatar_stays_unpunished(monkeypatch):
+    """频道候选没有“看我简介/主页”头像证据时不得删消息或限制账号。"""
+    from core.handlers.security_handlers import check_ad_detection
+    from modules import avatar_detector
+
+    bot = _FakePersonalChannelBot("聘群演有时间来", "公开剧组招募信息")
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_avatar_marketing",
+        lambda *args, **kwargs: (
+            True,
+            "AI视觉复核: marketing(普通活动海报)",
+            2,
+            {"type": "marketing"},
+        ),
+    )
+
+    msg = _FakeShortMessage()
+    msg.text = "在吗"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": True},
+        "ad_detector": _FakeAdDetector(),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": "普通用户",
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is False
+    assert bot.deleted == []
+    assert bot.restricted == []
+
+
 def test_invite_opportunity_bio_and_money_message_are_enforced_and_marked():
     from core.handlers.security_handlers import check_ad_detection
     from modules.ad_detector import AdDetector
@@ -1131,6 +1232,48 @@ def test_bio_smith_followed_by_social_text_is_not_sm_adult_evidence():
     )
 
     assert result["is_ad"] is False
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "聘群演有时间来",
+        "诚 聘 群 演，有 空 来",
+        "高聘群众演员 有时间来",
+    ],
+)
+def test_bound_channel_recruitment_bait_is_avatar_bridge_candidate(title):
+    """真实漏判及拆字变体：频道本身只候选，必须再叠加头像 CTA 才能处置。"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(title, "别人准备干你说不好干，别人赚钱了你说干得早")
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is False
+    assert result["avatar_bridge_candidate"] is True
+    assert set(result["personal_chat_recruitment_anchors"]) == {
+        "招聘动作", "群演岗位", "应召引导"
+    }
+
+
+@pytest.mark.parametrize(
+    ("title", "description"),
+    [
+        ("影视演员工作结算通知频道", "仅发布剧组工资到账通知"),
+        ("剧组群演排期通知", "仅发布已签约演员的拍摄排班"),
+        ("群演个人简历", "本人有时间可拍摄，记录过往作品"),
+        ("招聘信息频道", "整理公开岗位政策和求职防骗提醒"),
+        ("影视演员招聘政策报名指南", "仅整理公开法规、报名流程和防骗提醒"),
+    ],
+)
+def test_normal_bound_channels_are_not_avatar_bridge_candidates(title, description):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(title, description)
+    result = detect_profile_ad_signal(bot, _FakeUser(status_id=""), "", {})
+
+    assert result["is_ad"] is False
+    assert result.get("avatar_bridge_candidate", False) is False
     assert result["score"] == 0
 
 

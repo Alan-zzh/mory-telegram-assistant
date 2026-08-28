@@ -1,0 +1,12 @@
+# Mory Assistant - CI and local quality gates only.
+# Generate with:
+#   uv pip compile requirements-dev.in --constraint requirements.lock --generate-hashes --universal -o requirements-dev.lock
+
+pytest>=7.0.0
+pytest-cov>=4.0.0
+mypy>=1.5.0
+interrogate>=1.5.0
+vulture>=2.0
+radon>=5.1.0
+ruff>=0.15.0,<1.0.0
+pip-audit>=2.10.0,<3.0.0

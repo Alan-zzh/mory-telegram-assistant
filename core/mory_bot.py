@@ -14,41 +14,9 @@
 """
 
 import logging
-import time
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger("mory_bot")
-
-
-# 【v5.41.0】网络级瞬态异常重试（暗病修复：此前发送失败即丢消息）。
-# 仅连接失败/超时/传输中断允许重试一次——这类错误请求大概率未被 Telegram
-# 受理，重试不会造成重复消息；ApiTelegramException 等 API 语义错误绝不重试，
-# 避免对已成功送达的请求二次发送。
-def _is_transient_network_error(e: Exception) -> bool:
-    try:
-        import requests
-    except ImportError:
-        return False
-    return isinstance(
-        e,
-        (
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            requests.exceptions.ChunkedEncodingError,
-        ),
-    )
-
-
-def _send_with_network_retry(send_fn, *args, **kwargs):
-    """执行一次 Telegram 发送；命中瞬态网络错误时退避 0.8s 重试一次。"""
-    try:
-        return send_fn(*args, **kwargs)
-    except Exception as e:
-        if not _is_transient_network_error(e):
-            raise
-        logger.warning(f"⚠️ 发送遇到瞬态网络错误，退避后重试一次：{type(e).__name__}: {e}")
-        time.sleep(0.8)
-        return send_fn(*args, **kwargs)
 
 
 class MoryBot:
@@ -111,11 +79,11 @@ class MoryBot:
         # 私聊不追踪
         if cid > 0:
             logger.debug(f"私聊消息跳过追踪 chat={cid}")
-            return _send_with_network_retry(self._bot.reply_to, message, text, **kwargs)
+            return self._bot.reply_to(message, text, **kwargs)
         
         try:
-            # 尝试直接回复（瞬态网络错误自动重试一次）
-            sent = _send_with_network_retry(self._bot.reply_to, message, text, **kwargs)
+            # Telegram 写入遇到超时或断连时，服务端可能已经送达；禁止盲重发。
+            sent = self._bot.reply_to(message, text, **kwargs)
         except Exception as e:
             err_str = str(e).lower()
             # 如果原消息确实已经被秒删了，降级为普通发送
@@ -157,9 +125,8 @@ class MoryBot:
             )
 
         try:
-            sent = _send_with_network_retry(
-                self._bot.send_photo, cid, photo,
-                reply_to_message_id=user_msg_id, **kwargs
+            sent = self._bot.send_photo(
+                cid, photo, reply_to_message_id=user_msg_id, **kwargs
             )
         except Exception as e:
             logger.error(f"reply_photo_and_track API异常：{e}")
@@ -190,16 +157,9 @@ class MoryBot:
             发送成功的消息对象，或 None（失败时）
         """
         try:
-            return _send_with_network_retry(self._bot.reply_to, message, text, **kwargs)
+            return self._bot.reply_to(message, text, **kwargs)
         except Exception as e:
-            # 降级为普通发送
-            cid = message.chat.id
-            try:
-                kwargs_clean = {k: v for k, v in kwargs.items() 
-                               if k != 'reply_to_message_id'}
-                return _send_with_network_retry(
-                    self._bot.send_message, cid, text, **kwargs_clean
-                )
-            except Exception:
-                logger.error(f"reply_without_track 失败：{e}")
-                return None
+            # reply_to 的投递结果不确定时，退化为 send_message 会放大成重复消息。
+            # 记录失败并交由上层的正常消息处理/人工重试决定下一步。
+            logger.warning(f"reply_without_track 发送未确认，禁止自动降级重发：{e}")
+            return None

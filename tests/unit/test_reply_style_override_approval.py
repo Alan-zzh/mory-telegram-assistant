@@ -2,7 +2,6 @@
 """运行时样本读取：管理员确认放行样本跳过二次敏感词校验（v5.38.29）。"""
 from __future__ import annotations
 
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -10,29 +9,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from core.database import DB
 from core.db_repos.reply_evolution_repo import ReplyEvolutionRepo
 
 
-class _FakeLock:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-
-class _FakeDB:
-    lock = _FakeLock()
-
-    def __init__(self, conn):
-        self.conn = conn
-
-
 def _make_repo() -> ReplyEvolutionRepo:
-    conn = sqlite3.connect(":memory:")
-    repo = ReplyEvolutionRepo(_FakeDB(conn))
-    repo._ensure_schema()
-    return repo
+    return DB(":memory:").reply_evolution
 
 
 def _insert(repo, label, style_text, scene, note):

@@ -211,9 +211,10 @@ def _review_member_profile(
 
 
 def _review_member_avatar(
-    bot, user, config, db, chat_id, stage="join", check_similarity=False, bio=""
+    bot, user, config, db, chat_id, stage="join", check_similarity=False, bio="",
+    chat_info=None,
 ):
-    """审核头像；单头像仅记证据，与明确邀请收益 Bio 组合后才处置。"""
+    """审核头像；单头像仅记证据，与明确 Bio/绑定频道证据组合后才处置。"""
     user_id = user.id
     user_display = (user.first_name or "") + (user.last_name or "")
     try:
@@ -230,15 +231,30 @@ def _review_member_avatar(
                 f"⚠️ [入群头像审核] stage={stage} uid={user_id} score={avatar_score} "
                 f"ai_type={ai_result.get('type', 'none')} outcome=evidence_only reason={avatar_reason[:120]}"
             )
-            from modules.ad_profile_signals import has_avatar_profile_bridge
-            if has_avatar_profile_bridge(avatar_reason, ai_result, bio):
+            from modules.ad_profile_signals import (
+                detect_profile_ad_signal,
+                has_avatar_personal_channel_bridge,
+                has_avatar_profile_bridge,
+            )
+            profile_result = detect_profile_ad_signal(
+                bot, user, bio, config, chat_info=chat_info
+            )
+            channel_bridge = has_avatar_personal_channel_bridge(
+                avatar_reason,
+                profile_result.get("personal_chat_recruitment_anchors", []),
+            )
+            if has_avatar_profile_bridge(avatar_reason, ai_result, bio) or channel_bridge:
+                bridge_reason = (
+                    "avatar_personal_channel_bridge"
+                    if channel_bridge else "avatar_bio_bridge"
+                )
                 logger.warning(
                     f"🚫 [入群头像审核] stage={stage} uid={user_id} score={avatar_score} "
-                    f"outcome=block reason=avatar_profile_bridge"
+                    f"outcome=block reason={bridge_reason}"
                 )
                 _enforce_member_ad(
                     bot, db, config, chat_id, user_id, user_display,
-                    f"入群头像与Bio组合审核({stage}): {avatar_reason[:160]}",
+                    f"入群头像与资料组合审核({stage}): {avatar_reason[:160]} {bridge_reason}",
                 )
                 return True
 
@@ -384,7 +400,7 @@ def _handle_new_chat_members(bot, m, config, db, ctx=None):
             # 步骤2.5：明确头像视觉/OCR证据 + 批量相似头像。
             if _review_member_avatar(
                 bot, user, config, db, chat_id, stage="join", check_similarity=True,
-                bio=user_bio,
+                bio=user_bio, chat_info=chat_info,
             ):
                 continue
 
@@ -490,7 +506,7 @@ def _handle_chat_member_update(bot, update, config, db, ctx=None):
                     return
                 _review_member_avatar(
                     bot, user, config, db, chat_id, stage="verify_release",
-                    check_similarity=False, bio=bio,
+                    check_similarity=False, bio=bio, chat_info=chat_info,
                 )
                 if not bio:
                     _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx=ctx)

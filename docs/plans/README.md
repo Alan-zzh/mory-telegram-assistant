@@ -11,7 +11,13 @@
 
 ## 当前状态
 
-**有 1 份已完结计划**：`remediation-2026-08.md`（2026-08-05 v5.38.22 四项整改收尾，已执行完成）。历史整改见 `remediation_roadmap.md`（2026-07-07 完结）。
+当前计划以文件头状态为准：
+
+- `god-file-split-plan.md`：B1 完成，B2-B7 待分批；B5 与当前数据库真相源规则冲突，整改期间冻结并修订。
+- `remediation_roadmap.md`：进行中，禁止再写成“已完结”。
+- `mystic-greeting-enrichment-plan.md`：待按文件内勾选项复核。
+
+不存在的 `remediation-2026-08.md` 不再作为索引入口；历史完成记录统一查 `CHANGELOG.md` 与 `docs/archive/`。
 
 所有计划直接在以下位置跟踪：
 

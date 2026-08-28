@@ -19,12 +19,9 @@ import pytest
 # 让 tests/persona/ 下的脚本能 import 到项目根的 core 包
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-# 文件级 skip：未配置裁判模型 API Key 时跳过整个文件，避免在 CI/本地无密钥环境下
-# 误调用真实 LLM API。配置 STANDARD_MODEL_API_KEY 或 API_KEY 后才执行。
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("STANDARD_MODEL_API_KEY") and not os.environ.get("API_KEY"),
-    reason="未配置 STANDARD_MODEL_API_KEY/API_KEY，跳过裁判模型调用",
-)
+def _has_live_judge_credentials() -> bool:
+    """live_llm 用例是否具备显式的裁判模型凭据。"""
+    return bool(os.environ.get("STANDARD_MODEL_API_KEY") or os.environ.get("API_KEY"))
 
 
 # ── 50 个高频测试用例 ──────────────────────────────────────────────
@@ -435,6 +432,23 @@ def test_batch_evaluate_all_cases_with_mock():
         result = evaluate_response(response, case, judge_caller=mock_judge_caller)
         assert result["pass"] is True, f"用例 {case['id']} mock 评估应 pass：{result}"
         assert "raw" in result
+
+
+@pytest.mark.live_llm
+@pytest.mark.skipif(
+    not _has_live_judge_credentials(),
+    reason="未配置 STANDARD_MODEL_API_KEY/API_KEY，跳过真实裁判模型调用",
+)
+def test_live_judge_smoke():
+    """真实 LLM 冒烟仅在明确带凭据的专用环境执行，CI 永不调用。"""
+    result = evaluate_response(
+        "我是 Mory 小助理呀。你想聊什么，直接说就好。",
+        TEST_CASES[0],
+    )
+
+    assert set(SCORE_THRESHOLDS).issubset(result)
+    assert isinstance(result.get("pass"), bool)
+    assert "error" not in result, result.get("error")
 
 
 # ════════════════════════════════════════════════════════════════════

@@ -284,7 +284,7 @@ def validate_summary(summary: str) -> tuple:
             import json
             json.loads(summary)
             return (False, "摘要为纯 JSON 格式，应为自然语言")
-        except Exception:
+        except json.JSONDecodeError:
             pass  # 不是合法 JSON，放行
 
     # D. 重复度校验：连续重复 >3 次的字符
@@ -415,12 +415,6 @@ def _save_memory_summary(db, uid: int, summary: str):
     try:
         with db.lock:
             c = db.conn.cursor()
-            # 幂等添加 memory_summary 列
-            try:
-                c.execute("ALTER TABLE user_profiles ADD COLUMN memory_summary TEXT DEFAULT ''")
-            except Exception:
-                pass  # 幂等添加列：列已存在则跳过  # 列已存在
-
             # 更新 memory_summary
             c.execute(
                 "UPDATE user_profiles SET memory_summary=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
@@ -443,11 +437,6 @@ def get_memory_summary(db, uid: int) -> str:
     try:
         with db.lock:
             c = db.conn.cursor()
-            # 确保列存在
-            try:
-                c.execute("ALTER TABLE user_profiles ADD COLUMN memory_summary TEXT DEFAULT ''")
-            except Exception:
-                pass  # 幂等添加列：列已存在则跳过
             c.execute("SELECT memory_summary FROM user_profiles WHERE user_id=?", (uid,))
             row = c.fetchone()
             return row[0] if row and row[0] else ""

@@ -13,7 +13,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from core.logging_util import get_logger
 
 logger = get_logger("weather")
@@ -69,7 +69,7 @@ def handle_weather_query(bot, m, config, db, city: str):
 
         now = wdata["now"]
         text = f"🌤 {loc_name}天气\n"
-        text += f"━━━━━━━━━━━━━\n"
+        text += "━━━━━━━━━━━━━\n"
         text += f"🌡 温度：{now['temp']}°C\n"
         text += f"🌡 体感：{now['feelsLike']}°C\n"
         text += f"☁️ 天气：{now['text']}\n"

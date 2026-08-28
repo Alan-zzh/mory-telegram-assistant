@@ -8,6 +8,7 @@ from dashboard.helpers import (
     login_required, admin_required, get_current_role, read_config, write_config,
     _DashboardFakeMessage, _DashboardReplyProxy
 )
+from core.config_compat import is_sensitive_config_key, redact_sensitive_config
 from modules.natural_cmd import handle_natural_admin, ALL_CONFIGS
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,18 @@ config_bp = Blueprint('config', __name__, url_prefix='/api')
 # 配置由 Bot 进程每 30 秒检查 reload_flag；API 不应承诺一个不存在的
 # 5-8 秒 SLA。统一复用这条事实说明，避免不同配置页继续传播失真时间。
 CONFIG_RELOAD_NOTICE = "将在下一次配置重载周期内生效（默认约30秒）"
+
+
+def _contains_sensitive_config_field(value) -> bool:
+    """拒绝 Dashboard 把任何层级的凭据写回配置文件。"""
+    if isinstance(value, dict):
+        return any(
+            is_sensitive_config_key(key) or _contains_sensitive_config_field(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_sensitive_config_field(item) for item in value)
+    return False
 
 
 def _parse_scene_bool(value):
@@ -152,11 +165,11 @@ def api_config():
     cfg = read_config()
     role = get_current_role()
     safe_cfg = {
-        k: v
+        k: redact_sensitive_config(v)
         for k, v in cfg.items()
         if (
             k == "KEYWORD_AUTO_DELETE_CONFIG" and role == "admin"
-        ) or not any(s in k.lower() for s in ['key', 'token', 'password', 'secret'])
+        ) or not is_sensitive_config_key(k)
     }
     if role != "admin":
         safe_cfg.pop("KEYWORD_AUTO_DELETE_CONFIG", None)
@@ -223,6 +236,11 @@ def api_config_update():
         return jsonify({"ok": False, "msg": f"不支持的值类型: {type(value).__name__}"}), 400
     if key not in ALLOWED_CONFIG_FIELDS:
         return jsonify({"ok": False, "msg": "该配置项不允许修改"}), 403
+    if is_sensitive_config_key(key) or _contains_sensitive_config_field(value):
+        return jsonify({
+            "ok": False,
+            "msg": "凭据不得通过 Dashboard 写入配置，请在 .env 中配置后重启服务",
+        }), 400
     cfg = read_config()
     if key == "KEYWORD_AUTO_DELETE_CONFIG":
         from modules.keyword_auto_delete import normalize_keyword_auto_delete_payload
@@ -264,8 +282,11 @@ def api_config_natural():
         return jsonify({"ok": False, "msg": "处理失败，请检查参数"}), 500
     if not handled:
         return jsonify({"ok": False, "msg": "这句话我还没听明白，换个更明确的说法试试"}), 400
-    _sensitive_keys = ['key', 'token', 'password', 'secret']
-    safe_cfg = {k: v for k, v in cfg.items() if not any(s in k.lower() for s in _sensitive_keys)}
+    safe_cfg = {
+        key: redact_sensitive_config(value)
+        for key, value in cfg.items()
+        if not is_sensitive_config_key(key)
+    }
     return jsonify({
         "ok": True,
         "msg": (proxy.messages[-1] if proxy.messages else "已处理") + f"，{CONFIG_RELOAD_NOTICE}",

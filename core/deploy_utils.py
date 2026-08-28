@@ -9,7 +9,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
-import json, logging, os, posixpath, shlex, tempfile, time
+import json, logging, os, posixpath, shlex, tempfile, time, uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -183,8 +183,8 @@ def safe_upload_config(sftp, local_cfg: dict, vps_path: str) -> dict:
     1. 下载VPS现有配置
     2. 安全合并（保护密钥）
     3. 从config.json.example补齐缺失键
-    4. 备份VPS原配置
-    5. 上传合并后配置
+    4. 以 0600 权限备份 VPS 原配置
+    5. 上传到同文件系统私有暂存区后，使用 OpenSSH posix-rename 原子替换
     返回合并后的配置dict
     """
     remote_config = f"{vps_path}/config.json"
@@ -223,34 +223,50 @@ def safe_upload_config(sftp, local_cfg: dict, vps_path: str) -> dict:
 
     merged = _patch_missing_keys(merged)
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    operation_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}"
     try:
-        try: sftp.stat(backup_dir)
-        except FileNotFoundError:
-            sftp.mkdir(backup_dir)
-        except OSError:
-            sftp.mkdir(backup_dir)
-        try: sftp.stat(backup_dir)
-        except FileNotFoundError:
-            logger.debug(f"备份目录验证跳过: {backup_dir}")
-        backup_path = f"{backup_dir}/config_{ts}.json"
+        ensure_remote_dir(sftp, backup_dir)
+        sftp.chmod(backup_dir, 0o700)
+        backup_path = f"{backup_dir}/config_{operation_id}.json"
         tmp_bak = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8')
         json.dump(vps_cfg, tmp_bak, ensure_ascii=False, indent=2)
         tmp_bak.close()
         try:
             sftp.put(tmp_bak.name, backup_path)
+            sftp.chmod(backup_path, 0o600)
+            backup_mode = sftp.stat(backup_path).st_mode & 0o777
+            if backup_mode != 0o600:
+                raise RuntimeError(f"VPS配置备份权限不是0600: {oct(backup_mode)}")
         finally:
             try: os.unlink(tmp_bak.name)
             except Exception as e: logger.warning(f"清理备份临时文件失败: {e}")
     except Exception as e:
-        logger.warning(f"VPS配置备份失败: {e}")
+        raise RuntimeError(f"VPS配置备份失败，拒绝覆盖现有配置: {e}") from e
 
     tmp_upload = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8')
     json.dump(merged, tmp_upload, ensure_ascii=False, indent=2)
     tmp_upload.close()
 
+    staging_dir = f"{vps_path}/.deploy-staging"
+    staging_config = f"{staging_dir}/config.json.{operation_id}.tmp"
     try:
-        sftp.put(tmp_upload.name, remote_config)
+        ensure_remote_dir(sftp, staging_dir)
+        sftp.chmod(staging_dir, 0o700)
+        sftp.put(tmp_upload.name, staging_config)
+        sftp.chmod(staging_config, 0o600)
+        rename = getattr(sftp, "posix_rename", None)
+        if not callable(rename):
+            raise RuntimeError("SFTP服务器不支持posix-rename，拒绝非原子替换config.json")
+        rename(staging_config, remote_config)
+        config_mode = sftp.stat(remote_config).st_mode & 0o777
+        if config_mode != 0o600:
+            raise RuntimeError(f"config.json原子替换后权限不是0600: {oct(config_mode)}")
+    except Exception:
+        try:
+            sftp.remove(staging_config)
+        except Exception as cleanup_error:
+            logger.debug(f"清理失败的配置暂存文件失败: {cleanup_error}")
+        raise
     finally:
         try: os.unlink(tmp_upload.name)
         except Exception as e: logger.warning(f"清理上传临时文件失败: {e}")

@@ -323,14 +323,31 @@ def _clear_ad_tracking(ad_detector, uid: int) -> bool:
 
 
 def restore_ad_user(bot, db, config: dict, chat_id: int, uid: int, actor_id: int = 0, ad_detector=None) -> dict:
-    """撤销广告误封：移除黑名单并尝试恢复群内发言权限。"""
+    """撤销广告误封：远端恢复读回确认后，才清除四项本地治理事实。"""
     uid = int(uid)
     chat_id = int(chat_id or 0)
-    removed = _remove_blacklists(db, uid)
     restored = _restore_chat_permissions(bot, chat_id, uid)
-    tracking_cleared = _clear_ad_tracking(ad_detector, uid)
-    persistence_verified, persistence_counts = _verify_persistent_state_cleared(db, uid)
     permission_verified = restored and _verify_chat_permissions_restored(bot, chat_id, uid)
+    removed = False
+    persistence_verified = False
+    tracking_cleared = False
+    persistence_counts = {}
+
+    # Telegram 的成功返回不等于真实生效，必须先读回。远端恢复失败或未知时，
+    # 黑名单、禁言记录和可疑追踪都保留，避免出现“人仍被禁言但治理事实已消失”。
+    if permission_verified:
+        removed = _remove_blacklists(db, uid)
+        persistence_verified, persistence_counts = _verify_persistent_state_cleared(
+            db, uid
+        )
+        if removed and persistence_verified:
+            tracking_cleared = _clear_ad_tracking(ad_detector, uid)
+    else:
+        # 即使不清理，也返回当前读回，供管理员确认保留的四项事实。
+        _ignored, persistence_counts = _verify_persistent_state_cleared(
+            db, uid
+        )
+
     confirmed = removed and persistence_verified and permission_verified
     resolved_events = 0
     if confirmed and hasattr(db, "list_unresolved_ad_events") and hasattr(db, "resolve_ad_event"):

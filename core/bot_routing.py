@@ -73,31 +73,18 @@ class BotRouter:
             logger.warning(f"获取共享连接失败: {e}")
             return None
 
-    def _ensure_table(self, conn) -> bool:
-        """幂等确保路由表存在（防御首次调用或旧库）"""
+    def _schema_ready(self, conn) -> bool:
+        """确认中央数据库已创建路由表，不在路由请求路径执行 DDL。"""
         if conn is None:
             return False
         try:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS bot_group_routing (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    bot_id INTEGER NOT NULL,
-                    chat_id INTEGER NOT NULL,
-                    allowed_modules TEXT NOT NULL,
-                    is_active INTEGER DEFAULT 1,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(bot_id, chat_id)
-                )
-            """)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_bot_routing_chat "
-                "ON bot_group_routing(chat_id, is_active)"
-            )
-            conn.commit()
-            return True
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(bot_group_routing)").fetchall()
+            }
+            return {"bot_id", "chat_id", "allowed_modules", "is_active"}.issubset(columns)
         except Exception as e:
-            logger.warning(f"确保 bot_group_routing 表失败: {e}")
+            logger.warning(f"检查 bot_group_routing schema 失败: {e}")
             return False
 
     # ── 核心查询 ──────────────────────────────────────────────────────
@@ -130,7 +117,7 @@ class BotRouter:
 
         try:
             conn = self._get_conn()
-            if not self._ensure_table(conn):
+            if not self._schema_ready(conn):
                 # DB 不可用：按默认策略降级
                 return self.default_policy == "allow"
 
@@ -186,7 +173,7 @@ class BotRouter:
             return None
         try:
             conn = self._get_conn()
-            if not self._ensure_table(conn):
+            if not self._schema_ready(conn):
                 return None
             with self._lock:
                 rows = conn.execute(
@@ -222,7 +209,7 @@ class BotRouter:
         """
         try:
             conn = self._get_conn()
-            if not self._ensure_table(conn):
+            if not self._schema_ready(conn):
                 return False
             modules_json = json.dumps(list(allowed_modules), ensure_ascii=False)
             with self._lock:
@@ -255,7 +242,7 @@ class BotRouter:
         """
         try:
             conn = self._get_conn()
-            if not self._ensure_table(conn):
+            if not self._schema_ready(conn):
                 return False
             with self._lock:
                 conn.execute(
@@ -280,7 +267,7 @@ class BotRouter:
         """
         try:
             conn = self._get_conn()
-            if not self._ensure_table(conn):
+            if not self._schema_ready(conn):
                 return []
             with self._lock:
                 if chat_id is None:
@@ -331,10 +318,10 @@ def init_router(config: dict):
     with _router_lock:
         try:
             _router_instance = BotRouter(config)
-            # 启动时幂等确保表存在（即使 shared_db 未初始化也不报错）
+            # 启动时验证中央 schema；缺失时保持安全降级，不在此创建表。
             if _router_instance.enabled:
                 conn = _router_instance._get_conn()
-                _router_instance._ensure_table(conn)
+                _router_instance._schema_ready(conn)
                 logger.info(
                     f"✅ BotRouter 已初始化 enabled={_router_instance.enabled} "
                     f"default_policy={_router_instance.default_policy}"

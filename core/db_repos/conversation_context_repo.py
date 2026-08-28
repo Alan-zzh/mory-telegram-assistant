@@ -36,39 +36,14 @@ class ConversationContextRepo:
         return self._db.lock
 
     def _ensure_schema(self) -> bool:
-        """兼容 Dashboard/测试直连 SQLite 的幂等初始化。"""
+        """确认中央数据库已完成上下文 schema 初始化，不在请求路径写 DDL。"""
         with self.lock:
             try:
-                self.conn.execute("""CREATE TABLE IF NOT EXISTS business_conversation_context (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    chat_id INTEGER NOT NULL,
-                    user_text TEXT NOT NULL DEFAULT '',
-                    assistant_text TEXT NOT NULL DEFAULT '',
-                    intent TEXT NOT NULL DEFAULT '',
-                    conversion_target TEXT NOT NULL DEFAULT 'none',
-                    conversion_reason TEXT NOT NULL DEFAULT '',
-                    ts INTEGER NOT NULL
-                )""")
-                self.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_business_context_recent "
-                    "ON business_conversation_context(user_id, chat_id, ts)"
-                )
-                self.conn.execute("""CREATE TABLE IF NOT EXISTS conversation_conversion_state (
-                    user_id INTEGER NOT NULL,
-                    chat_id INTEGER NOT NULL,
-                    opt_out_until INTEGER NOT NULL DEFAULT 0,
-                    custom_context_until INTEGER NOT NULL DEFAULT 0,
-                    preview_context_until INTEGER NOT NULL DEFAULT 0,
-                    recent_cta_target TEXT NOT NULL DEFAULT '',
-                    recent_cta_at INTEGER NOT NULL DEFAULT 0,
-                    updated_at INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY(user_id, chat_id)
-                )""")
-                self.conn.commit()
+                self.conn.execute("SELECT 1 FROM business_conversation_context LIMIT 1")
+                self.conn.execute("SELECT 1 FROM conversation_conversion_state LIMIT 1")
                 return True
             except Exception as exc:
-                logger.warning("初始化短期业务上下文失败: %s", exc)
+                logger.warning("短期业务上下文 schema 未就绪，请先运行数据库初始化/迁移: %s", exc)
                 return False
 
     def get_recent_business_context(

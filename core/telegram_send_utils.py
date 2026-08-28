@@ -523,13 +523,85 @@ def send_rich_message_compat(bot, chat_id, rich_message, **kwargs):
     return _make_raw_request(bot, "sendRichMessage", params)
 
 
-# ── Ephemeral Messages 兼容层（Bot API 10.2, 2026-07-14）─────────────────────
+# ── Ephemeral Messages 兼容层（Bot API 10.2 引入 / 10.3 参数重构）───────────
 # 群内私密消息：只对指定用户可见，用于敏感通知（如警告/解封结果）。
 # SDK 4.34.0 未封装，走 raw API 兜底。
+#
+# [Bot API 10.3, 2026-08-24] 官方把 sendMessage 系列的 receiver_user_id /
+# callback_query_id 平铺参数替换为 ephemeral_message_parameters 对象
+# （EphemeralMessageParameters，含 replace_callback_query_message 等新字段）。
+# 服务端切换语义后平铺参数会 400。此处优先发送 10.3 对象格式；
+# 服务端仍为 10.2 语义时自动回退平铺格式并进程内记忆，双向兼容。
+
+_EPHEMERAL_PARAM_MODE = {"mode": "auto"}  # auto → 协商中；v3 → 对象格式；legacy → 平铺格式
+
+
+def _ephemeral_identity(receiver_user_id=None, callback_query_id=None):
+    """提取接收者身份键值；两者都缺省时返回空（无需身份参数）。"""
+    identity = {}
+    if receiver_user_id is not None:
+        identity["receiver_user_id"] = receiver_user_id
+    if callback_query_id is not None:
+        identity["callback_query_id"] = callback_query_id
+    return identity
+
+
+def _send_ephemeral_raw(bot, method_name: str, base_params: dict, identity: dict):
+    """按协商模式调用 ephemeral 原始 API。
+
+    - auto：先试 10.3 对象格式，遇 400 参数拒绝则回退 10.2 平铺格式并记忆；
+      回退后仍失败说明是真实参数错误，抛出第二次的原始异常。
+    - v3/legacy：直接用已协商格式，不再重复探测。
+    """
+    if identity and _EPHEMERAL_PARAM_MODE["mode"] in {"auto", "v3"}:
+        try:
+            result = _make_raw_result(
+                bot, method_name, {**base_params, "ephemeral_message_parameters": identity}
+            )
+            _EPHEMERAL_PARAM_MODE["mode"] = "v3"
+            return result
+        except Exception as exc:
+            if _EPHEMERAL_PARAM_MODE["mode"] == "v3" or not _is_bad_request(exc):
+                raise
+            # 服务端不认对象参数：降级到 10.2 平铺格式并记住
+            _EPHEMERAL_PARAM_MODE["mode"] = "legacy"
+    payload = {**base_params, **identity}
+    if identity and _EPHEMERAL_PARAM_MODE["mode"] == "auto":
+        # identity 为空的调用没有可协商差异，保持 auto 不锁定
+        pass
+    result = _make_raw_result(bot, method_name, payload)
+    if identity and _EPHEMERAL_PARAM_MODE["mode"] == "auto":
+        _EPHEMERAL_PARAM_MODE["mode"] = "legacy"
+    return result
+
+
+def _is_bad_request(exc) -> bool:
+    """识别 Bot API 400 参数拒绝。
+
+    telebot 的 ApiTelegramException 用 ``error_code``；其余实现可能叫
+    ``status_code``，两者都探测。
+    """
+    for attr in ("error_code", "status_code"):
+        code = getattr(exc, attr, None)
+        if code is None:
+            continue
+        try:
+            return int(code) == 400
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _ephemeral_request_message(bot, method_name: str, params: dict, identity: dict):
+    """调用 ephemeral 原始 API 并解析为 Message 对象。"""
+    from telebot import types
+
+    result = _send_ephemeral_raw(bot, method_name, params, identity)
+    return types.Message.de_json(result)
 
 
 def send_ephemeral_message_compat(bot, chat_id, receiver_user_id, text, **kwargs):
-    """发送群内私密消息（仅 receiver_user_id 可见）。Bot API 10.2+。
+    """发送群内私密消息（仅 receiver_user_id 可见）。Bot API 10.2+ / 10.3 适配。
 
     必需参数：
         chat_id: 群聊 ID
@@ -538,21 +610,24 @@ def send_ephemeral_message_compat(bot, chat_id, receiver_user_id, text, **kwargs
 
     可选 kwargs（透传给 Bot API）：
         parse_mode, reply_markup, disable_notification 等
+        10.3 起亦接受 rich_message（富文本私密消息）
     """
     params = {
         "chat_id": chat_id,
-        "receiver_user_id": receiver_user_id,
         "text": text,
         **kwargs,
     }
-    return _make_raw_request(bot, "sendEphemeralMessage", params)
+    return _ephemeral_request_message(
+        bot, "sendEphemeralMessage", params,
+        _ephemeral_identity(receiver_user_id=receiver_user_id),
+    )
 
 
 def edit_ephemeral_message_text_compat(
     bot, chat_id, message_id, text,
     receiver_user_id=None, callback_query_id=None, **kwargs
 ):
-    """编辑群内私密消息文本。Bot API 10.2+。
+    """编辑群内私密消息文本。Bot API 10.2+；10.3 起 kwargs 可透传 rich_message。
 
     receiver_user_id 和 callback_query_id 至少传一个，用于 Telegram 定位接收者。
     """
@@ -562,18 +637,17 @@ def edit_ephemeral_message_text_compat(
         "text": text,
         **kwargs,
     }
-    if receiver_user_id is not None:
-        params["receiver_user_id"] = receiver_user_id
-    if callback_query_id is not None:
-        params["callback_query_id"] = callback_query_id
-    return _make_raw_request(bot, "editEphemeralMessageText", params)
+    return _ephemeral_request_message(
+        bot, "editEphemeralMessageText", params,
+        _ephemeral_identity(receiver_user_id, callback_query_id),
+    )
 
 
 def delete_ephemeral_message_compat(
     bot, chat_id, message_id,
     receiver_user_id=None, callback_query_id=None, **kwargs
 ):
-    """删除群内私密消息。Bot API 10.2+。
+    """删除群内私密消息。Bot API 10.2+ / 10.3 适配。
 
     返回 True/False（delete 方法不返回 Message 对象）。
     """
@@ -582,11 +656,10 @@ def delete_ephemeral_message_compat(
         "message_id": message_id,
         **kwargs,
     }
-    if receiver_user_id is not None:
-        params["receiver_user_id"] = receiver_user_id
-    if callback_query_id is not None:
-        params["callback_query_id"] = callback_query_id
-    result = _make_raw_result(bot, "deleteEphemeralMessage", params)
+    result = _send_ephemeral_raw(
+        bot, "deleteEphemeralMessage", params,
+        _ephemeral_identity(receiver_user_id, callback_query_id),
+    )
     return bool(result)
 
 
@@ -854,40 +927,49 @@ def delete_all_message_reactions_compat(bot, chat_id, user_id=None, actor_chat_i
     )
 
 
-def create_colored_button(text, callback_data=None, url=None, style='default', icon_emoji_id=None):
-    """创建彩色按钮（Bot API 9.4+）。
-    
+def create_colored_button(text, callback_data=None, url=None, style='default', icon_emoji_id=None, disabled=False):
+    """创建彩色按钮（Bot API 9.4+；10.3+ 支持灰显）。
+
     参数：
         text: 按钮文本
         callback_data: 回调数据（与 url 二选一）
         url: 按钮链接（与 callback_data 二选一）
         style: 按钮样式 - 'default' | 'danger' | 'success' | 'primary'
         icon_emoji_id: Custom Emoji ID（可选，显示在按钮文本前）
-    
+        disabled: 是否灰显不可点（Bot API 10.3 InlineKeyboardButton.disabled，
+                  用于售罄/已结束等状态；SDK 未支持时优雅忽略）
+
     返回：
         telebot.types.InlineKeyboardButton 对象
-    
+
     注意：
         - style 参数需要 pyTelegramBotAPI 4.34.0+ 或 Telegram Bot API 9.4+
         - 如果 SDK 版本不支持，style 参数会被忽略，按钮显示为默认样式
         - icon_emoji_id 需要 Telegram Premium 或 Bot 有 Custom Emoji 权限
     """
     from telebot import types
-    
+
     # 创建基础按钮
     if url:
         button = types.InlineKeyboardButton(text=text, url=url)
     else:
         button = types.InlineKeyboardButton(text=text, callback_data=callback_data)
-    
+
     # 设置样式（pyTelegramBotAPI 4.34.0+ 支持）
     if hasattr(button, 'style') and style != 'default':
         button.style = style
-    
+
     # 设置 Custom Emoji 图标
     if icon_emoji_id and hasattr(button, 'icon_custom_emoji_id'):
         button.icon_custom_emoji_id = icon_emoji_id
-    
+
+    # 灰显（Bot API 10.3）：SDK 未封装该字段时静默忽略，按钮保持可点
+    if disabled:
+        try:
+            button.disabled = True
+        except (AttributeError, TypeError):
+            pass
+
     return button
 
 
@@ -935,13 +1017,17 @@ def create_colored_markup(buttons_config, row_width=2):
         row_buttons = []
         for btn_config in row:
             if isinstance(btn_config, dict):
-                button = create_colored_button(
-                    text=btn_config.get("text", ""),
-                    callback_data=btn_config.get("callback_data"),
-                    url=btn_config.get("url"),
-                    style=btn_config.get("style", "default"),
-                    icon_emoji_id=btn_config.get("icon_emoji_id"),
-                )
+                button_kwargs = {
+                    "text": btn_config.get("text", ""),
+                    "callback_data": btn_config.get("callback_data"),
+                    "url": btn_config.get("url"),
+                    "style": btn_config.get("style", "default"),
+                    "icon_emoji_id": btn_config.get("icon_emoji_id"),
+                }
+                # 仅显式配置时才透传，保持既有调用方/测试替身签名兼容
+                if "disabled" in btn_config:
+                    button_kwargs["disabled"] = bool(btn_config["disabled"])
+                button = create_colored_button(**button_kwargs)
                 row_buttons.append(button)
             elif isinstance(btn_config, types.InlineKeyboardButton):
                 # 已经是按钮对象，直接使用

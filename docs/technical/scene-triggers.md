@@ -95,10 +95,10 @@ if ctx.config.get("USER_PROFILE_ENABLED", False):
 
 ### 4.1 冷场破冰（cold_group_breaker）
 
-- **触发条件**：群组超过 `COLD_GROUP_THRESHOLD_MIN`（默认 30）分钟无人发言
+- **触发条件**：群组超过 `COLD_GROUP_THRESHOLD_MIN`（默认 45）分钟无人发言
 - **数据源**：复用 `message_snapshots` 表（v5.15.3 已强制所有消息入库）
-- **防刷**：`broadcast_tracking` 表记录，`COLD_GROUP_COOLDOWN_MIN`（默认 120）分钟内同群不重复
-- **限流**：单次最多 `COLD_GROUP_MAX_PER_RUN`（默认 3）个群
+- **防刷**：`broadcast_tracking` 表记录，`COLD_GROUP_COOLDOWN_MIN`（默认 180）分钟内同群不重复
+- **限流**：单次最多 `COLD_GROUP_MAX_PER_RUN`（默认 1）个群
 - **话术**：mode='cold_breaker'，走 llm_light 池
 
 ### 4.2 夜间高意向暗示（night_private_hint）
@@ -152,7 +152,7 @@ if ctx.config.get("USER_PROFILE_ENABLED", False):
 | modules/triggers/night_hint.py | 夜间暗示 |
 | modules/triggers/flood_mediate.py | 刷屏介入 |
 | modules/antiflood.py | 群级刷屏事件触发 |
-| modules/auto_tasks.py | 触发器注册到 APScheduler |
+| tasks/task_scheduler.py | 触发器注册到 APScheduler；热重载由 bot_initializer 重新编排 |
 | dashboard/api/config_api.py | /config/scene-triggers API |
 
 ## 7. 设计原则

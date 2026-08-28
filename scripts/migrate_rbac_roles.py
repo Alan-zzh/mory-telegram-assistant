@@ -8,7 +8,7 @@
 - 其他现有协作者 → operator（不覆盖已有角色）
 - 新注册用户 → viewer（由代码层保证，不在本脚本处理）
 
-幂等：可重复执行，CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE
+幂等：可重复执行，INSERT OR IGNORE；表结构由 core.database/Alembic 管理。
 用法：ADMIN_USER_IDS=123456,789012 python scripts/migrate_rbac_roles.py
 """
 
@@ -42,17 +42,12 @@ def _parse_admin_ids() -> set:
     return ids
 
 
-def _ensure_user_roles_table(conn):
-    """创建 user_roles 表（幂等）"""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS user_roles (
-            user_id INTEGER PRIMARY KEY,
-            role TEXT NOT NULL DEFAULT 'viewer',
-            assigned_by TEXT,
-            assigned_at TIMESTAMP
-        )
-    """)
-    conn.commit()
+def _require_user_roles_table(conn):
+    """拒绝在独立脚本中补 DDL，避免绕过统一 schema 迁移。"""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(user_roles)").fetchall()}
+    required = {"user_id", "role", "assigned_by", "assigned_at"}
+    if not required.issubset(columns):
+        raise RuntimeError("user_roles schema 未就绪；请先运行 alembic upgrade head 或启动主 Bot 初始化数据库")
 
 
 def _get_existing_user_ids(conn) -> list:
@@ -88,7 +83,7 @@ def migrate():
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        _ensure_user_roles_table(conn)
+        _require_user_roles_table(conn)
 
         existing_uids = _get_existing_user_ids(conn)
         print(f"[迁移] 现有用户数: {len(existing_uids)}")

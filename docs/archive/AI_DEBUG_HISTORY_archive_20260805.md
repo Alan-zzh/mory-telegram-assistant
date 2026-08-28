@@ -286,3 +286,22 @@
 - 根因：① `deploy_vps.py` 的 `SCAN_DIRS` 只列了 `core/modules/dashboard/scripts/tasks/migrations/i18n`，新增的 `assets/` 资源目录完全不在扫描范围内；`SCAN_DIR_EXTS` 只给 i18n 声明了 `.json`，assets 默认继承 `.py`，当然扫不到字体。② `core/broadcast_image_card.py` 的 `FONT_HEI/FONT_HEI_BOLD/FONT_SONG` 四个硬编码常量直接写了 `C:/Windows/Fonts/*.ttc` 单平台绝对路径，没有按平台分支，也没有为 Linux 追加 Noto CJK/WenQuanYi/Arphic 等常见系统字体；三个非楷风格没有把仓库自带 `FONT_KAI` 追加进最终兜底池，导致 Linux 上这些风格全部失败后落到 PIL 默认英文字体。
 - 解法：① `deploy_vps.py`：`SCAN_DIRS` 追加 `assets/`；`SCAN_DIR_EXTS` 新增 assets → `[".ttf", ".ttc", ".otf", ".woff", ".woff2", ".png", ".jpg", ".jpeg", ".gif"]`，把字体和图片资源完整纳入部署清单。② `broadcast_image_card.py`：重写字体常量为 `if os.name == 'nt'` Windows 池 vs Linux 池（含 Noto/WQY/Arphic 全量路径）；`FONT_HEI_POOL/FONT_HEI_BOLD_POOL/FONT_SONG_POOL` 三个非楷池尾部统一 `append(FONT_KAI)` 把仓库楷体作为跨平台最终保证；`font()` 函数最后再 `ImageFont.truetype(FONT_KAI, size)` 一次，然后才允许 PIL 默认字体兜底。③ 部署后 VPS 生产 `python -c` 跑 `font(24, 'kai'/'hei'/'bold'/'song')` 四风格均应返回 FreeTypeFont 对象（不再出现 FontLoadError 或 PIL 默认字体）。
 - 预防：任何新增 runtime 依赖（字体、模型权重、模板、图片资源）必须同步检查两条：(a) 资源文件不在默认 `.py` 扫描范围内 → 必须显式加 `SCAN_DIRS` + 对应扩展名到 `SCAN_DIR_EXTS`，部署后 `ls` 远端验证存在性和大小；(b) 新增跨平台绘图/IO 代码绝不能直接写死 `C:/Windows`、`/Users/xxx`、`C:\Program Files` 这类单平台硬编码路径 → 必须有平台分支或系统字体探测，最后兜底必须指向**仓库内可部署**的资源（已经在 deploy_vps.py 清单内的文件）。
+
+## 2026-08-24 记录预算归档
+
+### 6.6 CTA 文案池 label/image_label 两处硬编码不同步（v5.38.16 新增）
+- 问题：mystic 三池子（almanac/tarot/iching）× 三目标（contact/preview/subscribe）共 24 条 img_label 历史上全部拼接“· 点击头像”视觉后缀，但图片按钮视觉与真实 InlineKeyboard 按钮视觉无法对应，validate_cta_consistency 校验全失败。
+- 根因：v5.38.15 初版文案池的 img_label 是给人读的“点击头像提示”，不是给 draw_card 画按钮的正文；两处独立维护没有单一真相源。
+- 解法：v5.38.16 引入 derive_image_label = strip_visual_emoji(label) 统一派生，把运行时 image_label 强制等于派生结果；同步清理 24 条池内 img_label 后缀残留（iching 的 ☯️ 变体选择符 FE0F 也同步与 strip 结果一致）。
+- 预防：新增/修改 CTA 文案池条目，必须同步满足 label→strip→img_label 一致；每次改动后跑 test_all_cta_pool_entries_pass_consistency_check；运行路径强制走 derive_image_label 覆盖池内覆盖值，不接受第二套真实值。
+
+### 6.7 部署文件收集缺体积/路径黑名单，临时大目录会被误传（v5.38.16 新增）
+- 问题：runtime/cache（图片缓存）、runtime/logs（大日志）、runtime/audit-reports、runtime/demo、__pycache__、.git 等目录或超大文件（>20MB）会被 _collect_upload_files 误收，拉长部署并可能把旧日志/缓存覆盖生产。
+- 根因：deploy_vps.py 之前只有扩展名白名单和根文档列表过滤，没有按路径片段和体积拒绝。
+- 解法：v5.38.16 引入 `MAX_UPLOAD_FILE_SIZE=20MB` 和 `SKIP_PATH_FRAGMENTS=("runtime/cache", "runtime/logs", "runtime/audit-reports", "runtime/demo", "__pycache__", ".git/")` 两道硬门禁。v5.38.17 补 SKIP_PATH_FRAGMENTS=("_quarantine_", "EXECUTION_", "_tmp_") 路径片段兜底 + EXCLUDE_NAMES=EXECUTION_LOG.md/EXECUTION_REPORT.md 根目录过程流水精确排除，与 AGENTS.md 文档路由表一致。
+- 预防：部署脚本的路径扩展必须同步加过滤逻辑的回归单测（test_deploy_vps_filters_oversize_and_runtime_cache_paths）；新增根目录治理类文件要同步进 EXCLUDE_NAMES + SKIP_PATH_FRAGMENTS 双重防线。
+
+## 2026-08-28 记录预算归档
+
+### 74. 运行路径各自补结构与失败兜底，形成假绿和安全倒退
+- 问题|根因|解法|预防：Dashboard、任务和 Repo 各自懒建表，权限/发送失败又宽松兜底；结构收归 database+Alembic，权限与迁移失败关闭，外部写入禁止不确定重发，并以新旧库和负向测试守门。

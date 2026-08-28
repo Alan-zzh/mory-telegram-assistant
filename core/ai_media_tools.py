@@ -99,7 +99,9 @@ def analyze_image(image_bytes: bytes, prompt: str, config: dict) -> str | None:
                 f"{base_url}/chat/completions",
                 json_data=payload,
                 headers=headers,
-                timeout=30
+                timeout=30,
+                # 分析请求会消耗外部模型资源；无幂等收据时禁止自动重投。
+                retry_times=0,
             )
             if isinstance(data, dict) and data.get("choices"):
                 content = data["choices"][0].get("message", {}).get("content", "")

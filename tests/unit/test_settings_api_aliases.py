@@ -254,7 +254,7 @@ def test_antiflood_endpoint_syncs_rate_limit_and_engine_config(monkeypatch):
     assert store["ANTIFLOOD_CONFIG"] == {"enabled": False, "window": 8, "threshold": 7, "mute_duration": 90}
 
 
-def test_cas_endpoint_supports_spamwatch_switch_and_token(monkeypatch):
+def test_cas_endpoint_rejects_spamwatch_token_persistence(monkeypatch):
     import dashboard.api.settings_api as settings_api
 
     store = {"SPAM_WATCH_CONFIG": {"cas_enabled": False, "spamwatch_enabled": False, "spamwatch_token": ""}}
@@ -276,10 +276,13 @@ def test_cas_endpoint_supports_spamwatch_switch_and_token(monkeypatch):
         "spamwatch_token": "abcd1234xyz9876",
     })
 
-    assert resp.status_code == 200
-    assert store["SPAM_WATCH_CONFIG"]["cas_enabled"] is True
-    assert store["SPAM_WATCH_CONFIG"]["spamwatch_enabled"] is True
-    assert store["SPAM_WATCH_CONFIG"]["spamwatch_token"] == "abcd1234xyz9876"
+    assert resp.status_code == 400
+    assert "SPAMWATCH_TOKEN" in resp.get_json()["msg"]
+    assert store["SPAM_WATCH_CONFIG"] == {
+        "cas_enabled": False,
+        "spamwatch_enabled": False,
+        "spamwatch_token": "",
+    }
 
 
 def test_null_config_blocks_can_be_saved_without_crashing(monkeypatch):

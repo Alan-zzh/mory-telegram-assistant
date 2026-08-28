@@ -14,8 +14,14 @@ def _set_role(client, role: str):
 
 def test_reply_style_sample_dashboard_workflow_uses_sqlite_connection(monkeypatch, tmp_path):
     import dashboard.api.quality_api as quality_api
+    from core.database import DB
 
-    conn = sqlite3.connect(tmp_path / "reply_evolution.db")
+    db_path = tmp_path / "reply_evolution.db"
+    # 生产中主 Bot/Alembic 负责 schema；Dashboard 只拿到裸 sqlite
+    # connection 后也不得在请求路径自建表。
+    bootstrap_db = DB(str(db_path))
+    bootstrap_db.close()
+    conn = sqlite3.connect(db_path)
     # Dashboard 实际返回的是 Connection，而非 core.database.DB。
     monkeypatch.setattr(quality_api, "get_db", lambda: conn)
 

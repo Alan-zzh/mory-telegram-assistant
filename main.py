@@ -51,8 +51,15 @@ def main():
     # ════════════════════════════════════════════════════════════════════
     #  1. 初始化核心组件（环境变量/依赖/配置/DB/AI/Bot/中间件等）
     # ════════════════════════════════════════════════════════════════════
-    from core.bot_initializer import initialize_bot, start_config_reload_watcher, preflight_check
-    ctx = initialize_bot()
+    from core.bot_initializer import (
+        activate_bot,
+        initialize_bot,
+        preflight_check,
+        start_config_reload_watcher,
+    )
+    # 构造阶段不允许启动 scheduler/watchdog/维护线程；fatal preflight 通过后
+    # 才会进入 activate_bot。默认 initialize_bot() 仍保持旧调用方的完整启动语义。
+    ctx = initialize_bot(activate_background=False)
     bot = ctx.bot
     CONFIG = ctx.config
     DB = ctx.db if hasattr(ctx, 'db') else None
@@ -69,6 +76,10 @@ def main():
     if not preflight_result["ok"]:
         # 致命问题：阻断启动（但先通知 admin 然后再退出）
         logger.critical("🚨 preflight 启动检查失败，阻断启动")
+        try:
+            ctx.db.close()
+        except Exception as e:
+            logger.warning(f"preflight 失败后关闭数据库失败: {e}")
 
         # 指数退避：连续失败时等待更久再退出，防止 systemd 重启轰炸
         _backoff_file = os.path.join(base_dir, ".preflight_fail_count")
@@ -97,8 +108,6 @@ def main():
             os.remove(_backoff_file)
         except Exception as e:
             logger.debug(f"清除 preflight 失败计数文件失败: {e}")
-
-    start_config_reload_watcher(CONFIG)
 
     # ════════════════════════════════════════════════════════════════════
     #  1.2 初始化 LLM 成本熔断器（v5.26.0 阶段1-A：防刷资金安全红线）
@@ -280,6 +289,11 @@ def main():
     logger.info(f"🎲 随机回复概率：{reply_chance}%")
     logger.info(f"📁 数据库：mory.db（更新代码不影响此文件）")
     logger.info("=" * 60)
+
+    # 所有同步初始化、处理器注册和停机钩子均已就绪；preflight 通过后才允许
+    # scheduler/watchdog/维护线程与配置 watcher 产生后台副作用。
+    activate_bot(ctx)
+    start_config_reload_watcher(CONFIG)
 
     try:
         from core.telegram_send_utils import get_allowed_updates

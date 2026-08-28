@@ -345,18 +345,67 @@ def test_restore_ad_user_removes_blacklists_and_restores_permissions():
 def test_restore_ad_user_fails_closed_when_telegram_restore_returns_false():
     from modules.ad_enforcement import restore_ad_user
 
+    db = _FakeDB()
+    ad_detector = type(
+        "AdDetector", (), {"cleared": [], "clear_user_tracking": lambda self, uid: self.cleared.append(uid)}
+    )()
     result = restore_ad_user(
         bot=_FalseRestrictBot(),
-        db=_FakeDB(),
+        db=db,
         config={},
         chat_id=-1001,
         uid=42,
         actor_id=99,
+        ad_detector=ad_detector,
     )
 
     assert result["code"] == 500
     assert result["msg"] == "restore_not_verified"
     assert result["data"]["permission_verified"] is False
+    assert not any("DELETE FROM" in sql for sql, _ in db.conn.executed)
+    assert ad_detector.cleared == []
+
+
+def test_restore_ad_user_clears_local_state_only_after_telegram_readback(monkeypatch):
+    """远端未确认前，不能先删除四项广告治理事实。"""
+    from modules import ad_enforcement
+
+    calls = []
+    monkeypatch.setattr(
+        ad_enforcement,
+        "_restore_chat_permissions",
+        lambda *_args: calls.append("telegram-restore") or True,
+    )
+    monkeypatch.setattr(
+        ad_enforcement,
+        "_verify_chat_permissions_restored",
+        lambda *_args: calls.append("telegram-readback") or True,
+    )
+    monkeypatch.setattr(
+        ad_enforcement,
+        "_remove_blacklists",
+        lambda *_args: calls.append("clear-four-states") or True,
+    )
+    monkeypatch.setattr(
+        ad_enforcement,
+        "_verify_persistent_state_cleared",
+        lambda *_args: calls.append("persistence-readback") or (True, {
+            "blacklist": 0, "global_blacklist": 0, "mute_records": 0, "ad_suspicious_users": 0,
+        }),
+    )
+    monkeypatch.setattr(
+        ad_enforcement,
+        "_clear_ad_tracking",
+        lambda *_args: calls.append("clear-tracking") or True,
+    )
+
+    result = ad_enforcement.restore_ad_user(object(), object(), {}, -1001, 42)
+
+    assert result["code"] == 200
+    assert calls == [
+        "telegram-restore", "telegram-readback", "clear-four-states",
+        "persistence-readback", "clear-tracking",
+    ]
 
 
 def test_ad_state_transaction_rolls_back_all_tables_on_partial_failure():

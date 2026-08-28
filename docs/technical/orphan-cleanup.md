@@ -7,7 +7,7 @@
 
 Mory 小助理作为群管理 Bot，会主动发送大量"播报型"消息（早安/午安/晚安问候、用户升级祝贺、新闻播报等）。这类消息**没有用户会回复**（不是问题、不是命令），如果不主动清理，群消息历史会很快被这类"孤儿消息"占满。
 
-本文档详述 v5.12.0 实现的**孤儿消息自动清理**完整方案。**现行机制（v5.38.x）**：定时兜底任务已迁移至 `tasks/maintenance/burn_orphan_task.py`（`BurnOrphanTask`，每 6 小时，由 `task_scheduler.py` 自动发现注册），受独立开关 `ORPHAN_CLEANUP_ENABLED` 控制；`modules/auto_tasks.py` 中的 `_job_burn_orphan` 为 legacy 保留实现。
+本文档详述孤儿消息自动清理的现行链路。定时兜底唯一入口是 `tasks/maintenance/burn_orphan_task.py`（`BurnOrphanTask`，每 6 小时，由 `task_scheduler.py` 自动发现注册），受独立开关 `ORPHAN_CLEANUP_ENABLED` 控制；已删除的 `modules/auto_tasks.py` 不再是运行入口。
 
 ## 适用场景
 
@@ -22,7 +22,7 @@ Mory 小助理作为群管理 Bot，会主动发送大量"播报型"消息（早
 | 层级 | 触发时机 | 实现 | 适用场景 |
 |------|---------|------|---------|
 | **第一层** | 实时（30秒后） | `threading.Timer` 调度单条删除 | 升级播报"恭喜X升级到Lv2" |
-| **第二层** | 定时（每6小时） | `tasks/maintenance/burn_orphan_task.py`（`BurnOrphanTask`，task_scheduler 自动注册；`_job_burn_orphan` 为 legacy） | 所有 30 分钟超时孤儿兜底 |
+| **第二层** | 定时（每6小时） | `tasks/maintenance/burn_orphan_task.py`（`BurnOrphanTask`，task_scheduler 自动注册） | 所有 30 分钟超时孤儿兜底 |
 | **第三层** | 发新消息时 | 链式互删（发午安自动删早安） | 早安/午安/晚安链式清理 |
 
 ### 二、数据库表设计
@@ -65,10 +65,10 @@ CREATE INDEX IF NOT EXISTS idx_orphan_cleanup_log_run_at ON orphan_cleanup_log(r
 | 配置读取 | [core/helpers.py](../../core/helpers.py) | `get_broadcast_auto_delete_config()` / `safe_delete_broadcast()` / `can_delete_message()` |
 | 数据库 | [core/database.py](../../core/database.py) | 表创建 SQL + `_REPO_METHOD_MAP` 委托 |
 | Repo 方法 | [core/db_repos/tracking_repo.py](../../core/db_repos/tracking_repo.py) | `track_broadcast / get_last_broadcast / delete_broadcast / cleanup_old_broadcasts / log_orphan_cleanup / get_last_orphan_cleanup / get_orphan_cleanup_history / get_orphan_stats` |
-| 定时清理 | [tasks/maintenance/burn_orphan_task.py](../../tasks/maintenance/burn_orphan_task.py) | `BurnOrphanTask`（每6小时，`ORPHAN_CLEANUP_ENABLED` 开关）；[modules/auto_tasks.py](../../modules/auto_tasks.py) `_job_burn_orphan()` 为 legacy 保留 |
+| 定时清理 | [tasks/maintenance/burn_orphan_task.py](../../tasks/maintenance/burn_orphan_task.py) | `BurnOrphanTask`（每6小时，`ORPHAN_CLEANUP_ENABLED` 开关） |
 | 实时清理 | [modules/points_enhanced.py](../../modules/points_enhanced.py) | `check_level_up()` 30S 删除 |
 | API 端点 | [dashboard/api/orphan_api.py](../../dashboard/api/orphan_api.py) | `/api/orphan/stats` / `/api/orphan/cleanup-history` / `/api/orphan/force-clean` |
-| 验证脚本 | [scripts/verify_orphan_cleanup.py](../../scripts/verify_orphan_cleanup.py) | 端到端验证 |
+| 验证入口 | `tests/unit/` 目标测试 + Dashboard `/api/orphan/*` | 本地合同与生产业务回执分层验证 |
 
 ### 四、配置项
 
@@ -183,22 +183,18 @@ db.log_orphan_cleanup(orphan_count, 0, 0, "ORPHAN_CLEANUP_ENABLED=False", "sched
 
 #### 6.3 `POST /api/orphan/force-clean` — 手动触发清理
 
-写入一条 `trigger=force` 的日志，Bot 进程下次自动执行时清理。
+Dashboard 进程立即执行删除并写入 `trigger=force_api` 回执；这是会调用 Telegram 删除消息的真实动作，不是“等待 Bot 下次执行”的队列标记。
 
 ### 七、端到端验证
 
 ```bash
-# 1. 状态查看
-python scripts/verify_orphan_cleanup.py
+# 1. 本地目标测试（不调用真实 Telegram）
+python -m pytest tests/unit/ -q -k orphan
 
-# 2. dry-run（不真删，只列出待删孤儿）
-python scripts/verify_orphan_cleanup.py --dry-run
-
-# 3. force-clean（手动触发一次清理）
-python scripts/verify_orphan_cleanup.py --force-clean
-
-# 4. Dashboard 端点
+# 2. Dashboard 只读状态端点
 curl -u admin:password http://localhost:6616/api/orphan/stats
+
+# 3. force-clean 是真实删除动作，只能在明确授权的目标环境执行并核对回执
 ```
 
 ### 八、历史坑（病历本摘要）

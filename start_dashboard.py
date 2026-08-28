@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Dashboard安全启动器：从.env读取配置，缺失时生成本次临时密钥。"""
+"""Dashboard安全启动器：从 .env 读取配置，只接受密码哈希。"""
 
 import io
 import os
@@ -8,10 +8,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-
 ROOT = Path(__file__).resolve().parent
+
+
+def _configure_utf8_stdio() -> None:
+    """仅在直接启动时包装标准流，导入模块不能接管调用方的文件描述符。"""
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
 def load_env_file() -> None:
@@ -35,22 +40,13 @@ def main() -> int:
         os.environ["DASHBOARD_SECRET"] = secrets.token_hex(32)
         print("已生成本次临时Dashboard密钥。")
 
-    if not os.environ.get("DASHBOARD_PASSWORD"):
-        temp_password = "mory-" + secrets.token_hex(8)
-        os.environ["DASHBOARD_PASSWORD"] = temp_password
-        # 写入 .env 文件，方便用户从 .env 获取完整密码（避免脱敏后无法登录的功能回归）
-        env_file = ROOT / ".env"
-        try:
-            existing = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
-            if "DASHBOARD_PASSWORD" not in existing:
-                with open(env_file, "a", encoding="utf-8") as f:
-                    f.write(f"\n# 自动生成的临时Dashboard密码\nDASHBOARD_PASSWORD={temp_password}\n")
-                print(f"已生成临时Dashboard密码并写入 .env（前4位: {temp_password[:4]}***，完整密码请查看 .env）")
-            else:
-                print(f"已生成临时Dashboard密码（前4位: {temp_password[:4]}***，完整密码请查看环境变量）")
-        except Exception as e:
-            print(f"已生成临时Dashboard密码（前4位: {temp_password[:4]}***，写入 .env 失败: {e}）")
-        print("建议以后把 DASHBOARD_PASSWORD 写进 .env，避免每次启动变化。")
+    password_hash = os.environ.get("DASHBOARD_PASSWORD_HASH", "").strip().lower()
+    if len(password_hash) != 64 or any(c not in "0123456789abcdef" for c in password_hash):
+        print(
+            "Dashboard 未启动：必须在 .env 设置 64 位 SHA-256 "
+            "DASHBOARD_PASSWORD_HASH；启动器不会生成或写入明文口令。"
+        )
+        return 2
 
     os.environ.setdefault("DASHBOARD_PORT", "6616")
     print(f"Dashboard启动中：http://127.0.0.1:{os.environ['DASHBOARD_PORT']}")
@@ -59,4 +55,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _configure_utf8_stdio()
     raise SystemExit(main())

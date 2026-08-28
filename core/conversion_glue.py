@@ -576,21 +576,6 @@ def build_stage_hint(
     return prefix + "回复保持自然，并留下可追踪的下一步行动。"
 
 
-def _ensure_conversion_columns(conn: Any) -> None:
-    cursor = conn.execute("PRAGMA table_info(conversion_events)")
-    existing_cols = {row[1] for row in cursor.fetchall()}
-    column_defs = {
-        "source": "TEXT DEFAULT ''",
-        "campaign_id": "TEXT DEFAULT ''",
-        "attribution_model": "TEXT DEFAULT ''",
-        "weight": "REAL DEFAULT 0",
-        "is_memory_assisted": "INTEGER DEFAULT 0",
-    }
-    for column, definition in column_defs.items():
-        if column not in existing_cols:
-            conn.execute(f"ALTER TABLE conversion_events ADD COLUMN {column} {definition}")
-
-
 def log_attribution_event(db: Any, uid: int, event: str, mode: str, source: str, campaign_id: str) -> None:
     if not db or not uid:
         return
@@ -611,7 +596,6 @@ def log_attribution_event(db: Any, uid: int, event: str, mode: str, source: str,
 
 
 def _insert_conversion(conn: Any, uid: int, event: str, mode: str, source: str, campaign_id: str) -> None:
-    _ensure_conversion_columns(conn)
     conn.execute(
         "INSERT INTO conversion_events(uid, event, ts, mode, source, campaign_id) VALUES (?, ?, ?, ?, ?, ?)",
         (uid, event, int(time.time()), mode or "", source or "", campaign_id or ""),
@@ -710,7 +694,6 @@ def summarize_growth(db: Any, days: int = 7) -> list[dict[str, Any]]:
     result = []
     try:
         c = db.conn.cursor()
-        _ensure_conversion_columns(db.conn)
         for experiment_id, name in EXPERIMENTS.items():
             c.execute(
                 "SELECT event, COUNT(*) FROM conversion_events "

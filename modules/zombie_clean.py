@@ -27,21 +27,6 @@ logger = get_logger("zombie_clean")
 MAX_SCAN_USERS = 200
 
 
-def _ensure_table(db):
-    """确保zombie_scans表存在"""
-    with _db_lock:
-        db.conn.execute("""CREATE TABLE IF NOT EXISTS zombie_scans (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER NOT NULL,
-            operator_uid INTEGER NOT NULL,
-            zombie_uids TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'pending',
-            msg_id INTEGER DEFAULT 0,
-            ts INTEGER NOT NULL
-        )""")
-        db.conn.commit()
-
-
 def _log_action(db, chat_id: int, operator_uid: int, target_uid: int, action: str, reason: str = ""):
     """记录管理员操作到admin_logs表"""
     now = int(time.time())
@@ -66,8 +51,6 @@ def handle_zombies(bot, m, config: dict, db):
         config: 配置字典
         db: 数据库实例
     """
-    _ensure_table(db)
-
     chat_id = m.chat.id
     operator_uid = m.from_user.id
 
@@ -192,8 +175,6 @@ def handle_zombies_confirm(bot, call, config: dict, db):
         config: 配置字典
         db: 数据库实例
     """
-    _ensure_table(db)
-
     data = call.data
     chat_id = call.message.chat.id
     msg_id = call.message.message_id

@@ -63,23 +63,18 @@ def _get_db():
     return get_db()
 
 
-def _ensure_user_roles_table(db) -> None:
-    """
-    幂等确保 user_roles 表存在（与 scripts/migrate_rbac_roles.py 一致）。
-    表不存在时审批通过将无法写入角色，故在此兜底创建。
-    """
+def _ensure_user_roles_table(db) -> bool:
+    """确认统一迁移已创建 user_roles，不在 Dashboard 请求路径写 DDL。"""
     try:
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS user_roles (
-                user_id INTEGER PRIMARY KEY,
-                role TEXT NOT NULL DEFAULT 'viewer',
-                assigned_by TEXT,
-                assigned_at TIMESTAMP
-            )
-        """)
-        db.commit()
+        columns = {row[1] for row in db.execute("PRAGMA table_info(user_roles)").fetchall()}
+        required = {"user_id", "role", "assigned_by", "assigned_at"}
+        if not required.issubset(columns):
+            logger.error("user_roles schema 未就绪；请先运行数据库初始化/迁移")
+            return False
+        return True
     except Exception as e:
-        logger.error(f"创建 user_roles 表失败: {e}")
+        logger.error(f"检查 user_roles schema 失败: {e}")
+        return False
 
 
 def _grant_role_to_user(db, user_id: int, role: str, assigned_by: str) -> bool:
@@ -96,7 +91,8 @@ def _grant_role_to_user(db, user_id: int, role: str, assigned_by: str) -> bool:
         True=成功，False=失败
     """
     try:
-        _ensure_user_roles_table(db)
+        if not _ensure_user_roles_table(db):
+            return False
         now = datetime.now(_CST).isoformat()
         # INSERT OR REPLACE：用户已存在则更新角色，不存在则新增
         db.execute(
@@ -394,7 +390,8 @@ def get_rbac_audit_data() -> dict:
     }
     try:
         db = _get_db()
-        _ensure_user_roles_table(db)
+        if not _ensure_user_roles_table(db):
+            return result
 
         # 1. 各角色用户数
         try:

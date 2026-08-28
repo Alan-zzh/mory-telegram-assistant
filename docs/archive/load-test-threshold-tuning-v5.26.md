@@ -1,4 +1,6 @@
-# 压测落地与背压阈值调优指南
+# 压测落地与背压阈值调优指南（历史 WriteQueue 方案，已归档）
+
+> 本文依赖已删除的 `core/write_queue.py`，仅保留历史取证；其中阈值、命令和结论不适用于当前 WAL + busy_timeout 数据库架构。
 
 > v5.26.0 阶段1-B | 2C4G VPS + SQLite WAL 环境下的三档梯度压测方案
 

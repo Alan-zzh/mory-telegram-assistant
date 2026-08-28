@@ -166,6 +166,9 @@ def test_compact_runtime_config_strips_plaintext_secrets():
     cfg = {
         "TOKEN": "123456:ABC-real-secret",
         "API_KEY": "sk-real-llm-key",
+        "NSFW_DETECT_CONFIG": {"enabled": True, "api_key": "nsfw-secret"},
+        "SPAM_WATCH_CONFIG": {"spamwatch_token": "spam-secret"},
+        "nested": [{"private_key": "private-secret", "max_tokens": 2048}],
         "GROUP_ID": -100123,
         "REPORT_CONFIG": {"enabled": True},
     }
@@ -174,9 +177,35 @@ def test_compact_runtime_config_strips_plaintext_secrets():
 
     assert compacted["TOKEN"] == ""
     assert compacted["API_KEY"] == ""
+    assert compacted["NSFW_DETECT_CONFIG"]["api_key"] == ""
+    assert compacted["SPAM_WATCH_CONFIG"]["spamwatch_token"] == ""
+    assert compacted["nested"][0]["private_key"] == ""
+    assert compacted["nested"][0]["max_tokens"] == 2048
     # 非敏感键不受影响
     assert compacted["GROUP_ID"] == -100123
     assert compacted["REPORT_CONFIG"]["enabled"] is True
+
+
+def test_environment_secrets_are_injected_only_into_runtime_shape():
+    from core.config_compat import inject_environment_secrets
+
+    cfg = {"NSFW_DETECT_CONFIG": {"enabled": True}}
+    inject_environment_secrets(
+        cfg,
+        {
+            "TG_TOKEN": "telegram-runtime",
+            "DASHSCOPE_KEY": "llm-runtime",
+            "NSFW_DETECT_API_KEY": "nsfw-runtime",
+            "SPAMWATCH_TOKEN": "spam-runtime",
+            "EXCHANGE_API_KEY": "exchange-runtime",
+        },
+    )
+
+    assert cfg["TOKEN"] == "telegram-runtime"
+    assert cfg["API_KEY"] == "llm-runtime"
+    assert cfg["NSFW_DETECT_CONFIG"]["api_key"] == "nsfw-runtime"
+    assert cfg["SPAM_WATCH_CONFIG"]["spamwatch_token"] == "spam-runtime"
+    assert cfg["EXCHANGE_API_KEY"] == "exchange-runtime"
 
 
 def test_save_config_writes_atomically_and_never_persists_secrets(tmp_path):

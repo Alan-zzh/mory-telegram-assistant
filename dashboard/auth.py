@@ -4,11 +4,12 @@ import os
 import time
 import hmac
 import hashlib
+import logging
 import secrets
 import threading
 from datetime import datetime, timedelta, timezone
 from flask import request, jsonify, session, g
-from dashboard.helpers import get_db, login_required
+from dashboard.helpers import login_required
 
 # 【Loop 16】CST 时区，避免 VPS(UTC) 下登录时间错位 8 小时
 _CST = timezone(timedelta(hours=8))
@@ -32,6 +33,7 @@ _login_failures = {}
 _LOGIN_LOCKOUT_SECONDS = 600
 _LOGIN_MAX_FAILS = 5
 _login_failures_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _check_rate_limit(ip: str, max_requests: int = 60, window_seconds: int = 60) -> bool:
@@ -217,22 +219,46 @@ def close_db(exception):
 # 统一使用 dashboard.helpers.admin_required（检查 role）。需要 admin 校验的接口请从 helpers 导入。
 
 
-def _sync_role_from_db(data: dict):
-    """[阶段3-F] 若请求携带 user_id，从 user_roles 表同步角色到 session。
+def _set_authenticated_session(role: str) -> None:
+    """建立密码认证后的会话，仅绑定服务器配置的身份。
 
-    - 无 user_id → 保留密码默认角色（不破坏现有登录逻辑）
-    - user_id 存在但 user_roles 无记录 → 默认 viewer（最小权限原则）
-    - user_id 存在且有记录 → 使用 DB 角色
+    Dashboard 的密码登录本身不能证明请求体里的 Telegram ``user_id`` 或
+    ``username`` 属于谁。此前用请求体 user_id 查询 ``user_roles``，会让
+    viewer 只要提交管理员 ID 就把自己的 session 升级为 admin。
+
+    如需将 Dashboard 操作与 Telegram 身份关联，部署方可在环境变量中配置
+    ``DASHBOARD_ADMIN_UID`` / ``DASHBOARD_VIEWER_UID`` 及可选的对应
+    ``*_USERNAME``。未配置 UID 时仍可正常登录，但权限审批流会安全地拒绝
+    缺少可信身份的请求。
     """
-    user_id = data.get("user_id")
-    if not user_id:
-        return
-    try:
-        from dashboard.audit import get_user_role_from_db
-        db = get_db()
-        session["role"] = get_user_role_from_db(db, int(user_id))
-    except (ValueError, TypeError):
-        pass  # user_id 无效，保留密码默认角色
+    session.clear()
+    login_dt = datetime.now(_CST)
+    session["logged_in"] = True
+    session["login_time"] = login_dt.isoformat()
+    session["expires_at"] = (
+        login_dt + timedelta(seconds=_SESSION_LIFETIME_SECONDS)
+    ).isoformat()
+    session["absolute_expires_at"] = (
+        login_dt + timedelta(seconds=_SESSION_ABSOLUTE_MAX_SECONDS)
+    ).isoformat()
+    session["role"] = role
+
+    role_prefix = role.upper()
+    raw_uid = os.environ.get(f"DASHBOARD_{role_prefix}_UID", "").strip()
+    if raw_uid:
+        try:
+            uid = int(raw_uid)
+            if uid > 0:
+                session["uid"] = uid
+            else:
+                logger.warning("忽略无效的 DASHBOARD_%s_UID", role_prefix)
+        except ValueError:
+            logger.warning("忽略无效的 DASHBOARD_%s_UID", role_prefix)
+
+    username = os.environ.get(
+        f"DASHBOARD_{role_prefix}_USERNAME", f"dashboard-{role}"
+    ).strip()
+    session["username"] = username[:64] or f"dashboard-{role}"
 
 
 def init_auth(app):
@@ -266,7 +292,7 @@ def init_auth(app):
     # 登录接口
     @app.route("/api/login", methods=["POST"])
     def api_login():
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         pw = data.get("password", "")
         # [P0 修复 Task-03] 双模式密码校验：
         #   优先 DASHBOARD_PASSWORD_HASH（sha256 hex），向后兼容 DASHBOARD_PASSWORD（明文）
@@ -292,16 +318,7 @@ def init_auth(app):
         admin_ok = (has_hash and _verify_password(pw, admin_pw_hash)) or \
                    (has_plain and _verify_password(pw, admin_pw_plain))
         if admin_ok:
-            session["logged_in"] = True
-            login_dt = datetime.now(_CST)
-            session["login_time"] = login_dt.isoformat()
-            # [P0 修复 Task-09] 设置滑动过期时间
-            session["expires_at"] = (login_dt + timedelta(seconds=_SESSION_LIFETIME_SECONDS)).isoformat()
-            # 【WARN-4 修复】设置绝对最大会话时间：8 小时后必须重新登录
-            session["absolute_expires_at"] = (login_dt + timedelta(seconds=_SESSION_ABSOLUTE_MAX_SECONDS)).isoformat()
-            session["role"] = "admin"
-            # [阶段3-F] RBAC 角色同步：若请求携带 user_id，从 DB 读取角色覆盖默认角色
-            _sync_role_from_db(data)
+            _set_authenticated_session("admin")
             _generate_csrf_token()
             _clear_login_fails(login_key)
             return jsonify({"ok": True, "csrf_token": session.get("_csrf_token", ""), "role": session.get("role", "admin")})
@@ -312,16 +329,7 @@ def init_auth(app):
         viewer_ok = (viewer_has_hash and _verify_password(pw, viewer_pw_hash)) or \
                     (viewer_has_plain and _verify_password(pw, viewer_pw_plain))
         if viewer_ok:
-            session["logged_in"] = True
-            login_dt = datetime.now(_CST)
-            session["login_time"] = login_dt.isoformat()
-            # [P0 修复 Task-09] 设置滑动过期时间
-            session["expires_at"] = (login_dt + timedelta(seconds=_SESSION_LIFETIME_SECONDS)).isoformat()
-            # 【WARN-4 修复】设置绝对最大会话时间：8 小时后必须重新登录
-            session["absolute_expires_at"] = (login_dt + timedelta(seconds=_SESSION_ABSOLUTE_MAX_SECONDS)).isoformat()
-            session["role"] = "viewer"
-            # [阶段3-F] RBAC 角色同步：若请求携带 user_id，从 DB 读取角色覆盖默认角色
-            _sync_role_from_db(data)
+            _set_authenticated_session("viewer")
             _generate_csrf_token()
             _clear_login_fails(login_key)
             return jsonify({"ok": True, "csrf_token": session.get("_csrf_token", ""), "role": session.get("role", "viewer")})

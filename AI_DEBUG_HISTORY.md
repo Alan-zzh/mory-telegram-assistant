@@ -7,11 +7,11 @@
 
 ## 反复暗病清单
 
-### 6.37 逐条广告直证被重复刷屏分支降级为仅删除
-- 问题 | 走私手机账号连续投放，机器人只删消息不持久封禁。根因 | 售卖走私资料未命中，正文 AI 直证只写追踪表；三次重复又固定走 behavior_only。解法 | 新增走私交易资料组合，重复窗口含逐条直证时升级统一处置。预防 | 固定首条资料处置、重复直证升级及新闻/反诈/二手交易反例。
+### 6.39 时敏模型断言与异常卫生门自身漏检
+- 问题 | 模型过期后全量测试因硬编码旧首选失败，异常卫生扫描又漏掉 `pass # 注释`并误判命名异常。根因 | 测试直接依赖墙钟，扫描器只匹配纯 `pass` 且用子串识别 `Exception`。解法 | 冻结日期验过期选路，扩展注释 pass 规则并按单词边界识别宽异常。预防 | 门禁自身必须同时有逃逸正例和窄异常反例。
 
-### 6.36 同文换号广告的正文、Bio 与头像证据彼此断开
-- 问题 | 三个账号用“来微信收米 赚9千”、同一邀请收益 Bio 和“看我简介”头像连续投放，均未自动处置。根因 | 收米收益缺三锚点规则，Bio 招揽未覆盖项目收益组合，头像高置信命中固定只记日志。解法 | 正文与 Bio 各建窄组合规则，头像仅与明确恶意 Bio 合并处置。预防 | 固定原文、变体、正常业务反例及删除/限制/广告快照全链回归。
+### 6.38 头像 CTA 与资料绑定频道证据断裂
+- 问题 | “看我简介”头像账号绑定“聘群演有时间来”频道后发 `2Qoo+`，机器人仍回复且无处置记录。根因 | 频道规则缺群演招募变体，入群头像门未收到 personal_chat，消息门又只查姓名/Bio/频道。解法 | 频道三锚点只作候选，再与明确头像 CTA 联合进入统一处置。预防 | 固定真实短句、拆字变体、普通结算/排期/简历/政策频道及无 CTA 头像反例。
 
 ### 6.35 挂机收益正文与私密群 Bio 招揽双层漏判
 - 问题 | “电脑养家、挂机印钞”正文配合“小白必做、勤快来、懒人勿扰”私密群 Bio 未处置。根因 | 收益规则缺少设备挂机组合，资料层只认旧“多一条路”话术。解法 | 增加组合语义与三锚点 Bio 规则，接入消息、进群和延迟复审。预防 | 固定原文、变体、反诈与正常电脑反例，并验证删除、限制和数据库标记全链。
@@ -93,18 +93,6 @@
 - 根因：单连接串行上传全仓且无重连；顶层异常只打印不传播，`main()` 没有把 `deploy_ok` 映射为进程退出码。
 - 解法：每 40 文件分批上传，断线重连并重传当前批次；最终按双服务/health 验证结果返回 0/1。
 - 预防：发布工具必须测试连接中断恢复与失败非零；任何“异常/待手工检查”都不得以成功码结束。
-
-### 6.6 CTA 文案池 label/image_label 两处硬编码不同步（v5.38.16 新增）
-- 问题：mystic 三池子（almanac/tarot/iching）× 三目标（contact/preview/subscribe）共 24 条 img_label 历史上全部拼接“· 点击头像”视觉后缀，但图片按钮视觉与真实 InlineKeyboard 按钮视觉无法对应，validate_cta_consistency 校验全失败。
-- 根因：v5.38.15 初版文案池的 img_label 是给人读的“点击头像提示”，不是给 draw_card 画按钮的正文；两处独立维护没有单一真相源。
-- 解法：v5.38.16 引入 derive_image_label = strip_visual_emoji(label) 统一派生，把运行时 image_label 强制等于派生结果；同步清理 24 条池内 img_label 后缀残留（iching 的 ☯️ 变体选择符 FE0F 也同步与 strip 结果一致）。
-- 预防：新增/修改 CTA 文案池条目，必须同步满足 label→strip→img_label 一致；每次改动后跑 test_all_cta_pool_entries_pass_consistency_check；运行路径强制走 derive_image_label 覆盖池内覆盖值，不接受第二套真实值。
-
-### 6.7 部署文件收集缺体积/路径黑名单，临时大目录会被误传（v5.38.16 新增）
-- 问题：runtime/cache（图片缓存）、runtime/logs（大日志）、runtime/audit-reports、runtime/demo、__pycache__、.git 等目录或超大文件（>20MB）会被 _collect_upload_files 误收，拉长部署并可能把旧日志/缓存覆盖生产。
-- 根因：deploy_vps.py 之前只有扩展名白名单和根文档列表过滤，没有按路径片段和体积拒绝。
-- 解法：v5.38.16 引入 `MAX_UPLOAD_FILE_SIZE=20MB` 和 `SKIP_PATH_FRAGMENTS=("runtime/cache", "runtime/logs", "runtime/audit-reports", "runtime/demo", "__pycache__", ".git/")` 两道硬门禁。v5.38.17 补 SKIP_PATH_FRAGMENTS=("_quarantine_", "EXECUTION_", "_tmp_") 路径片段兜底 + EXCLUDE_NAMES=EXECUTION_LOG.md/EXECUTION_REPORT.md 根目录过程流水精确排除，与 AGENTS.md 文档路由表一致。
-- 预防：部署脚本的路径扩展必须同步加过滤逻辑的回归单测（test_deploy_vps_filters_oversize_and_runtime_cache_paths）；新增根目录治理类文件要同步进 EXCLUDE_NAMES + SKIP_PATH_FRAGMENTS 双重防线。
 
 ### 6.8 配置三处同步漏同步 .get() 默认值（v5.38.17 新增）
 - 问题：config.json.example 写了 "AI_REQUEST_TIMEOUT": 30 / "AI_MAX_ATTEMPTS": 2，但代码里 `config.get("AI_REQUEST_TIMEOUT", 15)` / `config.get("AI_MAX_ATTEMPTS", 3)`，example 没配这两项时运行态默认值反而比 example 更激进（更短超时、更多重试），导致高频超时或吞吐下降。
@@ -244,3 +232,9 @@
 
 ### 69. 旧分叉全目录部署回退主线审计依赖
 - 问题|根因|解法|预防：v5.38.43 从不含审计修复的分叉上传全目录，遗留新控制脚本却覆盖旧 `deploy_utils`，timer 实跑 ImportError；恢复主线文件并要求部署 HEAD 包含当前 main，部署后实跑所有 profile。
+
+### 70. 本地只读 SSH 兼容器缺少 get_pty 参数导致巡检降级
+- 问题|根因|解法|预防：生产 audit 改走本机执行后，监控器仍按 SSH 接口传 `get_pty`，业务与调度层全变 evidence_gap；兼容器接收并忽略该参数，固定生产 profile 实跑验收。
+
+### 71. Bio 裸链接被当成强广告证据
+- 问题|根因|解法|预防：`BIO_PATTERNS` 将纯 `t.me` 链接直接计强信号，姓名/username/Bio 还混字段匹配；移除裸链接规则并隔离字段，链接和绑定频道必须再有明确广告语义，固定回复入口反例。

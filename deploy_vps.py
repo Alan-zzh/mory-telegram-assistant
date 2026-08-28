@@ -190,6 +190,35 @@ def _runtime_permission_hardening_command() -> str:
         f"sudo test \"$(stat -c '%U:%G %a' {secure_watchdog})\" = 'root:root 755'",
     ])
 
+
+def _code_backup_command() -> str:
+    """生成不含凭据、配置和运行态数据的受限代码快照命令。"""
+    return (
+        f"cd {VPS_PATH} && umask 077 && mkdir -p backups && chmod 0700 backups && "
+        "tar --exclude='./mory.db' --exclude='./.venv' --exclude='./.env' --exclude='./.env.*' "
+        "--exclude='./config.json' --exclude='./logs' --exclude='./runtime' "
+        "--exclude='./backups' --exclude='./backup' --exclude='*__pycache__*' "
+        "--exclude='*.pyc' -czf backups/code_deploy_$(date +%s).tar.gz . 2>/dev/null && "
+        "chmod 0600 backups/code_deploy_*.tar.gz && "
+        "ls -dt backups/code_deploy_*.tar.gz 2>/dev/null | tail -n +3 | xargs -r rm -f && "
+        "echo BACKUP_OK"
+    )
+
+
+def _enable_services_command() -> str:
+    """同时启用两个 systemd 服务，避免主机重启后仅 Dashboard 自动恢复。"""
+    return "sudo systemctl daemon-reload && sudo systemctl enable mory-assistant mory-dashboard"
+
+
+def _database_migration_command() -> str:
+    """加载生产环境变量并把真实数据库升级到当前 Alembic head。"""
+    project_dir = shlex.quote(VPS_PATH)
+    return (
+        f"cd {project_dir} && set -a && "
+        "if [ -f .env ]; then . ./.env; fi && set +a && "
+        "python3 -m alembic upgrade head && python3 -m alembic current"
+    )
+
 # 绝不上传的文件名（含凭据/运行态/旧备份）。_collect_upload_files 只扫描 .py 文件，
 # 故 .bat/.sh 等非 Python 脚本根本不会被收集，无需在此列举。
 # v5.16.5 曾在此防御已删除的 deploy.bat/start.sh/start_dashboard.bat/docker_deploy.sh，
@@ -370,50 +399,17 @@ UPLOAD_FILES = _collect_upload_files()
 # ──────────────────────────────────────────────────────
 import signal
 
-# 部署状态追踪：外部信号(如工具超时SIGTERM)触发时，确保服务被拉起
+# 部署状态追踪：外部信号(如工具超时SIGTERM)触发时，如实标记所处阶段。
 _DEPLOY_STATE = {
-    "services_stopped": False,
     "phase": "init",
 }
 
 
-def _restart_services_fresh():
-    """[v5.31.4] 用全新 SSH 连接重启双核心服务（主连接可能已损坏/超时）
-
-    无论部署成功/失败/被外部杀死，都保证服务在跑。返回 True/False。
-    """
-    try:
-        client = paramiko.SSHClient()
-        ssh_connect(client, timeout=15)
-    except Exception as e:
-        print(f"  ⚠️ [保险] 重连VPS失败：{e}")
-        return False
-    try:
-        stdin, stdout, stderr = client.exec_command(
-            "sudo systemctl restart mory-assistant mory-dashboard", timeout=60)
-        rc = stdout.channel.recv_exit_status()
-        if rc == 0:
-            print("  ✅ [保险] 双核心服务已重启")
-            return True
-        err = stderr.read().decode("utf-8", errors="replace").strip()
-        print(f"  ⚠️ [保险] restart 返回码 {rc}：{err}")
-        client.exec_command("sudo systemctl start mory-assistant mory-dashboard", timeout=60)
-        return True
-    except Exception as e:
-        print(f"  ❌ [保险] 重启异常：{e}")
-        return False
-    finally:
-        try:
-            client.close()
-        except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
-            logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
-
-
 def _signal_handler(signum, frame):
-    """[v5.31.4] 捕获 SIGTERM/SIGINT：若服务已停，立即拉起再退出"""
-    print(f"\n⚠️ 收到信号 {signum}，进入保险恢复...")
-    if _DEPLOY_STATE["services_stopped"]:
-        _restart_services_fresh()
+    """捕获 SIGTERM/SIGINT：不得通过重启同一未验证版本冒充恢复。"""
+    phase = _DEPLOY_STATE["phase"]
+    print(f"\n⚠️ 收到信号 {signum}（phase={phase}），部署中止。")
+    print("  ⛔ 不自动重启未验证代码；保留快照供受控人工回滚。")
     sys.exit(1)
 
 
@@ -477,11 +473,8 @@ def main() -> bool:
         sys.exit(1)
     print("  ✅ 连接成功")
 
-    # 部署状态：services_stopped 恒为 False（v5.38.32 起全程不停服，仅 restart 切换）；
-    # restart_attempted：仅当 [4/5] 的 systemctl restart 已真正发出才置 True，
-    #   保险 restart 只在该情况下触发（中途异常时旧版服务仍在运行，无需干预）。
+    # restart_attempted：仅当 [4/5] 的 systemctl restart 已真正发出才置 True。
     # deploy_ok 仅在 health=200 + 双服务 active 后置 True。
-    services_stopped = False
     restart_attempted = False
     deploy_ok = False
 
@@ -511,10 +504,10 @@ def main() -> bool:
         # 待代码/配置全部就位后在 [4/5] 单步 systemctl restart 完成切换。
         # 旧版先 stop 再上传，若进程在停摆窗口被外部硬杀（finally 不可靠），
         # 双服务会长时间下线；现方案任意时刻被中断，服务都在跑上一版本（安全侧）。
-        # services_stopped 保持 False，finally 仅当 restart 已发生但 health 未确认时兜底重启。
+        # 在 restart 之前中断时，已在运行的旧进程不受影响。
 
-        # 4.5 部署前备份 VPS 当前代码（失败不阻断部署）
-        # [v5.38.32 加固] 改为 tar 精准快照：排除 mory.db/.venv/logs/runtime/backups/缓存，
+        # 4.5 部署前备份 VPS 当前代码。备份失败即停止，避免无恢复证据覆盖线上文件。
+        # [v5.38.32 加固] 改为 tar 精准快照：排除凭据、config、mory.db/.venv/logs/runtime/backups/缓存，
         # 避免旧版 cp -r 整目录复制（含大型运行态）拖慢部署并放大被外部中断的风险窗口。
         # 备份落 backups/code_deploy_*.tar.gz，保留最近 2 份；回滚 = 解压覆盖。
         print("\n  备份 VPS 当前代码 ...")
@@ -524,15 +517,7 @@ def main() -> bool:
             bak_stdout.channel.recv_exit_status()
         except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
             logging.getLogger('deploy_vps').debug(f'非致命忽略: {_e}')
-        backup_cmd = (
-            f"cd {VPS_PATH} && "
-            "tar --exclude='./mory.db' --exclude='./.venv' --exclude='./logs' "
-            "--exclude='./runtime' --exclude='./backups' --exclude='./backup' "
-            "--exclude='*__pycache__*' "
-            "--exclude='*.pyc' -czf backups/code_deploy_$(date +%s).tar.gz . 2>/dev/null && "
-            "ls -dt backups/code_deploy_*.tar.gz 2>/dev/null | tail -n +3 | xargs -r rm -f && "
-            "echo BACKUP_OK"
-        )
+        backup_cmd = _code_backup_command()
         try:
             stdin, stdout, stderr = client.exec_command(backup_cmd, timeout=180)
             rc = stdout.channel.recv_exit_status()
@@ -541,9 +526,9 @@ def main() -> bool:
                 print("  ✅ VPS 代码已备份（tar 快照，保留最近 2 个）")
             else:
                 err = stderr.read().decode("utf-8", errors="replace").strip()
-                print(f"  ⚠️ VPS 代码备份返回码 {rc}（继续部署）：{(err or out)[:200]}")
+                raise RuntimeError(f"VPS代码备份返回码 {rc}，拒绝继续部署：{(err or out)[:200]}")
         except Exception as e:
-            print(f"  ⚠️ VPS 代码备份失败（继续部署）：{e}")
+            raise RuntimeError(f"VPS代码备份失败，拒绝继续部署：{e}") from e
 
         # 5. 上传代码文件
         print("\n[3/5] 上传代码文件 ...")
@@ -687,15 +672,15 @@ def main() -> bool:
                 except Exception as e:
                     raise RuntimeError(f"systemd unit 部署失败：{e}") from e
 
-        # daemon-reload + enable dashboard
+        # daemon-reload + enable 双服务
         stdin, stdout, stderr = client.exec_command(
-            "sudo systemctl daemon-reload && sudo systemctl enable mory-dashboard", timeout=15)
+            _enable_services_command(), timeout=15)
         exit_code = stdout.channel.recv_exit_status()
         if exit_code == 0:
-            print("  ✅ daemon-reload完成，mory-dashboard已enable")
+            print("  ✅ daemon-reload完成，mory-assistant/mory-dashboard均已enable")
         else:
             err = stderr.read().decode("utf-8", errors="replace").strip()
-            print(f"  ⚠️ daemon-reload/enable返回码 {exit_code}：{err}")
+            raise RuntimeError(f"daemon-reload/enable返回码 {exit_code}：{err}")
 
         # 安全上传config.json
         print("\n  安全上传 config.json ...")
@@ -721,6 +706,20 @@ def main() -> bool:
             raise RuntimeError(f"运行态权限加固失败：{err or 'unknown error'}")
         print("  ✅ .env/config/db 已最小权限化，root cron 使用 root-owned watchdog")
 
+        # schema 必须在新代码重启前升级；应用启动期不再允许按请求懒建表。
+        print("  执行数据库迁移 ...")
+        stdin, stdout, stderr = client.exec_command(
+            _database_migration_command(), timeout=180)
+        migration_out = stdout.read().decode("utf-8", errors="replace").strip()
+        migration_err = stderr.read().decode("utf-8", errors="replace").strip()
+        migration_rc = stdout.channel.recv_exit_status()
+        if migration_rc != 0 or "(head)" not in migration_out:
+            raise RuntimeError(
+                "数据库迁移未到 Alembic head，拒绝重启新代码："
+                f"{(migration_err or migration_out)[-1200:]}"
+            )
+        print("  ✅ 生产数据库已升级并读回 Alembic head")
+
         sftp.close()
 
         # 清理旧备份
@@ -739,7 +738,7 @@ def main() -> bool:
 
         print("\n  ✅ gunicorn + gevent 已由 requirements.lock 精确锁定并读回")
 
-        # 6. 启动Bot（systemd）→ 取消保险标记
+        # 6. 重启双服务并进入运行态门禁
         print("\n[4/5] 启动Bot服务 ...")
         _DEPLOY_STATE["phase"] = "starting"
         stdin, stdout, stderr = client.exec_command("sudo systemctl restart mory-assistant mory-dashboard", timeout=60)
@@ -749,7 +748,7 @@ def main() -> bool:
             print("  ✅ Bot和Dashboard已重启")
         else:
             err = stderr.read().decode("utf-8", errors="replace").strip()
-            print(f"  ❌ 启动失败：{err}（保险机制将重试）")
+            print(f"  ❌ 启动失败：{err}（将继续执行失败关闭验证）")
 
         # [v5.31.4 修复] 健康检查轮询：start 是异步的，必须等真正起来再判成功
         # [v5.38.32 加固] 同时校验双服务 is-active（restart 返回 0 不代表进程存活），
@@ -771,13 +770,12 @@ def main() -> bool:
             both_active = active_out.count("active") >= 2
             if code == "200" and both_active:
                 print(f"  ✅ health=200 且双服务 active（第 {attempt+1} 次轮询）")
-                services_stopped = False  # 已确认起来，保险不用再管
                 deploy_ok = True
                 break
             else:
                 print(f"  ... 第 {attempt+1} 次 health={code or '无响应'} active=[{active_out.replace(chr(10), '/')}]")
         if not deploy_ok:
-            print("  ⚠️ 启动后 health 未达 200 或服务未 active，保险机制将重试重启")
+            print("  ⚠️ 启动后 health 未达 200 或服务未 active，发布门禁将失败关闭")
 
         # 7. 验证部署
         print("\n验证部署结果 ...")
@@ -789,23 +787,14 @@ def main() -> bool:
 
     except Exception as e:
         print(f"\n❌ 部署过程异常：{e}")
-        print("  保险机制将自动恢复服务...")
+        print("  将保留快照并失败关闭，不自动重启未验证版本。")
 
     finally:
-        # ── 🛡️ 保险：restart 已发生但 health 未确认时，确保服务在跑 ──
-        # [v5.31.4 修复] 用全新 SSH 连接重启（主连接可能已损坏/超时）；
-        # 并修复原 finally 引用未定义 logger 的 NameError。
-        # [v5.38.32] 服务全程未被 stop：被外部硬杀时旧版进程仍在运行（安全侧），
-        # 只有走到 restart 且 health 未达 200 时才需要保险重启。
+        # 验证失败必须失败关闭：不能通过重启同一未验证版本伪造“已恢复”。
+        # 上一步受限快照会保留，供明确的人工回滚流程使用。
         if restart_attempted and not deploy_ok:
-            print("\n🛡️ [保险触发] 检测到服务未确认运行，自动恢复中...")
-            restored = _restart_services_fresh()
-            if restored:
-                _DEPLOY_STATE["services_stopped"] = False
-                services_stopped = False
-            else:
-                print("  ❌ 保险恢复失败，请手动执行：")
-                print("     sudo systemctl restart mory-assistant mory-dashboard")
+            print("\n⛔ [失败关闭] 新版本未通过运行态验证；拒绝重启同一未验证版本或报告成功。")
+            print("   部署快照已保留，请按受控回滚流程恢复并重新取证。")
         # 关闭主 SSH（忽略任何错误，主连接可能在中断中已部分损坏）
         try:
             client.close()
@@ -817,15 +806,11 @@ def main() -> bool:
         print("  ✅ 部署运行态门禁通过！")
         print("  ℹ️ 仍须按受影响入口完成真实业务探针，才能宣称业务闭环")
         print("=" * 60)
-    elif not services_stopped:
-        # deploy_ok=False 但服务在跑（验证发现问题但服务正常）
-        print("\n" + "=" * 60)
-        print("  ⚠️ 部署完成，但验证发现问题，请手动检查")
-        print("  查看日志：journalctl -u mory-assistant -n 100 --no-pager")
-        print("=" * 60)
     else:
+        # deploy_ok=False，不能把 liveness 或残留服务进程描述成发布完成。
         print("\n" + "=" * 60)
-        print("  ❌ 部署失败，服务未确认运行")
+        print("  ⛔ 部署验证失败，当前版本不可视为已发布")
+        print("  请按受控回滚流程恢复快照并重新取证")
         print("  查看日志：journalctl -u mory-assistant -n 100 --no-pager")
         print("=" * 60)
     return deploy_ok

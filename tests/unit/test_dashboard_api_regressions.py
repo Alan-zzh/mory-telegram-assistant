@@ -108,9 +108,9 @@ def test_audit_role_lookup_error_falls_back_to_viewer_without_logging_name_error
     assert get_user_role_from_db(BrokenConnection(), 123) == "viewer"
 
 
-def test_audit_permission_lookup_error_falls_back_to_empty_set_without_logging_name_error():
+def test_audit_permission_lookup_error_returns_unavailable_without_logging_name_error():
     class BrokenConnection:
         def execute(self, *_args, **_kwargs):
             raise RuntimeError("permission table unavailable")
 
-    assert get_permissions_from_db(BrokenConnection(), "admin") == set()
+    assert get_permissions_from_db(BrokenConnection(), "admin") is None

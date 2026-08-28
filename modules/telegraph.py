@@ -4,7 +4,6 @@ Telegraph贴图 - 创建Telegraph页面
 命令：
   /telegraph 标题 → handle_telegraph
 """
-import json
 from core.logging_util import get_logger
 from core.http_client import get_http_client, HTTPRequestError
 
@@ -43,7 +42,11 @@ def handle_telegraph(bot, m, config, db):
             "author_name": "Mory",
             "author_url": ""
         }
-        account_data = client.get(create_account_url, params=params, timeout=10)
+        # Telegraph 将 createAccount 设计为 GET，但它实际会创建资源，不能按
+        # 通用 GET 的安全重试规则处理。
+        account_data = client.get(
+            create_account_url, params=params, timeout=10, retry_times=0
+        )
 
         if not account_data.get("ok"):
             bot.reply_to(m, "❌ 创建Telegraph账户失败")
@@ -61,7 +64,12 @@ def handle_telegraph(bot, m, config, db):
             "author_name": "Mory Bot",
             "content": [html_content]
         }
-        page_result = client.post("https://telegra.ph/createPage", json_data=page_data, timeout=10)
+        page_result = client.post(
+            "https://telegra.ph/createPage",
+            json_data=page_data,
+            timeout=10,
+            retry_times=0,
+        )
 
         if page_result.get("ok"):
             page_url = page_result["result"]["url"]

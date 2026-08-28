@@ -36,18 +36,17 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.lock
-          # 安装开发依赖（lint + 测试 + 类型检查）
-          pip install flake8 pytest pytest-cov mypy
+          python -m pip install --require-hashes -r requirements.lock -r requirements-dev.lock
+          python -m pip check
       
-      # 步骤 4：Lint 检查（flake8）
-      - name: Lint 检查（flake8）
+      # 步骤 4：Lint 检查（Ruff）
+      - name: Lint 检查（Ruff）
         run: |
-          # 忽略 E501（行长度）、W503（换行操作符）
+          # 忽略 E501（行长度）。
           # 当前仓库存在大量历史格式债务；清单为已稳定化关键文件。
           # 注：core/cache_manager.py 已在 v5.27 后被移除，由 core/database.py 接替；
           # core/ai_engine.py 的 124 项格式债务已于 v5.38.23 清理并纳入检查。
-          flake8 \
+          ruff check \
             core/ai_engine.py \
             core/settings.py \
             core/database.py \
@@ -56,9 +55,9 @@ jobs:
             core/anomaly_detector.py \
             dashboard/app.py \
             dashboard/api/metrics_api.py \
-            --ignore=E501,W503,W504,E203,E402 \
-            --max-line-length=120 \
-            --statistics
+            --select=E,F \
+            --ignore=E501,E203,E402 \
+            --line-length=120
       
       # 步骤 5：类型检查（mypy）
       - name: 类型检查（mypy）
@@ -82,6 +81,14 @@ jobs:
             --cov-report=html \
             --fail-under=25 \
             -v \
+            --tb=short
+
+      # 步骤 6.2：安全、告警与离线人设合同。live_llm 仅在专用凭据环境手工执行。
+      - name: 安全、告警与离线人设合同
+        run: |
+          pytest tests/security/ tests/alert/ tests/persona/ \
+            -m "not live_llm" \
+            -q \
             --tb=short
       
       # 步骤 6.5：Docstring 覆盖率检查
@@ -120,6 +127,14 @@ jobs:
         run: |
           # config.json.example ↔ Dashboard ALLOWED_CONFIG_FIELDS 差集断言
           python scripts/check_config_sync.py
+
+      # 步骤 7.8：锁文件漏洞扫描。任何可识别公告漏洞均阻断合入。
+      - name: 依赖漏洞扫描（pip-audit）
+        run: |
+          # Paramiko 4.0.0 的 SHA-1 公告暂未发布修复版；所有 SSH 入口已由
+          # test_paramiko_sha1_mitigation.py 机械断言禁用 ssh-rsa。上游发布修复版后移除此例外。
+          python -m pip_audit --require-hashes -r requirements.lock --strict --progress-spinner off --timeout 30 \
+            --ignore-vuln PYSEC-2026-2858
       
       # 步骤 8：上传覆盖率报告（可选）
       - name: 上传覆盖率报告

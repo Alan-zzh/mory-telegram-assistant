@@ -48,10 +48,34 @@ _EXEMPT_PREFIXES = (
 # 需要精确匹配(==)的豁免路径,避免 startswith 误豁免子路径
 _EXEMPT_EXACT_PATHS = {
     "/api/health",  # 仅根路径用于探活;/api/health/score /api/health/jobs 等子路径必须登录
+    # 登出必须让 viewer 会话也能清理；CSRF 仍由 auth._security_check 校验。
+    "/api/logout",
+}
+
+# 这两个端点只要求“已登录且有可信 session uid”：申请与取消由端点本身按
+# requester_id 校验，不能再把 viewer 当作 config:write 处理而误拦截。
+_AUTHENTICATED_WRITE_PATHS = {
+    "/api/rbac/request",
+    "/api/rbac/cancel",
 }
 
 # 路径前缀到权限的映射（按最长匹配优先）
 _PATH_PERMISSION_MAP = [
+    # 实际 Flask 路由均以 /api 开头；旧前缀保留在列表末尾供历史直接调用兼容。
+    ("/api/rbac/approve", "users:write"),
+    ("/api/rbac/reject", "users:write"),
+    ("/api/config", "config:write"),
+    ("/api/settings/", "config:write"),
+    ("/api/group/", "config:write"),
+    ("/api/keywords", "config:write"),
+    ("/api/faq/", "faq:write"),
+    ("/api/orphan/", "orphan:clean"),
+    ("/api/ab-test/", "ab_test:write"),
+    ("/api/button-stats/", "ab_test:write"),
+    ("/api/profile/", "users:write"),
+    ("/api/engage/", "engage:write"),
+    ("/api/bot-routing/", "config:write"),
+    ("/api/quality/", "config:write"),
     ("/config/", "config:write"),
     ("/settings/", "config:write"),
     ("/group/", "config:write"),
@@ -110,22 +134,26 @@ def enforce_rbac():
     if not session.get("logged_in"):
         return jsonify({"ok": False, "msg": "未登录"}), 401
 
-    # 4. 推断权限
+    # 4. 申请/取消只需已登录：业务端点会以可信 session uid 校验所有权。
+    if path in _AUTHENTICATED_WRITE_PATHS:
+        return None
+
+    # 5. 推断权限
     permission = _infer_permission(path)
     role = get_current_role()
 
-    # 5. 获取 DB 连接（失败回退到硬编码字典）
+    # 6. 获取 DB 连接。DB 权限读取失败时 has_permission 必须 fail-closed。
     db = None
     try:
         from dashboard.helpers import get_db
         db = get_db()
     except Exception as e:
-        logger.debug(f"RBAC DB连接回退到硬编码字典（非致命）：{e}")
-        db = None  # 无请求上下文或 DB 异常，has_permission 内部会回退到字典
+        logger.warning(f"RBAC DB连接失败，拒绝写操作：{e}")
+        return jsonify({"ok": False, "msg": "权限服务不可用，请稍后重试"}), 503
 
     allowed = has_permission(permission, role, db=db)
 
-    # 6. 记录审计日志
+    # 7. 记录审计日志
     operator_id = session.get("uid", 0)
     operator_name = session.get("username", "unknown")
     log_audit(
@@ -140,7 +168,7 @@ def enforce_rbac():
         payload_summary=_summarize_payload(),
     )
 
-    # 7. 无权限拒绝
+    # 8. 无权限拒绝
     if not allowed:
         return jsonify({"ok": False, "msg": f"权限不足：需要 {permission}"}), 403
 

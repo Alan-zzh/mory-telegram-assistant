@@ -13,7 +13,7 @@
 | 三档传统文化栏目 | 生产启用 | `tasks/broadcast/mystic_broadcast_task.py` | 北京时间黄历、塔罗、易经三档；模式固定，不串台 |
 | 普通问候 | 默认关闭 | `tasks/broadcast/greeting_task.py` | 开关改变后由热重载真实增删任务 |
 | 定点自定义播报 | 可配置 | `modules/scheduled_broadcast.py` | 按配置注册；失败必须释放防重锁并向调度器上浮 |
-| 新闻播报 | 已删除 | 无 | 执行链、Dashboard 写入口和配置键均删除，不保留幽灵开关 |
+| 新闻播报 | 执行链已删除 | 无任务入口 | 部署合并会移除旧新闻配置键；CTA 仅保留“新闻不挂销售入口”的无副作用兼容分支，生产旧键是否已清仍须只读取证 |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/` | 登录后管理配置和查看运行证据；写操作受 RBAC/CSRF 约束 |
 
 ## 2. 运行架构

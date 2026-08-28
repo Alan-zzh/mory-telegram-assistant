@@ -2,10 +2,9 @@
 """启动追溯扫描的防误删回归测试。"""
 
 import json
-import sqlite3
-from types import SimpleNamespace
 
 from core.bot_initializer import _get_latest_snapshot_message_id
+from core.database import DB
 from modules.ad_detector import AdDetector
 
 
@@ -27,20 +26,7 @@ class _AlreadyAbsentBot(_ProtectedContentBot):
 
 
 def _make_db():
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.execute(
-        """CREATE TABLE message_snapshots (
-            chat_id INTEGER,
-            msg_id INTEGER,
-            user_id INTEGER,
-            text TEXT,
-            ts INTEGER,
-            is_ad INTEGER DEFAULT 0,
-            deleted INTEGER DEFAULT 0,
-            PRIMARY KEY(chat_id, msg_id)
-        )"""
-    )
-    return SimpleNamespace(conn=conn)
+    return DB(":memory:")
 
 
 def _scan(detector, bot, chat_id=-1001, start=1, end=200, deletion_enabled=True):

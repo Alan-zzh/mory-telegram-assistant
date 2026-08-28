@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """临时 SSH 助手 - 读取 .env 凭据并执行远程命令"""
-import os
 import sys
 import paramiko
 from dotenv import dotenv_values
 from pathlib import Path
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"  # [v5.15.4 修复] 项目根目录 .env
+sys.path.insert(0, str(ENV_PATH.parent))
+from core.vps_config import secure_paramiko_connect_kwargs
+
 env = dotenv_values(ENV_PATH)
 
 HOST = env.get("VPS_HOST", "43.159.168.175")
@@ -23,7 +25,8 @@ def run_ssh(cmd, timeout=60, as_root=False):
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         client.connect(HOST, PORT, USER, PASS, timeout=15, banner_timeout=15,
-                       auth_timeout=15, allow_agent=False, look_for_keys=False)
+                       auth_timeout=15, allow_agent=False, look_for_keys=False,
+                       **secure_paramiko_connect_kwargs())
     except Exception as e:
         return "", f"SSH connect failed: {e}", -1
 

@@ -249,8 +249,8 @@ class ResourceManager:
                         f"任务 {func.__name__} 超时后资源锁未释放",
                         severity="🚨",
                     )
-            except Exception:
-                pass  # 通知失败不加重原问题
+            except Exception as report_error:
+                logger.debug(f"任务超时锁告警上报失败: {report_error}")
             raise TimeoutError(f"任务执行超时: {timeout}秒")
 
         if exception_container:

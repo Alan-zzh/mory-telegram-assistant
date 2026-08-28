@@ -24,6 +24,7 @@ verify_*.py
 check_*.py
 !scripts/check_config_sync.py
 !scripts/check_deploy_ready.py
+!scripts/check_exception_hygiene.py
 !tasks/maintenance/check_db_migration_task.py
 !tasks/maintenance/check_expired_redpackets_task.py
 fix_*.py
@@ -49,6 +50,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 *.log
 *.tmp
 *.zip

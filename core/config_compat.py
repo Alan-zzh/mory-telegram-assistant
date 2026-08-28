@@ -1,10 +1,88 @@
 # -*- coding: utf-8 -*-
-"""配置兼容与规范化工具。"""
+"""配置兼容、环境凭据注入与落盘规范化工具。"""
+
+import copy
+import os
 
 # 凭据唯一存 .env（AGENTS.md 红线）：任何落盘配置不得携带明文凭据。
 # 启动时由 bot_initializer 以 TG_TOKEN / DASHSCOPE_KEY 环境变量覆盖注入，
 # 因此落盘前剥离不影响运行，仅防止"运行时保存把环境变量里的密钥写回文件"。
 SECRET_CONFIG_KEYS = ("TOKEN", "API_KEY")
+_SECRET_KEY_SUFFIXES = (
+    "_token",
+    "_api_key",
+    "_apikey",
+    "_secret",
+    "_password",
+    "_password_hash",
+    "_credential",
+    "_credentials",
+    "_private_key",
+)
+_SECRET_KEY_NAMES = {
+    "token",
+    "api_key",
+    "apikey",
+    "secret",
+    "password",
+    "password_hash",
+    "credential",
+    "credentials",
+    "private_key",
+}
+_ENV_SECRET_OVERRIDES = {
+    ("TOKEN",): "TG_TOKEN",
+    ("API_KEY",): "DASHSCOPE_KEY",
+    ("NSFW_DETECT_CONFIG", "api_key"): "NSFW_DETECT_API_KEY",
+    ("SPAM_WATCH_CONFIG", "spamwatch_token"): "SPAMWATCH_TOKEN",
+    ("EXCHANGE_API_KEY",): "EXCHANGE_API_KEY",
+}
+
+
+def is_sensitive_config_key(key: object) -> bool:
+    """判断配置字段是否承载凭据，不误伤 max_tokens/token_budget 等调优键。"""
+    normalized = str(key or "").strip().lower().replace("-", "_")
+    return normalized in _SECRET_KEY_NAMES or normalized.endswith(_SECRET_KEY_SUFFIXES)
+
+
+def redact_sensitive_config(value, replacement="***"):
+    """递归复制并脱敏配置，供 API/日志输出使用。"""
+    if isinstance(value, dict):
+        return {
+            key: replacement if is_sensitive_config_key(key)
+            else redact_sensitive_config(item, replacement)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive_config(item, replacement) for item in value]
+    return value
+
+
+def _blank_sensitive_values(value):
+    """递归复制配置并清空凭据值，保留键形状以兼容旧读取方。"""
+    if isinstance(value, dict):
+        return {
+            key: "" if is_sensitive_config_key(key) else _blank_sensitive_values(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_blank_sensitive_values(item) for item in value]
+    return value
+
+
+def inject_environment_secrets(cfg: dict | None, environ=None) -> dict:
+    """把 .env/进程环境中的凭据注入运行时配置，不写回 config.json。"""
+    result = cfg if isinstance(cfg, dict) else {}
+    source = os.environ if environ is None else environ
+    for path, env_key in _ENV_SECRET_OVERRIDES.items():
+        env_value = source.get(env_key, "")
+        if not env_value:
+            continue
+        target = result
+        for part in path[:-1]:
+            target = _ensure_dict(target, part)
+        target[path[-1]] = env_value
+    return result
 
 
 def _ensure_dict(cfg: dict, key: str) -> dict:
@@ -140,11 +218,8 @@ def compact_runtime_config(cfg: dict | None) -> dict:
     【v5.41.0】落盘前剥离明文凭据（TOKEN/API_KEY）：凭据唯一存 .env，
     运行值由环境变量在启动时注入，写回文件只会造成凭据常驻磁盘。
     """
-    cfg = normalize_runtime_config(dict(cfg or {}))
-
-    for secret_key in SECRET_CONFIG_KEYS:
-        if cfg.get(secret_key):
-            cfg[secret_key] = ""
+    cfg = normalize_runtime_config(copy.deepcopy(cfg or {}))
+    cfg = _blank_sensitive_values(cfg)
 
     for section_key, alias_keys in {
         "REPORT_CONFIG": ["enable"],

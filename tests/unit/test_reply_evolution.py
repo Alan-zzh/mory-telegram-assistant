@@ -19,7 +19,8 @@ class _FakeDB:
                 style_text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
                 enabled INTEGER NOT NULL DEFAULT 0, created_by TEXT NOT NULL DEFAULT '',
                 reviewed_by TEXT NOT NULL DEFAULT '', review_note TEXT NOT NULL DEFAULT '',
-                created_at INTEGER NOT NULL, reviewed_at INTEGER NOT NULL DEFAULT 0
+                created_at INTEGER NOT NULL, reviewed_at INTEGER NOT NULL DEFAULT 0,
+                scene TEXT NOT NULL DEFAULT 'chat'
             )"""
         )
         self.repo = ReplyEvolutionRepo(self)

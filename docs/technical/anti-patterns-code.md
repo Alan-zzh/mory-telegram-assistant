@@ -1,16 +1,11 @@
-# 8 大类老坑详细反模式与验证命令
+# 历史老坑反模式与现行验证命令
 
 > **被 docs/technical/ 收录 · 适用版本：v5.12.0+**
 > **最后更新**：2026-06-02（v5.12.1 拆分为 code/ops 两文件）
 
 ## 概述
 
-本文件是 `AGENTS.md` 中"⚠️ 8 大类老坑铁律"章节的**详细版**（核心代码铁律）：
-- `AGENTS.md` 只放精简的铁律要点 + 引用链接
-- 本文件放完整的**反例/正例代码块**（**核心代码层面** 5 大类）
-- 运维层面 3 大类（3, 5, 7）见 [anti-patterns-ops.md](anti-patterns-ops.md)
-
-任何 AI 开工时可按需查阅。**8 大类与 AGENTS.md 一一对应**：1/2/4/6/8 见本文件，3/5/7 见 ops。
+本文件保留历史事故中反复出现的代码反模式与示例。现行强制规则以根 `AGENTS.md` 和 `runbook-ship-gate.md` 为准；这里的旧“8 大类”编号仅作历史索引，不再声称与当前 AGENTS 章节一一对应。运维侧历史示例见 [anti-patterns-ops.md](anti-patterns-ops.md)。
 
 ---
 
@@ -167,7 +162,7 @@ except AttributeError:
 
 - 不能只做 `py_compile` + 单元测试
 - 必须模拟真实场景：发消息 → 等触发 → 看结果
-- v5.12.0 新增 `scripts/verify_orphan_cleanup.py` 是这个模式的应用
+- 孤儿清理当前以目标单测、Dashboard API 和生产业务回执验证；旧 `scripts/verify_orphan_cleanup.py` 已删除
 
 ### 铁律 6.2：DB 写入后立即回查
 
@@ -214,7 +209,7 @@ except AttributeError:
 - `python3 -c "import telegram"` 必须成功
 - `python3 -c "import apscheduler"` 必须成功
 - `python3 -c "import flask"` 必须成功
-- 缺依赖时 `pip install -r requirements.in` 自动补
+- 缺依赖时失败关闭；使用带哈希的 `requirements.lock` 重建环境，禁止生产自动回退到未锁定 `requirements.in`
 
 ### 铁律 8.4：deploy_vps.py 必须验证
 

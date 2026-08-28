@@ -13,4 +13,4 @@
 ## 治理动作（2026-07-07）
 - 删除本仓库坏桩 `config/mory-media-assistant.service` / `config/mory-media-dashboard.service`，从 `deploy_vps.py` 的 `SERVICE_FILES` 移除，VPS 上 `systemctl disable` + `rm` + `daemon-reload`。
 - 当前线上仅一套稳定部署：双核心服务。
-- 本仓库残留的 media 模式 env 驱动代码（dashboard `DASHBOARD_MODE=media`、`auto_tasks` `_mode=="media"`、`core/shared_db.py` 跨 Bot 共享库）为休眠分支，仅手动设 env 时生效，删 unit 不影响运行。
+- 本仓库仍有可达的 media 模式 env 分支（Dashboard `DASHBOARD_MODE=media`、`core/shared_db.py`、消息分发与画像同步）。它不是第二套服务，但也不能称为已删除休眠代码；是否启用必须以生产 `DASHBOARD_MODE` / `SHARED_DB_PATH` 取证。

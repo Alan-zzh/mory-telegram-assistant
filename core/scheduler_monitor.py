@@ -229,20 +229,6 @@ def sync_metrics_to_db(db) -> int:
 
         with db.lock:
             c = db.conn.cursor()
-            # 幂等建表
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS scheduler_metrics (
-                    job_id TEXT PRIMARY KEY,
-                    last_status TEXT,
-                    success_count INTEGER DEFAULT 0,
-                    fail_count INTEGER DEFAULT 0,
-                    miss_count INTEGER DEFAULT 0,
-                    last_run INTEGER,
-                    last_duration INTEGER,
-                    last_error TEXT,
-                    synced_at INTEGER NOT NULL
-                )
-            """)
             now_ts = int(time.time())
             for job_id, info in jobs_snapshot.items():
                 c.execute("""

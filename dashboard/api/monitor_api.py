@@ -77,15 +77,6 @@ def api_llm_cost_stats():
         cutoff_24h = now - 86400
 
         db = get_db()
-        # 幂等建表（防止 Bot 进程尚未触发 flush_to_db 时表不存在）
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS llm_cost_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                uid INTEGER, model_name TEXT, task_type TEXT,
-                input_tokens INTEGER, output_tokens INTEGER,
-                estimated_cost REAL, tier TEXT, timestamp INTEGER
-            )
-        """)
 
         # 全量统计
         row = db.execute(

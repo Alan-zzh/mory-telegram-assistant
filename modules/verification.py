@@ -301,8 +301,6 @@ def check_callback_query(bot, callback_query, config: dict):
     if session is None:
         return False
 
-        # 验证通过
-        del _verification_sessions[key]
     # 同步删除 SQLite 记录
     _delete_session_from_db(_db, chat_id, user_id)
     bot.answer_callback_query(callback_query.id, text="✅ 验证通过！")

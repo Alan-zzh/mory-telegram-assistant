@@ -276,6 +276,7 @@ def check_ad_detection(dctx) -> bool:
             logger.debug(f"[AD] 短消息资料检测拉取Bio失败: uid={uid} err={e}")
         from modules.ad_profile_signals import (
             detect_profile_ad_signal,
+            has_avatar_personal_channel_bridge,
             has_profile_message_bridge,
             has_smuggled_goods_message_bridge,
         )
@@ -311,6 +312,41 @@ def check_ad_detection(dctx) -> bool:
             )
             clear_logging_context()
             return True
+        if profile_result.get("avatar_bridge_candidate"):
+            from modules.avatar_detector import check_avatar_marketing
+            avatar_hit, avatar_reason, avatar_score, _avatar_meta = check_avatar_marketing(
+                bot, uid, CONFIG
+            )
+            channel_bridge = (
+                avatar_hit
+                and int(avatar_score or 0) >= 2
+                and has_avatar_personal_channel_bridge(
+                    avatar_reason,
+                    profile_result.get("personal_chat_recruitment_anchors", []),
+                )
+            )
+            if channel_bridge:
+                from modules.ad_enforcement import enforce_ad_user
+                message_is_ad = _has_direct_message_ad_evidence(ad_detector, ad_text)
+                logger.warning(
+                    f"[AD] 头像资料CTA+关联频道规避式招募命中: uid={uid} "
+                    f"channel={profile_result.get('personal_chat_id', 0)}"
+                )
+                enforce_ad_user(
+                    bot=bot,
+                    db=db,
+                    config=CONFIG,
+                    chat_id=chat_id,
+                    uid=uid,
+                    uname=uname,
+                    reason="头像看资料CTA+关联频道群演招募组合广告",
+                    message=m,
+                    current_msg_id=getattr(m, "message_id", 0),
+                    current_message_is_ad=message_is_ad,
+                    notify_admin=True,
+                )
+                clear_logging_context()
+                return True
     except Exception as e:
         logger.debug(f"[AD] 资料层广告检测异常: uid={uid} err={e}")
 

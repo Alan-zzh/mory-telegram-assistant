@@ -804,20 +804,8 @@ class AdDetector:
             self.stats = {"total_detected": 0, "false_positives": 0}
 
     def _init_tracking_table(self):
-        if not self.db:
-            return
-        try:
-            with _db_lock:
-                self.db.conn.execute("""CREATE TABLE IF NOT EXISTS ad_suspicious_users (
-                    user_id INTEGER PRIMARY KEY,
-                    score INTEGER DEFAULT 0,
-                    first_seen TEXT,
-                    messages TEXT DEFAULT '[]',
-                    updated_at INTEGER
-                )""")
-                self.db.conn.commit()
-        except Exception as e:
-            logger.warning(f"创建ad_suspicious_users表失败: {e}")
+        """兼容调用点：表由 core.database 初始化，此处不再执行 DDL。"""
+        return bool(self.db)
 
     def _save_tracking_to_db(self, user_id):
         if not self.db:

@@ -85,7 +85,7 @@ TONE_POOL = {
 # [v5.32] 已移除：SLANG_TEMPLATES / PHOTO_HINT_TEMPLATES / CONVERSION_TEMPLATES
 # 这些模板硬塞"想知道私聊"/"有些照片这边不放"/"来了就知道"等话术到 footer，
 # 与正文割裂、像生硬营销，是用户反馈"再加的东西特别尬"的源头。
-# 对应的 getter 函数 get_slang_hint / get_photo_hint / get_conversion_hint 也一并移除。
+# 对应的 getter 函数 get_slang_hint / get_photo_hint / get_conversion_hint 已移除。
 
 
 def _get_seed(date: datetime, period: str, item_id: str = "") -> str:
@@ -134,21 +134,6 @@ def get_daily_tone(period: str, date: datetime = None, item_id: str = "") -> dic
     tone_keys = list(pool.keys())
     tone_key = rng.choice(tone_keys)
     return {tone_key: pool[tone_key]}
-
-
-def get_slang_hint(slang_key: str, date: datetime = None, item_id: str = "") -> str:
-    """[v5.32] 已弃用，始终返回空串。保留函数签名避免调用方报错。"""
-    return ""
-
-
-def get_photo_hint(photo_keyword: str, date: datetime = None, item_id: str = "") -> str:
-    """[v5.32] 已弃用，始终返回空串。保留函数签名避免调用方报错。"""
-    return ""
-
-
-def get_conversion_hint(date: datetime = None, item_id: str = "") -> str:
-    """[v5.32] 已弃用，始终返回空串。保留函数签名避免调用方报错。"""
-    return ""
 
 
 def build_broadcast_context(period: str, date: datetime = None, item_id: str = "") -> dict:

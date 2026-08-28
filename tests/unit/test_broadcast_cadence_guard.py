@@ -70,12 +70,20 @@ def test_model_pool_matches_current_expiry_first_truth():
         assert config["AB_TEST_GROUP_B_MODEL"] == ""
 
 
-def test_secondary_routers_cannot_reintroduce_removed_models():
+def test_secondary_routers_cannot_reintroduce_removed_models(monkeypatch):
+    from datetime import datetime
+
     from core.ab_test_router import GROUP_A, GROUP_B, get_model_for_group
-    from core.model_router import _primary_model_from_pool
+    from core import model_router
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 28, tzinfo=tz)
 
     config = _load_config("config.json.example")
 
-    assert _primary_model_from_pool(config) == "qwen3.7-max-preview"
+    monkeypatch.setattr(model_router, "datetime", _FrozenDateTime)
+    assert model_router._primary_model_from_pool(config) == "qwen3.7-plus-2026-05-26"
     assert get_model_for_group(GROUP_A, config) is None
     assert get_model_for_group(GROUP_B, config) is None

@@ -46,27 +46,13 @@ class TaskExecHistoryRepo:
         return self._db.lock
 
     def _ensure_schema(self) -> bool:
-        """Dashboard 直连 / 测试环境幂等建表(主进程已在 database._init_tables 中建好)。"""
+        """确认中央数据库已完成审计表初始化，不在请求路径写 DDL。"""
         with self.lock:
             try:
-                self.conn.execute("""CREATE TABLE IF NOT EXISTS task_execution_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    task_key TEXT NOT NULL,
-                    exec_date TEXT NOT NULL,
-                    start_ts INTEGER NOT NULL,
-                    end_ts INTEGER,
-                    status TEXT NOT NULL,
-                    error_msg TEXT,
-                    duration_ms INTEGER
-                )""")
-                self.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_task_exec_key_date "
-                    "ON task_execution_history(task_key, exec_date)"
-                )
-                self.conn.commit()
+                self.conn.execute("SELECT 1 FROM task_execution_history LIMIT 1")
                 return True
             except Exception as exc:
-                logger.warning("初始化 task_execution_history 失败: %s", exc)
+                logger.warning("任务执行审计 schema 未就绪，请先运行数据库初始化/迁移: %s", exc)
                 return False
 
     def record_task_start(self, task_key: str) -> Optional[int]:

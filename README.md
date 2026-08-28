@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.41.3**：售卖走私商品的资料名与订购群 Bio 首条即统一处置；重复刷屏含逐条广告直证时不再降级为仅删除。
+当前版本 **v5.42.0**：全仓深度整改——修复 Dashboard 越权与凭据泄漏、启动顺序和 A/B 假数据链；数据库结构收归单一入口；外部写请求不再盲重发；部署备份、配置原子替换与 CI 安全门禁同步加固。当前仅本地完成，尚未部署生产。
 
 ## 默认关闭功能货架
 
@@ -141,19 +141,19 @@ python deploy_vps.py                       # stop→上传→start→验证（sa
 > 普通用户命令见 `/help`；管理员在私聊触发 `/help` 会额外附带上述清单。
 
 ## 目录结构
-- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（76 个业务 `.py`）。
+- `core/`：消息分发、AI 引擎、模型路由、数据库、配置、handler（数量以本节“客观指标”为准）。
 - `modules/`：102 个业务模块（广告检测、群管、积分、转化、播报、定时任务、销售/安全/多群托管/会员等默认关闭能力）。
 - `dashboard/`：运营后台（`app` + `api`，163 路由，含人工审核风格样本 API）。
 - `tasks/`：后台定时任务（`task_scheduler.py` 自动发现 BaseTask 子类并承载 `start_background` 引擎）。
 - `scripts/`：工具脚本（含 `doc_consistency.py` 自检与默认只报告的 `scan_group.py` 全量成员扫描）。
 - `tests/`：单元测试。
-- `docs/`：技术(`technical`)、计划(`plans`)、愿景(`vision`)、归档(`archive`)。
+- `docs/`：技术(`technical`)、计划(`plans`)、调研(`research`)、愿景(`vision`)、归档(`archive`)。
 - `migrations/`：Alembic 数据库迁移。
 - `runtime/audit-reports/`：审计报告与完工报告。
 - `config/`：systemd 服务文件。
 
-## 客观指标（2026-08-22 实测，`scripts/doc_consistency.py` 全过）
-modules 业务 `.py` = 102，core 业务 `.py` = 77，DB 表 = 175，Dashboard 路由 = 163，消息分发函数 = 10，model_router 映射 = 10，BaseTask 任务类 = 45。
+## 客观指标（2026-08-24 实测）
+modules 业务 `.py` = 102，core 业务 `.py` = 77，DB 表 = 181，Dashboard 路由 = 163，消息分发函数 = 10，model_router 映射 = 10，BaseTask 任务类 = 45。
 一致性由 `scripts/doc_consistency.py` 断言（`project_snapshot.md` 的 `METRICS` 块为基准）。
 
 ## 播报图片卡（PIL 图片卡）

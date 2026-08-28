@@ -372,13 +372,7 @@ class LLMCostGuard:
         之前只建表不写数据，llm_cost_logs 永远为空，重启后熔断器累计清零。
         现在批量写入 _pending_logs 队列中的详细日志，写入后清空队列。
 
-        表结构：
-        CREATE TABLE IF NOT EXISTS llm_cost_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uid INTEGER, model_name TEXT, task_type TEXT,
-            input_tokens INTEGER, output_tokens INTEGER,
-            estimated_cost REAL, tier TEXT, timestamp INTEGER
-        )
+        ``llm_cost_logs`` 由 ``core.database`` 和 Alembic 统一创建；这里仅写入。
         """
         if not self.enabled:
             return
@@ -400,14 +394,9 @@ class LLMCostGuard:
                 else:
                     conn = db_conn
 
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS llm_cost_logs (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        uid INTEGER, model_name TEXT, task_type TEXT,
-                        input_tokens INTEGER, output_tokens INTEGER,
-                        estimated_cost REAL, tier TEXT, timestamp INTEGER
-                    )
-                """)
+                # 不在业务请求路径创建表；缺少 schema 时下面的写入会失败并将
+                # 队列放回，促使部署门禁/告警处理，而不是制造分叉结构。
+                conn.execute("SELECT 1 FROM llm_cost_logs LIMIT 1")
                 conn.executemany(
                     "INSERT INTO llm_cost_logs (uid, model_name, task_type, input_tokens, output_tokens, estimated_cost, tier, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     batch

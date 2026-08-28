@@ -14,6 +14,24 @@ from core.logging_util import get_logger
 
 logger = get_logger("vps_config")
 
+# CVE-2026-44405 / PYSEC-2026-2858：Paramiko 4.0.0 仍可协商 RSA+SHA-1。
+# 上游尚无包含修复的 PyPI 版本，所有项目 SSH 入口统一禁用该签名算法；
+# RSA 密钥材料本身仍可通过 rsa-sha2-256/512 使用。
+PARAMIKO_DISABLED_ALGORITHMS = {
+    "keys": ["ssh-rsa"],
+    "pubkeys": ["ssh-rsa"],
+}
+
+
+def secure_paramiko_connect_kwargs() -> dict:
+    """返回每次连接独立的禁用算法参数，避免调用方改写全局常量。"""
+    return {
+        "disabled_algorithms": {
+            category: list(algorithms)
+            for category, algorithms in PARAMIKO_DISABLED_ALGORITHMS.items()
+        }
+    }
+
 # 自动加载 .env 文件（如果存在）
 _env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
 if os.path.exists(_env_file):
@@ -158,4 +176,5 @@ def ssh_connect(client, timeout: int = 15):
         look_for_keys=False,
         allow_agent=False,
         timeout=timeout,
+        **secure_paramiko_connect_kwargs(),
     )

@@ -16,7 +16,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from core.config_compat import normalize_runtime_config, compact_runtime_config
+from core.config_compat import (
+    compact_runtime_config,
+    inject_environment_secrets,
+    normalize_runtime_config,
+)
 
 # ── 项目根目录 ──
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -289,9 +293,8 @@ def load_config() -> dict:
         cfg = _get_minimal_default_config()
 
     # ── 环境变量覆盖密钥类字段（优先级高于config.json）──
+    inject_environment_secrets(cfg)
     _env_overrides = {
-        "TOKEN": "TG_TOKEN",
-        "API_KEY": "DASHSCOPE_KEY",
         "ADMIN_ID": "ADMIN_ID",
         "GROUP_ID": "GROUP_ID",
     }
@@ -605,8 +608,13 @@ def _recover_zombie_tasks_or_raise(db, attempts: int = 3, sleep_fn=time.sleep) -
     raise RuntimeError("启动清理旧任务连续失败，拒绝启动调度器") from last_error
 
 
-def initialize_bot() -> BotContext:
-    """初始化Bot所有核心组件，返回BotContext"""
+def initialize_bot(*, activate_background: bool = True) -> BotContext:
+    """构造 BotContext；默认完成激活以兼容既有直接调用。
+
+    ``main`` 会先以 ``activate_background=False`` 构造上下文并执行 fatal
+    preflight。只有 preflight 通过后才调用 :func:`activate_bot`，这样失败的
+    配置不会启动 scheduler、watchdog 或启动维护线程。
+    """
 
     logger = _get_logger()
 
@@ -710,10 +718,10 @@ def initialize_bot() -> BotContext:
     # 15. 初始化默认关键词触发规则
     _init_keyword_triggers(db)
 
-    # 16. 创建唯一资源锁域后启动后台任务。BotContext 与 TaskScheduler 必须
-    # 持有同一 ResourceManager，否则共享 bot/ai/db 会各自加锁而产生并发裂缝。
+    # 16. 创建唯一资源锁域，但不在构造阶段启动后台任务。BotContext 与
+    # TaskScheduler 必须持有同一 ResourceManager，否则共享 bot/ai/db 会各自
+    # 加锁而产生并发裂缝。
     from core.resource_manager import ResourceManager
-    from tasks.task_scheduler import start_background
     _save_cfg = lambda: save_config(cfg, db)
     resource_manager = ResourceManager(
         bot=bot,
@@ -722,14 +730,10 @@ def initialize_bot() -> BotContext:
         config=cfg,
         save_config_fn=_save_cfg,
     )
-    resource_manager = start_background(
-        bot,
-        cfg,
-        db,
-        ai,
-        _save_cfg,
-        resource_manager=resource_manager,
-    )
+
+    # A/B router 只接受显式绑定的 Bot 数据库，禁止通过导入 main 反查运行态。
+    from core.ab_test_router import bind_db as bind_ab_test_db
+    bind_ab_test_db(db)
 
     # 17. 创建MoryBot封装层
     from core.mory_bot import MoryBot
@@ -814,6 +818,39 @@ def initialize_bot() -> BotContext:
     # [TRAE SOLO CN] v5.19.0 设置全局 BotContext 引用
     global _GLOBAL_CTX
     _GLOBAL_CTX = ctx
+
+    if activate_background:
+        activate_bot(ctx)
+    return ctx
+
+
+def activate_bot(ctx: BotContext) -> BotContext:
+    """激活构造完成的运行时；调用方必须已通过 fatal preflight。
+
+    此函数故意收拢全部启动副作用：统一 scheduler、watchdog、启动维护、
+    追溯封禁/扫描和孤儿补清理。幂等性由 ``start_background`` 的单例闸门
+    与 Context 标记共同保证。
+    """
+    if getattr(ctx, "_background_activated", False):
+        return ctx
+
+    logger = _get_logger()
+    bot = ctx.bot
+    cfg = ctx.config
+    db = ctx.db
+    ai = ctx.ai
+    ad_detector = ctx.ad_detector
+
+    from tasks.task_scheduler import start_background
+    start_background(
+        bot,
+        cfg,
+        db,
+        ai,
+        ctx.save_config,
+        resource_manager=ctx.resource_manager,
+    )
+    ctx._background_activated = True
 
     # [TRAE SOLO CN] 启动追溯封禁：处理重启前未完成的广告封禁
     try:
@@ -999,20 +1036,14 @@ def _restore_db_from_backup(db, cfg):
 def _test_db_write():
     """启动时数据库写入测试（验证track_reply功能正常，使用内存SQLite）"""
     logger = _get_logger()
-    test_conn = None
+    test_db = None
     try:
         logger.info("🔍 开始阅后即焚数据库功能测试...")
-        import sqlite3 as _sqlite3
-        test_conn = _sqlite3.connect(":memory:")
+        # 复用中央 schema；启动自检不能成为另一个隐式 DDL 所有者。
+        from core.database import DB
+        test_db = DB(":memory:")
+        test_conn = test_db.conn
         test_cursor = test_conn.cursor()
-        test_cursor.execute("""CREATE TABLE IF NOT EXISTS reply_tracking (
-            bot_msg_id INTEGER,
-            chat_id INTEGER,
-            user_msg_id INTEGER,
-            ts INTEGER,
-            replied INTEGER DEFAULT 0,
-            PRIMARY KEY (bot_msg_id, chat_id)
-        )""")
 
         test_bot_id = 999999999
         test_chat_id = 999999999
@@ -1033,10 +1064,10 @@ def _test_db_write():
         import traceback
         logger.error(f"❌ 测试异常详情：{traceback.format_exc()}")
     finally:
-        # 【v5.31.2 修复】SQL 失败时也要关闭 test_conn，避免连接泄漏
-        if test_conn is not None:
+        # 【v5.31.2 修复】SQL 失败时也要关闭连接，避免连接泄漏
+        if test_db is not None:
             try:
-                test_conn.close()
+                test_db.close()
             except Exception as _e:  # v5.41.0 卫生整改：留痕不吞错
                 logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 

@@ -173,7 +173,7 @@ Mory 小助理部署到腾讯云硅谷 VPS（43.159.168.175, ubuntu@22.04）。�
 执行 `python deploy_vps.py` 前必查：
 
 - [ ] 本地代码 `python -m py_compile` 无语法错误
-- [ ] 本地测试 `scripts/verify_orphan_cleanup.py` 通过
+- [ ] 本地 orphan 目标测试通过，生产 force-clean 仅在明确授权后执行并核对 Telegram/DB 回执
 - [ ] `config.json.example` 与代码 `config.get('KEY', default)` 键数一致
 - [ ] `.env.example` 列了所有需要的 KEY
 - [ ] `CHANGELOG.md` / `VERSION.md` 已更新

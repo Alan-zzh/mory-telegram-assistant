@@ -43,6 +43,13 @@ class _SQLiteDB:
                 user_id INTEGER PRIMARY KEY, reason TEXT, added_by INTEGER, added_at TEXT
             );
             CREATE TABLE mute_records (uid INTEGER, chat_id INTEGER, mute_until INTEGER, reason TEXT);
+            CREATE TABLE ad_suspicious_users (
+                user_id INTEGER PRIMARY KEY,
+                score INTEGER DEFAULT 0,
+                first_seen TEXT,
+                messages TEXT DEFAULT '[]',
+                updated_at INTEGER
+            );
         """)
 
     def is_blacklisted(self, uid):

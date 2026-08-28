@@ -1,104 +1,29 @@
-# HTTP 客户端统一重构技术文档
+# HTTP 请求安全与可靠性
 
-> 版本：v5.17.0 | 日期：2026-06-15 | 触发：网络请求异常处理缺失问题重构
+> 当前行为以 `core/http_client.py` 为准；本页只说明长期边界，不复制易漂移的调用清单。
 
----
+## 统一入口
 
-## 1. 问题背景
+- 普通外部 HTTP 调用优先复用 `core.http_client.get_http_client()`。
+- 每个调用必须设置有界超时；业务失败应返回可诊断结果或显式抛错，不静默吞掉。
+- 请求 URL 与异常在写日志前统一脱敏，查询串中的 key、token、secret、password 等值不得进入日志。
 
-项目中网络请求散落在多个模块，存在以下问题：
+## 重试边界
 
-1. **超时不统一**：各模块硬编码 3s/5s/10s/15s 不等，部分甚至无超时
-2. **无重试机制**：网络抖动直接失败，降低功能可用性
-3. **异常处理缺失**：多处 `except Exception: pass` 静默吞错，无法排查
-4. **代码重复**：每个模块各自实现 timeout/headers/exception 逻辑
-5. **日志不完整**：请求失败时缺少 URL、状态码、耗时等关键信息
+- GET、HEAD、OPTIONS 可按配置重试。
+- POST 等可能产生远端写入的请求默认不重试，因为超时并不能证明服务端没有执行。
+- 只有调用方已经提供幂等键或等价去重保障时，才可显式传入 `retry_unsafe=True`。
+- Telegram 发消息、Telegraph 创建页面、模型推理等写操作不得因连接结果不确定而自动重发。
 
----
+## 配置
 
-## 2. 解决方案
+`HTTP_CLIENT_CONFIG` 可设置默认 timeout、retry_times、retry_delay、日志开关和服务级超时。密钥只从 `.env`/进程环境注入，不能写入该配置组。
 
-### 2.1 统一 HTTP 客户端（core/http_client.py）
+## 验证
 
-| 特性 | 实现 |
-|------|------|
-| 默认超时 | 10 秒（可按请求覆盖） |
-| 默认重试 | 2 次，间隔 1 秒 |
-| 异常类型 | `HTTPTimeoutError` / `HTTPRequestError` |
-| 后端 | requests（优先）→ urllib（回退） |
-| 拦截器 | 支持 request/response 拦截器链 |
-| 配置 | `config.json → HTTP_CLIENT_CONFIG`（可选） |
-
-### 2.2 接口设计
-
-```python
-from core.http_client import get_http_client, init_http_client
-
-# main.py 启动时初始化
-init_http_client(CONFIG.get("HTTP_CLIENT_CONFIG", {}))
-
-# 业务模块使用
-client = get_http_client()
-data = client.get("https://api.example.com/data", timeout=5)
-data = client.post("https://api.example.com/submit", json_data={"key": "val"})
+```powershell
+python -m pytest tests/unit/test_external_write_retry_policy.py tests/unit/test_http_optional_failure_logging.py -q
+python -m compileall -q core/http_client.py modules/weather.py modules/telegraph.py core/ai_media_tools.py
 ```
 
-### 2.3 配置项（config.json → HTTP_CLIENT_CONFIG）
-
-```json
-{
-  "HTTP_CLIENT_CONFIG": {
-    "default_timeout": 10,
-    "retry_times": 2,
-    "retry_delay": 1,
-    "enable_logging": true,
-    "service_timeouts": {
-      "cas": 5,
-      "spamwatch": 5,
-      "telegraph": 15,
-      "url_shortener": 8
-    }
-  }
-}
-```
-
----
-
-## 3. 重构模块清单
-
-| 模块 | 原实现 | 新实现 | 变更 |
-|------|--------|--------|------|
-| `modules/spam_watch.py` | `requests.get` 直调 | `get_http_client().get()` | + 异常分类日志 |
-| `modules/ad_detector.py` | `requests.get` 直调 | `get_http_client().get()` | + 缓存+异常处理 |
-| `modules/telegraph.py` | `urllib` 调用 | `get_http_client().post()` | + 超时+重试 |
-| `modules/url_shortener.py` | `requests.get` 直调 | `get_http_client().get()` | + 超时+日志 |
-| `modules/search.py` | `urllib.request` 调用 | `get_http_client().get()` | + 超时+重试 |
-| `modules/auto_tasks.py` | 多处 `except: pass` | 补全日志+默认值 | + 可观测性 |
-| `main.py` | 无 HTTP 客户端初始化 | `init_http_client()` | + 启动初始化 |
-
----
-
-## 4. 空异常处理修复
-
-`modules/auto_tasks.py` 中发现多处 `except Exception: pass`，全部补全：
-
-| 函数 | 原代码 | 修复后 |
-|------|--------|--------|
-| `_job_startup_history_cleanup` | `except Exception: pass` | `logger.warning(...)` + 默认空列表 |
-| `_compute_health_score` | `except Exception: pass`（多处） | `logger.warning(...)` + 默认分数 |
-| `_watchdog_check` | `except Exception: pass` | `logger.warning(...)` + 安全降级 |
-
----
-
-## 5. 验证命令
-
-```bash
-# 语法检查
-python -m py_compile core/http_client.py main.py modules/spam_watch.py modules/ad_detector.py
-
-# 确认无残留 except: pass
-grep -n "except Exception: pass" modules/auto_tasks.py
-
-# 确认 HTTP 客户端已初始化
-grep -n "init_http_client" main.py
-```
+旧 v5.17 设计说明保存在 `docs/archive/http-client-refactoring-v5.17.md`，仅作历史背景，不代表当前运行合同。

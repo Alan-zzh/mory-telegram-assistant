@@ -1,5 +1,3 @@
-import sqlite3
-import threading
 import time
 
 from core.intent_router import IntentRouter
@@ -17,24 +15,16 @@ from core.conversion_glue import (
     get_conversion_state,
     persist_conversion_decision,
 )
+from core.database import DB
 from core.db_repos.conversation_context_repo import ConversationContextRepo
 
 
 class DummyDB:
     def __init__(self):
-        self.conn = sqlite3.connect(":memory:")
-        self.lock = threading.RLock()
-        self.conn.execute(
-            "CREATE TABLE conversion_events(uid INTEGER, event TEXT, ts INTEGER, mode TEXT)"
-        )
-        self.conn.execute(
-            "CREATE TABLE telemetry_events(user_id INTEGER, chat_id INTEGER, experiment_id TEXT, variant TEXT, event_type TEXT, event_value REAL, event_meta TEXT, ts INTEGER)"
-        )
-        self.conn.execute(
-            "CREATE TABLE conversation_telemetry(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER, experiment_id TEXT, variant TEXT, message_text TEXT, bot_reply_text TEXT, intent TEXT, sentiment TEXT, round_num INTEGER, ts INTEGER)"
-        )
-        self.conn.commit()
-        self.conversation_context = ConversationContextRepo(self)
+        self._database = DB(":memory:")
+        self.conn = self._database.conn
+        self.lock = self._database.lock
+        self.conversation_context = self._database.conversation_context
         assert self.conversation_context._ensure_schema()
 
     def log_telemetry(self, user_id, chat_id, experiment_id, variant, event_type, event_value=0.0, event_meta=None):

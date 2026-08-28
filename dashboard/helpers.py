@@ -10,7 +10,11 @@ from pathlib import Path
 from flask import g, jsonify, session
 from datetime import datetime, timedelta, timezone
 import logging
-from core.config_compat import normalize_runtime_config, compact_runtime_config
+from core.config_compat import (
+    compact_runtime_config,
+    inject_environment_secrets,
+    normalize_runtime_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +32,14 @@ def _signal_config_reload():
     except Exception as e:
         logger.debug(f"操作异常: {e}")
 sys.path.insert(0, _MORY_ROOT)
-from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH
+from core.vps_config import (
+    VPS_HOST,
+    VPS_PORT,
+    VPS_USER,
+    VPS_PASS,
+    VPS_PATH,
+    secure_paramiko_connect_kwargs,
+)
 
 
 # ============ 数据库工具 ============
@@ -104,10 +115,7 @@ def read_config():
         with open(cfg_path, "r", encoding="utf-8") as f:
             data = normalize_runtime_config(json.load(f))
         # 凭据环境变量优先（与 bot_initializer 同口径；config.json 落盘值恒为空）
-        if os.environ.get("TG_TOKEN"):
-            data["TOKEN"] = os.environ["TG_TOKEN"]
-        if os.environ.get("DASHSCOPE_KEY"):
-            data["API_KEY"] = os.environ["DASHSCOPE_KEY"]
+        inject_environment_secrets(data)
         _config_cache["data"] = data
         _config_cache["mtime"] = mtime
         _config_cache["loaded_at"] = now
@@ -153,7 +161,14 @@ def ssh_exec(cmd, timeout=15):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(get_ssh_policy())
     try:
-        client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, password=VPS_PASS, timeout=timeout)
+        client.connect(
+            VPS_HOST,
+            port=VPS_PORT,
+            username=VPS_USER,
+            password=VPS_PASS,
+            timeout=timeout,
+            **secure_paramiko_connect_kwargs(),
+        )
         stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout)
         out = stdout.read().decode("utf-8", errors="replace")
         err = stderr.read().decode("utf-8", errors="replace")
@@ -190,11 +205,25 @@ def get_vps_status():
         # 兼容回退：若已部署用户仍用 VPS_SSH_KEY_PATH，向后兼容读取（不推荐新部署使用）。
         ssh_key_path = os.environ.get("VPS_SSH_KEY", "") or os.environ.get("VPS_SSH_KEY_PATH", "")
         if ssh_key_path and os.path.exists(ssh_key_path):
-            client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, key_filename=ssh_key_path, timeout=10)
+            client.connect(
+                VPS_HOST,
+                port=VPS_PORT,
+                username=VPS_USER,
+                key_filename=ssh_key_path,
+                timeout=10,
+                **secure_paramiko_connect_kwargs(),
+            )
         elif VPS_PASS:
             # 向后兼容：密码模式（不推荐，建议迁移到 SSH Key）
             logger.warning("VPS SSH 使用密码认证，建议配置 VPS_SSH_KEY 环境变量改用 SSH Key")
-            client.connect(VPS_HOST, port=VPS_PORT, username=VPS_USER, password=VPS_PASS, timeout=10)
+            client.connect(
+                VPS_HOST,
+                port=VPS_PORT,
+                username=VPS_USER,
+                password=VPS_PASS,
+                timeout=10,
+                **secure_paramiko_connect_kwargs(),
+            )
         else:
             results["error"] = "无可用 SSH 认证方式（VPS_SSH_KEY 未设置且无密码）"
             _vps_cache["data"] = results

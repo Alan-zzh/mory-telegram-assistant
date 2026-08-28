@@ -331,5 +331,5 @@ class TaskTransactionManager:
                         f"任务 {self.task_name} 释放数据库锁完全失败，task_log 残留，需人工干预",
                         severity="🚨",
                     )
-            except Exception:
-                pass  # 通知失败不加重原问题
+            except Exception as report_error:
+                logger.debug(f"任务锁残留告警上报失败: {report_error}")

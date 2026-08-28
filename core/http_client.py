@@ -22,11 +22,78 @@
 
 import time
 import json
+import re
 import urllib.request
 from typing import Optional, Dict, Any, Union, Callable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from core.logging_util import get_logger
 
 logger = get_logger("http_client")
+
+
+# 只有不会创建、修改或删除远端资源的请求才允许默认重试。当前客户端公开
+# 入口只有 GET/POST；保留 HEAD/OPTIONS 是为了后续扩展时不放宽这个边界。
+_SAFE_RETRY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# URL 查询串常被第三方 SDK 或 requests 异常原样带回。日志和异常文本都必须
+# 经过同一处脱敏，不能只保护天气接口这一种调用方。
+_SENSITIVE_QUERY_KEYS = frozenset({
+    "api_key", "apikey", "key", "token", "access_token", "refresh_token",
+    "id_token", "client_secret", "secret", "signature", "sig", "authorization",
+    "password", "passwd", "pwd", "credential", "code", "hash",
+})
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+
+
+def redact_url(url: object) -> str:
+    """返回可安全写入日志的 URL，隐藏查询串凭据和 userinfo。"""
+    raw_url = str(url or "")
+    try:
+        parts = urlsplit(raw_url)
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+        redacted_pairs = [
+            (
+                key,
+                "***" if (
+                    str(key).lower() in _SENSITIVE_QUERY_KEYS
+                    or str(key).lower().endswith(("_key", "_token", "_secret"))
+                ) else value,
+            )
+            for key, value in pairs
+        ]
+        # URL 中携带 user:password@host 同样不应进入日志。
+        netloc = parts.netloc.rsplit("@", 1)[-1]
+        return urlunsplit((
+            parts.scheme,
+            netloc,
+            parts.path,
+            urlencode(redacted_pairs, doseq=True, safe="*"),
+            parts.fragment,
+        ))
+    except Exception:
+        # 解析失败时宁可不展示查询串，也不能把原值写入日志。
+        suffix = "?<redacted>" if "?" in raw_url else ""
+        return raw_url.split("?", 1)[0] + suffix
+
+
+def _redact_urls_in_text(value: object) -> str:
+    """清理 requests/urllib 异常文本中可能嵌入的完整 URL。"""
+    return _URL_IN_TEXT_RE.sub(
+        lambda match: redact_url(match.group(0)), str(value or "")
+    )
+
+
+def _safe_request_target(request_params: Dict) -> str:
+    """将基础 URL 与 params 合并后再脱敏，供统一日志与错误路径使用。"""
+    url = str(request_params.get("url") or "")
+    params = request_params.get("params")
+    if not params:
+        return redact_url(url)
+    try:
+        separator = "&" if "?" in url else "?"
+        return redact_url(f"{url}{separator}{urlencode(params, doseq=True)}")
+    except Exception:
+        return redact_url(url)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -179,7 +246,8 @@ class HTTPClient:
         timeout: Optional[int] = None,
         retry_times: Optional[int] = None,
         retry_delay: Optional[float] = None,
-        raw_text: bool = False
+        raw_text: bool = False,
+        retry_unsafe: bool = False,
     ) -> Union[Dict, str]:
         """
         发送POST请求
@@ -193,6 +261,7 @@ class HTTPClient:
             retry_times: 重试次数
             retry_delay: 重试延迟（秒）
             raw_text: 是否返回原始响应文本（默认False返回解析后的字典）
+            retry_unsafe: 仅在调用方已提供幂等保证时才允许重试 POST；默认 False
             
         Returns:
             响应数据字典，或原始响应文本（raw_text=True时）
@@ -210,7 +279,8 @@ class HTTPClient:
             timeout=timeout,
             retry_times=retry_times,
             retry_delay=retry_delay,
-            raw_text=raw_text
+            raw_text=raw_text,
+            retry_unsafe=retry_unsafe,
         )
     
     def _request(
@@ -226,6 +296,7 @@ class HTTPClient:
         retry_delay: Optional[float] = None,
         raw_text: bool = False,
         log_final_failure: bool = True,
+        retry_unsafe: bool = False,
     ) -> Union[Dict, str]:
         """
         内部请求方法（带重试机制）
@@ -245,7 +316,7 @@ class HTTPClient:
             json_data: JSON格式的请求体数据
             headers: 请求头
             timeout: 超时时间
-            retry_times: 重试次数
+            retry_times: 重试次数；POST 必须同时显式 retry_unsafe=True 才会生效
             retry_delay: 重试延迟
             raw_text: 是否返回原始响应文本
             
@@ -255,7 +326,11 @@ class HTTPClient:
         # 使用配置的默认值
         timeout = timeout or self.config["default_timeout"]
         retry_times = self.config["retry_times"] if retry_times is None else retry_times
-        retry_delay = retry_delay or self.config["retry_delay"]
+        retry_times = max(0, int(retry_times))
+        retry_delay = (
+            self.config["retry_delay"] if retry_delay is None else retry_delay
+        )
+        retry_delay = max(0.0, float(retry_delay))
         
         # 构建请求参数
         request_params = {
@@ -271,6 +346,18 @@ class HTTPClient:
         
         # 执行请求拦截器
         request_params = self._execute_request_interceptors(request_params)
+
+        method = str(request_params.get("method") or method).upper()
+        safe_target = _safe_request_target(request_params)
+        # POST 的超时、连接中断等都可能发生在服务端已经落库之后。即使调用方传入
+        # retry_times，也只能在其明确声明已有幂等保障时重试。
+        if method not in _SAFE_RETRY_METHODS and not retry_unsafe:
+            if retry_times and self.config["enable_logging"]:
+                logger.debug(
+                    f"HTTP非幂等请求默认不重试: {method} {safe_target}; "
+                    "如已具备幂等保障，调用方须显式 retry_unsafe=True"
+                )
+            retry_times = 0
         
         # 重试逻辑
         last_error = None
@@ -288,14 +375,18 @@ class HTTPClient:
                 if self.config["enable_logging"]:
                     logger.debug(
                         f"HTTP请求失败 (尝试 {attempt + 1}/{retry_times + 1}): "
-                        f"{method} {url} - {str(e)[:100]}"
+                        f"{method} {safe_target} - "
+                        f"{_redact_urls_in_text(e)[:100]}"
                     )
                 # 如果还有重试机会，等待后重试
                 if attempt < retry_times:
                     time.sleep(retry_delay)
         
         # 所有重试都失败，抛出异常
-        error_msg = f"HTTP请求失败: {method} {url} - {str(last_error)[:100]}"
+        error_msg = (
+            f"HTTP请求失败: {method} {safe_target} - "
+            f"{_redact_urls_in_text(last_error)[:100]}"
+        )
         if self.config["enable_logging"] and log_final_failure:
             logger.error(error_msg)
         raise HTTPRequestError(error_msg) from last_error
@@ -329,7 +420,7 @@ class HTTPClient:
         
         # 优先使用 requests 库
         try:
-            import requests
+            __import__("requests")
             return self._do_request_with_requests(
                 method, url, data, json_data, headers, timeout, raw_text
             )
@@ -390,7 +481,10 @@ class HTTPClient:
         # 如果请求原始文本，直接返回
         if raw_text:
             if self.config["enable_logging"]:
-                logger.info(f"HTTP请求成功: {method} {url} - 状态码: {resp.status_code} (原始文本)")
+                logger.info(
+                    f"HTTP请求成功: {method} {redact_url(url)} - "
+                    f"状态码: {resp.status_code} (原始文本)"
+                )
             return resp.text
         
         # 解析响应
@@ -402,7 +496,10 @@ class HTTPClient:
         
         # 记录成功日志
         if self.config["enable_logging"]:
-            logger.info(f"HTTP请求成功: {method} {url} - 状态码: {resp.status_code}")
+            logger.info(
+                f"HTTP请求成功: {method} {redact_url(url)}"
+                f" - 状态码: {resp.status_code}"
+            )
         
         return result
     
@@ -461,21 +558,23 @@ class HTTPClient:
                 resp_text = resp.read().decode("utf-8")
                 if raw_text:
                     if self.config["enable_logging"]:
-                        logger.info(f"HTTP请求成功: {method} {url} (原始文本)")
+                        logger.info(
+                            f"HTTP请求成功: {method} {redact_url(url)} (原始文本)"
+                        )
                     return resp_text
                 result = json.loads(resp_text)
         except urllib.error.HTTPError as e:
             raise HTTPRequestError(f"HTTP错误: {e.code} - {e.reason}")
         except urllib.error.URLError as e:
             if isinstance(e.reason, TimeoutError):
-                raise HTTPTimeoutError(f"请求超时: {url}")
-            raise HTTPRequestError(f"URL错误: {e.reason}")
+                raise HTTPTimeoutError(f"请求超时: {redact_url(url)}")
+            raise HTTPRequestError(f"URL错误: {_redact_urls_in_text(e.reason)}")
         except Exception as e:
-            raise HTTPRequestError(f"请求异常: {str(e)[:100]}")
+            raise HTTPRequestError(f"请求异常: {_redact_urls_in_text(e)[:100]}")
         
         # 记录成功日志
         if self.config["enable_logging"]:
-            logger.info(f"HTTP请求成功: {method} {url}")
+            logger.info(f"HTTP请求成功: {method} {redact_url(url)}")
         
         return result
 

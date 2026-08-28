@@ -323,3 +323,55 @@ def test_member_avatar_and_invite_income_bio_enforce_as_combined_evidence(monkey
 
     assert result is True
     assert len(enforced) == 1
+
+
+def test_member_avatar_and_bound_recruitment_channel_enforce_as_combined_evidence(monkeypatch):
+    """入群入口必须把已取得的 personal_chat 传入头像组合门。"""
+    from core.handlers import member_handlers
+    from modules import avatar_detector
+
+    user = SimpleNamespace(id=42, first_name="琚家可祚", last_name="", username="")
+    personal_chat = SimpleNamespace(
+        id=-1004447421024,
+        title="聘群演有时间来",
+        username="gzy_9911636179_1_6627",
+        description="别人准备干你说不好干，别人赚钱了你说干得早",
+    )
+    chat_info = SimpleNamespace(bio="", personal_chat=personal_chat)
+
+    class _BoundChannelBot(_Bot):
+        def get_chat(self, chat_id):
+            return personal_chat if chat_id == personal_chat.id else chat_info
+
+        def get_user_personal_chat_messages(self, user_id, limit):
+            return []
+
+    enforced = []
+    monkeypatch.setattr(
+        member_handlers,
+        "_enforce_member_ad",
+        lambda *args, **kwargs: enforced.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_avatar_marketing",
+        lambda *args: (
+            True,
+            "OCR命中营销话术: 看我简介",
+            2,
+            {"type": "unknown"},
+        ),
+    )
+    monkeypatch.setattr(
+        avatar_detector,
+        "check_avatar_similarity",
+        lambda *args: (False, "无相似头像", []),
+    )
+
+    result = member_handlers._review_member_avatar(
+        _BoundChannelBot(), user, {}, object(), -1001,
+        bio="", chat_info=chat_info,
+    )
+
+    assert result is True
+    assert len(enforced) == 1

@@ -3,6 +3,8 @@
 
 import os
 import sys
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -103,6 +105,64 @@ def test_safe_merge_config_removes_confirmed_dead_config_fields():
     merged = safe_merge_config({}, {"STATS_REPORT_CONFIG": {"enabled": True}})
 
     assert "STATS_REPORT_CONFIG" not in merged
+
+
+def test_safe_upload_config_uses_private_backup_and_atomic_replace():
+    """部署配置必须先私有备份，再通过同文件系统原子替换落盘。"""
+    from core.deploy_utils import safe_upload_config
+
+    class MemorySFTP:
+        def __init__(self):
+            self.files = {
+                "/remote/config.json": json.dumps({"TOKEN": "remote", "FEATURE": False}),
+            }
+            self.modes = {"/remote/config.json": 0o600}
+            self.dirs = {"/remote"}
+            self.put_paths = []
+            self.rename_calls = []
+
+        def get(self, remote, local):
+            Path(local).write_text(self.files[remote], encoding="utf-8")
+
+        def put(self, local, remote):
+            self.files[remote] = Path(local).read_text(encoding="utf-8")
+            self.put_paths.append(remote)
+
+        def stat(self, path):
+            if path in self.files:
+                return SimpleNamespace(st_mode=self.modes.get(path, 0o644))
+            if path in self.dirs:
+                return SimpleNamespace(st_mode=self.modes.get(path, 0o700))
+            raise FileNotFoundError(path)
+
+        def mkdir(self, path):
+            self.dirs.add(path)
+
+        def chmod(self, path, mode):
+            self.modes[path] = mode
+
+        def posix_rename(self, source, target):
+            self.rename_calls.append((source, target))
+            self.files[target] = self.files.pop(source)
+            self.modes[target] = self.modes.pop(source)
+
+        def remove(self, path):
+            self.files.pop(path, None)
+
+    sftp = MemorySFTP()
+    merged = safe_upload_config(sftp, {"TOKEN": "local", "FEATURE": True}, "/remote")
+
+    assert merged["TOKEN"] == "remote"
+    assert merged["FEATURE"] is True
+    assert "/remote/config.json" not in sftp.put_paths
+    assert len(sftp.rename_calls) == 1
+    source, target = sftp.rename_calls[0]
+    assert source.startswith("/remote/.deploy-staging/config.json.")
+    assert target == "/remote/config.json"
+    assert sftp.modes["/remote/config.json"] == 0o600
+    backup_paths = [path for path in sftp.files if path.startswith("/remote/backups/config_")]
+    assert len(backup_paths) == 1
+    assert sftp.modes[backup_paths[0]] == 0o600
 
 
 def test_runtime_sync_cannot_restore_legacy_auto_greeting_switches():
@@ -288,6 +348,49 @@ def test_systemd_install_command_sets_root_owner_and_fixed_mode():
     assert "/.deploy-staging/mory-assistant.service" in command
     assert "/tmp/mory-assistant.service" not in command
     assert "/etc/systemd/system/mory-assistant.service" in command
+
+
+def test_code_snapshot_excludes_credentials_and_is_private():
+    import deploy_vps
+
+    command = deploy_vps._code_backup_command()
+
+    assert "--exclude='./.env'" in command
+    assert "--exclude='./.env.*'" in command
+    assert "--exclude='./config.json'" in command
+    assert "chmod 0700 backups" in command
+    assert "chmod 0600 backups/code_deploy_*.tar.gz" in command
+
+
+def test_failed_deploy_does_not_claim_same_version_will_be_retried_or_restored():
+    """Failed runtime verification must stay fail-closed and describe manual rollback truthfully."""
+    import deploy_vps
+
+    source = Path(deploy_vps.__file__).read_text(encoding="utf-8")
+
+    assert "保险机制将重试" not in source
+    assert "保险机制将自动恢复服务" not in source
+    assert "_restart_services_fresh" not in source
+
+
+def test_enable_command_covers_both_services():
+    import deploy_vps
+
+    command = deploy_vps._enable_services_command()
+
+    assert "systemctl daemon-reload" in command
+    assert "systemctl enable mory-assistant mory-dashboard" in command
+
+
+def test_database_migration_runs_before_new_code_restart_contract():
+    import deploy_vps
+
+    command = deploy_vps._database_migration_command()
+
+    assert "set -a" in command
+    assert ". ./.env" in command
+    assert "python3 -m alembic upgrade head" in command
+    assert "python3 -m alembic current" in command
 
 
 def test_runtime_permission_hardening_protects_credentials_and_watchdog():

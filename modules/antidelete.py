@@ -34,23 +34,6 @@ _cache_lock = Lock()
 MAX_CACHE_PER_CHAT = 50
 
 
-def _init_table(db):
-    """初始化deleted_messages表（幂等）"""
-    with _db_lock:
-        db.conn.execute("""CREATE TABLE IF NOT EXISTS deleted_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            msg_id INTEGER,
-            uid INTEGER,
-            sender_name TEXT,
-            content TEXT,
-            content_type TEXT,
-            ts INTEGER,
-            deleted_ts INTEGER
-        )""")
-        db.conn.commit()
-
-
 def cache_message(chat_id: int, msg_id: int, uid: int, sender_name: str,
                   content: str, content_type: str = "text"):
     """缓存群组消息，供后续反撤回查询
@@ -107,7 +90,6 @@ def record_deleted_message(db, chat_id: int, msg_id: int):
         return
 
     # 写入数据库
-    _init_table(db)
     with _db_lock:
         try:
             db.conn.execute(
@@ -149,8 +131,6 @@ def handle_snipe(bot, m, config, db):
         logger.error(f"检查管理员权限失败: {e}")
         bot.reply_to(m, "❌ 权限检查失败，请稍后再试")
         return
-
-    _init_table(db)
 
     # 查询该群最近一条被删除的消息
     try:
@@ -198,7 +178,6 @@ def cleanup_old_records(db, max_age: int = 86400):
         db: DB类实例
         max_age: 最大保留时间（秒）
     """
-    _init_table(db)
     cutoff = int(time.time()) - max_age
     with _db_lock:
         try:

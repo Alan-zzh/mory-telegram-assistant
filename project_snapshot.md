@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-26。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-28。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -14,7 +14,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标。风格参考仅限当前场景，含价格、权益、联系方式、保证性事实或 CTA 的样本不进入普通 AI 提示 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 当前唯一池为9个文本型号+`qwen3.5-ocr`；严格按到期日升序且同日保留配置顺序；思考型按声明调用。超时、限流和服务异常仅进程内熔断并自动回首选，只有明确额度耗尽永久拉黑；当前索引只认配置，不从数据库复活旧值 |
 | 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类（AST 实测，doc_consistency 断言）；`start_background` 引擎同文件 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；legacy `modules/auto_tasks.py` 已于 v5.38.69 拆除收敛 |
-| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 歧义联系方式仅作弱信号；微信收米收益、邀请项目收益、售卖走私商品资料及其交易续句直接处置，新闻/反诈/正常二手交易放行；重复刷屏只有无逐条广告直证时才仅删除 |
+| 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 歧义联系方式仅作弱信号；看简介头像仅与绑定频道的群演招募三锚点联合处置，普通招聘资讯放行；处置事件保留首次根因，高风险/未知状态拒绝自动恢复 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 102 个业务 `.py`（含子目录，与 METRICS 一致）；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 仅管理员商品管理（/sales 别名 handle_admin_cmd），无用户侧触发；不在 Bot 内收款，咨询承接统一走单目标漏斗 |
 | 安全中心 | 默认关闭 | `modules/security_center.py` | 统一风险评分/自动分级处置，`SECURITY_CENTER_CONFIG.enabled` |
@@ -26,8 +26,8 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关键词延迟删 | 生产开启 | `modules/keyword_auto_delete.py`、`tasks/maintenance/keyword_message_auto_delete_task.py` | 生产精确匹配 `/me@afoolGroupBot` 并延迟 300 秒删除；SQLite 队列支持重启恢复，只删消息不处罚用户 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
-| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 175 张表；`reply_style_samples`=Alembic 0002；0003=业务上下文+转化状态；0004=任务执行历史；0006=首次欢迎送达状态；0007=关键词待删恢复；0008=广告处置事件 |
-| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前备份、失败保险恢复双服务；项目巡检由 `scripts/project_audit_control.py` 只读取证并以 0/2/3 回执，三条 systemd timer 已安装启用 |
+| 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 181 张表；运行时 DDL 收归 `core/database.py`，Alembic 0009 升级旧库并把 `funnel_state` 改为 `(uid, bot_id)` 复合主键；业务模块不再按请求懒建表 |
+| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前生成私有快照，运行态验证失败时失败关闭并要求受控人工回滚，不重启同一未验证版本冒充恢复；项目巡检由 `scripts/project_audit_control.py` 只读取证并以 0/2/3 回执；三条 systemd timer 曾于 2026-08-12 验证启用，本轮未重探，当前状态未知 |
 | 转化漏斗 | 在用 | `core/db_repos/social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `core/memory_summarizer.py`、`core/profile_learner.py` | `profile_learner` 的 sticker 维度显式未启用（`STICKER_DIMENSION_ENABLED=False`，仅内存统计不持久化） |
 | Rich Message / 图片卡 | 在用 | `core/telegram_send_utils.py`、`core/broadcast_image_card.py`、`core/start_welcome_card.py`、`modules/private_preset_media.py` | `/start` 与群首次精确 @ 共用六套欢迎卡；普通用户私聊索图使用审核静态照片，原味/本人/普通照片分流，福利内容先文字后随机图；群聊与管理员不触发私聊媒体 |
@@ -38,20 +38,20 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.41.3（2026-08-27）· 走私商品资料首条处置与重复广告直证升级热修
+v5.42.0（2026-08-28）· 本地完成：Dashboard 安全、两相启动、A/B 数据链、数据库真相源、外部写入可靠性、部署与 CI 门禁整改
 
-生产状态基线：**v5.41.2 于 2026-08-27 取证时双服务 active、数据库完整；v5.41.3 以本轮 release manifest、稳定窗和账号持久态回执为准。**
+生产状态：**v5.41.4 已于 2026-08-28 部署：339/339 哈希匹配、双服务 active、health 200、启动窗零错误；UID 8862880312 保持 kicked，消息 71181 已回写删除态并固化双黑名单、永久 mute 和高风险事件。v5.42.0 仍仅本地完成，未部署；上线前必须先执行 Alembic 0009，再通过双服务、版本/哈希、启动日志和受影响业务探针。**
 
 ## 最近 3 条大事
-1. 2026-08-27 v5.41.3：售卖走私商品资料首条处置，重复广告直证不再仅删除。
-2. 2026-08-26 v5.41.2：微信收米收益正文、邀请项目收益 Bio 与看简介头像组合热修。
-3. 2026-08-23 v5.41.0：凭据搬家、原子写、发送重试、假监控拆除与卫生闸门。
+1. 2026-08-28 v5.41.4：看简介头像与绑定群演招募频道组合广告热修已部署，真实账号已补处置。
+2. 2026-08-28 v5.42.0：本地完成安全、启动、A/B、数据库、外部写入、部署与 CI 深度整改，未部署。
+3. 2026-08-24 v5.41.1：设备挂机收益广告与私密群 Bio 招揽热修已部署，历史广告已补删并限制账号。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
 modules_py=102
 core_py=77
-db_tables=175
+db_tables=181
 dashboard_routes=163
 dispatch_funcs=10
 model_router_mappings=10

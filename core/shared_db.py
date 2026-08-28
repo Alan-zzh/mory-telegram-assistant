@@ -76,7 +76,7 @@ def _get_shared_conn():
             conn.execute("PRAGMA busy_timeout=30000")
             _shared_conn = conn
             logger.info(f"✅ 共享数据库连接已建立: {db_path}")
-            # 幂等初始化 user_profiles.version 列（乐观锁支持，v5.24.0 阶段2-A）
+            # schema 只由 core.database/Alembic 管理；共享连接仅验证所需列。
             ensure_version_column(conn)
             return conn
         except Exception as e:
@@ -85,15 +85,10 @@ def _get_shared_conn():
 
 
 def ensure_version_column(conn=None) -> bool:
-    """幂等确保 user_profiles 表存在 version 列（乐观锁支持）
+    """确认中央 schema 已提供 user_profiles 乐观锁所需列。
 
-    v5.24.0 阶段2-A：为多 Bot 并发写 user_profiles 引入 SQL 乐观锁。
-    - 表不存在则建表（含 version 列）
-    - 表存在但缺 version 列则 ALTER TABLE ADD COLUMN（幂等，PRAGMA 检测）
-    - 表存在但缺 memory_summary 列也一并补齐（防御旧表）
-
-    在 _get_shared_conn 初始化时自动调用，也可外部显式调用。
-    调用方应已持有 _shared_lock，本函数不再加锁。
+    历史版本会在此函数内建表/补列，导致共享 Bot 连接可绕过主数据库的
+    schema 管理。旧库应先运行 Alembic 或由主 Bot 的 DB 初始化升级。
 
     Returns:
         True 成功，False 失败
@@ -104,39 +99,34 @@ def ensure_version_column(conn=None) -> bool:
             if not conn:
                 return False
 
-        # 先确保表存在（含 version 列定义，新表直接具备）
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS user_profiles (
-                user_id INTEGER PRIMARY KEY,
-                tags TEXT DEFAULT '[]',
-                level INTEGER DEFAULT 0,
-                interests TEXT DEFAULT '[]',
-                last_interaction INTEGER,
-                conversation_rounds INTEGER DEFAULT 0,
-                activity_score REAL DEFAULT 0.0,
-                flirt_affinity REAL DEFAULT 0.0,
-                spend_tendency REAL DEFAULT 0.0,
-                resistance_idx REAL DEFAULT 0.5,
-                peak_hours TEXT DEFAULT '[]',
-                persona_tags TEXT DEFAULT '[]',
-                memory_summary TEXT DEFAULT '',
-                version INTEGER DEFAULT 1,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        # 检测列是否存在（幂等 ALTER，避免重复添加报错）
-        cols = conn.execute("PRAGMA table_info(user_profiles)").fetchall()
-        col_names = [c[1] for c in cols]
-        if "version" not in col_names:
-            conn.execute("ALTER TABLE user_profiles ADD COLUMN version INTEGER DEFAULT 1")
-            logger.info("✅ user_profiles 表已添加 version 列（乐观锁支持）")
-        if "memory_summary" not in col_names:
-            conn.execute("ALTER TABLE user_profiles ADD COLUMN memory_summary TEXT DEFAULT ''")
-            logger.info("✅ user_profiles 表已添加 memory_summary 列")
-        conn.commit()
+        col_names = {row[1] for row in conn.execute("PRAGMA table_info(user_profiles)").fetchall()}
+        required = {
+            "user_id", "tags", "level", "interests", "last_interaction",
+            "conversation_rounds", "activity_score", "flirt_affinity",
+            "spend_tendency", "resistance_idx", "peak_hours", "persona_tags",
+            "memory_summary", "version", "updated_at",
+        }
+        missing = required - col_names
+        if missing:
+            logger.warning("共享 user_profiles schema 缺列 %s；请先运行数据库初始化/迁移", sorted(missing))
+            return False
         return True
     except Exception as e:
         logger.warning(f"ensure_version_column 失败: {e}")
+        return False
+
+
+def _ensure_funnel_state_schema(conn) -> bool:
+    """确认中央 schema 已提供多 Bot 漏斗状态表。"""
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(funnel_state)").fetchall()}
+        required = {"uid", "state", "state_ts", "version", "recovery_stage", "recovery_ts", "bot_id"}
+        if not required.issubset(cols):
+            logger.warning("共享 funnel_state schema 未就绪；请先运行数据库初始化/迁移")
+            return False
+        return True
+    except Exception as e:
+        logger.warning("检查共享 funnel_state schema 失败: %s", e)
         return False
 
 
@@ -234,25 +224,8 @@ def get_shared_profile(uid: int) -> dict:
             return {}
 
         with _shared_lock:
-            # 确保表存在
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS user_profiles (
-                    user_id INTEGER PRIMARY KEY,
-                    tags TEXT DEFAULT '[]',
-                    level INTEGER DEFAULT 0,
-                    interests TEXT DEFAULT '[]',
-                    last_interaction INTEGER,
-                    conversation_rounds INTEGER DEFAULT 0,
-                    activity_score REAL DEFAULT 0.0,
-                    flirt_affinity REAL DEFAULT 0.0,
-                    spend_tendency REAL DEFAULT 0.0,
-                    resistance_idx REAL DEFAULT 0.5,
-                    peak_hours TEXT DEFAULT '[]',
-                    persona_tags TEXT DEFAULT '[]',
-                    memory_summary TEXT DEFAULT '',
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+            if not ensure_version_column(conn):
+                return {}
             row = conn.execute(
                 "SELECT * FROM user_profiles WHERE user_id=?", (uid,)
             ).fetchone()
@@ -304,8 +277,8 @@ def save_shared_profile(uid: int, profile: dict) -> bool:
 
         import json
         with _shared_lock:
-            # 幂等确保表结构 + version 列（防御首次调用或旧表）
-            ensure_version_column(conn)
+            if not ensure_version_column(conn):
+                return False
 
             max_retries = 3  # 最大重试次数（不含首次尝试）
 
@@ -438,30 +411,12 @@ def get_shared_conversion_state(uid: int, bot_id: str = "mory") -> str:
             return "unknown"
 
         with _shared_lock:
-            # 幂等确保表存在（含 bot_id 列，v5.24.0 阶段2-C）
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS funnel_state (
-                    uid INTEGER NOT NULL,
-                    state TEXT NOT NULL DEFAULT 'touched',
-                    state_ts INTEGER NOT NULL DEFAULT 0,
-                    version INTEGER NOT NULL DEFAULT 1,
-                    recovery_stage INTEGER NOT NULL DEFAULT 0,
-                    recovery_ts INTEGER NOT NULL DEFAULT 0,
-                    bot_id TEXT DEFAULT 'mory',
-                    PRIMARY KEY (uid, bot_id)
-                )
-            """)
-            # 优先按 bot_id 过滤；若表无 bot_id 列（旧表），回退全 uid 查询
-            try:
-                row = conn.execute(
-                    "SELECT state FROM funnel_state WHERE uid=? AND bot_id=?",
-                    (uid, bot_id)
-                ).fetchone()
-            except sqlite3.OperationalError:
-                row = conn.execute(
-                    "SELECT state FROM funnel_state WHERE uid=?",
-                    (uid,)
-                ).fetchone()
+            if not _ensure_funnel_state_schema(conn):
+                return "unknown"
+            row = conn.execute(
+                "SELECT state FROM funnel_state WHERE uid=? AND bot_id=?",
+                (uid, bot_id)
+            ).fetchone()
             return row[0] if row else "unknown"
     except Exception as e:
         logger.debug(f"获取共享转化状态失败 uid={uid}: {e}")

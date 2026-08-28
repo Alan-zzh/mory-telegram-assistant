@@ -20,14 +20,13 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
-import os
 import time
 import json
 import logging
-import sqlite3
 from functools import wraps
-from flask import g, jsonify, session, request
+from flask import jsonify, session, request
 from datetime import datetime, timezone, timedelta
+from core.config_compat import redact_sensitive_config
 
 _CST = timezone(timedelta(hours=8))
 
@@ -108,22 +107,11 @@ def get_user_role_from_db(db, user_id: int) -> str:
 
 def ensure_role_permissions_table(db) -> None:
     """
-    幂等初始化 role_permissions 表：
-        1. CREATE TABLE IF NOT EXISTS
-        2. 若表为空，用 ROLE_PERMISSIONS 字典批量 INSERT（assigned_by='bootstrap'）
+    在中央 schema 已创建的 role_permissions 表为空时写入默认权限种子。
 
     在 dashboard/app.py 启动时调用一次；也可在迁移脚本中调用。
     """
     try:
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS role_permissions (
-                role TEXT NOT NULL,
-                permission TEXT NOT NULL,
-                assigned_by TEXT,
-                assigned_at TIMESTAMP,
-                PRIMARY KEY (role, permission)
-            )
-        """)
         # 检查是否已有数据
         cnt = db.execute("SELECT COUNT(*) FROM role_permissions").fetchone()[0]
         if cnt == 0:
@@ -139,12 +127,12 @@ def ensure_role_permissions_table(db) -> None:
             )
         db.commit()
     except Exception as e:
-        # 初始化失败不能阻断启动，降级到硬编码字典
+        # 初始化失败由请求鉴权 fail-closed，不能静默扩大权限。
         import logging
         logging.getLogger("dashboard.audit").warning(f"role_permissions 表初始化失败: {e}")
 
 
-def get_permissions_from_db(db, role: str) -> set:
+def get_permissions_from_db(db, role: str) -> set | None:
     """
     从 role_permissions 表读取指定角色的权限集合。
 
@@ -153,7 +141,7 @@ def get_permissions_from_db(db, role: str) -> set:
         role: 角色字符串（admin/operator/viewer）
 
     Returns:
-        权限字符串集合 set，查询失败返回空集合
+        权限字符串集合；查询失败返回 ``None``，以便调用方安全拒绝请求。
     """
     try:
         cur = db.execute(
@@ -162,9 +150,9 @@ def get_permissions_from_db(db, role: str) -> set:
         )
         return {row[0] for row in cur.fetchall()}
     except Exception as e:
-        # 表不存在或查询异常，返回空集合（调用方负责回退）
-        logging.getLogger("dashboard.audit").debug(f"权限集合查询异常，返回空集（非致命）：{e}")
-        return set()
+        # 运行时权限表异常时不能将写操作提升到静态默认权限。
+        logging.getLogger("dashboard.audit").warning(f"权限集合查询失败，拒绝写操作：{e}")
+        return None
 
 
 def grant_permission(db, role: str, permission: str, assigned_by: str = "system") -> bool:
@@ -250,7 +238,8 @@ def has_permission(permission: str, role: str = None, db=None) -> bool:
     Args:
         permission: 权限字符串（resource:action）
         role: 角色字符串，None 时从 session 读取
-        db: 数据库连接，传入则从 DB 动态查询权限；未传则回退到 ROLE_PERMISSIONS 字典（向后兼容）
+        db: 数据库连接，传入则从 DB 动态查询权限；未传仅供离线兼容调用
+            使用 ROLE_PERMISSIONS 字典。线上请求有 DB 但查询失败时必须拒绝。
 
     Returns:
         True=有权限，False=无权限
@@ -260,10 +249,9 @@ def has_permission(permission: str, role: str = None, db=None) -> bool:
     # DB 驱动模式：动态查询权限
     if db is not None:
         perms = get_permissions_from_db(db, role)
-        if perms:
-            # DB 有数据，使用动态权限
-            return permission in perms
-        # DB 为空，回退到硬编码字典（向后兼容）
+        if perms is None:
+            return False
+        return permission in perms
     perms = ROLE_PERMISSIONS.get(role, set())
     return permission in perms
 
@@ -289,14 +277,16 @@ def permission_required(permission: str):
             if not session.get("logged_in"):
                 return jsonify({"ok": False, "msg": "未登录"}), 401
 
-            # 2. 权限检查（DB 驱动，失败回退到硬编码字典）
+            # 2. 权限检查：线上动态权限库不可用时必须拒绝，不能静默放宽。
             role = get_current_role()
-            db = None
             try:
                 from dashboard.helpers import get_db
                 db = get_db()
-            except Exception:
-                db = None  # 无请求上下文或 DB 不可用，回退到字典
+            except Exception as exc:
+                logging.getLogger("dashboard.audit").warning(
+                    "权限库不可用，拒绝 %s: %s", request.path, exc
+                )
+                return jsonify({"ok": False, "msg": "权限服务不可用，请稍后重试"}), 503
             allowed = has_permission(permission, role, db=db)
 
             # 3. 记录审计日志
@@ -326,12 +316,12 @@ def _summarize_payload(max_len: int = 200) -> str:
     """提取请求 payload 摘要（截断防止日志爆炸）"""
     try:
         if request.method == "GET":
-            return json.dumps(dict(request.args), ensure_ascii=False)[:max_len]
+            data = dict(request.args)
         elif request.is_json:
             data = request.get_json(silent=True) or {}
-            return json.dumps(data, ensure_ascii=False)[:max_len]
         else:
-            return json.dumps(dict(request.form), ensure_ascii=False)[:max_len]
+            data = dict(request.form)
+        return json.dumps(redact_sensitive_config(data), ensure_ascii=False)[:max_len]
     except Exception:
         return ""
 
@@ -342,7 +332,7 @@ def log_audit(operator_id: int, operator_name: str, role: str,
     """
     写入审计日志到 audit_logs 表。
 
-    表结构（自动建表）：
+    表结构由 core.database/Alembic 创建：
         id INTEGER PRIMARY KEY AUTOINCREMENT
         ts INTEGER NOT NULL              -- Unix 时间戳
         operator_id INTEGER              -- 操作者 UID
@@ -359,21 +349,6 @@ def log_audit(operator_id: int, operator_name: str, role: str,
         from dashboard.helpers import get_db
         db = get_db()
         ts = int(time.time())
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS audit_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts INTEGER NOT NULL,
-                operator_id INTEGER,
-                operator_name TEXT,
-                role TEXT,
-                permission TEXT,
-                endpoint TEXT,
-                method TEXT,
-                allowed INTEGER,
-                ip TEXT,
-                payload_summary TEXT
-            )
-        """)
         db.execute("""
             INSERT INTO audit_logs (ts, operator_id, operator_name, role, permission, endpoint, method, allowed, ip, payload_summary)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

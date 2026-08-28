@@ -70,7 +70,7 @@
 |---|------|---------|
 | 8.1 | **chown 检查** 每次部署前自动 | `find /home/ubuntu/mory_assistant/{core,modules,dashboard} ! -user ubuntu` |
 | 8.2 | **服务文件 owner** | `ls -la /etc/systemd/system/mory-*.service` |
-| 8.3 | **依赖完整性** 部署后 `pip install -r requirements.in` | `pip check` |
+| 8.3 | **依赖完整性** 按带哈希的 `requirements.lock` 安装并审计 | `pip check` + `pip-audit` |
 | 8.4 | **deploy_vps.py 必跑** | `python deploy_vps.py --check` |
 | 8.5 | **mory.db 不覆盖** VPS 数据库与本地不同步 | `ls -la /home/ubuntu/mory_assistant/mory.db` |
 
@@ -78,7 +78,7 @@
 
 ## 引用
 
-- [AGENTS.md](../../AGENTS.md) — 精简铁律 + 引用本文件
+- [AGENTS.md](../../AGENTS.md) — 当前长期规则与发布门禁
 - [anti-patterns-code.md](anti-patterns-code.md) — 核心代码 5 大类（沉默失败/配置/DB 注册/关键路径/VPS 部署）
 - [vps-deploy-trap.md](vps-deploy-trap.md) — VPS 部署陷阱（部署一致性 6 条铁律完整版）
 - [orphan-cleanup.md](orphan-cleanup.md) — 孤儿清理机制

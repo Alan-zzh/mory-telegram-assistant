@@ -41,6 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from version import VERSION as EXPECTED_VERSION
+from core.vps_config import secure_paramiko_connect_kwargs
 
 ENV_PATH = PROJECT_ROOT / ".env"
 LOGS_DIR = PROJECT_ROOT / "logs"
@@ -122,6 +123,7 @@ def make_ssh_client():
         HOST, PORT, USER, PASS,
         timeout=15, banner_timeout=15, auth_timeout=15,
         allow_agent=False, look_for_keys=False,
+        **secure_paramiko_connect_kwargs(),
     )
     return client
 
@@ -923,7 +925,6 @@ def main():
                 time.sleep(args.interval)
             run_single_round(i, 0, log_file)  # total=0 表示无限
             i += 1
-        return 0
 
     start = args.start_round
     total = args.rounds

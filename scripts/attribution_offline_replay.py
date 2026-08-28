@@ -2,7 +2,7 @@
 """
 归因模型离线回放验证脚本
 对比：时间衰减归因 vs 末次触达归因
-用法：python -m tests.attribution.test_offline_replay --days 30
+用法：python scripts/attribution_offline_replay.py --days 30
 
 设计说明：
 - 不依赖 pytest fixture，可独立运行
@@ -23,7 +23,7 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
 # 添加项目根目录到 sys.path，便于独立运行
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -62,8 +62,8 @@ def _log_error(msg: str):
         log_path = os.path.join(logs_dir, "attribution_replay_error.log")
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now(_CST).isoformat()}] {msg}\n")
-    except Exception:
-        pass  # 日志写入失败不影响主流程
+    except OSError as error:
+        print(f"[attribution-replay] 错误日志写入失败: {error}", file=sys.stderr)
 
 
 def load_historical_events(days: int, db_path: str = None) -> list:
@@ -132,8 +132,8 @@ def load_historical_events(days: int, db_path: str = None) -> list:
     finally:
         try:
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as close_error:
+            _log_error(f"关闭只读归因数据库失败: {close_error}")
 
 
 def _group_events_by_uid(events: list) -> dict:
@@ -504,10 +504,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例:\n"
-            "  python -m tests.attribution.test_offline_replay --days 30\n"
-            "  python -m tests.attribution.test_offline_replay --days 7 --half-life 3.5\n"
-            "  python -m tests.attribution.test_offline_replay --days 30 --window 24\n"
-            "  python -m tests.attribution.test_offline_replay --db /path/to/mory.db --days 14\n"
+            "  python scripts/attribution_offline_replay.py --days 30\n"
+            "  python scripts/attribution_offline_replay.py --days 7 --half-life 3.5\n"
+            "  python scripts/attribution_offline_replay.py --days 30 --window 24\n"
+            "  python scripts/attribution_offline_replay.py --db /path/to/mory.db --days 14\n"
         ),
     )
     parser.add_argument(
@@ -542,7 +542,7 @@ def main():
         print("  1. 数据库文件存在（mory.db 或通过 --db 指定）")
         print("  2. conversion_events 表中有过去 N 天的转化事件")
         print("  3. 表中包含 event IN ('interested', 'carted', 'converted') 的记录")
-        return 0
+        return 2
 
     # 统计加载的事件
     event_counts = defaultdict(int)
@@ -592,6 +592,7 @@ def main():
     except Exception as e:
         _log_error(f"报告写入失败: {e}")
         print(f"\n[ERROR] 报告写入失败: {e}")
+        return 3
 
     return 0
 

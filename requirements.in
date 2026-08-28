@@ -11,13 +11,16 @@ cnlunar==0.2.4
 pypinyin>=0.53.0
 
 # Image processing
-Pillow>=10.0.0,<12.0.0
+# 12.3.0 修复了项目会直接解析的用户图片相关高危漏洞。
+Pillow>=12.3.0,<13.0.0
 nudenet==3.4.2
 onnxruntime>=1.20.1,<1.28.0
 opencv-python-headless>=4.13.0.92,<5.0.0
 
 # VPS SSH
-paramiko>=3.3.0,<4.0.0
+# 4.0.0 仍受 PYSEC-2026-2858 影响且暂无修复版；core.vps_config 对所有连接
+# 禁用 ssh-rsa(SHA-1)，CI 由 test_paramiko_sha1_mitigation.py 防止新入口漏接。
+paramiko>=4.0.0,<5.0.0
 
 # Dashboard
 # v5.41.0 升钉：gunicorn 21.x 存在已修复的请求走私 CVE-2024-1135/CVE-2024-6827（22.x 修复），
@@ -39,12 +42,3 @@ sqlalchemy>=2.0.0,<3.0.0
 
 # A/B testing statistics
 scipy>=1.11.0,<2.0.0
-
-# Test / quality gates used by CI
-pytest>=7.0.0
-pytest-cov>=4.0.0
-mypy>=1.5.0
-interrogate>=1.5.0
-vulture>=2.0
-radon>=5.1.0
-flake8>=7.0.0

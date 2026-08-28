@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Dashboard设置面板API - 所有/settings/*路由"""
 from flask import Blueprint, request, jsonify
-from dashboard.helpers import login_required, admin_required, get_current_role, read_config, write_config, clamp_int, clamp_float
+from dashboard.helpers import login_required, get_current_role, read_config, write_config, clamp_int, clamp_float
+from core.config_compat import redact_sensitive_config
 from core.logging_util import get_logger
 
 logger = get_logger("settings_api")
@@ -617,11 +618,16 @@ def api_settings_nsfw():
     if request.method == "GET":
         cfg = read_config()
         d = cfg.get("NSFW_DETECT_CONFIG", {"enabled": False, "threshold": 0.85})
-        return jsonify({"ok": True, "data": d})
+        return jsonify({"ok": True, "data": redact_sensitive_config(d)})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
+    if "api_key" in data:
+        return jsonify({
+            "ok": False,
+            "msg": "NSFW 凭据不得通过 Dashboard 保存，请在 .env 中配置 NSFW_DETECT_API_KEY",
+        }), 400
     cfg = read_config()
     val = cfg.get("NSFW_DETECT_CONFIG", {})
     val["enabled"] = bool(data.get("enabled", val.get("enabled", False)))
@@ -661,18 +667,21 @@ def api_settings_cas():
         return jsonify({"ok": True, "data": {
             "cas_enabled": sw.get("cas_enabled", False),
             "spamwatch_enabled": sw.get("spamwatch_enabled", False),
-            "spamwatch_token": _mask_secret(sw.get("spamwatch_token", "")),
+            "spamwatch_token_configured": bool(sw.get("spamwatch_token", "")),
         }})
     _adm = _check_admin()
     if _adm:
         return _adm
     data = request.get_json() or {}
+    if "spamwatch_token" in data:
+        return jsonify({
+            "ok": False,
+            "msg": "SpamWatch 凭据不得通过 Dashboard 保存，请在 .env 中配置 SPAMWATCH_TOKEN",
+        }), 400
     cfg = read_config()
     sw = cfg.get("SPAM_WATCH_CONFIG", {})
     sw["cas_enabled"] = bool(data.get("cas_enabled", sw.get("cas_enabled", False)))
     sw["spamwatch_enabled"] = bool(data.get("spamwatch_enabled", sw.get("spamwatch_enabled", False)))
-    if "spamwatch_token" in data:
-        sw["spamwatch_token"] = data.get("spamwatch_token", "")
     cfg["SPAM_WATCH_CONFIG"] = sw
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "CAS/SpamWatch 配置已保存"})
@@ -871,14 +880,10 @@ def api_settings_exchange_rate():
     if request.method == "GET":
         cfg = read_config()
         raw_key = cfg.get("EXCHANGE_API_KEY", "")
-        # [TRAE SOLO CN] 脱敏显示：只显示前4位和后4位，中间用****替代
-        if raw_key and len(raw_key) > 8:
-            masked_key = raw_key[:4] + "****" + raw_key[-4:]
-        elif raw_key:
-            masked_key = "****"
-        else:
-            masked_key = ""
-        return jsonify({"ok": True, "data": {"enabled": cfg.get("EXCHANGE_RATE_ENABLE", False), "api_key": masked_key}})
+        return jsonify({"ok": True, "data": {
+            "enabled": cfg.get("EXCHANGE_RATE_ENABLE", False),
+            "api_key_configured": bool(raw_key),
+        }})
     _adm = _check_admin()
     if _adm:
         return _adm
@@ -886,7 +891,10 @@ def api_settings_exchange_rate():
     cfg = read_config()
     cfg["EXCHANGE_RATE_ENABLE"] = bool(data.get("enabled", cfg.get("EXCHANGE_RATE_ENABLE", False)))
     if "api_key" in data:
-        cfg["EXCHANGE_API_KEY"] = data["api_key"]
+        return jsonify({
+            "ok": False,
+            "msg": "汇率服务凭据不得通过 Dashboard 保存，请在 .env 中配置 EXCHANGE_API_KEY",
+        }), 400
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "实时U价配置已保存"})
     return jsonify({"ok": False, "msg": "保存失败"}), 500

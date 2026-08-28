@@ -2938,4 +2938,5 @@ def get_fallback_text(reason: str = "default", is_priv: bool = False) -> str:
 
 # 【B1 批次】识图/TTS 媒体工具外移至 core/ai_media_tools.py（逐字搬运），
 # 此处再导出以兼容既有 from core.ai_engine import analyze_image/text_to_speech 调用方。
+
 from core.ai_media_tools import analyze_image, text_to_speech  # noqa: E402,F401

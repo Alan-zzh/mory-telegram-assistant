@@ -82,53 +82,23 @@ class ReplyEvolutionRepo:
         return self._db.lock
 
     def _ensure_schema(self) -> bool:
-        """兼容 Dashboard 直连 SQLite 的渐进初始化。"""
+        """确认中央数据库已完成样本表初始化，不在请求路径写 DDL。"""
         with self.lock:
             try:
-                self.conn.execute("""CREATE TABLE IF NOT EXISTS reply_style_samples (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    label TEXT NOT NULL DEFAULT '',
-                    style_text TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
-                    enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
-                    created_by TEXT NOT NULL DEFAULT '',
-                    reviewed_by TEXT NOT NULL DEFAULT '',
-                    review_note TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL,
-                    reviewed_at INTEGER NOT NULL DEFAULT 0,
-                    scene TEXT NOT NULL DEFAULT 'chat'
-                )""")
-                self.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_reply_style_samples_active "
-                    "ON reply_style_samples(status, enabled, reviewed_at)"
-                )
-                self._ensure_scene_column()
-                self.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_reply_style_samples_scene "
-                    "ON reply_style_samples(scene)"
-                )
-                self.conn.commit()
+                self.conn.execute("SELECT scene FROM reply_style_samples LIMIT 1")
                 return True
             except Exception as exc:
-                logger.warning("初始化回复风格样本库失败: %s", exc)
+                logger.warning("回复风格样本 schema 未就绪，请先运行数据库初始化/迁移: %s", exc)
                 return False
 
     def _ensure_scene_column(self) -> bool:
-        """幂等补列：兼容旧库已存在但缺少 scene 列的 reply_style_samples 表。"""
+        """验证 scene 列已由中央 schema/迁移提供。"""
         with self.lock:
             try:
-                cols = {
-                    row[1]
-                    for row in self.conn.execute("PRAGMA table_info(reply_style_samples)").fetchall()
-                }
-                if "scene" not in cols:
-                    self.conn.execute(
-                        "ALTER TABLE reply_style_samples ADD COLUMN scene TEXT NOT NULL DEFAULT 'chat'"
-                    )
-                    self.conn.commit()
+                self.conn.execute("SELECT scene FROM reply_style_samples LIMIT 1")
                 return True
             except Exception as exc:
-                logger.warning("补 reply_style_samples.scene 列失败: %s", exc)
+                logger.warning("reply_style_samples.scene 未就绪，请先运行数据库初始化/迁移: %s", exc)
                 return False
 
     def create_reply_style_sample(

@@ -13,7 +13,11 @@ core/message_dispatcher.py  ·  消息分发器
   → P9 画像标签 → P10 AI回复
 """
 
-import os, time, random, traceback, threading, uuid
+import time
+import random
+import traceback
+import threading
+import uuid
 import re
 from datetime import datetime, timezone, timedelta
 from threading import Lock
@@ -22,17 +26,15 @@ from typing import Any
 
 from core.helpers import can_delete_message, format_user_mention
 from core.bot_initializer import BotContext
-from core.i18n import set_user_language, _
+from core.i18n import set_user_language
 from core.logging_util import get_logger, set_logging_context, clear_logging_context
 from core.tracing import is_tracing_enabled
 from core.handlers.command_handlers import (
     _handle_welcome_fed_commands, _handle_admin_feature_commands,
-    _handle_feature_keywords, _handle_group_admin_commands,
-    _handle_module_commands, _handle_extended_commands,
+    _handle_feature_keywords,
 )
 from core.handlers.ai_reply_handler import (
-    _dispatch_p10_ai, _build_convert_hint, _build_emotional_hint,
-    _build_normal_hint, _notify_admin_for_deep_conversation,
+    _dispatch_p10_ai,
 )
 
 logger = get_logger("message_dispatcher")
@@ -425,14 +427,6 @@ def _handle_tool_calls(message: dict, bot, m, config: dict, db) -> str | None:
         func_name = func.get("name", "")
 
         try:
-            import json as _json
-            args = {}
-            if func.get("arguments"):
-                try:
-                    args = _json.loads(func["arguments"])
-                except Exception:
-                    args = {}
-
             if func_name in {"send_price_list", "send_private_guide"}:
                 # 兼容旧模型/缓存返回的工具调用，但绝不执行外部发送动作。
                 logger.warning(
@@ -1161,7 +1155,7 @@ def _handle_new_chat_members(bot, m, config, db, ctx: BotContext):
             logger.error(f"入群广告资料检测异常 uid={user_id}: {e}")
 
         # 步骤3：启动验证码
-        from modules.verification import start_verification, check_verification_answer
+        from modules.verification import start_verification
         from modules.welcome_customization import send_welcome_message
         from modules.group_mgr import handle_new_members
         from modules.force_subscribe import check_force_subscribe
@@ -1495,7 +1489,6 @@ def _dispatch_p4_flood(dctx: DispatchContext) -> bool:
     CONFIG = ctx.config
     db = ctx.db
     bot = ctx.bot
-    msg = dctx.text
     uid = dctx.uid
     uname = dctx.uname
     chat_id = dctx.chat_id
@@ -1561,7 +1554,7 @@ def _dispatch_p4_flood(dctx: DispatchContext) -> bool:
                     except Exception as e:
                         logger.debug(f"操作异常: {e}")
                 else:
-                    logger.info(f"[消息锁] 消息删除已禁用，跳过删除消息")
+                    logger.info("[消息锁] 消息删除已禁用，跳过删除消息")
                 clear_logging_context()
                 return True
         except Exception as e:
@@ -1618,7 +1611,6 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
     uid = dctx.uid
     uname = dctx.uname
     chat_id = dctx.chat_id
-    is_priv = dctx.is_priv
     is_group = dctx.is_group
     mory_bot = ctx.mory_bot
     ai = ctx.ai
@@ -1883,14 +1875,8 @@ def _handle_feedback(dctx: DispatchContext, analysis: dict) -> bool:
     """P9.7 用户反馈/找Mory（安抚回复 + 通知管理员）"""
     m = dctx.msg
     ctx = dctx.ctx
-    CONFIG = ctx.config
-    db = ctx.db
-    bot = ctx.bot
     msg = dctx.text
-    uid = dctx.uid
     uname = dctx.uname
-    chat_id = dctx.chat_id
-    is_priv = dctx.is_priv
     is_group = dctx.is_group
     mory_bot = ctx.mory_bot
 

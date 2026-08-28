@@ -620,13 +620,11 @@
   },
   "NSFW_DETECT_CONFIG": {
     "enabled": false,
-    "threshold": 0.85,
-    "api_key": ""
+    "threshold": 0.85
   },
   "SPAM_WATCH_CONFIG": {
     "cas_enabled": false,
     "spamwatch_enabled": false,
-    "spamwatch_token": "",
     "auto_ban": false
   },
   "AUTO_GREETING": false,

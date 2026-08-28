@@ -380,7 +380,7 @@ telemetry.log_group_leave(user_id, chat_id, "persona_cute_vs_cool", "B")
 | `core/db_repos/ab_test_repo.py` | 数据层：实验 CRUD、漏斗统计、特征提取 |
 | `modules/ab_insights.py` | 周度分析：Top 5 特征/毒点、生成运营建议 |
 | `modules/ab_guardian.py` | 异常守护：阈值巡检、自动回滚、管理员通知 |
-| `modules/auto_tasks.py` | 定时任务注册：ab_guardian（5min）、ab_weekly（周一 02:00） |
+| `tasks/analytics/ab_guardian_task.py` / `ab_weekly_task.py` | BaseTask 自动发现：ab_guardian（5min）、ab_weekly（周一 02:00） |
 | `core/database.py` | 表结构初始化：6 张 A/B 测试相关表 |
 | `config.json.example` | 配置模板：AB_TEST_CONFIG 完整示例 |
 
