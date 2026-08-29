@@ -795,8 +795,8 @@ class _PendingBot:
         self.sent.append((chat_id, text))
 
 
-def test_startup_traceback_skipped_admin_not_counted_as_failed():
-    """任务16：启动追溯命中配置管理员 → 不计 total_failed，报告展示跳过计数。"""
+def test_startup_traceback_skipped_admin_never_deletes_and_clears_tracking(caplog):
+    """启动追溯命中配置管理员 → 整条跳过，不删消息、不计失败并清理追踪。"""
     from datetime import datetime, timezone
 
     from modules.ad_detector import AdDetector
@@ -815,12 +815,79 @@ def test_startup_traceback_skipped_admin_not_counted_as_failed():
     detector.process_pending_bans(bot, {"ADMIN_ID": 99, "ADMIN_IDS": [42]})
 
     # 配置管理员豁免：未被禁言、不计入禁言失败
+    assert bot.deleted == []
     assert bot.restricted == []
     report_text = next(text for cid, text in bot.sent if cid == 99)
-    assert "禁言失败：0人" in report_text
-    assert "跳过管理员/查询失败：1人" in report_text
+    assert "处置失败：0人" in report_text
+    assert "跳过管理员/白名单：1人" in report_text
+    assert "身份查询失败待重试：0人" in report_text
+    assert not any("永久禁言成功" in record.message for record in caplog.records)
     # 视为正常跳过（非失败），追踪被清理而非保留重试
     assert "42" not in detector.suspicious_users
+
+
+def test_startup_traceback_skipped_whitelist_never_deletes_and_clears_tracking():
+    """AD_WHITELIST 与管理员使用同一保护边界，历史直证消息也不得被删除。"""
+    from datetime import datetime, timezone
+
+    from modules.ad_detector import AdDetector
+
+    db = _PendingDB()
+    detector = AdDetector(config={}, db=db)
+    detector.suspicious_users["42"] = {
+        "score": 9,
+        "first_seen": datetime.now(timezone.utc),
+        "messages": [
+            {"chat_id": -1001, "msg_id": 10, "score": 3, "direct_message_is_ad": True},
+        ],
+    }
+    bot = _PendingBot()
+
+    detector.process_pending_bans(
+        bot,
+        {"ADMIN_ID": 99, "AD_WHITELIST": {"user_ids": [42]}},
+    )
+
+    assert bot.deleted == []
+    assert bot.restricted == []
+    report_text = next(text for cid, text in bot.sent if cid == 99)
+    assert "跳过管理员/白名单：1人" in report_text
+    assert "身份查询失败待重试：0人" in report_text
+    assert "42" not in detector.suspicious_users
+
+
+class _PendingAdminQueryFailureBot(_PendingBot):
+    def get_chat_member(self, chat_id, uid):
+        raise RuntimeError("telegram unavailable")
+
+
+def test_startup_traceback_admin_query_failure_keeps_tracking_for_retry(caplog):
+    """群管身份查询失败时不删不禁言，并在报告中单列待重试。"""
+    from datetime import datetime, timezone
+
+    from modules.ad_detector import AdDetector
+
+    db = _PendingDB()
+    detector = AdDetector(config={}, db=db)
+    detector.suspicious_users["42"] = {
+        "score": 9,
+        "first_seen": datetime.now(timezone.utc),
+        "messages": [
+            {"chat_id": -1001, "msg_id": 10, "score": 3, "direct_message_is_ad": True},
+        ],
+    }
+    bot = _PendingAdminQueryFailureBot()
+
+    detector.process_pending_bans(bot, {"ADMIN_ID": 99})
+
+    assert bot.deleted == []
+    assert bot.restricted == []
+    report_text = next(text for cid, text in bot.sent if cid == 99)
+    assert "处置失败：0人" in report_text
+    assert "跳过管理员/白名单：0人" in report_text
+    assert "身份查询失败待重试：1人" in report_text
+    assert "42" in detector.suspicious_users
+    assert not any("永久禁言成功" in record.message for record in caplog.records)
 
 
 def test_admin_join_skips_profile_ad_detection(monkeypatch):

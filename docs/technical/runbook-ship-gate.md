@@ -10,9 +10,9 @@ python -m pytest <相关测试> -q                      # 必跑：真实受影�
 python -m compileall <受影响目录或文件> -q          # 必跑：语法兜底
 # 待部署、高风险、跨模块或公共基础设施改动再跑：
 python -m pytest tests/unit/ -q
-flake8 core/ai_engine.py core/settings.py core/database.py core/user_lifecycle.py \
-       core/metrics.py core/anomaly_detector.py dashboard/app.py dashboard/api/metrics_api.py \
-       --ignore=E501,W503,W504,E203,E402 --max-line-length=120   # 8 文件 CI 清单
+ruff check core/ai_engine.py core/settings.py core/database.py core/user_lifecycle.py \
+           core/metrics.py core/anomaly_detector.py dashboard/app.py dashboard/api/metrics_api.py \
+           --select=E,F --ignore=E501,E203,E402 --line-length=120   # 与 CI 完全一致的 8 文件清单
 mypy core/settings.py core/database.py core/ai_engine.py core/user_lifecycle.py --follow-imports=silent
 ```
 

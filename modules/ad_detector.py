@@ -1936,15 +1936,18 @@ class AdDetector:
         # 统计信息
         total_deleted = 0
         total_banned = 0
-        total_failed = 0
-        skipped_count = 0
+        failed_users = set()
+        skipped_protected_users = set()
+        retry_pending_users = set()
         processed_users = []
 
         for user_key, track in pending_bans:
             uid = int(user_key)
-            failures_before_user = total_failed
             total_score = track["score"]
             messages = track["messages"]
+            user_failed = False
+            user_retry_pending = False
+            user_skipped_protected = False
             
             user_info = {"uid": uid, "score": total_score, "deleted": 0, "banned": False}
 
@@ -1986,21 +1989,34 @@ class AdDetector:
                     )
                     enforcement_data = enforcement.get("data", {})
                     skipped_reason = enforcement_data.get("skipped_reason")
-                    if skipped_reason in ("admin_or_creator", "admin_query_failed"):
-                        # 【v5.38.22】管理员豁免/群管查询失败降级：不计失败、不记"处置未闭合"警告
-                        skipped_count += 1
-                        account_ok = False
-                    else:
-                        account_ok = bool(
-                            enforcement_data.get("muted") and enforcement_data.get("blacklisted")
+                    if skipped_reason in ("admin_or_creator", "whitelist"):
+                        # 保护对象必须整条短路；历史逐条删除不能绕过统一处置入口的豁免。
+                        skipped_protected_users.add(uid)
+                        user_skipped_protected = True
+                        logger.warning(
+                            f"[AD] 启动追溯跳过保护对象: uid={uid} chat_id={chat_id} "
+                            f"reason={skipped_reason}"
                         )
-                        if not account_ok:
-                            total_failed += 1
-                            logger.warning(
-                                f"[AD] 启动追溯账号处置未闭合: uid={uid} chat_id={chat_id} "
-                                f"muted={enforcement_data.get('muted')} "
-                                f"blacklisted={enforcement_data.get('blacklisted')}"
-                            )
+                        continue
+                    if skipped_reason == "admin_query_failed":
+                        # 身份查询失败不是正常豁免，也不是已完成；保留追踪供下次重试。
+                        retry_pending_users.add(uid)
+                        user_retry_pending = True
+                        logger.warning(
+                            f"[AD] 启动追溯身份查询失败，保留追踪待重试: uid={uid} chat_id={chat_id}"
+                        )
+                        continue
+
+                    account_ok = bool(
+                        enforcement_data.get("muted") and enforcement_data.get("blacklisted")
+                    )
+                    if not account_ok:
+                        user_failed = True
+                        logger.warning(
+                            f"[AD] 启动追溯账号处置未闭合: uid={uid} chat_id={chat_id} "
+                            f"muted={enforcement_data.get('muted')} "
+                            f"blacklisted={enforcement_data.get('blacklisted')}"
+                        )
                     deleted_now = int(enforcement_data.get("deleted_count", 0) or 0)
                     user_info["deleted"] += deleted_now
                     total_deleted += deleted_now
@@ -2012,18 +2028,32 @@ class AdDetector:
                             user_info["deleted"] += 1
                             total_deleted += 1
                         elif deletion["status"] == "failed":
-                            total_failed += 1
-                    logger.warning(f"[AD] 启动追溯永久禁言: uid={uid}, 累计评分={total_score}, chat_id={chat_id}")
+                            user_failed = True
                     if account_ok:
                         user_info["banned"] = True
+                        logger.warning(
+                            f"[AD] 启动追溯永久禁言成功: uid={uid}, "
+                            f"累计评分={total_score}, chat_id={chat_id}"
+                        )
                 except Exception as e:
                     logger.warning(f"启动追溯处置失败: uid={uid}, {e}")
-                    total_failed += 1
+                    user_failed = True
 
             if user_info["banned"]:
                 total_banned += 1
+            if user_retry_pending:
+                user_info["status"] = "retry_pending"
+            elif user_failed:
+                user_info["status"] = "failed"
+                failed_users.add(uid)
+            elif user_skipped_protected and not user_info["banned"]:
+                user_info["status"] = "skipped_protected"
+            else:
+                user_info["status"] = "completed"
             processed_users.append(user_info)
-            if total_failed == failures_before_user:
+            if user_retry_pending:
+                logger.warning(f"[AD] 启动追溯待重试，保留追踪: uid={uid}")
+            elif not user_failed:
                 self.clear_user_tracking(uid)
             else:
                 logger.warning(f"[AD] 启动追溯部分失败，保留追踪供下次重试: uid={uid}")
@@ -2037,14 +2067,20 @@ class AdDetector:
                     f"👥 处理用户数：{len(pending_bans)}",
                     f"🗑 删除消息：{total_deleted}条",
                     f"🔇 成功永久禁言：{total_banned}人",
-                    f"⚠️ 禁言失败：{total_failed}人",
-                    f"🛡 跳过管理员/查询失败：{skipped_count}人",
+                    f"⚠️ 处置失败：{len(failed_users)}人",
+                    f"🛡 跳过管理员/白名单：{len(skipped_protected_users)}人",
+                    f"⏳ 身份查询失败待重试：{len(retry_pending_users)}人",
                     f"━━━━━━━━━━━━━━━",
                 ]
                 
                 # 显示最近5个用户的详情
                 for i, ui in enumerate(processed_users[:5], 1):
-                    status = "✅" if ui["banned"] else "❌"
+                    status = {
+                        "completed": "✅",
+                        "skipped_protected": "🛡",
+                        "retry_pending": "⏳",
+                        "failed": "❌",
+                    }.get(ui["status"], "❌")
                     report_lines.append(f"{i}. {status} uid={ui['uid']} 评分={ui['score']} 删除={ui['deleted']}条")
                 
                 if len(processed_users) > 5:

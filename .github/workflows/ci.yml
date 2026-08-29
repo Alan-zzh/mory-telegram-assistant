@@ -145,50 +145,5 @@ jobs:
           path: htmlcov/
           retention-days: 7
 
-  # ══════════════════════════════════════════════════════════════════════
-  # 部署任务：仅 main 分支触发（当前为注释状态，避免误操作）
-  # ══════════════════════════════════════════════════════════════════════
-  # deploy:
-  #   name: 部署到 VPS
-  #   needs: test
-  #   runs-on: ubuntu-latest
-  #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-  #   
-  #   steps:
-  #     # 步骤 1：检出代码
-  #     - name: 检出代码
-  #       uses: actions/checkout@v4
-  #     
-  #     # 步骤 2：配置 SSH 密钥
-  #     - name: 配置 SSH 密钥
-  #       run: |
-  #         mkdir -p ~/.ssh
-  #         echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
-  #         chmod 600 ~/.ssh/id_rsa
-  #         ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
-  #     
-  #     # 步骤 3：SSH 连接并部署
-  #     - name: SSH 连接并部署
-  #       run: |
-  #         ssh ubuntu@${{ secrets.VPS_HOST }} << 'EOF'
-  #           # 进入项目目录
-  #           cd /path/to/mory_assistant
-  #           
-  #           # 拉取最新代码
-  #           git pull origin main
-  #           
-  #           # 安装依赖
-  #           pip install -r requirements.lock
-  #           
-  #           # 重启服务
-  #           sudo systemctl restart mory-assistant
-  #           sudo systemctl restart mory-dashboard
-  #           
-  #           # 等待服务启动
-  #           sleep 5
-  #           
-  #           # 健康检查
-  #           curl -f http://localhost:6616/api/health || exit 1
-  #           
-  #           echo "✅ 部署成功"
-  #         EOF
+  # 生产部署不由 CI 自动执行；发布流程与真实业务验收统一遵循
+  # docs/technical/runbook-ship-gate.md，避免注释示例漂移成第二套部署合同。

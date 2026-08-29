@@ -125,4 +125,5 @@ reports/
 # ── AI 审查/分析产物（better-harness 等，不提交）────────────────────
 .qoder/
 .better-harness/
+.codex/better-harness/
 .codebuddy/
