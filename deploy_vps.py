@@ -219,6 +219,41 @@ def _database_migration_command() -> str:
         "python3 -m alembic upgrade head && python3 -m alembic current"
     )
 
+
+def _database_backup_command() -> str:
+    """迁移前创建经过完整性校验的在线 SQLite 快照。"""
+    project_dir = shlex.quote(VPS_PATH)
+    code = "\n".join(
+        [
+            "import glob, hashlib, os, secrets, sqlite3, time",
+            "stamp = int(time.time())",
+            "token = secrets.token_hex(8)",
+            "stage = f'backups/.mory_pre_migration_{stamp}_{token}.tmp'",
+            "target = f'backups/mory_pre_migration_{stamp}_{token}.db'",
+            "source = sqlite3.connect('file:mory.db?mode=ro', uri=True)",
+            "snapshot = sqlite3.connect(stage)",
+            "source.backup(snapshot)",
+            "integrity = snapshot.execute('PRAGMA integrity_check').fetchone()[0]",
+            "foreign_keys = snapshot.execute('PRAGMA foreign_key_check').fetchall()",
+            "snapshot.close()",
+            "source.close()",
+            "assert integrity == 'ok', integrity",
+            "assert not foreign_keys, f'foreign_key_errors={len(foreign_keys)}'",
+            "os.chmod(stage, 0o600)",
+            "os.replace(stage, target)",
+            "handle = open(target, 'rb')",
+            "digest = hashlib.file_digest(handle, 'sha256').hexdigest()",
+            "handle.close()",
+            "old = sorted(glob.glob('backups/mory_pre_migration_*.db'), key=os.path.getmtime, reverse=True)[3:]",
+            "[os.unlink(path) for path in old]",
+            "print('DB_BACKUP_OK', os.path.basename(target), digest)",
+        ]
+    )
+    return (
+        f"cd {project_dir} && umask 077 && mkdir -p backups && chmod 0700 backups && "
+        f"test -f mory.db && python3 -c {shlex.quote(code)}"
+    )
+
 # 绝不上传的文件名（含凭据/运行态/旧备份）。_collect_upload_files 只扫描 .py 文件，
 # 故 .bat/.sh 等非 Python 脚本根本不会被收集，无需在此列举。
 # v5.16.5 曾在此防御已删除的 deploy.bat/start.sh/start_dashboard.bat/docker_deploy.sh，
@@ -705,6 +740,20 @@ def main() -> bool:
             err = stderr.read().decode("utf-8", errors="replace").strip()
             raise RuntimeError(f"运行态权限加固失败：{err or 'unknown error'}")
         print("  ✅ .env/config/db 已最小权限化，root cron 使用 root-owned watchdog")
+
+        # SQLite migration 可能重建表或去重数据；必须先留下可校验的一致性快照。
+        print("  备份生产数据库（在线一致性快照） ...")
+        stdin, stdout, stderr = client.exec_command(
+            _database_backup_command(), timeout=180)
+        backup_out = stdout.read().decode("utf-8", errors="replace").strip()
+        backup_err = stderr.read().decode("utf-8", errors="replace").strip()
+        backup_rc = stdout.channel.recv_exit_status()
+        if backup_rc != 0 or not backup_out.startswith("DB_BACKUP_OK "):
+            raise RuntimeError(
+                "生产数据库备份或完整性校验失败，拒绝执行迁移："
+                f"{(backup_err or backup_out)[-1200:]}"
+            )
+        print(f"  ✅ {backup_out}")
 
         # schema 必须在新代码重启前升级；应用启动期不再允许按请求懒建表。
         print("  执行数据库迁移 ...")

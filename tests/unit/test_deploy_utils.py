@@ -393,6 +393,26 @@ def test_database_migration_runs_before_new_code_restart_contract():
     assert "python3 -m alembic current" in command
 
 
+def test_database_migration_is_guarded_by_verified_online_backup():
+    import deploy_vps
+
+    command = deploy_vps._database_backup_command()
+    source = Path(deploy_vps.__file__).read_text(encoding="utf-8")
+
+    assert "file:mory.db?mode=ro" in command
+    assert "source.backup(snapshot)" in command
+    assert "PRAGMA integrity_check" in command
+    assert "PRAGMA foreign_key_check" in command
+    assert "secrets.token_hex(8)" in command
+    assert "os.chmod(stage, 0o600)" in command
+    assert "os.replace(stage, target)" in command
+    assert "DB_BACKUP_OK" in command
+    deploy_body = source[source.index("def main"):]
+    backup_call = deploy_body.index("_database_backup_command()")
+    migration_call = deploy_body.index("_database_migration_command()")
+    assert backup_call < migration_call
+
+
 def test_runtime_permission_hardening_protects_credentials_and_watchdog():
     import deploy_vps
 

@@ -27,7 +27,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 181 张表；运行时 DDL 收归 `core/database.py`，Alembic 0009 升级旧库并把 `funnel_state` 改为 `(uid, bot_id)` 复合主键；业务模块不再按请求懒建表 |
-| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；部署前生成私有快照，运行态验证失败时失败关闭并要求受控人工回滚，不重启同一未验证版本冒充恢复；项目巡检由 `scripts/project_audit_control.py` 只读取证并以 0/2/3 回执；三条 systemd timer 曾于 2026-08-12 验证启用，本轮未重探，当前状态未知 |
+| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；迁移前自动生成随机名 0600 SQLite 在线快照并校验完整性/外键，失败即阻断；运行态验证失败时要求受控人工回滚，不重启同一未验证版本冒充恢复；项目巡检由 `scripts/project_audit_control.py` 只读取证并以 0/2/3 回执 |
 | 转化漏斗 | 在用 | `core/db_repos/social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `core/memory_summarizer.py`、`core/profile_learner.py` | `profile_learner` 的 sticker 维度显式未启用（`STICKER_DIMENSION_ENABLED=False`，仅内存统计不持久化） |
 | Rich Message / 图片卡 | 在用 | `core/telegram_send_utils.py`、`core/broadcast_image_card.py`、`core/start_welcome_card.py`、`modules/private_preset_media.py` | `/start` 与群首次精确 @ 共用六套欢迎卡；普通用户私聊索图使用审核静态照片，原味/本人/普通照片分流，福利内容先文字后随机图；群聊与管理员不触发私聊媒体 |
@@ -38,14 +38,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.42.1（2026-08-29）· 本地完成：启动追溯保护对象整条放行、身份查询失败待重试、处置报告与日志纠真
+v5.42.1（2026-08-29）· 已部署：启动追溯跨群预检、保护对象整条放行、身份查询失败待重试
 
-生产状态：**v5.41.4 已于 2026-08-28 部署：339/339 哈希匹配、双服务 active、health 200、启动窗零错误；UID 8862880312 保持 kicked，消息 71181 已回写删除态并固化双黑名单、永久 mute 和高风险事件。v5.42.1 仍仅本地完成，未部署；上线前必须先执行 Alembic 0009，再通过双服务、版本/哈希、启动日志和受影响业务探针。**
+生产状态：**v5.42.1 已于 2026-08-29 部署：双服务 active/enabled 且零重启，health 200，版本与关键哈希一致；Alembic 0009、数据库完整性、Telegram getMe 和启动追溯五类业务合同探针均通过。生产库当前无达到追溯阈值的自然样本，本轮未制造真实处罚事件。**
 
 ## 最近 3 条大事
-1. 2026-08-29 v5.42.1：本地修复启动追溯误删保护对象、查询失败假完成与禁言日志失真，未部署。
-2. 2026-08-28 v5.41.4：看简介头像与绑定群演招募频道组合广告热修已部署，真实账号已补处置。
-3. 2026-08-28 v5.42.0：本地完成安全、启动、A/B、数据库、外部写入、部署与 CI 深度整改，未部署。
+1. 2026-08-29 v5.42.1：启动追溯跨群保护修复已部署，生产证据链通过。
+2. 2026-08-29 部署门禁：迁移前 SQLite 在线快照、完整性与外键校验已固化。
+3. 2026-08-28 v5.41.4：资料与绑定频道组合广告热修已部署并补处置。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

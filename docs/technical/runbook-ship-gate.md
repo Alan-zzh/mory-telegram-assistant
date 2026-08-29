@@ -21,6 +21,7 @@ mypy core/settings.py core/database.py core/ai_engine.py core/user_lifecycle.py 
 python scripts/verify_db_methods.py   # 新增 Repo 方法必须注册 _REPO_METHOD_MAP/_REPO_ATTR_MAP
 # + 读写往返测试（write → read → assert，禁止只跑 import）
 # + schema 改动同步 Alembic migration，部署后验证表结构
+# + deploy_vps.py 在迁移前自动创建 0600 在线快照并校验 integrity/FK；失败必须阻断
 ```
 
 ### 配置改动必跑
