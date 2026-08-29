@@ -17,7 +17,7 @@ import re
 import shlex
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 def _configure_stdio():
     """仅在命令行执行部署时切换 UTF-8，避免被测试导入时破坏捕获流。"""
@@ -211,13 +211,21 @@ def _enable_services_command() -> str:
 
 
 def _database_migration_command() -> str:
-    """加载生产环境变量并把真实数据库升级到当前 Alembic head。"""
+    """把本仓库唯一生产数据库精确绑定后升级到 Alembic head。"""
     project_dir = shlex.quote(VPS_PATH)
-    return (
-        f"cd {project_dir} && set -a && "
-        "if [ -f .env ]; then . ./.env; fi && set +a && "
-        "python3 -m alembic upgrade head && python3 -m alembic current"
+    database_path = str(PurePosixPath(VPS_PATH) / "mory.db")
+    code = "\n".join(
+        [
+            "import os, subprocess, sys",
+            "env = os.environ.copy()",
+            "env.pop('DATABASE_URL', None)",
+            f"env['MORY_DB_PATH'] = {database_path!r}",
+            "subprocess.run([sys.executable, '-m', 'alembic', 'upgrade', 'head'], check=True, env=env)",
+            "subprocess.run([sys.executable, '-m', 'alembic', 'current'], check=True, env=env)",
+            "print('MIGRATION_OK')",
+        ]
     )
+    return f"cd {project_dir} && python3 -c {shlex.quote(code)}"
 
 
 def _database_backup_command() -> str:

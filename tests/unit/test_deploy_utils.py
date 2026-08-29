@@ -383,14 +383,22 @@ def test_enable_command_covers_both_services():
 
 
 def test_database_migration_runs_before_new_code_restart_contract():
+    import shlex
+
     import deploy_vps
 
     command = deploy_vps._database_migration_command()
+    script = shlex.split(command)[-1]
 
-    assert "set -a" in command
-    assert ". ./.env" in command
-    assert "python3 -m alembic upgrade head" in command
-    assert "python3 -m alembic current" in command
+    assert ". ./.env" not in command
+    assert "env.pop('DATABASE_URL', None)" in script
+    assert "env['MORY_DB_PATH']" in script
+    assert "/home/ubuntu/mory_assistant/mory.db" in script
+    assert "\\home\\ubuntu" not in script
+    assert "'alembic', 'upgrade', 'head'" in script
+    assert "'alembic', 'current'" in script
+    assert script.count("check=True") == 2
+    assert "MIGRATION_OK" in script
 
 
 def test_database_migration_is_guarded_by_verified_online_backup():

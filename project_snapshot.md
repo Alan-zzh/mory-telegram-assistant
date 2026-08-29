@@ -27,7 +27,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
 | Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 181 张表；运行时 DDL 收归 `core/database.py`，Alembic 0009 升级旧库并把 `funnel_state` 改为 `(uid, bot_id)` 复合主键；业务模块不再按请求懒建表 |
-| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；迁移前自动生成随机名 0600 SQLite 在线快照并校验完整性/外键，失败即阻断；运行态验证失败时要求受控人工回滚，不重启同一未验证版本冒充恢复；项目巡检由 `scripts/project_audit_control.py` 只读取证并以 0/2/3 回执 |
+| 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；Alembic 清除继承的 `DATABASE_URL` 并精确绑定生产 `mory.db`，迁移前生成随机名 0600 在线快照并校验完整性/外键，任一步失败即阻断；运行态验证失败时要求受控人工回滚 |
 | 转化漏斗 | 在用 | `core/db_repos/social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
 | 记忆 / 画像 | 在用 | `core/memory_summarizer.py`、`core/profile_learner.py` | `profile_learner` 的 sticker 维度显式未启用（`STICKER_DIMENSION_ENABLED=False`，仅内存统计不持久化） |
 | Rich Message / 图片卡 | 在用 | `core/telegram_send_utils.py`、`core/broadcast_image_card.py`、`core/start_welcome_card.py`、`modules/private_preset_media.py` | `/start` 与群首次精确 @ 共用六套欢迎卡；普通用户私聊索图使用审核静态照片，原味/本人/普通照片分流，福利内容先文字后随机图；群聊与管理员不触发私聊媒体 |
