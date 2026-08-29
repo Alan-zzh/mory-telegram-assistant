@@ -1970,13 +1970,48 @@ class AdDetector:
                 if chat_id:
                     messages_by_chat.setdefault(chat_id, []).append(msg_info)
 
+            # 在任何删除/禁言前先完成该用户涉及群的身份预检。否则第二个群才发现
+            # 管理员或查询失败时，第一个群可能已经产生不可逆副作用。
+            from modules.ad_enforcement import (
+                _is_chat_admin_member,
+                delete_confirmed_ad_message,
+                enforce_ad_user,
+            )
+            for chat_id in messages_by_chat:
+                admin_status = _is_chat_admin_member(bot, chat_id, uid)
+                if admin_status == "admin":
+                    skipped_protected_users.add(uid)
+                    user_skipped_protected = True
+                    logger.warning(
+                        f"[AD] 启动追溯预检跳过群管/群主: uid={uid} chat_id={chat_id}"
+                    )
+                    break
+                if admin_status == "unknown":
+                    retry_pending_users.add(uid)
+                    user_retry_pending = True
+                    logger.warning(
+                        f"[AD] 启动追溯预检身份查询失败，保留追踪待重试: "
+                        f"uid={uid} chat_id={chat_id}"
+                    )
+                    break
+
+            if user_skipped_protected or user_retry_pending:
+                user_info["status"] = (
+                    "retry_pending" if user_retry_pending else "skipped_protected"
+                )
+                processed_users.append(user_info)
+                if user_retry_pending:
+                    logger.warning(f"[AD] 启动追溯待重试，保留追踪: uid={uid}")
+                else:
+                    self.clear_user_tracking(uid)
+                continue
+
             for chat_id, chat_messages in messages_by_chat.items():
                 confirmed = [
                     item for item in chat_messages
                     if self._has_direct_message_evidence(item)
                 ]
                 try:
-                    from modules.ad_enforcement import delete_confirmed_ad_message, enforce_ad_user
                     enforcement = enforce_ad_user(
                         bot=bot,
                         db=self.db,
@@ -1997,7 +2032,7 @@ class AdDetector:
                             f"[AD] 启动追溯跳过保护对象: uid={uid} chat_id={chat_id} "
                             f"reason={skipped_reason}"
                         )
-                        continue
+                        break
                     if skipped_reason == "admin_query_failed":
                         # 身份查询失败不是正常豁免，也不是已完成；保留追踪供下次重试。
                         retry_pending_users.add(uid)
@@ -2005,7 +2040,7 @@ class AdDetector:
                         logger.warning(
                             f"[AD] 启动追溯身份查询失败，保留追踪待重试: uid={uid} chat_id={chat_id}"
                         )
-                        continue
+                        break
 
                     account_ok = bool(
                         enforcement_data.get("muted") and enforcement_data.get("blacklisted")

@@ -890,6 +890,77 @@ def test_startup_traceback_admin_query_failure_keeps_tracking_for_retry(caplog):
     assert not any("永久禁言成功" in record.message for record in caplog.records)
 
 
+class _PendingMultiChatBot(_PendingBot):
+    def __init__(self, statuses, failing_chat_id=None):
+        super().__init__()
+        self.statuses = statuses
+        self.failing_chat_id = failing_chat_id
+
+    def get_chat_member(self, chat_id, uid):
+        from types import SimpleNamespace
+
+        if chat_id == self.failing_chat_id:
+            raise RuntimeError("telegram unavailable")
+        return SimpleNamespace(status=self.statuses.get(chat_id, "member"))
+
+
+def _multi_chat_pending_detector():
+    from datetime import datetime, timezone
+
+    from modules.ad_detector import AdDetector
+
+    detector = AdDetector(config={}, db=_PendingDB())
+    detector.suspicious_users["42"] = {
+        "score": 9,
+        "first_seen": datetime.now(timezone.utc),
+        "messages": [
+            {"chat_id": -1001, "msg_id": 10, "score": 3, "direct_message_is_ad": True},
+            {"chat_id": -1002, "msg_id": 20, "score": 3, "direct_message_is_ad": True},
+        ],
+    }
+    return detector
+
+
+def test_startup_traceback_multi_chat_admin_preflight_has_zero_side_effects():
+    """第二个群才是群管时，也必须在处理第一个群前整用户放行。"""
+    detector = _multi_chat_pending_detector()
+    bot = _PendingMultiChatBot({-1001: "member", -1002: "administrator"})
+
+    detector.process_pending_bans(bot, {"ADMIN_ID": 99})
+
+    assert bot.deleted == []
+    assert bot.restricted == []
+    assert "42" not in detector.suspicious_users
+    report_text = next(text for cid, text in bot.sent if cid == 99)
+    assert "跳过管理员/白名单：1人" in report_text
+
+
+def test_startup_traceback_multi_chat_query_failure_preflight_keeps_retry():
+    """第二个群身份查询失败时，第一个群也不得提前产生副作用。"""
+    detector = _multi_chat_pending_detector()
+    bot = _PendingMultiChatBot({-1001: "member"}, failing_chat_id=-1002)
+
+    detector.process_pending_bans(bot, {"ADMIN_ID": 99})
+
+    assert bot.deleted == []
+    assert bot.restricted == []
+    assert "42" in detector.suspicious_users
+    report_text = next(text for cid, text in bot.sent if cid == 99)
+    assert "身份查询失败待重试：1人" in report_text
+
+
+def test_startup_traceback_multi_chat_regular_user_still_reaches_enforcement():
+    """普通多群用户不应被预检误放行，两个群都必须进入统一处置链。"""
+    detector = _multi_chat_pending_detector()
+    bot = _PendingMultiChatBot({-1001: "member", -1002: "member"})
+
+    detector.process_pending_bans(bot, {"ADMIN_ID": 99})
+
+    assert {chat_id for chat_id, _uid in bot.restricted} == {-1001, -1002}
+    assert set(bot.deleted) == {(-1001, 10), (-1002, 20)}
+    assert "42" in detector.suspicious_users
+
+
 def test_admin_join_skips_profile_ad_detection(monkeypatch):
     """任务17：管理员入群 → 检测前置豁免，detect_profile_ad_signal 不被调用。"""
     from types import SimpleNamespace
