@@ -577,19 +577,9 @@ def detect_profile_ad_signal(
         if not bio:
             bio = getattr(chat_info, "bio", "") or ""
 
-    personal_parts, personal_chat_id = _personal_channel_parts(
-        bot,
-        chat_info,
-        int(uid or 0),
-        personal_channel_messages=personal_channel_messages,
-    )
-
-    sticker_texts = _sticker_texts(bot, status_ids)
-
-    status_text = " ".join(sticker_texts)
-
-    # 普通字段证据保持隔离：姓名/username 只跑账号名规则，Bio 只跑 Bio 规则。
-    # 唯一例外是高置信“广告化姓名 + Bot 拉新深链”组合，禁止用普通文字+裸链接定罪。
+    # 先完成只依赖姓名/username/Bio 的本地强证据判断。命中后继续读取
+    # personal_chat 和最近帖子不会改变结论，只会放大每条群消息的 Bot API 调用。
+    status_text = ""
     profile_hit = _match_ad_patterns(" ".join((display, username)), USERNAME_PATTERNS)
     if not profile_hit:
         profile_hit = _match_ad_patterns(bio or "", BIO_PATTERNS)
@@ -624,16 +614,16 @@ def detect_profile_ad_signal(
             "status_text": status_text,
         }
 
-    coded_phone_hit = _detect_coded_phone_distribution_profile_ad(
-        display, username, bio, personal_parts
+    coded_phone_name_hit = _detect_coded_phone_distribution_profile_ad(
+        display, username, bio, []
     )
-    if coded_phone_hit:
+    if coded_phone_name_hit:
         return {
             "is_ad": True,
             "score": 3,
-            "reason": f"资料命中手机分销广告组合: {coded_phone_hit}",
+            "reason": f"资料命中手机分销广告组合: {coded_phone_name_hit}",
             "source": "profile_coded_phone_distribution",
-            "personal_chat_id": personal_chat_id,
+            "personal_chat_id": 0,
             "status_ids": status_ids,
             "status_text": status_text,
         }
@@ -645,6 +635,31 @@ def detect_profile_ad_signal(
             "score": 3,
             "reason": f"Bio群邀请链接命中规避式引流话术: {invite_teaser}",
             "source": "bio_invite_teaser",
+            "status_ids": status_ids,
+            "status_text": status_text,
+        }
+
+    personal_parts, personal_chat_id = _personal_channel_parts(
+        bot,
+        chat_info,
+        int(uid or 0),
+        personal_channel_messages=personal_channel_messages,
+    )
+
+    sticker_texts = _sticker_texts(bot, status_ids)
+
+    status_text = " ".join(sticker_texts)
+
+    coded_phone_hit = _detect_coded_phone_distribution_profile_ad(
+        display, username, bio, personal_parts
+    )
+    if coded_phone_hit:
+        return {
+            "is_ad": True,
+            "score": 3,
+            "reason": f"资料命中手机分销广告组合: {coded_phone_hit}",
+            "source": "profile_coded_phone_distribution",
+            "personal_chat_id": personal_chat_id,
             "status_ids": status_ids,
             "status_text": status_text,
         }

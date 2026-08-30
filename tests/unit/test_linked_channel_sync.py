@@ -177,6 +177,59 @@ def test_media_ad_path_uses_unified_security_handler_not_invalid_detect_signatur
     assert "detect(ad_text, uid=" not in source
 
 
+def test_channel_post_timestamp_accepts_telegram_integer_and_datetime():
+    """pyTelegramBotAPI 生产消息 date 是 Unix int，兼容测试/旧对象的 datetime。"""
+    from core.handlers.media_handlers import _message_timestamp
+
+    assert _message_timestamp(1_725_000_123) == 1_725_000_123
+    assert _message_timestamp(datetime.fromtimestamp(1_725_000_123)) == 1_725_000_123
+
+
+def test_registered_channel_handler_persists_integer_telegram_timestamp():
+    """整数 date 必须穿过真实注册回调写入 DB，不能只验证辅助函数。"""
+    from core.handlers.media_handlers import register_media_handlers
+
+    class _HandlerBot:
+        def __init__(self):
+            self.handlers = {}
+
+        def __getattr__(self, name):
+            if not name.endswith("_handler"):
+                raise AttributeError(name)
+
+            def _decorator(*_args, **_kwargs):
+                def _register(fn):
+                    self.handlers[name] = fn
+                    return fn
+                return _register
+            return _decorator
+
+    class _Db:
+        def __init__(self):
+            self.posts = []
+
+        def track_channel_post(self, *args):
+            self.posts.append(args)
+
+    bot = _HandlerBot()
+    db = _Db()
+    ctx = SimpleNamespace(config={"CHANNEL_IDS": [100]}, db=db)
+    register_media_handlers(bot, ctx)
+    callback = bot.handlers["channel_post_handler"]
+    callback(
+        SimpleNamespace(
+            chat=SimpleNamespace(id=100),
+            message_id=77,
+            date=1_725_000_123,
+            views=9,
+            forward_count=2,
+            content_type="text",
+        )
+    )
+
+    assert db.posts == [(100, 77, 1_725_000_123, 9, 2, "text")]
+
+
 def test_group_forward_skips_duplicate_message():
     _reset_state()
     bot = _Bot()
@@ -292,6 +345,57 @@ def test_contextual_comment_sends_reviewed_marketing_image_card():
     assert kwargs["reply_to_message_id"] == 50
     assert "这组质感太绝了" in kwargs["caption"]
     assert kwargs["reply_markup"].keyboard[0][0].url.endswith("MorychannelBot")
+
+
+def test_missing_reply_target_retries_without_reply_and_reports_text_fallback(monkeypatch):
+    """回复目标消失时必须去掉 reply_to 再发，且不能把文本降级记成图片成功。"""
+    bot = _Bot()
+    cfg = mod._load_config(_channel_config(comment_style="contextual"))
+    monkeypatch.setattr(mod, "_pick_comment_media", lambda *_args: mod.Path("missing-reply.jpg"))
+
+    def _missing_reply(*_args, **_kwargs):
+        raise RuntimeError("400 Bad Request: message to be replied not found")
+
+    monkeypatch.setattr("core.telegram_send_utils.send_photo_compat", _missing_reply)
+
+    sent, _target, media_sent = mod._send_comment_reply(
+        bot,
+        -123,
+        50,
+        cfg,
+        _channel_config(),
+        "这组写真完整版已更新",
+    )
+
+    assert sent.message_id == 99
+    assert media_sent is False
+    assert len(bot.sent) == 1
+    assert "reply_to_message_id" not in bot.sent[0][2]
+
+
+def test_text_comment_missing_reply_target_retries_without_reply():
+    class _MissingReplyBot(_Bot):
+        def __init__(self):
+            super().__init__()
+            self.attempts = []
+
+        def send_message(self, chat_id, text, **kwargs):
+            self.attempts.append(kwargs)
+            if "reply_to_message_id" in kwargs:
+                raise RuntimeError("message to be replied not found")
+            return SimpleNamespace(message_id=101)
+
+    bot = _MissingReplyBot()
+    cfg = mod._load_config(_channel_config(comment_style="compliment"))
+    sent, _target, media_sent = mod._send_comment_reply(
+        bot, -123, 50, cfg, _channel_config(), "普通频道正文"
+    )
+
+    assert sent.message_id == 101
+    assert media_sent is False
+    assert len(bot.attempts) == 2
+    assert bot.attempts[0]["reply_to_message_id"] == 50
+    assert "reply_to_message_id" not in bot.attempts[1]
 
 
 def test_original_taste_copy_uses_menu_card_and_contact_target():

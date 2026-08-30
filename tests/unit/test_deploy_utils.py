@@ -463,6 +463,8 @@ def test_deployment_verification_checks_direct_version_truth_and_permissions():
     assert "critical_jobs_health_check" not in checks["Bot日志"]
     assert "failed_1h" in checks["调度事实"]
     assert "bad_metrics" in checks["调度事实"]
+    assert "COALESCE(last_run,0) >= ?" in checks["调度事实"]
+    assert "cumulative_metrics" in checks["调度事实"]
     assert "任务调度器准备就绪" in checks["调度注册"]
     assert "current_api_not_observed" in checks["调度注册"]
 

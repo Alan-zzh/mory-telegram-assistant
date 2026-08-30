@@ -114,10 +114,15 @@ def test_monitor_receipt_filters_raw_process_and_log_tails():
 
     filtered = control._filter_monitor_evidence(
         "l1_resources",
-        {"cpu_usage": "10%", "top_head": "process args with secrets", "_warn": ""},
+        {
+            "cpu_usage": "10%",
+            "oom_kills_1h": 7,
+            "top_head": "process args with secrets",
+            "_warn": "",
+        },
     )
 
-    assert filtered == {"cpu_usage": "10%", "_warn": ""}
+    assert filtered == {"cpu_usage": "10%", "oom_kills_1h": 7, "_warn": ""}
 
 
 def test_timer_manager_defaults_to_plan_and_requires_apply(capsys):
@@ -215,6 +220,21 @@ def test_local_read_only_client_accepts_get_pty(monkeypatch):
     assert stdout.read() == b"ok\n"
     assert stderr.channel.recv_exit_status() == 0
     assert calls[0][1]["timeout"] == 7
+
+
+def test_scheduler_cumulative_failures_are_kept_in_filtered_evidence():
+    from scripts import project_audit_control as control
+
+    details = {
+        "scheduler_metrics_errors": "",
+        "scheduler_metrics_cumulative_failures": "heartbeat|success|18|0",
+        "unrelated": "drop me",
+    }
+
+    assert control._filter_monitor_evidence("l5_scheduler", details) == {
+        "scheduler_metrics_errors": "",
+        "scheduler_metrics_cumulative_failures": "heartbeat|success|18|0",
+    }
 
 
 def test_conflicting_legacy_health_and_auto_rollback_are_retired():

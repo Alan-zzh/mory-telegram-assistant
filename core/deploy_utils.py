@@ -489,10 +489,21 @@ if missing:
 cutoff = int(time.time()) - 3600
 stale = conn.execute("SELECT COUNT(*) FROM task_execution_history WHERE status='running' AND start_ts < ?", (int(time.time()) - 1800,)).fetchone()[0]
 failed = conn.execute("SELECT COUNT(*) FROM task_execution_history WHERE status='failed' AND start_ts >= ?", (cutoff,)).fetchone()[0]
-bad_metrics = conn.execute("SELECT COUNT(*) FROM scheduler_metrics WHERE last_status IN ('error','missed')").fetchone()[0]
+bad_metrics = conn.execute(
+    "SELECT COUNT(*) FROM scheduler_metrics "
+    "WHERE last_status IN ('error','missed') AND COALESCE(last_run,0) >= ?",
+    (cutoff,),
+).fetchone()[0]
+cumulative_metrics = conn.execute(
+    "SELECT COUNT(*) FROM scheduler_metrics WHERE fail_count > 0 OR miss_count > 0"
+).fetchone()[0]
 if stale or failed or bad_metrics:
     raise SystemExit(f'SCHEDULER_UNHEALTHY stale_running={{stale}} failed_1h={{failed}} bad_metrics={{bad_metrics}}')
-print('SCHEDULER_TRUTH_OK coverage=transactional_history+historical_metrics registry=current_process_not_observed')
+print(
+    'SCHEDULER_TRUTH_OK '
+    f'coverage=transactional_history_1h+current_metrics_1h+cumulative_metrics({{cumulative_metrics}}) '
+    'registry=current_process_not_observed'
+)
 PYEOF"""),
         # 当前进程至少要有启动注册回执，且启动至今不能出现注册/热重载同步失败。
         ("调度注册", """since=$(systemctl show mory-assistant -p ActiveEnterTimestamp --value) || exit 2; test -n "$since" || { echo SCHEDULER_STARTUP_TIMESTAMP_UNAVAILABLE; exit 2; }; logs=$(journalctl -u mory-assistant --since "$since" --no-pager 2>&1) || { printf '%s\n' "$logs"; exit 2; }; ready=$(printf '%s\n' "$logs" | grep -E '任务调度器准备就绪，共注册 [0-9]+ 个调度任务' | tail -1); test -n "$ready" || { echo SCHEDULER_STARTUP_RECEIPT_MISSING; exit 2; }; failures=$(printf '%s\n' "$logs" | grep -E '任务注册失败|读取任务 .* 调度配置失败|移除已关闭任务 .* 失败' || true); test -z "$failures" || { printf '%s\n' "$failures"; exit 1; }; echo SCHEDULER_REGISTRY_OK coverage=startup_registry+reload_error_scan current_api_not_observed"""),

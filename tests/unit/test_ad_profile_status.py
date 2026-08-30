@@ -1378,6 +1378,38 @@ def test_bound_normal_agriculture_channel_is_not_distribution_ad():
     assert result["is_ad"] is False
 
 
+def test_coded_phone_name_short_circuits_personal_channel_network_calls():
+    """本地姓名已形成强证据时不得继续拉关联频道和最近帖子。"""
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot("普通生活频道", posts=["日常分享"])
+    calls = []
+    original_get_chat = bot.get_chat
+    original_get_messages = bot.get_user_personal_chat_messages
+
+    def counted_get_chat(chat_id):
+        calls.append(("get_chat", chat_id))
+        return original_get_chat(chat_id)
+
+    def counted_get_messages(user_id, limit):
+        calls.append(("get_user_personal_chat_messages", user_id, limit))
+        return original_get_messages(user_id, limit)
+
+    bot.get_chat = counted_get_chat
+    bot.get_user_personal_chat_messages = counted_get_messages
+    result = detect_profile_ad_signal(
+        bot,
+        _FakeUser(first_name="正品水果17手机全系", status_id=""),
+        "",
+        {},
+        chat_info=bot.user_chat,
+    )
+
+    assert result["is_ad"] is True
+    assert result["source"] == "profile_coded_phone_distribution"
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     "title",
     [

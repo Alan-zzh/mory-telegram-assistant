@@ -10,6 +10,10 @@ from core.db_repos._constants import _CST
 logger = get_logger("db.question")
 
 
+class QuestionStatsUnavailable(RuntimeError):
+    """问题统计无法从当前数据库读取。"""
+
+
 class QuestionRepo:
     """问题追踪与FAQ蒸馏数据库操作"""
 
@@ -141,8 +145,12 @@ class QuestionRepo:
             )
             today_delegated = int(c.fetchone()[0])
             today = today_recorded - today_delegated
-            # FAQ命中率保留原语义；来源分布用于区分预设、入口、AI与待优化。
-            c.execute("SELECT COUNT(*) FROM user_questions WHERE faq_hit_id>0")
+            # FAQ 命中分子与 Mory 职责内分母使用同一口径；历史 delegated
+            # 行可能保留 faq_hit_id 作为审计证据，但不能再进入 Mory 命中率。
+            c.execute(
+                """SELECT COUNT(*) FROM user_questions
+                   WHERE faq_hit_id>0 AND COALESCE(answer_source, '')!='delegated'"""
+            )
             faq_hit = c.fetchone()[0]
             faq_hit_rate = (faq_hit / total * 100) if total > 0 else 0.0
             c.execute(
@@ -201,23 +209,7 @@ class QuestionRepo:
             }
         except Exception as e:
             logger.error(f"获取问题统计失败：{e}")
-            return {
-                "total_count": 0,
-                "recorded_total_count": 0,
-                "delegated_count": 0,
-                "today_count": 0,
-                "today_recorded_count": 0,
-                "today_delegated_count": 0,
-                "faq_hit_rate": 0.0,
-                "answer_source_distribution": {
-                    "faq": 0, "preset": 0, "direct_access": 0, "ai": 0,
-                    "unresolved": 0, "fallback": 0, "delegated": 0,
-                    "legacy_unclassified": 0,
-                },
-                "deterministic_coverage_rate": 0.0,
-                "category_distribution": {},
-                "top_questions": [],
-            }
+            raise QuestionStatsUnavailable("问题统计不可用") from e
 
     def get_top_questions(self, limit=20, days=7):
         """获取高频问题列表

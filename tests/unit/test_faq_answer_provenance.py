@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 
 import sqlalchemy as sa
+import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
@@ -92,6 +93,7 @@ def test_question_repo_roundtrips_answer_source_and_stats():
         question_text="签到！！！",
         mode="normal",
         intent="external_feature",
+        faq_hit_id=99,
         answer_source="delegated",
         answer_ref="other_bot_feature",
     )
@@ -99,6 +101,7 @@ def test_question_repo_roundtrips_answer_source_and_stats():
     assert stats["total_count"] == 1
     assert stats["recorded_total_count"] == 2
     assert stats["delegated_count"] == 1
+    assert stats["faq_hit_rate"] == 100.0
     assert stats["answer_source_distribution"]["faq"] == 1
     assert stats["answer_source_distribution"]["delegated"] == 1
     assert stats["deterministic_coverage_rate"] == 100.0
@@ -113,6 +116,17 @@ def test_question_repo_roundtrips_answer_source_and_stats():
     page, total = repo.get_questions(limit=1, days=1, include_total=True)
     assert len(page) == 1
     assert total == 2
+
+
+def test_question_stats_fail_closed_when_database_is_unavailable():
+    """统计库不可读时不能伪装成全零业务数据。"""
+    conn = sqlite3.connect(":memory:")
+    _create_user_questions(conn)
+    repo = QuestionRepo(_Db(conn))
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="问题统计不可用"):
+        repo.get_question_stats()
 
 
 def test_distill_excludes_covered_answers_and_commands():

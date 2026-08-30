@@ -198,6 +198,28 @@ def l1_vps_check(client):
         loadavg_o, _, _ = ssh_run(client, "cat /proc/loadavg", timeout=10)
         details["uptime"] = uptime_o
         details["loadavg"] = loadavg_o
+        oom_o, oom_err, oom_rc = ssh_run(
+            client,
+            "journalctl -k --since '1 hour ago' --no-pager "
+            "| awk '/Memory cgroup out of memory: Killed process/{count++} END{print count+0}'",
+            timeout=15,
+        )
+        if oom_rc != 0 or oom_err:
+            details["oom_kills_1h"] = "unavailable"
+            status = "WARN"
+            details["_warn"] = details.get("_warn", "") + "oom_evidence_unavailable; "
+        else:
+            try:
+                oom_kills_1h = int((oom_o or "0").strip())
+            except ValueError:
+                oom_kills_1h = -1
+            details["oom_kills_1h"] = oom_kills_1h
+            if oom_kills_1h < 0:
+                status = "WARN"
+                details["_warn"] = details.get("_warn", "") + "oom_evidence_invalid; "
+            elif oom_kills_1h > 0:
+                status = "WARN"
+                details["_warn"] = details.get("_warn", "") + f"cgroup_oom_1h({oom_kills_1h}); "
 
         # 提取关键指标
         cpu_usage = ""
@@ -512,9 +534,22 @@ def l5_scheduler_check(client):
             client, MORY_DB,
             "SELECT job_id, last_status, fail_count, miss_count, last_run, COALESCE(last_error,'') "
             "FROM scheduler_metrics WHERE last_status IN ('error','missed') "
+            "AND COALESCE(last_run,0) >= strftime('%s', datetime('now', '-1 hour')) "
             "ORDER BY COALESCE(last_run,0) DESC LIMIT 10;",
         )
         details["scheduler_metrics_errors"] = bad_metrics if not metrics_err else f"ERR: {metrics_err}"
+
+        cumulative_failures, cumulative_failures_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT job_id, last_status, fail_count, miss_count, last_run, COALESCE(last_error,'') "
+            "FROM scheduler_metrics WHERE fail_count > 0 OR miss_count > 0 "
+            "ORDER BY (fail_count + miss_count) DESC, job_id LIMIT 20;",
+        )
+        details["scheduler_metrics_cumulative_failures"] = (
+            cumulative_failures
+            if not cumulative_failures_err
+            else f"ERR: {cumulative_failures_err}"
+        )
 
         recent, er = sqlite_query(
             client, MORY_DB,
@@ -522,7 +557,17 @@ def l5_scheduler_check(client):
         )
         details["recent_scheduled_tasks"] = recent if not er else f"ERR: {er}"
 
-        db_errors = [err for err in (stale_err, recent_failures_err, metrics_err, er) if err]
+        db_errors = [
+            err
+            for err in (
+                stale_err,
+                recent_failures_err,
+                metrics_err,
+                cumulative_failures_err,
+                er,
+            )
+            if err
+        ]
         if db_errors:
             status = "ERROR"
             details["_crit"] = details.get("_crit", "") + "; ".join(db_errors)

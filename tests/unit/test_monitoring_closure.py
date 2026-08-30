@@ -113,6 +113,94 @@ def test_loop_monitor_warn_is_not_reported_as_all_normal(monkeypatch, tmp_path, 
     assert receipt["status"] == "failed"
 
 
+def test_vps_layer_warns_on_recent_cgroup_oom_even_when_free_memory_recovered(monkeypatch):
+    """共享主机 OOM 不能因当前 available 内存回升而从巡检中消失。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    def _ssh_run(_client, command, timeout=10):
+        if command.startswith("top "):
+            return "%Cpu(s): 10.0 us,  5.0 sy,  0.0 ni, 85.0 id\n", "", 0
+        if command == "free -m":
+            return "Mem: 8000 3000 1000 0 0 4000", "", 0
+        if command.startswith("df -h"):
+            return "/dev/vda1 100G 59G 41G 59% /", "", 0
+        if command.startswith("ss -tn"):
+            return "12", "", 0
+        if command == "uptime":
+            return "up 1 day", "", 0
+        if command == "cat /proc/loadavg":
+            return "1.00 1.20 1.30 1/100 1", "", 0
+        if "Memory cgroup out of memory" in command:
+            return "7", "", 0
+        raise AssertionError(command)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l1_vps_check(object())
+
+    assert status == "WARN"
+    assert details["oom_kills_1h"] == 7
+    assert "cgroup_oom_1h(7)" in details["_warn"]
+
+
+def test_vps_layer_zero_oom_keeps_otherwise_healthy_resources_ok(monkeypatch):
+    from scripts import puzan_loop_monitor as monitor
+
+    def _ssh_run(_client, command, timeout=10):
+        if command.startswith("top "):
+            return "%Cpu(s): 10.0 us,  5.0 sy,  0.0 ni, 85.0 id\n", "", 0
+        if command == "free -m":
+            return "Mem: 8000 3000 1000 0 0 4000", "", 0
+        if command.startswith("df -h"):
+            return "/dev/vda1 100G 59G 41G 59% /", "", 0
+        if command.startswith("ss -tn"):
+            return "12", "", 0
+        if command == "uptime":
+            return "up 1 day", "", 0
+        if command == "cat /proc/loadavg":
+            return "1.00 1.20 1.30 1/100 1", "", 0
+        if "Memory cgroup out of memory" in command:
+            return "0", "", 0
+        raise AssertionError(command)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l1_vps_check(object())
+
+    assert status == "OK"
+    assert details["oom_kills_1h"] == 0
+    assert "_warn" not in details
+
+
+def test_vps_layer_oom_evidence_failure_is_not_reported_healthy(monkeypatch):
+    from scripts import puzan_loop_monitor as monitor
+
+    def _ssh_run(_client, command, timeout=10):
+        if command.startswith("top "):
+            return "%Cpu(s): 10.0 us,  5.0 sy,  0.0 ni, 85.0 id\n", "", 0
+        if command == "free -m":
+            return "Mem: 8000 3000 1000 0 0 4000", "", 0
+        if command.startswith("df -h"):
+            return "/dev/vda1 100G 59G 41G 59% /", "", 0
+        if command.startswith("ss -tn"):
+            return "12", "", 0
+        if command == "uptime":
+            return "up 1 day", "", 0
+        if command == "cat /proc/loadavg":
+            return "1.00 1.20 1.30 1/100 1", "", 0
+        if "Memory cgroup out of memory" in command:
+            return "", "journal unavailable", 1
+        raise AssertionError(command)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l1_vps_check(object())
+
+    assert status == "WARN"
+    assert details["oom_kills_1h"] == "unavailable"
+    assert "oom_evidence_unavailable" in details["_warn"]
+
+
 def test_loop_monitor_ssh_failure_is_evidence_gap(monkeypatch, tmp_path):
     from scripts import puzan_loop_monitor as monitor
 
@@ -212,6 +300,46 @@ def test_scheduler_layer_warns_from_persisted_failures_without_journal(monkeypat
     assert details["fail_log_10min"] == "(none)"
     assert any("task_execution_history" in sql for sql in seen_sql)
     assert any("scheduler_metrics" in sql for sql in seen_sql)
+
+
+def test_scheduler_layer_exposes_recovered_jobs_cumulative_failures(monkeypatch):
+    """最近已恢复的任务可保持 OK，但累计失败不能从审计证据中消失。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    seen_sql = []
+
+    def _sqlite_query(_client, _db_path, sql, timeout=20):
+        seen_sql.append(sql)
+        if "GROUP BY status" in sql:
+            return "success|8", ""
+        if "status='running'" in sql:
+            return "0", ""
+        if "status='failed'" in sql:
+            return "", ""
+        if "last_status IN" in sql:
+            return "", ""
+        if "fail_count > 0" in sql:
+            return "heartbeat|success|18|0|1786200000|historical timeout", ""
+        if "ORDER BY id DESC LIMIT 10" in sql:
+            return "heartbeat|success|2026-08-31", ""
+        raise AssertionError(sql)
+
+    monkeypatch.setattr(monitor, "sqlite_query", _sqlite_query)
+    monkeypatch.setattr(
+        monitor,
+        "ssh_run",
+        lambda _client, _command, timeout=10: ("0", "", 0)
+        if "WatchdogUSec" in _command
+        else ("", "", 0),
+    )
+
+    status, details = monitor.l5_scheduler_check(object())
+
+    assert status == "OK"
+    assert details["scheduler_metrics_errors"] == ""
+    assert details["scheduler_metrics_cumulative_failures"].startswith("heartbeat|success|18|")
+    current_error_sql = next(sql for sql in seen_sql if "last_status IN" in sql)
+    assert "-1 hour" in current_error_sql
 
 
 def test_scheduler_layer_fails_closed_when_execution_history_is_unreadable(monkeypatch):

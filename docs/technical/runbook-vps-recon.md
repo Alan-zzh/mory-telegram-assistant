@@ -37,8 +37,9 @@ client.close()
 systemctl show mory-assistant mory-dashboard -p ActiveState -p SubState -p MainPID -p NRestarts -p ExecMainStartTimestamp
 systemctl list-unit-files --type=service | grep -iE 'mory|media|ops|coo|bot'
 
-# 2. 进程（精确路径，禁止 pkill -f main.py）
-ps -ef | grep -E '/home/ubuntu/mory_assistant/main.py|/opt/moryfansbot' | grep -v grep
+# 2. 进程（以 systemd MainPID + cwd 为准；真实命令可能只是 python3 main.py）
+for unit in mory-assistant mory-dashboard; do pid=$(systemctl show "$unit" -p MainPID --value); ps -fp "$pid"; readlink -f "/proc/$pid/cwd"; done
+ps -ef | grep -E '/opt/moryfansbot' | grep -v grep
 
 # 3. 端口监听
 ss -tlnp | grep -E ':6616|:6617|:17860'
@@ -54,6 +55,7 @@ cd /home/ubuntu/mory_assistant && sha256sum version.py
 # 6. 资源与进程压力
 df -h / ; free -m ; nproc ; cat /proc/loadavg
 ps -eo stat,ppid,pid,comm,args | awk '$1 ~ /^Z/ {print}' | head -50
+journalctl -k --since '1 hour ago' --no-pager | grep -c 'Memory cgroup out of memory: Killed process' || true
 
 # 7. 健康检查：保留响应体与状态码，仅判 liveness
 curl -sS -w '\nHTTP=%{http_code}\n' localhost:6616/api/health
@@ -61,7 +63,8 @@ curl -sS -w '\nHTTP=%{http_code}\n' localhost:6616/api/health
 # 8. 数据库完整性与持久任务四态（task_execution_history 不是全量注册表）
 cd /home/ubuntu/mory_assistant && sqlite3 mory.db 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
 cd /home/ubuntu/mory_assistant && sqlite3 mory.db "SELECT status,COUNT(*) FROM task_execution_history WHERE start_ts >= strftime('%s',datetime('now','-24 hours')) GROUP BY status;"
-cd /home/ubuntu/mory_assistant && sqlite3 mory.db "SELECT COUNT(*),SUM(CASE WHEN fail_count>0 THEN 1 ELSE 0 END) FROM scheduler_metrics;"
+cd /home/ubuntu/mory_assistant && sqlite3 mory.db "SELECT job_id,last_status,fail_count,miss_count,last_run FROM scheduler_metrics WHERE last_status IN ('error','missed') AND last_run>=strftime('%s',datetime('now','-1 hour'));"
+cd /home/ubuntu/mory_assistant && sqlite3 mory.db "SELECT job_id,last_status,fail_count,miss_count,last_run FROM scheduler_metrics WHERE fail_count>0 OR miss_count>0 ORDER BY fail_count+miss_count DESC;"
 journalctl -u mory-assistant --since '1 hour ago' --no-pager | grep -E 'Running job|ERROR|CRITICAL|Traceback' | tail -100
 
 # 9. 权限与 root 执行链（只读，不输出凭据内容）

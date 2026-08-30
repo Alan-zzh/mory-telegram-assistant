@@ -4,8 +4,10 @@
 from flask import Flask
 
 import dashboard.api.features_api as features_api
+import dashboard.api.faq_api as faq_api
 import dashboard.api.models_api as models_api
 import dashboard.api.stats_api as stats_api
+from core.db_repos.question_repo import QuestionStatsUnavailable
 from dashboard.audit import get_permissions_from_db, get_user_role_from_db
 
 
@@ -80,6 +82,26 @@ def test_tasks_status_database_error_is_logged_without_logger_name_error(monkeyp
 
     assert response.status_code == 503
     assert response.get_json()["msg"] == "task_history_unavailable"
+
+
+def test_faq_stats_database_error_is_not_reported_as_zero_success(monkeypatch):
+    """FAQ 统计失败必须返回错误，不能用零指标假装成功。"""
+    class BrokenStatsRepo:
+        def get_question_stats(self):
+            raise QuestionStatsUnavailable("question stats unavailable")
+
+    monkeypatch.setattr(faq_api, "get_db", lambda: BrokenStatsRepo())
+
+    app = _app(faq_api.faq_bp)
+    with app.test_client() as client:
+        _login(client)
+        response = client.get("/api/faq/stats")
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "ok": False,
+        "msg": "问题统计暂不可用",
+    }
 
 
 def test_user_analytics_database_errors_are_logged_without_logger_name_error(monkeypatch):

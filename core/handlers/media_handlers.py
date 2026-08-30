@@ -16,6 +16,18 @@ from core.telegram_send_utils import delete_all_message_reactions_compat, delete
 logger = get_logger("media_handlers")
 
 
+def _message_timestamp(value) -> int:
+    """兼容 Telegram Unix 时间戳与旧测试对象中的 datetime。"""
+    if isinstance(value, bool):
+        raise TypeError("message date must not be bool")
+    if isinstance(value, (int, float)):
+        return int(value)
+    timestamp = getattr(value, "timestamp", None)
+    if callable(timestamp):
+        return int(timestamp())
+    raise TypeError(f"unsupported message date type: {type(value).__name__}")
+
+
 def _handle_trusted_channel_forward(bot, m, ctx) -> bool:
     """自有频道媒体转发走可信联动并终止普通媒体/广告管线。"""
     try:
@@ -220,7 +232,14 @@ def register_media_handlers(bot, ctx):
         forwards = getattr(m, 'forward_count', 0) or 0
         content_type = m.content_type if hasattr(m, 'content_type') else "text"
         content_type = m.content_type if hasattr(m, 'content_type') else "text"
-        ctx.db.track_channel_post(cid, m.message_id, int(m.date.timestamp()), views, forwards, content_type)
+        ctx.db.track_channel_post(
+            cid,
+            m.message_id,
+            _message_timestamp(m.date),
+            views,
+            forwards,
+            content_type,
+        )
         logger.info(f"📺 频道帖子捕获: chat_id={cid} msg_id={m.message_id} views={views} type={content_type}")
         # 关联频道联动（点赞 + 登记自动评论），默认关闭
         try:

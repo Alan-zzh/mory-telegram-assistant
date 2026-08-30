@@ -368,6 +368,15 @@ def _pick_comment_media(cfg: dict, source_text: str) -> Path | None:
     return secrets.choice(candidates) if candidates else None
 
 
+def _is_missing_reply_target_error(exc: Exception) -> bool:
+    """只识别 Telegram 明确返回的回复目标不存在错误。"""
+    text = str(exc or "").lower()
+    return (
+        "message to be replied not found" in text
+        or "reply message not found" in text
+    )
+
+
 def _send_comment_reply(
     bot,
     chat_id: int,
@@ -382,6 +391,8 @@ def _send_comment_reply(
     markup = build_comment_button(target, root_config or cfg)
     media_path = _pick_comment_media(cfg, source_text)
     sent = None
+    media_sent = False
+    reply_target_available = True
     if media_path is not None:
         try:
             from core.telegram_send_utils import send_photo_compat
@@ -394,22 +405,32 @@ def _send_comment_reply(
                 reply_to_message_id=reply_to_message_id,
                 reply_markup=markup,
             )
+            media_sent = sent is not None
         except Exception as exc:
+            if _is_missing_reply_target_error(exc):
+                reply_target_available = False
             logger.warning(
                 f"营销图片评论发送失败，降级文本: chat={chat_id} "
                 f"reply_to={reply_to_message_id}: {exc}"
             )
     if sent is None:
-        sent = bot.send_message(
-            chat_id,
-            text,
-            reply_to_message_id=reply_to_message_id,
-            reply_markup=markup,
-        )
+        kwargs = {"reply_markup": markup}
+        if reply_target_available and reply_to_message_id:
+            kwargs["reply_to_message_id"] = reply_to_message_id
+        try:
+            sent = bot.send_message(chat_id, text, **kwargs)
+        except Exception as exc:
+            if not reply_target_available or not _is_missing_reply_target_error(exc):
+                raise
+            logger.warning(
+                f"评论回复目标不存在，改为群内直发: chat={chat_id} "
+                f"reply_to={reply_to_message_id}"
+            )
+            sent = bot.send_message(chat_id, text, reply_markup=markup)
     if sent is None:
         raise RuntimeError("Telegram 未返回评论消息回执")
     _track_sent_message(db, chat_id, sent)
-    return sent, target, media_path
+    return sent, target, media_sent
 
 
 def _register_pending(cfg: dict, channel_id: int, post_msg_id: int, bot=None, root_config=None, db=None):
@@ -469,7 +490,7 @@ def _timeout_fallback(bot, channel_id: int, post_msg_id: int, cfg: dict, root_co
                 if pending:
                     pending["consumed"] = False
             return
-        sent, target, media_path = _send_comment_reply(
+        sent, target, media_sent = _send_comment_reply(
             bot,
             channel_id,
             post_msg_id,
@@ -637,7 +658,7 @@ def _try_consumed_post(
         return
 
     try:
-        sent, target, media_path = _send_comment_reply(
+        sent, target, media_sent = _send_comment_reply(
             bot,
             chat_id,
             message_id,
@@ -648,7 +669,7 @@ def _try_consumed_post(
         )
         logger.info(
             f"💬 关联频道评论已发: chat={chat_id} channel={channel_id} "
-            f"post={post_msg_id} target={target} media={bool(media_path)} source=pending"
+            f"post={post_msg_id} target={target} media={media_sent} source=pending"
         )
     except Exception as e:
         logger.warning(f"评论发送失败: chat={chat_id} post={post_msg_id}: {e}")
@@ -677,7 +698,7 @@ def _try_direct_forward_comment(
     source_text = _extract_post_text(m)
     post_msg_id = _extract_origin_post_id(m, channel_id)
     try:
-        sent, target, media_path = _send_comment_reply(
+        sent, target, media_sent = _send_comment_reply(
             bot,
             chat_id,
             message_id,
@@ -694,7 +715,7 @@ def _try_direct_forward_comment(
                 }
         logger.info(
             f"💬 关联频道评论已发: chat={chat_id} channel={channel_id} "
-            f"post={post_msg_id or 0} target={target} media={bool(media_path)} source=group_forward"
+            f"post={post_msg_id or 0} target={target} media={media_sent} source=group_forward"
         )
         return bool(sent)
     except Exception as e:

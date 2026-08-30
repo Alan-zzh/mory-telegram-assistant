@@ -16,6 +16,7 @@ dashboard/api/faq_api.py  ·  FAQ 统计与管理 API
 """
 import logging
 from flask import Blueprint, jsonify, request, session
+from core.db_repos.question_repo import QuestionStatsUnavailable
 from dashboard.helpers import login_required, admin_required, get_db
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,9 @@ def get_stats():
 
         stats = db.get_question_stats()
         return jsonify({"ok": True, "data": stats})
+    except QuestionStatsUnavailable:
+        logger.exception("FAQ 统计暂不可用")
+        return jsonify({"ok": False, "msg": "问题统计暂不可用"}), 503
     except Exception as e:
         logger.exception("FAQ API 查询接口异常")
         return jsonify({"ok": False, "msg": "查询失败，请查看服务器日志获取详情"}), 500

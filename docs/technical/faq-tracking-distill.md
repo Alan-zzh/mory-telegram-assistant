@@ -178,7 +178,7 @@ P10钩子中根据 mode 自动映射：
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| /api/faq/stats | GET | Mory职责内问题统计；另报原始记录数和 delegated 数，TOP20不含其他机器人事项 |
+| /api/faq/stats | GET | Mory职责内问题统计；分子分母均排除 delegated；数据库不可读时返回 503，不以零指标假成功 |
 | /api/faq/questions | GET | 问题列表（真实总数分页+分类+天数+回答来源） |
 | /api/faq/candidates | GET | FAQ候选列表（按状态筛选） |
 | /api/faq/candidates/<id>/approve | POST | 审核通过（含answer_template/ai_polish） |
