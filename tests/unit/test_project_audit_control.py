@@ -228,12 +228,14 @@ def test_scheduler_cumulative_failures_are_kept_in_filtered_evidence():
     details = {
         "scheduler_metrics_errors": "",
         "scheduler_metrics_cumulative_failures": "heartbeat|success|18|0",
+        "fail_log_10min_count": 0,
         "unrelated": "drop me",
     }
 
     assert control._filter_monitor_evidence("l5_scheduler", details) == {
         "scheduler_metrics_errors": "",
         "scheduler_metrics_cumulative_failures": "heartbeat|success|18|0",
+        "fail_log_10min_count": 0,
     }
 
 

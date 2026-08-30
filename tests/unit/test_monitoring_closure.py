@@ -298,8 +298,50 @@ def test_scheduler_layer_warns_from_persisted_failures_without_journal(monkeypat
     assert details["stale_running_30m"] == 0
     assert "persisted_task_failures=2" in details["_warn"]
     assert details["fail_log_10min"] == "(none)"
+    assert details["fail_log_10min_count"] == 0
     assert any("task_execution_history" in sql for sql in seen_sql)
     assert any("scheduler_metrics" in sql for sql in seen_sql)
+
+
+def test_scheduler_journal_filter_does_not_treat_failed_false_as_failure(monkeypatch):
+    """INFO 字段 fetch_failed=False 不得被宽泛 fail 子串筛选成任务故障。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    seen_commands = []
+
+    def _sqlite_query(_client, _db_path, sql, timeout=20):
+        if "GROUP BY status" in sql:
+            return "success|8", ""
+        if "status='running'" in sql:
+            return "0", ""
+        if "status='failed'" in sql:
+            return "", ""
+        if "last_status IN" in sql or "fail_count > 0" in sql:
+            return "", ""
+        if "ORDER BY id DESC LIMIT 10" in sql:
+            return "heartbeat|success|2026-08-31", ""
+        raise AssertionError(sql)
+
+    def _ssh_run(_client, command, timeout=10):
+        seen_commands.append(command)
+        if "WatchdogUSec" in command:
+            return "0", "", 0
+        return "", "", 0
+
+    monkeypatch.setattr(monitor, "sqlite_query", _sqlite_query)
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l5_scheduler_check(object())
+
+    journal_command = next(
+        command
+        for command in seen_commands
+        if "journalctl" in command and "fail(ed|ure)?" in command
+    )
+    assert status == "OK"
+    assert details["fail_log_10min_count"] == 0
+    assert "fail|exception|error" not in journal_command
+    assert "[^[:alnum:]_=]" in journal_command
 
 
 def test_scheduler_layer_exposes_recovered_jobs_cumulative_failures(monkeypatch):

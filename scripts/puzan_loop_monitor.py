@@ -586,12 +586,15 @@ def l5_scheduler_check(client):
         fail_log, _, _ = ssh_run(
             client,
             r'journalctl -u mory-assistant --since "10 minutes ago" --no-pager '
-            r'| grep -iE "fail|exception|error" '
+            r'| grep -iE "\[(ERROR|CRITICAL)\]|level=(ERROR|CRITICAL)|traceback|(^|[^[:alnum:]_])(fail(ed|ure)?|error|exception)([^[:alnum:]_=]|$)" '
             r'| grep -viE "EXECUTED|ERROR.*MISSED|EVENT_JOB_|scheduler_monitor.*EVENT|no such|operationalerror|_job_critical|critical_jobs_health|CriticalJobsHealth|HTTP请求失败|HTTP请求成功|Running job|executed successfully|Added job" '
             r'| tail -15',
             timeout=15,
         )
         details["fail_log_10min"] = fail_log or "(none)"
+        details["fail_log_10min_count"] = len(
+            [line for line in (fail_log or "").splitlines() if line.strip()]
+        )
         if fail_log:
             status = "WARN" if status != "ERROR" else "ERROR"
             details["_warn"] = details.get("_warn", "") + "journalctl_has_fail_logs; "
