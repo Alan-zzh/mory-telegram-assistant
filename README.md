@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.42.5**：修复 FAQ 统计假绿和口径漂移、频道时间戳及回复降级，并让调度历史失败与 VPS cgroup OOM 压力进入真实巡检。生产部署状态见 `project_snapshot.md`。
+当前版本 **v5.42.6**：修复 FAQ/频道/调度巡检误判，并分开 VPS 全局/cgroup OOM、压力来源和受害进程，保留共享主机风险但不再错记 Mory 故障归属。生产部署状态见 `project_snapshot.md`。
 
 ## 默认关闭功能货架
 

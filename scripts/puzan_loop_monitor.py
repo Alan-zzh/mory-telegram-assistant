@@ -165,6 +165,186 @@ def _parse_status_counts(rows_str):
     return counts
 
 
+def _compact_oom_scope(scope):
+    """把内核 cgroup 路径压缩为不泄露主机目录的稳定来源标签。"""
+    leaf = (scope or "unknown").rstrip("/").rsplit("/", 1)[-1]
+    if leaf.startswith("docker-") and leaf.endswith(".scope"):
+        container_id = leaf[len("docker-"):-len(".scope")]
+        return f"docker:{container_id[:12]}"
+    return leaf or "unknown"
+
+
+def _format_ranked_counts(counts):
+    """将来源/进程计数压缩为确定性证据字符串。"""
+    return ",".join(
+        f"{name}={count}"
+        for name, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    )
+
+
+def _parse_oom_journal(raw, mory_control_groups=()):
+    """解析一小时 OOM 日志，分开压力来源 cgroup 与受害进程 cgroup。"""
+    cgroup_total = None
+    global_total = None
+    matched_total = None
+    journal_ok = False
+    source_lines = 0
+    non_memcg_source_lines = 0
+    source_mory = 0
+    source_external = 0
+    source_unknown = 0
+    victim_mory = 0
+    sources = {}
+    victims = {}
+    evidence_lines = 0
+    control_groups = {
+        group.rstrip("/") or "/"
+        for group in mory_control_groups
+        if group and group.strip()
+    }
+
+    def _field(line, name):
+        marker = f"{name}="
+        if marker not in line:
+            return ""
+        return line.split(marker, 1)[1].split(",", 1)[0].strip()
+
+    def _belongs_to_mory(scope):
+        normalized = (scope or "").rstrip("/") or "/"
+        return any(
+            normalized == group or normalized.startswith(group + "/")
+            for group in control_groups
+        )
+
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if line == "__OOM_JOURNAL_OK__=1":
+            journal_ok = True
+            continue
+        if line.startswith("__OOM_CGROUP_TOTAL__="):
+            try:
+                cgroup_total = int(line.split("=", 1)[1])
+            except ValueError:
+                cgroup_total = None
+            continue
+        if line.startswith("__OOM_GLOBAL_TOTAL__="):
+            try:
+                global_total = int(line.split("=", 1)[1])
+            except ValueError:
+                global_total = None
+            continue
+        if line.startswith("__OOM_MATCHED_TOTAL__="):
+            try:
+                matched_total = int(line.split("=", 1)[1])
+            except ValueError:
+                matched_total = None
+            continue
+        if " oom-kill:" in line or line.startswith("oom-kill:"):
+            evidence_lines += 1
+            source_scope = _field(line, "oom_memcg")
+            victim_scope = _field(line, "task_memcg")
+            if victim_scope and victim_scope not in {"/", "(null)"} and _belongs_to_mory(victim_scope):
+                victim_mory += 1
+            if "constraint=CONSTRAINT_MEMCG" not in line:
+                non_memcg_source_lines += 1
+                continue
+            source_lines += 1
+            label = _compact_oom_scope(source_scope)
+            sources[label] = sources.get(label, 0) + 1
+            if source_scope.startswith("/"):
+                if _belongs_to_mory(source_scope):
+                    source_mory += 1
+                elif control_groups or label.startswith("docker:"):
+                    source_external += 1
+                else:
+                    source_unknown += 1
+            else:
+                source_unknown += 1
+            continue
+        killed_markers = (
+            "Memory cgroup out of memory: Killed process ",
+            "Out of memory: Killed process ",
+        )
+        killed_marker = next((marker for marker in killed_markers if marker in line), "")
+        if killed_marker:
+            evidence_lines += 1
+            victim_part = line.split(killed_marker, 1)[1]
+            if "(" in victim_part and ")" in victim_part:
+                victim = victim_part.split("(", 1)[1].split(")", 1)[0].strip()
+                if victim:
+                    victims[victim] = victims.get(victim, 0) + 1
+
+    totals = (cgroup_total, global_total, matched_total)
+    if not journal_ok or any(value is None or value < 0 for value in totals):
+        raise ValueError("missing or invalid OOM journal markers")
+    total = cgroup_total + global_total
+    source_unknown += (
+        max(cgroup_total - source_lines, 0)
+        + global_total
+        + max(non_memcg_source_lines - global_total, 0)
+    )
+    truncated = matched_total > evidence_lines
+    complete = (
+        global_total == 0
+        and source_lines == cgroup_total
+        and source_unknown == 0
+        and not truncated
+        and (total == 0 or bool(control_groups))
+    )
+    return {
+        "oom_kills_1h": total,
+        "oom_cgroup_kills_1h": cgroup_total,
+        "oom_global_kills_1h": global_total,
+        "oom_source_mory_1h": source_mory,
+        "oom_source_external_1h": source_external,
+        "oom_source_unknown_1h": source_unknown,
+        "oom_victim_mory_1h": victim_mory,
+        "oom_source_labels_1h": _format_ranked_counts(sources),
+        "oom_victim_processes_1h": _format_ranked_counts(victims),
+        "oom_attribution_complete": complete,
+        "oom_journal_ok": journal_ok,
+        "oom_control_groups_available": bool(control_groups),
+        "oom_evidence_truncated": truncated,
+    }
+
+
+def _resolve_oom_container_names(client, source_counts):
+    """一次批量把已校验 Docker 短 ID 映射成容器名；失败时保留 ID。"""
+    docker_counts = {}
+    for item in (source_counts or "").split(",")[:5]:
+        if "=" not in item:
+            continue
+        label, raw_count = item.rsplit("=", 1)
+        if not label.startswith("docker:"):
+            continue
+        container_id = label.split(":", 1)[1]
+        if len(container_id) < 12 or any(ch not in "0123456789abcdefABCDEF" for ch in container_id):
+            continue
+        try:
+            count = int(raw_count)
+        except ValueError:
+            continue
+        docker_counts[container_id] = docker_counts.get(container_id, 0) + count
+    if not docker_counts:
+        return ""
+    output, _, rc = ssh_run(
+        client,
+        "docker inspect --format={{.Id}}:{{.Name}} " + " ".join(sorted(docker_counts)),
+        timeout=10,
+    )
+    names = {}
+    if rc == 0:
+        for line in output.splitlines():
+            full_id, separator, raw_name = line.strip().partition(":")
+            if separator and full_id and raw_name:
+                names[full_id[:12]] = raw_name.lstrip("/")
+    resolved = {}
+    for container_id, count in docker_counts.items():
+        resolved_name = names.get(container_id, f"docker:{container_id}")
+        resolved[resolved_name] = resolved.get(resolved_name, 0) + count
+    return _format_ranked_counts(resolved)
+
+
 # ============ L1 VPS 实例层 ============
 def l1_vps_check(client):
     details = {}
@@ -198,28 +378,102 @@ def l1_vps_check(client):
         loadavg_o, _, _ = ssh_run(client, "cat /proc/loadavg", timeout=10)
         details["uptime"] = uptime_o
         details["loadavg"] = loadavg_o
+        control_group_o, _, control_group_rc = ssh_run(
+            client,
+            "systemctl show mory-assistant.service mory-dashboard.service "
+            "-p ControlGroup --value",
+            timeout=10,
+        )
+        mory_control_groups = {
+            line.strip()
+            for line in control_group_o.splitlines()
+            if control_group_rc == 0 and line.strip()
+        }
         oom_o, oom_err, oom_rc = ssh_run(
             client,
-            "journalctl -k --since '1 hour ago' --no-pager "
-            "| awk '/Memory cgroup out of memory: Killed process/{count++} END{print count+0}'",
-            timeout=15,
+            "set -eu; "
+            "logs=\"$(journalctl -k --since '1 hour ago' --no-pager)\"; "
+            "printf '__OOM_JOURNAL_OK__=1\\n'; "
+            "printf '__OOM_CGROUP_TOTAL__=%s\\n' \"$(printf '%s\\n' \"$logs\" "
+            "| awk '/Memory cgroup out of memory: Killed process/{count++} END{print count+0}')\"; "
+            "printf '__OOM_GLOBAL_TOTAL__=%s\\n' \"$(printf '%s\\n' \"$logs\" "
+            "| awk '/Out of memory: Killed process/{count++} END{print count+0}')\"; "
+            "printf '__OOM_MATCHED_TOTAL__=%s\\n' \"$(printf '%s\\n' \"$logs\" "
+            "| awk '/oom-kill:|Memory cgroup out of memory: Killed process|Out of memory: Killed process/{count++} END{print count+0}')\"; "
+            "printf '%s\\n' \"$logs\" "
+            "| grep -E 'oom-kill:|Memory cgroup out of memory: Killed process|Out of memory: Killed process' "
+            "| tail -800",
+            timeout=20,
         )
         if oom_rc != 0 or oom_err:
-            details["oom_kills_1h"] = "unavailable"
+            details.update({
+                "oom_kills_1h": "unavailable",
+                "oom_cgroup_kills_1h": "unavailable",
+                "oom_global_kills_1h": "unavailable",
+                "oom_source_mory_1h": "unavailable",
+                "oom_source_external_1h": "unavailable",
+                "oom_source_unknown_1h": "unavailable",
+                "oom_victim_mory_1h": "unavailable",
+                "oom_source_labels_1h": "unavailable",
+                "oom_victim_processes_1h": "unavailable",
+                "oom_external_containers_1h": "unavailable",
+                "oom_attribution_complete": False,
+                "oom_journal_ok": False,
+                "oom_control_groups_available": bool(mory_control_groups),
+                "oom_evidence_truncated": "unavailable",
+            })
             status = "WARN"
             details["_warn"] = details.get("_warn", "") + "oom_evidence_unavailable; "
         else:
             try:
-                oom_kills_1h = int((oom_o or "0").strip())
+                oom_evidence = _parse_oom_journal(oom_o, mory_control_groups)
             except ValueError:
-                oom_kills_1h = -1
-            details["oom_kills_1h"] = oom_kills_1h
-            if oom_kills_1h < 0:
+                oom_evidence = {
+                    "oom_kills_1h": "invalid",
+                    "oom_cgroup_kills_1h": "invalid",
+                    "oom_global_kills_1h": "invalid",
+                    "oom_source_mory_1h": "invalid",
+                    "oom_source_external_1h": "invalid",
+                    "oom_source_unknown_1h": "invalid",
+                    "oom_victim_mory_1h": "invalid",
+                    "oom_source_labels_1h": "invalid",
+                    "oom_victim_processes_1h": "invalid",
+                    "oom_external_containers_1h": "invalid",
+                    "oom_attribution_complete": False,
+                    "oom_journal_ok": False,
+                    "oom_control_groups_available": bool(mory_control_groups),
+                    "oom_evidence_truncated": "invalid",
+                }
+            details.update(oom_evidence)
+            if isinstance(details["oom_source_external_1h"], int) and details["oom_source_external_1h"] > 0:
+                details["oom_external_containers_1h"] = _resolve_oom_container_names(
+                    client,
+                    details["oom_source_labels_1h"],
+                )
+            elif details["oom_source_external_1h"] == 0:
+                details["oom_external_containers_1h"] = ""
+            if details["oom_kills_1h"] == "invalid":
                 status = "WARN"
                 details["_warn"] = details.get("_warn", "") + "oom_evidence_invalid; "
-            elif oom_kills_1h > 0:
-                status = "WARN"
-                details["_warn"] = details.get("_warn", "") + f"cgroup_oom_1h({oom_kills_1h}); "
+            elif details["oom_source_mory_1h"] > 0 or details["oom_victim_mory_1h"] > 0:
+                status = "CRITICAL"
+                details["_crit"] = details.get("_crit", "") + (
+                    f"mory_oom_source({details['oom_source_mory_1h']}); "
+                    f"mory_oom_victim({details['oom_victim_mory_1h']}); "
+                )
+            if details["oom_kills_1h"] != "invalid":
+                if not details["oom_attribution_complete"]:
+                    status = "WARN" if status != "CRITICAL" else status
+                    details["_warn"] = details.get("_warn", "") + "oom_attribution_incomplete; "
+                if details["oom_global_kills_1h"] > 0:
+                    status = "WARN" if status != "CRITICAL" else status
+                    details["_warn"] = details.get("_warn", "") + f"global_oom_1h({details['oom_global_kills_1h']}); "
+                if details["oom_source_unknown_1h"] > 0:
+                    status = "WARN" if status != "CRITICAL" else status
+                    details["_warn"] = details.get("_warn", "") + f"unknown_oom_source_1h({details['oom_source_unknown_1h']}); "
+                if details["oom_source_external_1h"] > 0:
+                    status = "WARN" if status != "CRITICAL" else status
+                    details["_warn"] = details.get("_warn", "") + f"external_oom_source_1h({details['oom_source_external_1h']}); "
 
         # 提取关键指标
         cpu_usage = ""
@@ -247,7 +501,7 @@ def l1_vps_check(client):
                                 mem_avail_pct = f"{avail_mb / total_mb * 100:.1f}%"
                                 details["mem_avail_pct"] = mem_avail_pct
                                 if avail_mb / total_mb < 0.10:
-                                    status = "WARN"
+                                    status = "WARN" if status != "CRITICAL" else status
                                     details["_warn"] = details.get("_warn", "") + f"mem_avail_low({avail_mb}MB); "
                         except ValueError:
                             pass
@@ -263,7 +517,7 @@ def l1_vps_check(client):
                             disk_usage_pct = f"{use_pct}%"
                             details["disk_usage_pct"] = disk_usage_pct
                             if use_pct > 90:
-                                status = "WARN"
+                                status = "WARN" if status != "CRITICAL" else status
                                 details["_warn"] = details.get("_warn", "") + f"disk_usage_high({use_pct}%); "
                         except ValueError:
                             pass
@@ -274,7 +528,7 @@ def l1_vps_check(client):
             details["load1"] = load1
             try:
                 if float(load1) > 5.0:
-                    status = "WARN"
+                    status = "WARN" if status != "CRITICAL" else status
                     details["_warn"] = details.get("_warn", "") + f"load1_high({load1}); "
             except ValueError:
                 pass

@@ -130,8 +130,19 @@ def test_vps_layer_warns_on_recent_cgroup_oom_even_when_free_memory_recovered(mo
             return "up 1 day", "", 0
         if command == "cat /proc/loadavg":
             return "1.00 1.20 1.30 1/100 1", "", 0
+        if command.startswith("systemctl show"):
+            return "/system.slice/mory-assistant.service\n/system.slice/mory-dashboard.service", "", 0
         if "Memory cgroup out of memory" in command:
-            return "7", "", 0
+            event = (
+                "kernel: oom-kill:constraint=CONSTRAINT_MEMCG,"
+                "oom_memcg=/system.slice/docker-abcdef1234567890.scope,"
+                "task_memcg=/system.slice/docker-abcdef1234567890.scope,task=chromium"
+            )
+            victim = "kernel: Memory cgroup out of memory: Killed process 1 (chromium)"
+            body = "\n".join([event, victim] * 7)
+            return "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=7\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=14\n" + body, "", 0
+        if command.startswith("docker inspect"):
+            return "abcdef1234567890:/steel-browser", "", 0
         raise AssertionError(command)
 
     monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
@@ -140,7 +151,187 @@ def test_vps_layer_warns_on_recent_cgroup_oom_even_when_free_memory_recovered(mo
 
     assert status == "WARN"
     assert details["oom_kills_1h"] == 7
-    assert "cgroup_oom_1h(7)" in details["_warn"]
+    assert details["oom_cgroup_kills_1h"] == 7
+    assert details["oom_global_kills_1h"] == 0
+    assert details["oom_source_mory_1h"] == 0
+    assert details["oom_source_external_1h"] == 7
+    assert details["oom_source_unknown_1h"] == 0
+    assert details["oom_victim_mory_1h"] == 0
+    assert details["oom_source_labels_1h"] == "docker:abcdef123456=7"
+    assert details["oom_victim_processes_1h"] == "chromium=7"
+    assert details["oom_external_containers_1h"] == "steel-browser=7"
+    assert details["oom_attribution_complete"] is True
+    assert details["oom_journal_ok"] is True
+    assert details["oom_control_groups_available"] is True
+    assert details["oom_evidence_truncated"] is False
+    assert "external_oom_source_1h(7)" in details["_warn"]
+
+
+def test_vps_layer_marks_mory_cgroup_oom_critical(monkeypatch):
+    """Mory 自身 service cgroup 被杀必须与外部容器 OOM 分开并升级为 CRITICAL。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    def _ssh_run(_client, command, timeout=10):
+        if command.startswith("top "):
+            return "%Cpu(s): 10.0 us,  5.0 sy,  0.0 ni, 85.0 id\n", "", 0
+        if command == "free -m":
+            return "Mem: 8000 3000 1000 0 0 4000", "", 0
+        if command.startswith("df -h"):
+            return "/dev/vda1 100G 59G 41G 59% /", "", 0
+        if command.startswith("ss -tn"):
+            return "12", "", 0
+        if command == "uptime":
+            return "up 1 day", "", 0
+        if command == "cat /proc/loadavg":
+            return "1.00 1.20 1.30 1/100 1", "", 0
+        if command.startswith("systemctl show"):
+            return "/system.slice/mory-assistant.service\n/system.slice/mory-dashboard.service", "", 0
+        if "Memory cgroup out of memory" in command:
+            return (
+                "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=1\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=2\n"
+                "kernel: oom-kill:constraint=CONSTRAINT_MEMCG,"
+                "oom_memcg=/system.slice/mory-assistant.service,"
+                "task_memcg=/system.slice/mory-assistant.service,task=python3\n"
+                "kernel: Memory cgroup out of memory: Killed process 2 (python3)",
+                "",
+                0,
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l1_vps_check(object())
+
+    assert status == "CRITICAL"
+    assert details["oom_kills_1h"] == 1
+    assert details["oom_source_mory_1h"] == 1
+    assert details["oom_source_external_1h"] == 0
+    assert details["oom_victim_mory_1h"] == 1
+    assert details["oom_source_labels_1h"] == "mory-assistant.service=1"
+    assert "mory_oom_source(1)" in details["_crit"]
+    assert "mory_oom_victim(1)" in details["_crit"]
+
+
+def test_oom_parser_separates_source_victim_and_keeps_unpaired_events_unknown():
+    """source 与 victim 分开；全局/无来源/无法配对事件必须留在 unknown。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    details = monitor._parse_oom_journal(
+        "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=2\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=2\n"
+        "kernel: oom-kill:constraint=CONSTRAINT_MEMCG,oom_memcg=(null),"
+        "task_memcg=/system.slice/mory-dashboard.service,task=python3\n"
+        "kernel: Memory cgroup out of memory: Killed process 2 (python3)",
+        {"/system.slice/mory-dashboard.service"},
+    )
+
+    assert details["oom_kills_1h"] == 2
+    assert details["oom_source_mory_1h"] == 0
+    assert details["oom_source_external_1h"] == 0
+    assert details["oom_source_unknown_1h"] == 2
+    assert details["oom_victim_mory_1h"] == 1
+    assert details["oom_attribution_complete"] is False
+
+
+def test_oom_parser_counts_global_oom_and_truncation_as_incomplete():
+    """主机级 OOM 或日志截断都不能静默显示 attribution complete。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    details = monitor._parse_oom_journal(
+        "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=0\n__OOM_GLOBAL_TOTAL__=1\n__OOM_MATCHED_TOTAL__=2\n"
+        "kernel: oom-kill:constraint=CONSTRAINT_NONE,oom_memcg=(null),"
+        "task_memcg=/system.slice/mory-assistant.service,task=python3\n"
+        "kernel: Out of memory: Killed process 9 (python3)",
+        {"/system.slice/mory-assistant.service"},
+    )
+
+    assert details["oom_kills_1h"] == 1
+    assert details["oom_global_kills_1h"] == 1
+    assert details["oom_source_unknown_1h"] == 1
+    assert details["oom_victim_mory_1h"] == 1
+    assert details["oom_evidence_truncated"] is False
+    assert details["oom_attribution_complete"] is False
+
+
+def test_oom_parser_marks_external_pressure_with_mory_victim_separately():
+    """外部/上级 cgroup 压力与 Mory 受害进程不能共用一个字段。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    details = monitor._parse_oom_journal(
+        "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=1\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=2\n"
+        "kernel: oom-kill:constraint=CONSTRAINT_MEMCG,oom_memcg=/system.slice,"
+        "task_memcg=/system.slice/mory-assistant.service,task=python3\n"
+        "kernel: Memory cgroup out of memory: Killed process 4 (python3)",
+        {"/system.slice/mory-assistant.service"},
+    )
+
+    assert details["oom_source_mory_1h"] == 0
+    assert details["oom_source_external_1h"] == 1
+    assert details["oom_victim_mory_1h"] == 1
+    assert details["oom_attribution_complete"] is True
+
+
+def test_oom_parser_marks_extra_constraint_and_non_path_sources_unknown():
+    """额外 constraint 或非绝对 cgroup 路径都必须破坏完整归因。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    extra_constraint = monitor._parse_oom_journal(
+        "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=1\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=3\n"
+        "kernel: oom-kill:constraint=CONSTRAINT_MEMCG,oom_memcg=/system.slice/other.service,"
+        "task_memcg=/system.slice/other.service,task=worker\n"
+        "kernel: oom-kill:constraint=CONSTRAINT_NONE,oom_memcg=(null),task_memcg=(null)\n"
+        "kernel: Memory cgroup out of memory: Killed process 4 (worker)",
+        {"/system.slice/mory-assistant.service"},
+    )
+    bogus_path = monitor._parse_oom_journal(
+        "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=1\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=2\n"
+        "kernel: oom-kill:constraint=CONSTRAINT_MEMCG,oom_memcg=bogus,task_memcg=bogus,task=x\n"
+        "kernel: Memory cgroup out of memory: Killed process 5 (x)",
+        {"/system.slice/mory-assistant.service"},
+    )
+
+    assert extra_constraint["oom_source_external_1h"] == 1
+    assert extra_constraint["oom_source_unknown_1h"] == 1
+    assert extra_constraint["oom_attribution_complete"] is False
+    assert bogus_path["oom_source_external_1h"] == 0
+    assert bogus_path["oom_source_unknown_1h"] == 1
+    assert bogus_path["oom_attribution_complete"] is False
+
+
+def test_vps_layer_incomplete_oom_attribution_never_reports_ok(monkeypatch):
+    """即使总数为零，只要事件证据不完整就必须保持 WARN。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    def _ssh_run(_client, command, timeout=10):
+        if command.startswith("top "):
+            return "%Cpu(s): 10.0 us,  5.0 sy,  0.0 ni, 85.0 id\n", "", 0
+        if command == "free -m":
+            return "Mem: 8000 3000 1000 0 0 4000", "", 0
+        if command.startswith("df -h"):
+            return "/dev/vda1 100G 59G 41G 59% /", "", 0
+        if command.startswith("ss -tn"):
+            return "12", "", 0
+        if command == "uptime":
+            return "up 1 day", "", 0
+        if command == "cat /proc/loadavg":
+            return "1.00 1.20 1.30 1/100 1", "", 0
+        if command.startswith("systemctl show"):
+            return "/system.slice/mory-assistant.service", "", 0
+        if "Memory cgroup out of memory" in command:
+            return (
+                "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=0\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=1\n"
+                "kernel: oom-kill:constraint=CONSTRAINT_MEMCG,oom_memcg=(null),task_memcg=(null)",
+                "",
+                0,
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l1_vps_check(object())
+
+    assert status == "WARN"
+    assert details["oom_attribution_complete"] is False
+    assert "oom_attribution_incomplete" in details["_warn"]
 
 
 def test_vps_layer_zero_oom_keeps_otherwise_healthy_resources_ok(monkeypatch):
@@ -159,8 +350,10 @@ def test_vps_layer_zero_oom_keeps_otherwise_healthy_resources_ok(monkeypatch):
             return "up 1 day", "", 0
         if command == "cat /proc/loadavg":
             return "1.00 1.20 1.30 1/100 1", "", 0
+        if command.startswith("systemctl show"):
+            return "/system.slice/mory-assistant.service\n/system.slice/mory-dashboard.service", "", 0
         if "Memory cgroup out of memory" in command:
-            return "0", "", 0
+            return "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=0\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=0", "", 0
         raise AssertionError(command)
 
     monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
@@ -169,6 +362,11 @@ def test_vps_layer_zero_oom_keeps_otherwise_healthy_resources_ok(monkeypatch):
 
     assert status == "OK"
     assert details["oom_kills_1h"] == 0
+    assert details["oom_source_mory_1h"] == 0
+    assert details["oom_source_external_1h"] == 0
+    assert details["oom_source_unknown_1h"] == 0
+    assert details["oom_attribution_complete"] is True
+    assert details["oom_journal_ok"] is True
     assert "_warn" not in details
 
 
@@ -188,6 +386,8 @@ def test_vps_layer_oom_evidence_failure_is_not_reported_healthy(monkeypatch):
             return "up 1 day", "", 0
         if command == "cat /proc/loadavg":
             return "1.00 1.20 1.30 1/100 1", "", 0
+        if command.startswith("systemctl show"):
+            return "", "systemctl unavailable", 1
         if "Memory cgroup out of memory" in command:
             return "", "journal unavailable", 1
         raise AssertionError(command)
@@ -198,6 +398,12 @@ def test_vps_layer_oom_evidence_failure_is_not_reported_healthy(monkeypatch):
 
     assert status == "WARN"
     assert details["oom_kills_1h"] == "unavailable"
+    assert details["oom_source_mory_1h"] == "unavailable"
+    assert details["oom_source_external_1h"] == "unavailable"
+    assert details["oom_source_unknown_1h"] == "unavailable"
+    assert details["oom_external_containers_1h"] == "unavailable"
+    assert details["oom_attribution_complete"] is False
+    assert details["oom_journal_ok"] is False
     assert "oom_evidence_unavailable" in details["_warn"]
 
 

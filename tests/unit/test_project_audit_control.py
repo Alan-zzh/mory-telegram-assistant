@@ -117,12 +117,42 @@ def test_monitor_receipt_filters_raw_process_and_log_tails():
         {
             "cpu_usage": "10%",
             "oom_kills_1h": 7,
+            "oom_cgroup_kills_1h": 7,
+            "oom_global_kills_1h": 0,
+            "oom_source_mory_1h": 0,
+            "oom_source_external_1h": 7,
+            "oom_source_unknown_1h": 0,
+            "oom_victim_mory_1h": 0,
+            "oom_source_labels_1h": "docker:abcdef123456=7",
+            "oom_victim_processes_1h": "chromium=7",
+            "oom_external_containers_1h": "steel-browser=7",
+            "oom_attribution_complete": True,
+            "oom_journal_ok": True,
+            "oom_control_groups_available": True,
+            "oom_evidence_truncated": False,
             "top_head": "process args with secrets",
             "_warn": "",
         },
     )
 
-    assert filtered == {"cpu_usage": "10%", "oom_kills_1h": 7, "_warn": ""}
+    assert filtered == {
+        "cpu_usage": "10%",
+        "oom_kills_1h": 7,
+        "oom_cgroup_kills_1h": 7,
+        "oom_global_kills_1h": 0,
+        "oom_source_mory_1h": 0,
+        "oom_source_external_1h": 7,
+        "oom_source_unknown_1h": 0,
+        "oom_victim_mory_1h": 0,
+        "oom_source_labels_1h": "docker:abcdef123456=7",
+        "oom_victim_processes_1h": "chromium=7",
+        "oom_external_containers_1h": "steel-browser=7",
+        "oom_attribution_complete": True,
+        "oom_journal_ok": True,
+        "oom_control_groups_available": True,
+        "oom_evidence_truncated": False,
+        "_warn": "",
+    }
 
 
 def test_timer_manager_defaults_to_plan_and_requires_apply(capsys):

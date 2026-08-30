@@ -149,7 +149,7 @@ def _aggregate(checks: list[dict[str, Any]]) -> str:
 
 
 _MONITOR_EVIDENCE_KEYS = {
-    "l1_resources": {"cpu_usage", "mem_avail_pct", "disk_usage_pct", "load1", "net_conn", "uptime", "oom_kills_1h", "_warn", "_crit", "_exc"},
+    "l1_resources": {"cpu_usage", "mem_avail_pct", "disk_usage_pct", "load1", "net_conn", "uptime", "oom_kills_1h", "oom_cgroup_kills_1h", "oom_global_kills_1h", "oom_source_mory_1h", "oom_source_external_1h", "oom_source_unknown_1h", "oom_victim_mory_1h", "oom_source_labels_1h", "oom_victim_processes_1h", "oom_external_containers_1h", "oom_attribution_complete", "oom_journal_ok", "oom_control_groups_available", "oom_evidence_truncated", "_warn", "_crit", "_exc"},
     "l4_business_metrics": {"task_1h", "task_5min", "task_status_1h", "recent_tasks", "token_usage_1h", "token_usage_5min", "token_cost_1h_sum", "conversion_1h", "orphan_1h", "_warn", "_crit", "_exc"},
     "l5_scheduler": {"task_status_1h", "failed_1h", "running_1h", "aborted_1h", "stale_running_30m", "recent_persisted_failures", "scheduler_metrics_errors", "scheduler_metrics_cumulative_failures", "recent_scheduled_tasks", "fail_log_10min_count", "watchdog_usec", "_warn", "_crit", "_exc"},
     "l6_watchdog": {"cron_tasks", "legacy_cron_residue", "watchdog_log_age_sec", "_warn", "_crit", "_exc"},
