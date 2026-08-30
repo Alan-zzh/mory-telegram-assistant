@@ -44,7 +44,7 @@ class QuestionRepo:
             is_convert: 是否转化（0/1）
             ai_reply_summary: 已知回复摘要；早路由可在发送成功后一次写完整
             faq_hit_id: 命中的FAQ知识库ID
-            answer_source: preset/faq/direct_access/ai/unresolved/fallback
+            answer_source: preset/faq/direct_access/ai/unresolved/fallback/delegated
             answer_ref: 规则名、FAQ ID、入口目标或其他稳定引用
 
         Returns:
@@ -79,7 +79,7 @@ class QuestionRepo:
             question_id: 问题记录ID
             ai_reply_summary: AI回复摘要（截断到200字符）
             faq_hit_id: 命中的FAQ知识库ID
-            answer_source: preset/faq/direct_access/ai/unresolved/fallback
+            answer_source: preset/faq/direct_access/ai/unresolved/fallback/delegated
             answer_ref: 稳定来源引用
 
         Returns:
@@ -110,8 +110,10 @@ class QuestionRepo:
 
         Returns:
             {
-                total_count: 总问题数,
-                today_count: 今日问题数,
+                total_count: Mory职责内问题数,
+                recorded_total_count: 原始记录总数（含 delegated）,
+                delegated_count: 交给其他机器人的记录数,
+                today_count: 今日Mory职责内问题数,
                 faq_hit_rate: FAQ命中率（百分比）,
                 category_distribution: {分类: 数量},
                 top_questions: [{question_text, count}, ...] 前20高频问题
@@ -119,14 +121,26 @@ class QuestionRepo:
         """
         try:
             c = self.conn.cursor()
-            # 总数
+            # 原始记录全部保留；Mory 问题指标排除已明确交给其他机器人的事项。
             c.execute("SELECT COUNT(*) FROM user_questions")
-            total = c.fetchone()[0]
+            recorded_total = int(c.fetchone()[0])
+            c.execute(
+                "SELECT COUNT(*) FROM user_questions WHERE COALESCE(answer_source, '')='delegated'"
+            )
+            delegated_count = int(c.fetchone()[0])
+            total = recorded_total - delegated_count
             # 今日（CST 0点起）
             today_start = int(datetime.now(_CST).replace(
                 hour=0, minute=0, second=0, microsecond=0).timestamp())
             c.execute("SELECT COUNT(*) FROM user_questions WHERE ts>=?", (today_start,))
-            today = c.fetchone()[0]
+            today_recorded = int(c.fetchone()[0])
+            c.execute(
+                """SELECT COUNT(*) FROM user_questions
+                   WHERE ts>=? AND COALESCE(answer_source, '')='delegated'""",
+                (today_start,),
+            )
+            today_delegated = int(c.fetchone()[0])
+            today = today_recorded - today_delegated
             # FAQ命中率保留原语义；来源分布用于区分预设、入口、AI与待优化。
             c.execute("SELECT COUNT(*) FROM user_questions WHERE faq_hit_id>0")
             faq_hit = c.fetchone()[0]
@@ -143,6 +157,7 @@ class QuestionRepo:
                 "ai": source_counts.get("ai", 0),
                 "unresolved": source_counts.get("unresolved", 0),
                 "fallback": source_counts.get("fallback", 0),
+                "delegated": source_counts.get("delegated", 0),
                 "legacy_unclassified": source_counts.get("", 0),
             }
             c.execute(
@@ -163,15 +178,21 @@ class QuestionRepo:
             )
             # 分类分布
             c.execute("""SELECT question_category, COUNT(*) FROM user_questions
+                         WHERE COALESCE(answer_source, '')!='delegated'
                          GROUP BY question_category ORDER BY COUNT(*) DESC""")
             category_distribution = {r[0]: r[1] for r in c.fetchall()}
             # 高频问题TOP20
             c.execute("""SELECT question_text, COUNT(*) as cnt FROM user_questions
+                         WHERE COALESCE(answer_source, '')!='delegated'
                          GROUP BY question_text ORDER BY cnt DESC LIMIT 20""")
             top_questions = [{"question_text": r[0], "count": r[1]} for r in c.fetchall()]
             return {
                 "total_count": total,
+                "recorded_total_count": recorded_total,
+                "delegated_count": delegated_count,
                 "today_count": today,
+                "today_recorded_count": today_recorded,
+                "today_delegated_count": today_delegated,
                 "faq_hit_rate": round(faq_hit_rate, 2),
                 "answer_source_distribution": source_distribution,
                 "deterministic_coverage_rate": round(deterministic_coverage_rate, 2),
@@ -182,11 +203,16 @@ class QuestionRepo:
             logger.error(f"获取问题统计失败：{e}")
             return {
                 "total_count": 0,
+                "recorded_total_count": 0,
+                "delegated_count": 0,
                 "today_count": 0,
+                "today_recorded_count": 0,
+                "today_delegated_count": 0,
                 "faq_hit_rate": 0.0,
                 "answer_source_distribution": {
                     "faq": 0, "preset": 0, "direct_access": 0, "ai": 0,
-                    "unresolved": 0, "fallback": 0, "legacy_unclassified": 0,
+                    "unresolved": 0, "fallback": 0, "delegated": 0,
+                    "legacy_unclassified": 0,
                 },
                 "deterministic_coverage_rate": 0.0,
                 "category_distribution": {},
@@ -210,6 +236,7 @@ class QuestionRepo:
                 """SELECT question_text, COUNT(*) as cnt,
                           mode, intent, question_category
                    FROM user_questions WHERE ts>=?
+                     AND COALESCE(answer_source, '')!='delegated'
                    GROUP BY question_text ORDER BY cnt DESC LIMIT ?""",
                 (cutoff, limit),
             )
@@ -241,7 +268,8 @@ class QuestionRepo:
             c = self.conn.cursor()
             c.execute(
                 """SELECT question_category, COUNT(*) FROM user_questions
-                   WHERE ts>=? GROUP BY question_category ORDER BY COUNT(*) DESC""",
+                   WHERE ts>=? AND COALESCE(answer_source, '')!='delegated'
+                   GROUP BY question_category ORDER BY COUNT(*) DESC""",
                 (cutoff,),
             )
             return {r[0]: r[1] for r in c.fetchall()}
@@ -693,7 +721,7 @@ class QuestionRepo:
                    FROM user_questions
                    WHERE ts>=?
                      AND faq_hit_id<=0
-                     AND COALESCE(answer_source, '') NOT IN ('preset', 'faq', 'direct_access')
+                     AND COALESCE(answer_source, '') NOT IN ('preset', 'faq', 'direct_access', 'delegated')
                      AND LTRIM(question_text) NOT LIKE '/%'""",
                 (cutoff,),
             )

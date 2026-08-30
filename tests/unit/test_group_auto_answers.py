@@ -91,10 +91,7 @@ def test_invalid_checkin_aliases_are_rejected_with_simplified_format():
         is_invalid_checkin_command,
     )
 
-    for text in (
-        "簽到", "/簽到", "QD", "qd", "/qd", "Q.D",
-        "签到！！！", "签到？？", "签到签到",
-    ):
+    for text in ("簽到", "/簽到", "QD", "qd", "/qd", "Q.D"):
         assert is_invalid_checkin_command(text)
     assert not is_invalid_checkin_command("签到")
     assert "简体“签到”" in CHECKIN_FORMAT_HINT
@@ -456,7 +453,7 @@ def test_private_mystic_reply_is_default_off_and_group_does_not_trigger():
     assert group_recorder.replies == []
 
 
-def test_builtin_points_answer_uses_preview_and_custom_concept_is_not_static_order():
+def test_unconfigured_builtin_points_answer_is_not_active():
     from modules.keyword_trigger import KeywordTrigger
 
     db = _QuestionDb()
@@ -465,16 +462,12 @@ def test_builtin_points_answer_uses_preview_and_custom_concept_is_not_static_ord
 
     points_msg = "签到积分有什么福利"
     video_msg = "定制视频是什么"
-    assert trigger.handle_message(points_msg, -1001, _message(points_msg), object())
+    assert not trigger.handle_message(points_msg, -1001, _message(points_msg), object())
     assert not trigger.handle_message(video_msg, -1001, _message(video_msg), object())
-
-    assert "@moryselect" in recorder.replies[0][0]
-    assert "VIP月卡" not in recorder.replies[0][0]
-    assert "@Moryfansbot" not in recorder.replies[0][0]
-    assert len(recorder.replies) == 1
+    assert recorder.replies == []
 
 
-def test_preset_question_families_answer_new_points_questions_without_llm():
+def test_configured_points_question_uses_only_configured_answer_without_llm():
     from modules.keyword_trigger import KeywordTrigger
 
     class _FailIfCalledAi:
@@ -488,28 +481,26 @@ def test_preset_question_families_answer_new_points_questions_without_llm():
         mory_bot=recorder,
         ai=_FailIfCalledAi(),
         config={"SPECIAL_AUTO_REPLIES": [{
-            "name": "旧积分咨询",
+            "name": "积分咨询",
             "topic": "积分",
             "enabled": True,
-            "keywords": ["积分"],
+            "keywords": ["积分怎么使用"],
+            "keyword_match_mode": "full",
             "conversion_target": "none",
-            "base_reply": "旧的泛化回答",
+            "ai_polish": False,
+            "remember_context": True,
+            "base_reply": "这是老板配置的积分说明。",
         }]},
     )
 
     text = "积分怎么使用"
     assert trigger.handle_message(text, -1001, _message(text), object())
     reply = recorder.replies[-1][0]
-    assert "14900" in reply
-    assert "积分商城" in reply
-    assert "至臻精选会员" in reply
-    assert "旧的泛化回答" not in reply
-    assert "@moryselect" not in reply.lower()
-    assert "@morychannelbot" not in reply.lower()
+    assert reply == "这是老板配置的积分说明。"
     assert db.business_context[-1][1]["conversion_target"] == "none"
 
 
-def test_preset_question_family_followups_stay_bound_to_previous_topic():
+def test_unconfigured_points_followup_does_not_reactivate_builtin_answer():
     from modules.keyword_trigger import KeywordTrigger
 
     recorder = _ReplyRecorder()
@@ -525,19 +516,17 @@ def test_preset_question_family_followups_stay_bound_to_previous_topic():
     ]
 
     followup = _message("门槛多少？")
-    assert trigger.handle_message(
+    assert not trigger.handle_message(
         followup.text,
         followup.chat.id,
         followup,
         object(),
         conversation_history=points_history,
     )
-    assert recorder.replies[-1][0].startswith("当前门槛是 14900 积分")
-
     rule = trigger._match_special_rule("门槛多少？", conversation_history=points_history)
-    assert rule["name"] == "积分兑换说明"
-    assert rule["base_reply"].startswith("当前门槛是 14900 积分")
+    assert rule is None
     assert trigger._match_special_rule("门槛多少？", conversation_history=[]) is None
+    assert recorder.replies == []
 
 
 def test_meet_mory_question_and_followups_use_social_unlock_not_chatbot_rejection():
@@ -618,15 +607,13 @@ def test_private_short_business_questions_use_presets_without_widening_groups():
         assert db.questions[-1]["answer_ref"] == expected_rule
         assert db.questions[-1]["ai_reply_summary"] == recorder.replies[-1][0]
 
+    replies_before = len(recorder.replies)
+    questions_before = len(db.questions)
     for text in ("签到！！！", "签到签到", "什么？我断签了🤪", "签到"):
         message = _private_message(text)
-        assert trigger.handle_message(text, message.chat.id, message, object())
-        assert recorder.replies[-1][0] == (
-            "签到功能当前未开启。"
-            if "断签" not in text
-            else "签到功能当前未开启，我不能只凭这句话判断你以前是否断签；历史连续记录要以实际签到记录为准。"
-        )
-        assert db.questions[-1]["answer_ref"] == "签到状态说明"
+        assert not trigger.handle_message(text, message.chat.id, message, object())
+    assert len(recorder.replies) == replies_before
+    assert len(db.questions) == questions_before
 
     # 裸短句只有私聊对象明确时才承接；群聊不能猜成 Mory 业务。
     for text in ("可以约吗", "约吗", "怎么进群", "怎么加群", "会员群", "包年可以", "预览"):
@@ -667,7 +654,6 @@ def test_new_business_presets_keep_each_problem_on_its_own_answer():
     )
     cases = {
         "至臻全享三个群分别是什么": ("至臻精选、至臻全享、精选图集", "14900"),
-        "兑换成功但没进群": ("订单号文字和成功凭证截图", "三个群"),
         "VIP订阅具体权益": ("最想要什么", "订单号"),
         "原味/视频定制规则": ("需求、预算和边界", "14900"),
         "官方联系方式": ("普通咨询直接在这里发", "积分商城"),
@@ -694,17 +680,6 @@ def test_business_presets_cover_common_natural_phrasing_without_ai():
         config={},
     )
     cases = {
-        "积分兑换说明": (
-            "积分怎么兑换会员", "签到积分怎么用", "积分兑换会员需要多少分",
-            "我有14900积分怎么换", "签到多久能换会员", "多少积分兑换",
-            "现在不可以用积分兑换了吗", "积分现在不能换会员了吗",
-        ),
-        "签到九十天兑换": (
-            "签到九十天可以换吗", "连续签到三个月能换会员吗", "我签了90天能换VIP吗",
-        ),
-        "会员兑换未进群": (
-            "我兑换会员了怎么还没进群", "积分换完怎么没拉我进群", "兑换成功了没收到群链接",
-        ),
         "至臻全享群说明": ("全享包括哪三个群", "至臻全享都有哪些群"),
         "VIP订阅权益说明": (
             "会员都包括什么", "VIP能干嘛", "订阅后可以得到什么", "会员有啥权益",
@@ -761,7 +736,7 @@ def test_example_config_rules_keep_project_topics_and_reject_shared_words():
         "福利在哪呀": "福利咨询",
         "有没有福利": "福利咨询",
         "会员里有什么内容": "内容咨询",
-        "我的积分有多少": "积分咨询",
+        "积分有什么用": "积分咨询",
         "签到有什么奖励": "签到奖励咨询",
     }
     for text, name in expected.items():
@@ -780,17 +755,114 @@ def test_example_config_rules_keep_project_topics_and_reject_shared_words():
         assert trigger._match_special_rule(text) is None, text
 
 
-def test_new_preset_question_families_keep_single_conversion_target():
-    from modules.keyword_trigger import _DEFAULT_SPECIAL_AUTO_REPLIES
+def test_configured_points_answer_keeps_owner_authored_reply_and_provenance():
+    from modules.keyword_trigger import KeywordTrigger
+
+    config = json.loads(
+        (Path(__file__).parents[2] / "config.json.example").read_text(encoding="utf-8")
+    )
+    config["FAQ_TRACKING_ENABLED"] = True
+    expected_rule = next(
+        rule for rule in config["SPECIAL_AUTO_REPLIES"] if rule["name"] == "积分咨询"
+    )
+    expected_rule["ai_polish"] = False
+    db = _QuestionDb()
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(db, mory_bot=recorder, ai=_NoReplyAi(), config=config)
+    message = _private_message("积分有什么用")
+
+    assert trigger.handle_message(message.text, message.chat.id, message, object())
+    assert recorder.replies[-1][0] == expected_rule["base_reply"]
+    assert db.questions[-1]["answer_source"] == "preset"
+    assert db.questions[-1]["answer_ref"] == "积分咨询"
+
+
+def test_unconfigured_points_variants_do_not_become_presets():
+    from modules.keyword_trigger import KeywordTrigger
+
+    config = json.loads(
+        (Path(__file__).parents[2] / "config.json.example").read_text(encoding="utf-8")
+    )
+    trigger = KeywordTrigger(_QuestionDb(), config=config)
+
+    for text in (
+        "多少积分兑换",
+        "现在不可以用积分兑换了吗",
+        "积分现在不能换会员了吗",
+        "积分做什么",
+        "签到有啥奖励",
+    ):
+        assert trigger._match_special_rule(text, is_private=True) is None, text
+
+
+def test_external_feature_classifier_covers_only_unowned_operational_topics():
+    import modules.keyword_trigger as keyword_trigger
+
+    classifier = getattr(keyword_trigger, "is_external_feature_text", None)
+    assert callable(classifier)
+    for text in (
+        "签到！！！", "签到签到", "什么？我断签了🤪", "补签", "积分可以提现吗",
+        "多少积分兑换", "积分商城", "/checkin", "/points",
+    ):
+        assert classifier(text), text
+
+    for text in (
+        "怎么订阅会员", "怎么进会员群", "包年可以吗", "预览",
+        "刚开会员可以聊定制吗", "预约签到处", "连续订阅90天",
+        "数学积分怎么求", "航空积分怎么兑换机票", "信用卡积分不能换了吗",
+        "签到一份合同", "打卡景点推荐",
+    ):
+        assert not classifier(text), text
+
+
+def test_external_feature_delegation_records_for_audit_without_generating_reply():
+    import core.message_dispatcher as message_dispatcher
+
+    handler = getattr(message_dispatcher, "_defer_external_feature", None)
+    assert callable(handler)
+    db = _QuestionDb()
+    dctx = SimpleNamespace(
+        ctx=SimpleNamespace(db=db, config={"FAQ_TRACKING_ENABLED": True}),
+        text="签到！！！",
+        uid=42,
+        chat_id=42,
+    )
+
+    assert handler(dctx)
+    assert db.questions == [{
+        "uid": 42,
+        "chat_id": 42,
+        "question_text": "签到！！！",
+        "mode": "normal",
+        "intent": "external_feature",
+        "keyword_tag": "",
+        "question_category": "other",
+        "is_convert": 0,
+        "ai_reply_summary": "",
+        "faq_hit_id": 0,
+        "answer_source": "delegated",
+        "answer_ref": "other_bot_feature",
+    }]
+
+    dctx.text = "怎么订阅会员"
+    assert not handler(dctx)
+    assert len(db.questions) == 1
+
+
+def test_active_preset_question_families_keep_single_conversion_target():
+    from modules.keyword_trigger import KeywordTrigger
 
     names = {
-        "积分兑换说明", "签到九十天兑换", "会员兑换未进群",
         "至臻全享群说明", "VIP订阅权益说明", "定制规则说明",
         "联系与社交解锁", "会员加入入口", "预览入口",
         "会员包年咨询", "已购会员定制承接",
     }
-    rules = [rule for rule in _DEFAULT_SPECIAL_AUTO_REPLIES if rule["name"] in names]
+    active_rules = KeywordTrigger(_QuestionDb(), config={})._effective_special_rules()
+    rules = [rule for rule in active_rules if rule["name"] in names]
     assert {rule["name"] for rule in rules} == names
+    assert not {
+        "签到积分福利", "积分兑换说明", "签到九十天兑换", "会员兑换未进群",
+    } & {rule["name"] for rule in active_rules}
 
     for rule in rules:
         texts = [rule["base_reply"]]
@@ -1006,6 +1078,32 @@ def test_daily_question_summary_counts_preset_and_direct_without_false_misses():
     assert "这是什么新问题" in summary
     assert "可以约吗" not in summary
     assert "怎么订阅" not in summary
+
+
+def test_daily_question_summary_keeps_delegated_records_out_of_mory_optimization():
+    from tasks.analytics.faq_distill_task import _build_daily_question_summary
+
+    summary = _build_daily_question_summary([
+        {
+            "question_text": "签到！！！",
+            "ai_reply_summary": "",
+            "faq_hit_id": 0,
+            "answer_source": "delegated",
+            "answer_ref": "other_bot_feature",
+        },
+        {
+            "question_text": "新的会员问题",
+            "ai_reply_summary": "模型正常回答。",
+            "faq_hit_id": 0,
+            "answer_source": "ai",
+            "answer_ref": "normal",
+        },
+    ])
+
+    assert "共记录 1 条" in summary
+    assert "其他机器人事项 1 条" in summary
+    assert "签到！！！" not in summary
+    assert "新的会员问题" in summary
 
 
 def test_p10_answer_provenance_priorities_are_stable():

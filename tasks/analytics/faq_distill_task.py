@@ -102,9 +102,11 @@ def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
         # 不能倒推成预设或直接入口。
         return "ai"
 
+    delegated = [item for item in questions if _answer_source(item) == "delegated"]
+    owned_questions = [item for item in questions if _answer_source(item) != "delegated"]
     reportable = [
         item
-        for item in questions
+        for item in owned_questions
         if not _is_command_text(item.get("question_text", ""))
         and not _is_fallback_reply(item.get("ai_reply_summary", ""))
         and not _is_casual_chat_question(item.get("question_text", ""))
@@ -114,9 +116,9 @@ def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
         for item in reportable
         if _answer_source(item) == "unresolved"
     ]
-    faq_hits = sum(1 for item in questions if _answer_source(item) == "faq")
-    preset_hits = sum(1 for item in questions if _answer_source(item) == "preset")
-    direct_hits = sum(1 for item in questions if _answer_source(item) == "direct_access")
+    faq_hits = sum(1 for item in owned_questions if _answer_source(item) == "faq")
+    preset_hits = sum(1 for item in owned_questions if _answer_source(item) == "preset")
+    direct_hits = sum(1 for item in owned_questions if _answer_source(item) == "direct_access")
     faq_misses = [
         item
         for item in reportable
@@ -127,9 +129,9 @@ def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
     lines = [
         "📋 今日问题汇总",
         (
-            f"共记录 {len(questions)} 条｜FAQ命中 {faq_hits} 条｜"
+            f"共记录 {len(owned_questions)} 条｜FAQ命中 {faq_hits} 条｜"
             f"预设命中 {preset_hits} 条｜入口直达 {direct_hits} 条｜"
-            f"待优化 {len(unresolved)} 条"
+            f"待优化 {len(unresolved)} 条｜其他机器人事项 {len(delegated)} 条"
         ),
     ]
 

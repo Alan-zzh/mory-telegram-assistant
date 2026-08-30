@@ -66,6 +66,7 @@ def test_question_repo_roundtrips_answer_source_and_stats():
         question_text="可以约吗",
         mode="normal",
         intent="联系Mory",
+        question_category="social",
         answer_source="preset",
         answer_ref="联系与社交解锁",
         ai_reply_summary="按当前社交解锁说明操作。",
@@ -85,12 +86,33 @@ def test_question_repo_roundtrips_answer_source_and_stats():
     row = repo.get_questions(days=1)[0]
     assert row["faq_hit_id"] == 9
     assert row["answer_source"] == "faq"
+    repo.log_question(
+        uid=42,
+        chat_id=42,
+        question_text="签到！！！",
+        mode="normal",
+        intent="external_feature",
+        answer_source="delegated",
+        answer_ref="other_bot_feature",
+    )
     stats = repo.get_question_stats()
+    assert stats["total_count"] == 1
+    assert stats["recorded_total_count"] == 2
+    assert stats["delegated_count"] == 1
     assert stats["answer_source_distribution"]["faq"] == 1
+    assert stats["answer_source_distribution"]["delegated"] == 1
     assert stats["deterministic_coverage_rate"] == 100.0
+    assert repo.get_top_questions(days=1) == [{
+        "question_text": "可以约吗",
+        "count": 1,
+        "mode": "normal",
+        "intent": "联系Mory",
+        "question_category": "social",
+    }]
+    assert repo.get_category_distribution(days=1) == {"social": 1}
     page, total = repo.get_questions(limit=1, days=1, include_total=True)
     assert len(page) == 1
-    assert total == 1
+    assert total == 2
 
 
 def test_distill_excludes_covered_answers_and_commands():
@@ -102,6 +124,8 @@ def test_distill_excludes_covered_answers_and_commands():
     for source, text in (
         ("preset", "怎么进群"),
         ("direct_access", "怎么订阅"),
+        ("delegated", "多少积分兑换"),
+        ("delegated", "多少积分兑换"),
         ("ai", "/start"),
         ("ai", "新的业务问题"),
         ("ai", "新的业务问题"),
@@ -174,3 +198,73 @@ def test_0010_migration_is_idempotent_and_keeps_evidence_on_downgrade(tmp_path):
             "SELECT answer_source, answer_ref FROM user_questions WHERE id=1"
         )).one()
         assert tuple(preserved) == ("preset", "联系与社交解锁")
+
+
+def test_0011_backfills_only_verified_external_records_and_rejects_candidate(tmp_path):
+    migration_path = (
+        Path(__file__).parents[2]
+        / "migrations/versions/0011_external_feature_answer_scope.py"
+    )
+    assert migration_path.exists()
+    spec = importlib.util.spec_from_file_location("external_feature_scope_migration", migration_path)
+    migration = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(migration)
+
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'scope.db'}")
+    with engine.begin() as connection:
+        connection.execute(sa.text(
+            """CREATE TABLE user_questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_text TEXT NOT NULL DEFAULT '',
+                answer_source TEXT NOT NULL DEFAULT '',
+                answer_ref TEXT NOT NULL DEFAULT ''
+            )"""
+        ))
+        connection.execute(sa.text(
+            """CREATE TABLE faq_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_pattern TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                reviewed_by TEXT NOT NULL DEFAULT '',
+                reviewed_at INTEGER NOT NULL DEFAULT 0
+            )"""
+        ))
+        for text in (
+            "签到！！！", "什么？我断签了🤪", "多少积分兑换",
+            "现在不可以用积分兑换了吗", "签到积分能干嘛", "签到签到",
+            "积分有什么用", "航空积分怎么兑换机票",
+        ):
+            connection.execute(
+                sa.text("INSERT INTO user_questions (question_text) VALUES (:text)"),
+                {"text": text},
+            )
+        connection.execute(sa.text(
+            "INSERT INTO faq_candidates (question_pattern) VALUES ('签到')"
+        ))
+
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.upgrade()
+        migration.upgrade()
+
+        rows = dict(connection.execute(sa.text(
+            "SELECT question_text, answer_source FROM user_questions"
+        )).all())
+        for text in (
+            "签到！！！", "什么？我断签了🤪", "多少积分兑换",
+            "现在不可以用积分兑换了吗", "签到积分能干嘛", "签到签到",
+        ):
+            assert rows[text] == "delegated"
+        assert rows["积分有什么用"] == ""
+        assert rows["航空积分怎么兑换机票"] == ""
+
+        candidate = connection.execute(sa.text(
+            "SELECT status, reviewed_by FROM faq_candidates WHERE question_pattern='签到'"
+        )).one()
+        assert tuple(candidate) == ("rejected", "scope_cleanup_v5.42.3")
+
+        migration.downgrade()
+        preserved = connection.execute(sa.text(
+            "SELECT answer_source, answer_ref FROM user_questions WHERE question_text='签到！！！'"
+        )).one()
+        assert tuple(preserved) == ("delegated", "other_bot_feature")

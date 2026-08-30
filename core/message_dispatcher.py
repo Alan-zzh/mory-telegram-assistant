@@ -1600,6 +1600,46 @@ def _dispatch_p4_flood(dctx: DispatchContext) -> bool:
 #  P5-P9：命令和功能处理
 # ═══════════════════════════════════════════════════════════════════════
 
+
+def _defer_external_feature(dctx: DispatchContext) -> bool:
+    """未命中审核预设的签到/积分操作留给共存功能机器人，不进入 Mory AI。"""
+    from modules.keyword_trigger import is_external_feature_text
+
+    text = str(getattr(dctx, "text", "") or "")
+    if not is_external_feature_text(text):
+        return False
+
+    config = getattr(dctx.ctx, "config", {}) or {}
+    if config.get("FAQ_TRACKING_ENABLED", False):
+        try:
+            log_question = getattr(dctx.ctx.db, "log_question", None)
+            if callable(log_question):
+                log_question(
+                    uid=int(getattr(dctx, "uid", 0) or 0),
+                    chat_id=int(getattr(dctx, "chat_id", 0) or 0),
+                    question_text=text[:500],
+                    mode="normal",
+                    intent="external_feature",
+                    keyword_tag="",
+                    question_category="other",
+                    is_convert=0,
+                    ai_reply_summary="",
+                    faq_hit_id=0,
+                    answer_source="delegated",
+                    answer_ref="other_bot_feature",
+                )
+        except Exception as e:
+            logger.warning("外部功能问题记录失败 uid=%s: %s", dctx.uid, e)
+
+    logger.info(
+        "外部功能问题已留给共存机器人，不进入Mory回复链 uid=%s chat=%s",
+        getattr(dctx, "uid", 0),
+        getattr(dctx, "chat_id", 0),
+    )
+    clear_logging_context()
+    return True
+
+
 def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
     """P5 机器人过滤 → P6 管理员指令 → P7 价格雷达 → P8 彩蛋 → P9 画像"""
     m = dctx.msg
@@ -1724,6 +1764,11 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
                 return True
         except Exception as e:
             logger.error(f"🔑 关键词触发检测异常: {e}")
+
+    # P6.7：签到/积分由共存功能机器人执行。老板已经配置的预设在 P6.6
+    # 优先命中；只有未配置变体才在这里静默止步，既不抢答也不进入 AI。
+    if _defer_external_feature(dctx):
+        return True
 
     # P6.6：管理员专属新功能指令
     if is_group and msg:

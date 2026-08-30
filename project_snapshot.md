@@ -33,19 +33,19 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | Rich Message / 图片卡 | 在用 | `core/telegram_send_utils.py`、`core/broadcast_image_card.py`、`core/start_welcome_card.py`、`modules/private_preset_media.py` | `/start` 与群首次精确 @ 共用六套欢迎卡；普通用户私聊索图使用审核静态照片，原味/本人/普通照片分流，福利内容先文字后随机图；群聊与管理员不触发私聊媒体 |
 | 泛问候/定点播报 | 生产关闭 | `tasks/broadcast/greeting_task.py`、`tasks/maintenance/scheduled_broadcast_task.py` | 早午晚泛问候与 4 档定点播报全部关闭，避免与内容栏目重叠；若未来人工开启，问候模型失败直接跳过，不用固定套话，图片卡只渲染同源正文 |
 | 传统文化播报 | 在用 | `tasks/broadcast/mystic_broadcast_task.py`、`tasks/support/mystic_content.py` | 生产唯一主动栏目：09:05 黄历、13:05 塔罗、20:35 易经；三档语义各异、间隔至少 4 小时，图片卡保留；新闻执行链已删除；v5.40.0 新增易经经典句/值神浅释/吉时参考/免责尾注/塔罗框架轮换/私聊敏感分流，全部默认关闭待逐项开启 |
-| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | VPN/梯子、积分、进群、包年、预览、已购定制、联系Mory等已审核问答按完整意图命中；私聊可承接对象明确的短句，群聊须带业务对象；预设送达后记录来源，正常反例不命中；none/preview/subscribe 单目标 |
+| 关键话题回复 | 在用 | `modules/keyword_trigger.py` | 进群、包年、预览、已购定制、联系Mory等审核问答按完整意图命中；签到积分只认生产配置白名单，未配置变体记 delegated 后退出，不进入AI或Mory优化统计；预设送达后记录来源；none/preview/subscribe 单目标 |
 | 自动沟通 | 默认克制 | `tasks/interaction/*.py`、`modules/group_mgr.py` | 欢迎群内一次预览、不主动私聊；传统文化栏目允许 1-2 个同目标不重复入口；新闻执行链和配置入口已删除（legacy `auto_tasks.py` 已于 v5.38.69 拆除） |
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；v5.38.56 代码已随 v5.38.57 部署，尚无本轮新增真实频道帖探针；外部频道不豁免 |
 
 ## 当前版本
-v5.42.2（2026-08-31）· 已部署：高频预设漏答与问题回答来源闭环
+v5.42.3（2026-08-31）· 待部署：预设白名单与其他机器人事项隔离
 
-生产状态：**v5.42.2 已于 2026-08-31 部署：双服务 active/enabled、NRestarts=0、health 200；10 个运行文件哈希一致，Alembic 0010 与回答来源字段读回，数据库 integrity=ok/外键零错误；隔离回放 15 条生产问法全部 preset 命中并持久读回，蒸馏新增 0、日报预设命中 15。未使用真实 Telegram 账号制造新入站消息。**
+生产状态：**当前仍为 v5.42.2；v5.42.3 本地修复待完成门禁与部署。上一版生产闭环证据保存在 runtime/audit-reports，当前状态以本轮重新取证为准。**
 
 ## 最近 3 条大事
-1. 2026-08-31 v5.42.2：高频私聊预设与回答来源追踪已部署，生产回放闭环。
-2. 2026-08-29 v5.42.1：启动追溯跨群保护修复已部署，生产证据链通过。
-3. 2026-08-29 部署门禁：迁移前 SQLite 在线快照、完整性与外键校验已固化。
+1. 2026-08-31 v5.42.3：签到积分收敛为生产预设白名单，未配置变体隔离待部署。
+2. 2026-08-31 v5.42.2：高频私聊预设与回答来源追踪已部署，生产回放闭环。
+3. 2026-08-29 v5.42.1：启动追溯跨群保护修复已部署，生产证据链通过。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

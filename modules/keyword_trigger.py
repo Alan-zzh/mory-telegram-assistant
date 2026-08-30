@@ -22,6 +22,48 @@ from core.logging_util import get_logger
 
 logger = get_logger("keyword_trigger")
 
+
+def is_external_feature_text(text: str) -> bool:
+    """识别应交给群内其他功能机器人的签到/积分操作话题。
+
+    该判断只在已审核预设没有命中后使用；因此“积分有什么用”等老板已配置
+    的白名单仍先走确定性答案，未配置的变体才会停止进入 Mory AI 主链。
+    """
+    normalized = re.sub(r"\s+", "", str(text or "").strip().lower())
+    if not normalized:
+        return False
+    if "断签" in normalized or "补签" in normalized:
+        return True
+    unrelated_points_anchors = (
+        "数学", "微积分", "高数", "航空", "机票", "信用卡", "商场", "游戏",
+    )
+    points_operation_markers = (
+        "我的积分", "查看积分", "积分多少", "多少积分", "积分排行", "积分排名",
+        "积分抽奖", "积分商城", "积分记录", "积分日志", "积分余额", "签到积分",
+        "积分有什么用", "积分有啥用", "积分干嘛", "积分怎么用", "积分怎么获得",
+        "怎么获得积分", "积分兑换", "兑换积分", "积分换", "换会员", "提现",
+    )
+    if (
+        "积分" in normalized
+        and not any(anchor in normalized for anchor in unrelated_points_anchors)
+        and any(marker in normalized for marker in points_operation_markers)
+    ):
+        return True
+    if re.fullmatch(r"/(?:checkin|points|shop)(?:@[a-z0-9_]+)?", normalized):
+        return True
+    if normalized in {
+        "打卡", "商城", "积分商城", "qd", "/qd", "q.d", "q-d", "簽到", "/簽到",
+    }:
+        return True
+    if re.fullmatch(r"(?:签到)+(?:[，,。.!！?？~～]+)?", normalized):
+        return True
+    if re.fullmatch(r"签到(?:排行|排名|日历|记录)", normalized):
+        return True
+    if normalized.startswith("连续签到"):
+        return True
+    return False
+
+
 _UNUSABLE_POLISH_MARKERS = (
     "原模板",
     "润色后",
@@ -34,6 +76,13 @@ _UNUSABLE_POLISH_MARKERS = (
     "刚刚没反应过来",
     "轻食版",
 )
+
+_EXTERNAL_FEATURE_BUILTIN_RULES = {
+    "签到积分福利",
+    "积分兑换说明",
+    "签到九十天兑换",
+    "会员兑换未进群",
+}
 
 _DEFAULT_SPECIAL_AUTO_REPLIES = (
     {
@@ -214,9 +263,6 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "match_patterns": [
             r"(?:签到)?积分(?:要|该|可以|能)?怎么(?:使用|用|兑换|换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"(?:积分兑换会员|兑换会员)(?:需要|要)?多少(?:积分|分)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
-            r"(?:需要|要|得)?多少积分(?:能|可以|才可以|才能)?(?:兑换|换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
-            r"(?:现在)?(?:不可以|不能|没法)用积分(?:兑换|换)(?:会员|vip)?(?:了)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
-            r"积分(?:现在)?(?:不可以|不能|没法)(?:兑换|换)(?:会员|vip)?(?:了)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"(?:我有)?\d+积分(?:怎么|如何)(?:换|兑换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"签到(?:多久|多少天)(?:能|可以)?(?:换|兑换)(?:会员|vip)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
         ],
@@ -659,9 +705,6 @@ class KeywordTrigger:
             if self._handle_private_mystic(text, chat_id, message, bot):
                 return True
 
-            if is_private and self._handle_private_checkin(text, chat_id, message, bot):
-                return True
-
             explicit_media_scene = None
             if not is_admin:
                 explicit_media_scene = self._detect_private_media_scene(
@@ -736,45 +779,6 @@ class KeywordTrigger:
             logger.error(f"🔑 关键词触发处理异常: {e}")
             logger.error(traceback.format_exc())
             return False
-
-    def _handle_private_checkin(self, text: str, chat_id: int, message, bot) -> bool:
-        """私聊签到只说明真实运行状态，绝不把文本误报成签到成功。"""
-        from modules.checkin import is_checkin_enabled, is_invalid_checkin_command
-
-        normalized = self._normalize_match_phrase(text)
-        asks_status = "断签" in normalized and len(normalized) <= 30
-        if normalized != "签到" and not is_invalid_checkin_command(text) and not asks_status:
-            return False
-
-        enabled = is_checkin_enabled(self.config)
-        if asks_status:
-            base_reply = (
-                "签到功能当前未开启，我不能只凭这句话判断你以前是否断签；"
-                "历史连续记录要以实际签到记录为准。"
-                if not enabled
-                else "我不能只凭这句话判断是否断签；请到群里查看实际签到记录，再决定是否需要补签。"
-            )
-        else:
-            base_reply = (
-                "签到功能当前未开启。"
-                if not enabled
-                else "签到需要在群里直接发送简体“签到”，私聊不会执行，也不会增加积分。"
-            )
-        return self._handle_special_rule(
-            {
-                "name": "签到状态说明",
-                "topic": "签到状态",
-                "base_reply": base_reply,
-                "ai_polish": False,
-                "ai_mode": "local_zero_token",
-                "conversion_target": "none",
-                "remember_context": True,
-                "card_enabled": False,
-            },
-            chat_id,
-            message,
-            bot,
-        )
 
     def _handle_private_mystic(self, text: str, chat_id: int, message, bot) -> bool:
         """私聊明确占卜请求走本地引擎，在进入 LLM 前直接承接。"""
@@ -1153,24 +1157,27 @@ class KeywordTrigger:
                 rules.append(configured_rule)
                 continue
             rule = dict(configured_rule)
-            controls = _CONFIGURED_RULE_MATCH_CONTROLS.get(
-                str(rule.get("name", "")).strip()
-            )
+            rule_name = str(rule.get("name", "")).strip()
+            controls = _CONFIGURED_RULE_MATCH_CONTROLS.get(rule_name)
             if controls:
                 rule["keyword_match_mode"] = "full"
-                if str(rule.get("name", "")).strip() in {"积分咨询", "签到奖励咨询"}:
+                if rule_name in {"积分咨询", "签到奖励咨询"}:
                     # “我的积分有多少”里的“多少”不代表询价；只有在完整积分/
                     # 签到句式已命中后，才允许越过通用转化分类。
                     rule["ignore_conversion_target"] = True
-                existing_patterns = rule.get("match_patterns", [])
-                if isinstance(existing_patterns, str):
-                    existing_patterns = [existing_patterns]
-                rule["match_patterns"] = [*existing_patterns, *controls]
+                    # 这两类功能由其他机器人执行；Mory 只使用老板在生产配置
+                    # 中明确列出的问法，不用代码正则再扩写相似句。
+                else:
+                    existing_patterns = rule.get("match_patterns", [])
+                    if isinstance(existing_patterns, str):
+                        existing_patterns = [existing_patterns]
+                    rule["match_patterns"] = [*existing_patterns, *controls]
             rules.append(rule)
         rules.extend(
             dict(rule)
             for rule in _DEFAULT_SPECIAL_AUTO_REPLIES
             if rule["name"] not in configured_names
+            and rule["name"] not in _EXTERNAL_FEATURE_BUILTIN_RULES
         )
         return rules
 
