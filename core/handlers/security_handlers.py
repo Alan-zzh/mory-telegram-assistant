@@ -277,6 +277,7 @@ def check_ad_detection(dctx) -> bool:
         from modules.ad_profile_signals import (
             detect_profile_ad_signal,
             has_avatar_personal_channel_bridge,
+            has_coded_phone_distribution_message_bridge,
             has_profile_message_bridge,
             has_smuggled_goods_message_bridge,
         )
@@ -294,6 +295,14 @@ def check_ad_detection(dctx) -> bool:
                     + (getattr(m.from_user, "last_name", "") or ""),
                     getattr(m.from_user, "username", "") or "",
                     user_bio,
+                )
+                or has_coded_phone_distribution_message_bridge(
+                    ad_text,
+                    (getattr(m.from_user, "first_name", "") or "")
+                    + (getattr(m.from_user, "last_name", "") or ""),
+                    getattr(m.from_user, "username", "") or "",
+                    user_bio,
+                    profile_result.get("source", ""),
                 )
                 or _has_direct_message_ad_evidence(ad_detector, ad_text)
             )

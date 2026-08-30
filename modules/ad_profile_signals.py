@@ -81,6 +81,25 @@ _SMUGGLED_MESSAGE_CONTINUATION_RE = re.compile(
     r"(?:便宜|特价|水果机|卖手机|买手机|手机店|预订|订购|拿货|批发|合作|找我|私聊)",
     re.IGNORECASE,
 )
+_CODED_PHONE_NAME_RE = re.compile(
+    r"(?:正品)?(?:水果|果子)(?:(?:手机|机)?(?:1[4-9]|20)|(?:1[4-9]|20)(?:手机|机)?)"
+    r"(?:全系|全系列)",
+    re.IGNORECASE,
+)
+_DISTRIBUTION_TARGET_RE = re.compile(
+    r"(?:代理商|经销商|渠道商|散户|手机店|同行|商家)", re.IGNORECASE
+)
+_DISTRIBUTION_TRADE_RE = re.compile(
+    r"(?:出货|供货|拿货|批发|预定|预订|订货|合作|招代理)", re.IGNORECASE
+)
+_DISTRIBUTION_SCALE_RE = re.compile(
+    r"(?:大量|全系|全系列|现货|一手|货源|稳定)", re.IGNORECASE
+)
+_CODED_PHONE_MESSAGE_CONTINUATION_RE = re.compile(
+    r"(?:寻|寻找|找|联系).{0,4}(?:手机店|代理商|经销商|渠道商|同行|商家)"
+    r".{0,4}(?:合作|拿货|出货|供货|预定|预订|订货)",
+    re.IGNORECASE,
+)
 
 
 def _iter_status_ids(user) -> list:
@@ -295,6 +314,56 @@ def has_smuggled_goods_message_bridge(
     if not _detect_smuggled_goods_profile_ad(display, username, bio):
         return False
     return bool(_SMUGGLED_MESSAGE_CONTINUATION_RE.search(_compact_profile_text(message_text)))
+
+
+def _detect_coded_phone_distribution_profile_ad(
+    display: str,
+    username: str,
+    bio: str,
+    personal_parts: list[str] | None = None,
+) -> str:
+    """识别“水果+型号+手机全系”暗语及资料/频道中的批发招揽组合。"""
+    compact_name = _compact_profile_text(" ".join((display, username)))
+    name_match = _CODED_PHONE_NAME_RE.search(compact_name)
+    if name_match:
+        return f"姓名命中水果机型号全系暗语:{name_match.group()}"
+
+    raw_bio = str(bio or "")
+    parts = [raw_bio, *(personal_parts or [])]
+    compact_distribution = _compact_profile_text(" ".join(parts))
+    if not compact_distribution:
+        return ""
+
+    target = _DISTRIBUTION_TARGET_RE.search(compact_distribution)
+    trade = _DISTRIBUTION_TRADE_RE.search(compact_distribution)
+    scale = _DISTRIBUTION_SCALE_RE.search(compact_distribution)
+    has_contact_surface = bool(personal_parts) or bool(_TELEGRAM_INVITE_RE.search(raw_bio))
+    if target and trade and scale and has_contact_surface:
+        surface = "关联频道" if personal_parts else "Bio邀请链接"
+        return f"{surface}命中规模招代理出货组合:{target.group()}+{trade.group()}+{scale.group()}"
+    return ""
+
+
+def has_coded_phone_distribution_message_bridge(
+    message_text: str,
+    display: str = "",
+    username: str = "",
+    bio: str = "",
+    profile_source: str = "",
+) -> bool:
+    """资料已确认手机分销广告时，只标记明确寻店合作等交易续句。"""
+    confirmed = profile_source == "profile_coded_phone_distribution"
+    if not confirmed:
+        confirmed = bool(
+            _detect_coded_phone_distribution_profile_ad(display, username, bio)
+        )
+    if not confirmed:
+        return False
+    return bool(
+        _CODED_PHONE_MESSAGE_CONTINUATION_RE.search(
+            _compact_profile_text(message_text)
+        )
+    )
 
 
 def has_avatar_profile_bridge(avatar_reason: str, avatar_meta: dict, bio: str) -> bool:
@@ -551,6 +620,20 @@ def detect_profile_ad_signal(
             "score": 3,
             "reason": f"资料命中走私商品交易组合: {smuggled_trade_hit}",
             "source": "profile_smuggled_goods_trade",
+            "status_ids": status_ids,
+            "status_text": status_text,
+        }
+
+    coded_phone_hit = _detect_coded_phone_distribution_profile_ad(
+        display, username, bio, personal_parts
+    )
+    if coded_phone_hit:
+        return {
+            "is_ad": True,
+            "score": 3,
+            "reason": f"资料命中手机分销广告组合: {coded_phone_hit}",
+            "source": "profile_coded_phone_distribution",
+            "personal_chat_id": personal_chat_id,
             "status_ids": status_ids,
             "status_text": status_text,
         }

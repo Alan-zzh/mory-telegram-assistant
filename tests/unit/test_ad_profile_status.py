@@ -218,6 +218,75 @@ def test_smuggled_goods_profile_message_bridge_requires_trade_continuation():
 
 
 @pytest.mark.parametrize(
+    "display",
+    [
+        "正-品-水-果17-手-机-全-系",
+        "正品水果机17全系列",
+        "水果17机全系",
+        "果子手机18全系",
+    ],
+)
+def test_coded_phone_distribution_name_variants_are_ads(display):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None, _FakeUser(first_name=display, status_id=""), "", {}
+    )
+
+    assert result["is_ad"] is True
+    assert result["score"] == 3
+    assert result["source"] == "profile_coded_phone_distribution"
+
+
+def test_exact_coded_phone_distribution_bio_is_ad_without_ad_name():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None,
+        _FakeUser(first_name="普通昵称", status_id=""),
+        "大量寻代理商和散户出货预定18 https://t.me/+npV6UqNCBedjM2Jk",
+        {},
+    )
+
+    assert result["is_ad"] is True
+    assert result["source"] == "profile_coded_phone_distribution"
+
+
+@pytest.mark.parametrize(
+    ("display", "bio"),
+    [
+        ("正品水果17斤礼盒", "果园散户出货，欢迎交流"),
+        ("苹果17手机摄影交流", "https://t.me/+AbCdEfGhIjKlMnOp 摄影群"),
+        ("手机全系维修教程", "https://t.me/+AbCdEfGhIjKlMnOp 技术交流"),
+        ("普通昵称", "大量水果，寻代理商和散户出货预定18"),
+    ],
+)
+def test_coded_phone_distribution_rule_preserves_normal_contexts(display, bio):
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    result = detect_profile_ad_signal(
+        None, _FakeUser(first_name=display, status_id=""), bio, {}
+    )
+
+    assert result["is_ad"] is False
+
+
+def test_coded_phone_distribution_message_bridge_requires_trade_continuation():
+    from modules.ad_profile_signals import has_coded_phone_distribution_message_bridge
+
+    source = "profile_coded_phone_distribution"
+    assert has_coded_phone_distribution_message_bridge(
+        "寻·手‧机店‧合作", profile_source=source
+    ) is True
+    assert has_coded_phone_distribution_message_bridge(
+        "寻找渠道商拿货", profile_source=source
+    ) is True
+    assert has_coded_phone_distribution_message_bridge(
+        "今天天气不错", profile_source=source
+    ) is False
+
+
+@pytest.mark.parametrize(
     "bio",
     [
         "https://t.me/+yZILbWYkW9hiMTg1 小白必做🫐勤快你就来懒人勿扰",
@@ -1004,6 +1073,52 @@ def test_exact_smuggled_phone_profile_incident_is_blocked_on_first_message():
     assert db.ad_marked == [(-1001, 88)]
 
 
+def test_exact_coded_phone_distribution_incident_is_blocked_on_first_message():
+    from core.handlers.security_handlers import check_ad_detection
+    from modules.ad_detector import AdDetector
+
+    bot = _FakePersonalChannelBot("", "", "")
+    bot.user_chat.personal_chat = None
+    bot.user_chat.bio = (
+        "大量寻代理商和散户出货预定18 "
+        "https://t.me/+npV6UqNCBedjM2Jk"
+    )
+    bot.deleted = []
+    bot.restricted = []
+    bot.get_chat_member = lambda chat_id, uid: type("Member", (), {"status": "member"})()
+    bot.delete_message = lambda chat_id, msg_id: bot.deleted.append((chat_id, msg_id)) or True
+    bot.restrict_chat_member = (
+        lambda chat_id, uid, **kwargs: bot.restricted.append((chat_id, uid, kwargs)) or True
+    )
+
+    msg = _FakeShortMessage()
+    msg.from_user = _FakeUser(
+        first_name="正-品-水-果17-手-机-全-系", status_id=""
+    )
+    msg.text = "寻手机店合作"
+    db = _FakeDB()
+    ctx = type("Ctx", (), {
+        "bot": bot,
+        "db": db,
+        "config": {"ENABLE_MESSAGE_DELETION": False},
+        "ad_detector": AdDetector(config={}, db=None),
+    })()
+    dctx = type("Dctx", (), {
+        "is_group": True,
+        "text": msg.text,
+        "ctx": ctx,
+        "msg": msg,
+        "uid": 42,
+        "uname": msg.from_user.first_name,
+        "chat_id": -1001,
+    })()
+
+    assert check_ad_detection(dctx) is True
+    assert bot.deleted == [(-1001, 88)]
+    assert bot.restricted[0][0:2] == (-1001, 42)
+    assert db.ad_marked == [(-1001, 88)]
+
+
 def test_repeat_spam_with_direct_ad_evidence_uses_unified_enforcement():
     from core.handlers.security_handlers import check_ad_detection
 
@@ -1229,6 +1344,35 @@ def test_bio_smith_followed_by_social_text_is_not_sm_adult_evidence():
         None,
         _FakeUser(first_name="Kimberly Smith", status_id=""),
         bio="Smith交友",
+    )
+
+    assert result["is_ad"] is False
+
+
+def test_bound_personal_channel_distribution_variant_is_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(
+        "新品供货预定",
+        posts=["大量寻代理商和散户出货预定18"],
+    )
+    result = detect_profile_ad_signal(
+        bot, _FakeUser(first_name="普通昵称", status_id=""), "", {}
+    )
+
+    assert result["is_ad"] is True
+    assert result["source"] == "profile_coded_phone_distribution"
+
+
+def test_bound_normal_agriculture_channel_is_not_distribution_ad():
+    from modules.ad_profile_signals import detect_profile_ad_signal
+
+    bot = _FakePersonalChannelBot(
+        "本地水果种植交流",
+        posts=["果园散户分享采摘和物流经验"],
+    )
+    result = detect_profile_ad_signal(
+        bot, _FakeUser(first_name="水果17斤礼盒", status_id=""), "", {}
     )
 
     assert result["is_ad"] is False

@@ -162,6 +162,26 @@ def test_invite_opportunity_bio_blocks_at_join_and_delayed_review(monkeypatch):
     assert len(enforced) == 2
 
 
+def test_coded_phone_distribution_blocks_at_join_and_delayed_review(monkeypatch):
+    from core.handlers import member_handlers
+
+    user = _User("正-品-水-果17-手-机-全-系", username="spjc7ymbce")
+    bio = "大量寻代理商和散户出货预定18 https://t.me/+npV6UqNCBedjM2Jk"
+    enforced = []
+    monkeypatch.setattr(
+        member_handlers,
+        "_enforce_member_ad",
+        lambda *args, **kwargs: enforced.append((args, kwargs)),
+    )
+
+    for stage in ("join", "delayed_30s"):
+        assert member_handlers._review_member_profile(
+            _Bot(bio), user, bio, {}, object(), -1003004701688, stage=stage
+        ) is True
+
+    assert len(enforced) == 2
+
+
 def test_verify_release_does_not_enforce_normal_smith_name(monkeypatch):
     """截图回归：验证码放行后的真实入口不得把 Smith 中的 Sm 当色情引流。"""
     from core.handlers import member_handlers
