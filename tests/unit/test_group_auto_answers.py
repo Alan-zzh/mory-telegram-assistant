@@ -23,6 +23,7 @@ class _QuestionDb:
         self.telemetry = []
         self.faq_hits = []
         self.business_context = []
+        self.questions = []
 
     def match_keyword_trigger(self, _text):
         return []
@@ -44,6 +45,10 @@ class _QuestionDb:
     def record_business_context(self, *args, **kwargs):
         self.business_context.append((args, kwargs))
         return True
+
+    def log_question(self, **kwargs):
+        self.questions.append(kwargs)
+        return len(self.questions)
 
 
 class _ReplyRecorder:
@@ -86,7 +91,10 @@ def test_invalid_checkin_aliases_are_rejected_with_simplified_format():
         is_invalid_checkin_command,
     )
 
-    for text in ("簽到", "/簽到", "QD", "qd", "/qd", "Q.D"):
+    for text in (
+        "簽到", "/簽到", "QD", "qd", "/qd", "Q.D",
+        "签到！！！", "签到？？", "签到签到",
+    ):
         assert is_invalid_checkin_command(text)
     assert not is_invalid_checkin_command("签到")
     assert "简体“签到”" in CHECKIN_FORMAT_HINT
@@ -581,6 +589,72 @@ def test_meet_mory_question_and_followups_use_social_unlock_not_chatbot_rejectio
     assert not trigger._match_special_rule("怎么和你约定会议时间")
 
 
+def test_private_short_business_questions_use_presets_without_widening_groups():
+    from modules.keyword_trigger import KeywordTrigger
+
+    db = _QuestionDb()
+    recorder = _ReplyRecorder()
+    trigger = KeywordTrigger(
+        db,
+        mory_bot=recorder,
+        ai=_NoReplyAi(),
+        config={"FAQ_TRACKING_ENABLED": True, "CHECKIN_CONFIG": {"enabled": False}},
+    )
+    cases = {
+        "可以约吗": "联系与社交解锁",
+        "约吗": "联系与社交解锁",
+        "怎么进群": "会员加入入口",
+        "我怎么进群": "会员加入入口",
+        "怎么加群": "会员加入入口",
+        "会员群": "会员加入入口",
+        "包年可以": "会员包年咨询",
+        "预览": "预览入口",
+        "刚刚开了会员，是可以聊定制了咩？": "已购会员定制承接",
+    }
+    for text, expected_rule in cases.items():
+        message = _private_message(text)
+        assert trigger.handle_message(text, message.chat.id, message, object())
+        assert db.questions[-1]["answer_source"] == "preset"
+        assert db.questions[-1]["answer_ref"] == expected_rule
+        assert db.questions[-1]["ai_reply_summary"] == recorder.replies[-1][0]
+
+    for text in ("签到！！！", "签到签到", "什么？我断签了🤪", "签到"):
+        message = _private_message(text)
+        assert trigger.handle_message(text, message.chat.id, message, object())
+        assert recorder.replies[-1][0] == (
+            "签到功能当前未开启。"
+            if "断签" not in text
+            else "签到功能当前未开启，我不能只凭这句话判断你以前是否断签；历史连续记录要以实际签到记录为准。"
+        )
+        assert db.questions[-1]["answer_ref"] == "签到状态说明"
+
+    # 裸短句只有私聊对象明确时才承接；群聊不能猜成 Mory 业务。
+    for text in ("可以约吗", "约吗", "怎么进群", "怎么加群", "会员群", "包年可以", "预览"):
+        assert trigger._match_special_rule(text, is_private=False) is None
+
+
+def test_explicit_group_business_questions_match_but_unrelated_topics_do_not():
+    from modules.keyword_trigger import KeywordTrigger
+
+    trigger = KeywordTrigger(_QuestionDb(), config={})
+    expected = {
+        "会员可以包年吗": "会员包年咨询",
+        "至臻全享有年付吗": "会员包年咨询",
+        "怎么加入VIP群": "会员加入入口",
+        "会员群在哪里": "会员加入入口",
+    }
+    for text, rule_name in expected.items():
+        rule = trigger._match_special_rule(text, is_private=False)
+        assert rule and rule["name"] == rule_name, text
+
+    for text in (
+        "怎么进游戏群", "怎么加公司群", "群友怎么加",
+        "健身房包年可以吗", "包年月嫂可以吗",
+        "航空多少积分兑换机票", "信用卡积分不能兑换了吗", "商场积分换礼品",
+    ):
+        assert trigger._match_special_rule(text, is_private=False) is None, text
+
+
 def test_new_business_presets_keep_each_problem_on_its_own_answer():
     from modules.keyword_trigger import KeywordTrigger
 
@@ -622,7 +696,8 @@ def test_business_presets_cover_common_natural_phrasing_without_ai():
     cases = {
         "积分兑换说明": (
             "积分怎么兑换会员", "签到积分怎么用", "积分兑换会员需要多少分",
-            "我有14900积分怎么换", "签到多久能换会员",
+            "我有14900积分怎么换", "签到多久能换会员", "多少积分兑换",
+            "现在不可以用积分兑换了吗", "积分现在不能换会员了吗",
         ),
         "签到九十天兑换": (
             "签到九十天可以换吗", "连续签到三个月能换会员吗", "我签了90天能换VIP吗",
@@ -711,7 +786,8 @@ def test_new_preset_question_families_keep_single_conversion_target():
     names = {
         "积分兑换说明", "签到九十天兑换", "会员兑换未进群",
         "至臻全享群说明", "VIP订阅权益说明", "定制规则说明",
-        "联系与社交解锁",
+        "联系与社交解锁", "会员加入入口", "预览入口",
+        "会员包年咨询", "已购会员定制承接",
     }
     rules = [rule for rule in _DEFAULT_SPECIAL_AUTO_REPLIES if rule["name"] in names]
     assert {rule["name"] for rule in rules} == names
@@ -891,11 +967,72 @@ def test_daily_question_summary_separates_unresolved_and_faq_misses():
         },
     ])
 
-    assert "共记录 3 条｜FAQ命中 1 条｜待优化 1 条" in summary
+    assert "共记录 3 条｜FAQ命中 1 条｜预设命中 0 条｜入口直达 0 条｜待优化 1 条" in summary
     assert "待老板优化：" in summary
     assert "这个能不能定制" in summary
-    assert "AI已答但FAQ未命中：" in summary
+    assert "AI已答但FAQ/预设未命中：" in summary
     assert "积分能换什么" in summary
+
+
+def test_daily_question_summary_counts_preset_and_direct_without_false_misses():
+    from tasks.analytics.faq_distill_task import _build_daily_question_summary
+
+    summary = _build_daily_question_summary([
+        {
+            "question_text": "可以约吗",
+            "ai_reply_summary": "按当前社交解锁说明操作。",
+            "faq_hit_id": 0,
+            "answer_source": "preset",
+            "answer_ref": "联系与社交解锁",
+        },
+        {
+            "question_text": "怎么订阅",
+            "ai_reply_summary": "去自助入口。",
+            "faq_hit_id": 0,
+            "answer_source": "direct_access",
+            "answer_ref": "subscribe",
+        },
+        {
+            "question_text": "这是什么新问题",
+            "ai_reply_summary": "模型正常回答。",
+            "faq_hit_id": 0,
+            "answer_source": "ai",
+            "answer_ref": "normal",
+        },
+    ])
+
+    assert "预设命中 1 条｜入口直达 1 条｜待优化 0 条" in summary
+    assert "AI已答但FAQ/预设未命中：" in summary
+    assert "这是什么新问题" in summary
+    assert "可以约吗" not in summary
+    assert "怎么订阅" not in summary
+
+
+def test_p10_answer_provenance_priorities_are_stable():
+    from core.handlers.ai_reply_handler import _resolve_answer_provenance
+
+    base = {
+        "faq_hit_id": 0,
+        "direct_access_handled": False,
+        "direct_access_order": False,
+        "needs_handoff": False,
+        "ai_attempted": True,
+        "response": "正常回答",
+        "mode": "normal",
+        "is_priv": True,
+    }
+    assert _resolve_answer_provenance(**base) == ("ai", "normal")
+    assert _resolve_answer_provenance(**{**base, "faq_hit_id": 7}) == ("faq", "7")
+    assert _resolve_answer_provenance(**{
+        **base,
+        "direct_access_handled": True,
+        "direct_access_order": True,
+    }) == ("direct_access", "subscribe")
+    assert _resolve_answer_provenance(**{
+        **base,
+        "faq_hit_id": 7,
+        "needs_handoff": True,
+    }) == ("unresolved", "handoff")
 
 
 def test_daily_question_summary_excludes_commands_and_model_fallback():
@@ -919,9 +1056,9 @@ def test_daily_question_summary_excludes_commands_and_model_fallback():
         },
     ])
 
-    assert "共记录 3 条｜FAQ命中 0 条｜待优化 0 条" in summary
+    assert "共记录 3 条｜FAQ命中 0 条｜预设命中 0 条｜入口直达 0 条｜待优化 0 条" in summary
     assert "待老板优化：" not in summary
-    assert "AI已答但FAQ未命中：" not in summary
+    assert "AI已答但FAQ/预设未命中：" not in summary
     assert "/myid" not in summary
     assert "/me@afoolGroupBot" not in summary
     assert "真牛" not in summary
@@ -954,7 +1091,7 @@ def test_daily_question_summary_excludes_plain_smalltalk_but_keeps_real_requests
     ]
 
     summary = _build_daily_question_summary(questions)
-    assert "共记录 4 条｜FAQ命中 0 条｜待优化 0 条" in summary
+    assert "共记录 4 条｜FAQ命中 0 条｜预设命中 0 条｜入口直达 0 条｜待优化 0 条" in summary
     assert "你在干嘛\n" not in summary
     assert "你忙吗" not in summary
     assert "你在干嘛帮我查积分" in summary

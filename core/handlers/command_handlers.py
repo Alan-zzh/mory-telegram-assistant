@@ -760,9 +760,16 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
     is_group = dctx.is_group
 
     # 签到：繁体或 QD 只提示正确格式，不执行签到。
-    from modules.checkin import CHECKIN_FORMAT_HINT, is_invalid_checkin_command
+    from modules.checkin import (
+        CHECKIN_FORMAT_HINT,
+        is_checkin_enabled,
+        is_invalid_checkin_command,
+    )
     if is_invalid_checkin_command(msg):
-        bot.reply_to(m, CHECKIN_FORMAT_HINT)
+        bot.reply_to(
+            m,
+            CHECKIN_FORMAT_HINT if is_checkin_enabled(CONFIG) else "签到功能当前未开启。",
+        )
         clear_logging_context()
         return True
 

@@ -353,6 +353,29 @@ def _should_offer_handoff(
     return _mentions_human_deferral(text)
 
 
+def _resolve_answer_provenance(
+    *,
+    faq_hit_id: int,
+    direct_access_handled: bool,
+    direct_access_order: bool,
+    needs_handoff: bool,
+    ai_attempted: bool,
+    response,
+    mode: str,
+    is_priv: bool,
+) -> tuple[str, str]:
+    """把最终回复归入一个稳定来源；优先级按实际送达路径判定。"""
+    if needs_handoff:
+        return "unresolved", "handoff"
+    if int(faq_hit_id or 0) > 0:
+        return "faq", str(int(faq_hit_id))
+    if direct_access_handled:
+        return "direct_access", "subscribe" if direct_access_order else "preview"
+    if ai_attempted and response == _final_ai_reply_fallback(mode, is_priv=is_priv):
+        return "fallback", mode
+    return "ai", mode
+
+
 def _build_unresolved_handoff_markup():
     """未解决问题只给人工入口，禁止和下单入口混在同一轮。"""
     from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -1288,8 +1311,29 @@ def _dispatch_p10_ai(dctx: DispatchContext):
                 summary = resp[:100]
                 if needs_handoff:
                     summary = f"[UNRESOLVED] {summary}"[:200]
-                db.update_question_reply(_faq_qid, summary, faq_hit_id=_faq_hit_id)
-                logger.debug(f"📋 FAQ追踪：更新回复摘要 id={_faq_qid} faq_hit={_faq_hit_id}")
+                answer_source, answer_ref = _resolve_answer_provenance(
+                    faq_hit_id=_faq_hit_id,
+                    direct_access_handled=direct_access_handled,
+                    direct_access_order=direct_access_order,
+                    needs_handoff=needs_handoff,
+                    ai_attempted=ai_attempted,
+                    response=resp,
+                    mode=mode,
+                    is_priv=is_priv,
+                )
+                db.update_question_reply(
+                    _faq_qid,
+                    summary,
+                    faq_hit_id=_faq_hit_id,
+                    answer_source=answer_source,
+                    answer_ref=answer_ref,
+                )
+                logger.debug(
+                    "📋 FAQ追踪：更新回复 id=%s faq_hit=%s source=%s",
+                    _faq_qid,
+                    _faq_hit_id,
+                    answer_source,
+                )
         except Exception as _faq_err:
             logger.error(f"📋 FAQ追踪更新回复失败（不影响AI回复）：{_faq_err}")
     else:

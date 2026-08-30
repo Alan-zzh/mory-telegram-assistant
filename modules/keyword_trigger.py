@@ -214,6 +214,9 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "match_patterns": [
             r"(?:签到)?积分(?:要|该|可以|能)?怎么(?:使用|用|兑换|换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"(?:积分兑换会员|兑换会员)(?:需要|要)?多少(?:积分|分)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:需要|要|得)?多少积分(?:能|可以|才可以|才能)?(?:兑换|换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:现在)?(?:不可以|不能|没法)用积分(?:兑换|换)(?:会员|vip)?(?:了)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"积分(?:现在)?(?:不可以|不能|没法)(?:兑换|换)(?:会员|vip)?(?:了)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"(?:我有)?\d+积分(?:怎么|如何)(?:换|兑换)(?:会员|vip)?(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"签到(?:多久|多少天)(?:能|可以)?(?:换|兑换)(?:会员|vip)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
         ],
@@ -383,6 +386,86 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
         "base_reply": "VIP/订阅分不同档位，完整版、图集下载、定制和沟通权限并不完全相同。先看 @moryselect 判断内容风格；你再告诉我最想要什么，我会按目标帮你对应，当前完整权益以档位页面为准。",
     },
     {
+        "name": "已购会员定制承接",
+        "topic": "会员定制",
+        "enabled": True,
+        "priority": 130,
+        "private_match_patterns": [
+            r"(?:刚刚?)?(?:开|开了|买|买了|订阅|订阅了)(?:会员|vip)(?:后|了)?[，,。.!！?？~～]*(?:是)?(?:可以|能)(?:聊|做)?(?:定制|订制)(?:了)?(?:呢|呀|啊|吗|嘛|咩)?[？?。！!~～]*",
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "none",
+        "allow_custom_information": True,
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "可以先聊具体需求，但开了会员不等于所有定制都会自动承接。把类型、想要的内容、预算和边界发来，我帮你整理；是否可接、价格和交付时间由 Mory 最终确认。",
+    },
+    {
+        "name": "会员加入入口",
+        "topic": "会员进群",
+        "enabled": True,
+        "priority": 125,
+        # 这几句来自生产私聊，脱离私聊语境可能是在问任意工作群/游戏群，
+        # 因此只允许私聊完整句命中；群聊仍要求带会员、订阅或至臻对象。
+        "private_keywords": ["怎么进群", "怎么加群", "会员群"],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:怎么|如何)(?:进|加|加入)(?:会员|vip|订阅|至臻)(?:群|群聊)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:会员|vip|订阅|至臻)(?:群|群聊)(?:怎么|如何)(?:进|加|加入)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"(?:会员|vip|订阅|至臻)(?:群|群聊)(?:在哪|在哪里|入口在哪)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "private_match_patterns": [
+            r"(?:我)?(?:怎么|如何)(?:进|加|加入)群(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+            r"会员群(?:呢|呀|啊|吗|嘛|在哪|在哪里)?[？?。！!~～]*",
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "subscribe",
+        "ignore_conversion_target": True,
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "如果还没开通，直接去 @MorychannelBot 看当前档位并按提示自助操作；如果已经购买或兑换成功却没收到群入口，把订单号文字和成功凭证截图发来，我帮你登记核对。不要发送密码或验证码。",
+    },
+    {
+        "name": "预览入口",
+        "topic": "内容预览",
+        "enabled": True,
+        "priority": 125,
+        "private_keywords": ["预览", "看预览", "想看预览"],
+        "keyword_match_mode": "full",
+        "private_match_patterns": [
+            r"(?:我)?(?:想|要|想要)?看(?:一下)?预览(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "preview",
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "想看预览就去 @moryselect，里面有照片和视频可以试看；先看风格合不合你心意，再决定要不要继续。",
+    },
+    {
+        "name": "会员包年咨询",
+        "topic": "会员包年",
+        "enabled": True,
+        "priority": 125,
+        "private_keywords": ["包年可以", "包年可以吗", "可以包年吗", "有包年吗"],
+        "keyword_match_mode": "full",
+        "match_patterns": [
+            r"(?:会员|vip|订阅|至臻全享|精选图集)(?:可以|能|可不可以|能不能|有没有|有)?(?:包年|年付)(?:吗|呢|呀|啊|嘛)?[？?。！!~～]*",
+        ],
+        "private_match_patterns": [
+            r"(?:会员|vip|订阅)?(?:可以|能|可不可以|能不能|有没有|有)?包年(?:吗|呢|呀|啊|嘛)?[？?。！!~～]*",
+        ],
+        "ai_polish": False,
+        "ai_mode": "local_zero_token",
+        "conversion_target": "subscribe",
+        "ignore_conversion_target": True,
+        "card_enabled": False,
+        "remember_context": True,
+        "base_reply": "可以，当前有年付档位；具体可选档位、价格和权益以 @MorychannelBot 自助菜单的实时展示为准，点进去看最准确。",
+    },
+    {
         "name": "定制规则说明",
         "topic": "定制规则",
         "enabled": True,
@@ -449,6 +532,12 @@ _DEFAULT_SPECIAL_AUTO_REPLIES = (
             r"(?:怎么|如何)(?:跟|和)?mory联系(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"(?:会员)?怎么联系(?:你|mory)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
             r"(?:我想|想|我要)(?:找|联系)(?:mory本人|mory|你)(?:呢|呀|啊|吗|嘛)?[？?。！!~～]*",
+        ],
+        "private_match_patterns": [
+            r"约(?:吗|呢|呀|啊|嘛)?[？?。！!~～]*",
+            r"(?:我)?(?:可以|能|可不可以|能不能)约(?:吗|呢|呀|啊|嘛)?[？?。！!~～]*",
+            r"(?:我)?(?:可以|能|可不可以|能不能)(?:线下)?见面(?:吗|呢|呀|啊|嘛)?[？?。！!~～]*",
+            r"线下(?:吗|呢|呀|啊|嘛)?[？?。！!~～]*",
         ],
         "contextual_followup_match_mode": "full",
         "contextual_followups": ["微信呢", "线下呢", "怎么约", "那怎么联系", "必须先订阅吗", "只是聊聊呢"],
@@ -561,7 +650,16 @@ class KeywordTrigger:
             if not text or len(text.strip()) == 0:
                 return False
 
+            chat = getattr(message, "chat", None)
+            chat_type = str(getattr(chat, "type", "") or "")
+            is_private = chat_type == "private" or (
+                not chat_type and int(chat_id or 0) > 0
+            )
+
             if self._handle_private_mystic(text, chat_id, message, bot):
+                return True
+
+            if is_private and self._handle_private_checkin(text, chat_id, message, bot):
                 return True
 
             explicit_media_scene = None
@@ -575,6 +673,7 @@ class KeywordTrigger:
             special_rule = self._match_special_rule(
                 text,
                 conversation_history=conversation_history,
+                is_private=is_private,
             )
             if special_rule:
                 handled = self._handle_special_rule(
@@ -637,6 +736,45 @@ class KeywordTrigger:
             logger.error(f"🔑 关键词触发处理异常: {e}")
             logger.error(traceback.format_exc())
             return False
+
+    def _handle_private_checkin(self, text: str, chat_id: int, message, bot) -> bool:
+        """私聊签到只说明真实运行状态，绝不把文本误报成签到成功。"""
+        from modules.checkin import is_checkin_enabled, is_invalid_checkin_command
+
+        normalized = self._normalize_match_phrase(text)
+        asks_status = "断签" in normalized and len(normalized) <= 30
+        if normalized != "签到" and not is_invalid_checkin_command(text) and not asks_status:
+            return False
+
+        enabled = is_checkin_enabled(self.config)
+        if asks_status:
+            base_reply = (
+                "签到功能当前未开启，我不能只凭这句话判断你以前是否断签；"
+                "历史连续记录要以实际签到记录为准。"
+                if not enabled
+                else "我不能只凭这句话判断是否断签；请到群里查看实际签到记录，再决定是否需要补签。"
+            )
+        else:
+            base_reply = (
+                "签到功能当前未开启。"
+                if not enabled
+                else "签到需要在群里直接发送简体“签到”，私聊不会执行，也不会增加积分。"
+            )
+        return self._handle_special_rule(
+            {
+                "name": "签到状态说明",
+                "topic": "签到状态",
+                "base_reply": base_reply,
+                "ai_polish": False,
+                "ai_mode": "local_zero_token",
+                "conversion_target": "none",
+                "remember_context": True,
+                "card_enabled": False,
+            },
+            chat_id,
+            message,
+            bot,
+        )
 
     def _handle_private_mystic(self, text: str, chat_id: int, message, bot) -> bool:
         """私聊明确占卜请求走本地引擎，在进入 LLM 前直接承接。"""
@@ -730,7 +868,13 @@ class KeywordTrigger:
             include_caption=False,
         )
 
-    def _match_special_rule(self, text: str, conversation_history=None):
+    def _match_special_rule(
+        self,
+        text: str,
+        conversation_history=None,
+        *,
+        is_private: bool = False,
+    ):
         """匹配特定词规则；配置可覆盖或关闭同名内置规则。"""
         rules = self._effective_special_rules()
 
@@ -789,6 +933,13 @@ class KeywordTrigger:
             keywords = rule.get("keywords", [])
             if isinstance(keywords, str):
                 keywords = [keywords]
+            else:
+                keywords = list(keywords)
+            if is_private:
+                private_keywords = rule.get("private_keywords", [])
+                if isinstance(private_keywords, str):
+                    private_keywords = [private_keywords]
+                keywords.extend(private_keywords)
             keyword_match_mode = str(
                 rule.get("keyword_match_mode", "substring") or "substring"
             ).strip().lower()
@@ -812,6 +963,13 @@ class KeywordTrigger:
             match_patterns = rule.get("match_patterns", [])
             if isinstance(match_patterns, str):
                 match_patterns = [match_patterns]
+            else:
+                match_patterns = list(match_patterns)
+            if is_private:
+                private_patterns = rule.get("private_match_patterns", [])
+                if isinstance(private_patterns, str):
+                    private_patterns = [private_patterns]
+                match_patterns.extend(private_patterns)
             for pattern in match_patterns:
                 if not pattern:
                     continue
@@ -1222,7 +1380,7 @@ class KeywordTrigger:
         was_polished: bool,
         reply_text: str = "",
     ):
-        """用现有 telemetry_events 记录关键话题，不保存用户原文。"""
+        """记录关键话题；审核预设另写问题来源，供后续升级复盘。"""
         user = getattr(message, "from_user", None)
         user_id = int(getattr(user, "id", 0) or 0)
         topic = str(
@@ -1247,6 +1405,46 @@ class KeywordTrigger:
             )
         except Exception as e:
             logger.warning(f"🔑 关键话题统计写入失败: {e}")
+
+        # 只在回复真实送达后记录 SPECIAL 预设；本地占卜等非FAQ内容不混入
+        # 问题蒸馏。一次 INSERT 同时写问题、回复和来源，避免半条记录。
+        rule_name = str(rule.get("name", "") or "").strip()
+        if (
+            reply_text
+            and rule_name != "私聊本地占卜"
+            and self.config.get("FAQ_TRACKING_ENABLED", False)
+        ):
+            try:
+                log_question = getattr(self.db, "log_question", None)
+                if callable(log_question):
+                    target = str(rule.get("conversion_target", "none") or "none")
+                    category = (
+                        "pricing" if target == "subscribe"
+                        else "content" if target == "preview"
+                        else "other"
+                    )
+                    question_id = log_question(
+                        uid=user_id,
+                        chat_id=int(chat_id or 0),
+                        question_text=str(getattr(message, "text", "") or "")[:500],
+                        mode="convert" if target == "subscribe" else "normal",
+                        intent=topic,
+                        keyword_tag=matched_keyword,
+                        question_category=category,
+                        is_convert=1 if target == "subscribe" else 0,
+                        ai_reply_summary=str(reply_text)[:200],
+                        faq_hit_id=0,
+                        answer_source="preset",
+                        answer_ref=rule_name,
+                    )
+                    if question_id:
+                        logger.debug(
+                            "📋 预设问答已记录 id=%s rule=%s",
+                            question_id,
+                            rule_name,
+                        )
+            except Exception as e:
+                logger.warning(f"🔑 预设问题来源写入失败: {e}")
 
         if rule.get("remember_context", False):
             try:

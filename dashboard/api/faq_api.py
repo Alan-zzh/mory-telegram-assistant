@@ -66,7 +66,13 @@ def get_questions():
 
         limit = per_page
         offset = (page - 1) * per_page
-        result = db.get_questions(limit, offset, category, days)
+        result = db.get_questions(
+            limit,
+            offset,
+            category,
+            days,
+            include_total=True,
+        )
 
         # 兼容返回值：可能是元组 (questions, total) 或仅列表
         if isinstance(result, tuple) and len(result) == 2:

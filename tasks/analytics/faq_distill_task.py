@@ -89,6 +89,19 @@ def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
                 break
         return samples
 
+    def _answer_source(item) -> str:
+        source = str(item.get("answer_source", "") or "").strip().lower()
+        if source:
+            return source
+        if int(item.get("faq_hit_id", 0) or 0) > 0:
+            return "faq"
+        summary = str(item.get("ai_reply_summary", "") or "").strip()
+        if not summary or summary.startswith("[UNRESOLVED]"):
+            return "unresolved"
+        # 历史记录没有来源字段；有正常回复摘要时只能保守归为 legacy AI，
+        # 不能倒推成预设或直接入口。
+        return "ai"
+
     reportable = [
         item
         for item in questions
@@ -99,22 +112,25 @@ def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
     unresolved = [
         item
         for item in reportable
-        if (
-            not str(item.get("ai_reply_summary", "") or "").strip()
-            or str(item.get("ai_reply_summary", "")).startswith("[UNRESOLVED]")
-        )
+        if _answer_source(item) == "unresolved"
     ]
-    faq_hits = sum(1 for item in questions if int(item.get("faq_hit_id", 0) or 0) > 0)
+    faq_hits = sum(1 for item in questions if _answer_source(item) == "faq")
+    preset_hits = sum(1 for item in questions if _answer_source(item) == "preset")
+    direct_hits = sum(1 for item in questions if _answer_source(item) == "direct_access")
     faq_misses = [
         item
         for item in reportable
-        if int(item.get("faq_hit_id", 0) or 0) <= 0
+        if _answer_source(item) == "ai"
         and item not in unresolved
     ]
 
     lines = [
         "📋 今日问题汇总",
-        f"共记录 {len(questions)} 条｜FAQ命中 {faq_hits} 条｜待优化 {len(unresolved)} 条",
+        (
+            f"共记录 {len(questions)} 条｜FAQ命中 {faq_hits} 条｜"
+            f"预设命中 {preset_hits} 条｜入口直达 {direct_hits} 条｜"
+            f"待优化 {len(unresolved)} 条"
+        ),
     ]
 
     unresolved_samples = _unique_samples(unresolved, sample_limit)
@@ -132,7 +148,7 @@ def _build_daily_question_summary(questions, sample_limit: int = 8) -> str:
     )
     if miss_samples:
         lines.append("")
-        lines.append("AI已答但FAQ未命中：")
+        lines.append("AI已答但FAQ/预设未命中：")
         lines.extend(
             f"{index}. {text}"
             for index, text in enumerate(miss_samples, 1)

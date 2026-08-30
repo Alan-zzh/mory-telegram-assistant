@@ -1267,6 +1267,8 @@ class DB:
                 is_convert INTEGER NOT NULL DEFAULT 0,
                 ai_reply_summary TEXT NOT NULL DEFAULT '',
                 faq_hit_id INTEGER DEFAULT 0,
+                answer_source TEXT NOT NULL DEFAULT '',
+                answer_ref TEXT NOT NULL DEFAULT '',
                 ts INTEGER NOT NULL
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_user_questions_uid ON user_questions(uid)")

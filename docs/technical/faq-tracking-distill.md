@@ -1,11 +1,12 @@
-# 用户问题追踪、自动承接与FAQ蒸馏系统 (v5.35.11)
+# 用户问题追踪、自动承接与FAQ蒸馏系统 (v5.42.2)
 
 > 自动记录用户问题 → 蒸馏高频问题 → 人工审核话术 → AI润色自动回复，实现"变相蒸馏运营者"闭环。
 
 ## 1. 系统架构
 
 ```
-用户消息 → P10 AI回复
+用户消息 → 审核预设早路由 / P10 AI回复
+  ├─ 审核预设实际送达 → 原子记录问题、回复、answer_source=preset、规则名
   ├─ 明显问句 + FAQ_TRACKING_ENABLED=true → 不受随机回复率限制，主动承接
   ├─ [FAQ_TRACKING_ENABLED=true] → db.log_question() 记录问题
   ├─ [FAQ_AUTO_REPLY_ENABLED=true] → _try_faq_match() 匹配FAQ
@@ -13,18 +14,19 @@
   │   ├─ 命中 + ai_polish=false → 直接模板回复
   │   └─ 未命中 → 正常AI回复
   ├─ 未命中且AI无可靠答案 → 联系Mory/自助下单同排双按钮
-  └─ AI回复后 → db.update_question_reply() 更新摘要+faq_hit_id
+  └─ 最终回复后 → db.update_question_reply() 更新摘要、faq_hit_id、answer_source/ref
       └─ 无可靠答案 → ai_reply_summary加[UNRESOLVED]标记
 
 每日自动蒸馏 → tasks/analytics/faq_distill_task.py
-  ├─ 扫描7天内user_questions
+  ├─ 扫描7天内user_questions，排除preset/faq/direct_access和命令
   ├─ 按(category, mode, intent)分组+文本归一化聚类
   ├─ 频次≥FAQ_MIN_FREQUENCY → 写入faq_candidates(status=pending)
   └─ 通知管理员审核
 
 每日23:50问题汇总 → faq_daily_question_summary
   ├─ 待老板优化：[UNRESOLVED]或没有回复摘要的问题
-  ├─ AI已答但FAQ未命中：faq_hit_id=0的样本
+  ├─ 分别统计FAQ、预设、直接入口、AI和待优化来源
+  ├─ AI已答但FAQ/预设未命中：只展示AI或历史未分类的正常回答
   └─ 直接发送给ADMIN_ID，不含用户ID
 
 管理员审核 → Dashboard /api/faq/candidates/:id/approve
@@ -50,6 +52,8 @@
 | is_convert | INTEGER | 是否转化类（1=是） |
 | ai_reply_summary | TEXT | AI回复摘要（前200字）；`[UNRESOLVED]`前缀表示需人工优化 |
 | faq_hit_id | INTEGER | 命中的FAQ条目ID（0=未命中） |
+| answer_source | TEXT | 回答来源：preset/faq/direct_access/ai/unresolved/fallback；旧行留空 |
+| answer_ref | TEXT | 规则名、FAQ ID、入口目标或稳定路径引用 |
 | ts | INTEGER | 时间戳 |
 
 索引：uid, ts, question_category
@@ -136,7 +140,7 @@ P10钩子中根据 mode 自动映射：
 ## 6. FAQ蒸馏逻辑（distill_candidates）
 
 ```
-1. 扫描 user_questions 最近 days 天的记录
+1. 扫描 user_questions 最近 days 天的记录，排除已由 preset/faq/direct_access 覆盖的记录及 `/` 命令
 2. 按 (question_category, mode, intent) 分组
 3. 组内按归一化文本聚合：
    - 小写化
@@ -165,7 +169,8 @@ P10钩子中根据 mode 自动映射：
 
 - “助理出来/助理在吗”：按当前人设响应，并自然保留 `@MorychannelBot` 自助下单入口。
 - “签到积分有什么福利/积分能换什么”：说明积分可兑换订阅VIP月卡等福利，具体可问 `@Moryfansbot`。
-- “定制视频/可以定制视频吗”：说明可先沟通需求，是否承接由Mory确认。
+- 私聊“可以约吗/怎么进群/包年可以/预览”等对象明确短句：使用审核底稿；群聊必须带会员、VIP、至臻等业务对象。
+- 私聊签到及无效格式：只说明真实开关或群内操作方式，绝不把文本当成签到成功。
 
 `SPECIAL_AUTO_REPLIES` 中的同名配置优先，可通过 `enabled=false` 关闭内置规则。繁体“簽到”、QD、带句号“签到。”不会执行签到，只提示发送无符号简体“签到”。签到运行态优先读 `CHECKIN_CONFIG.enabled`，兼容历史 `enable`；Dashboard保存时同步两者，并把 `streak_bonus` 同步为历史 `bonus_3d/bonus_7d/...`。
 
@@ -173,8 +178,8 @@ P10钩子中根据 mode 自动映射：
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| /api/faq/stats | GET | 问题统计（总数/今日/TOP20/分类分布/FAQ命中率） |
-| /api/faq/questions | GET | 问题列表（分页+分类+天数筛选） |
+| /api/faq/stats | GET | 问题统计（来源分布、确定性覆盖率、旧FAQ命中率及TOP20） |
+| /api/faq/questions | GET | 问题列表（真实总数分页+分类+天数+回答来源） |
 | /api/faq/candidates | GET | FAQ候选列表（按状态筛选） |
 | /api/faq/candidates/<id>/approve | POST | 审核通过（含answer_template/ai_polish） |
 | /api/faq/candidates/<id>/reject | POST | 审核拒绝 |

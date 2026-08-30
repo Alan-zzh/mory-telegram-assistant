@@ -19,6 +19,7 @@
 """
 import os
 import random
+import re
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
@@ -121,7 +122,7 @@ CHECKIN_FORMAT_HINT = "请直接发送简体“签到”（不要加任何符号
 def is_invalid_checkin_command(text: str) -> bool:
     """识别常见但无效的签到写法，避免用户误以为已经签到。"""
     compact = "".join(str(text or "").strip().split()).lower()
-    return compact in {
+    if compact in {
         "簽到",
         "/簽到",
         "qd",
@@ -130,7 +131,12 @@ def is_invalid_checkin_command(text: str) -> bool:
         "q-d",
         "签到。",
         "簽到。",
-    }
+    }:
+        return True
+    return bool(
+        re.fullmatch(r"(?:签到){2,}", compact)
+        or re.fullmatch(r"签到[，,。.!！?？~～]+", compact)
+    )
 
 
 def is_checkin_enabled(config: dict) -> bool:
@@ -169,7 +175,7 @@ def handle_checkin(bot, m, config, db):
     # 检查签到开关
     checkin_cfg = config.get("CHECKIN_CONFIG", {})
     if not is_checkin_enabled(config):
-        # 功能已关闭，静默忽略
+        bot.reply_to(m, "签到功能当前未开启。")
         return
 
     today = datetime.now(_CST).strftime("%Y-%m-%d")
@@ -294,7 +300,6 @@ def handle_checkin_rank(bot, m, config, db):
 def handle_makeup_checkin(bot, m, config, db):
     """补签 - 消耗积分补昨日签到"""
     uid = m.from_user.id
-    uname = m.from_user.first_name or "用户"
 
     # 检查签到开关
     checkin_cfg = config.get("CHECKIN_CONFIG", {})

@@ -28,7 +28,9 @@ class QuestionRepo:
     # ─────────────────────────────── 用户问题记录 ────────────────────────────
 
     def log_question(self, uid, chat_id, question_text, mode='', intent='',
-                     keyword_tag='', question_category='other', is_convert=0):
+                     keyword_tag='', question_category='other', is_convert=0,
+                     ai_reply_summary='', faq_hit_id=0, answer_source='',
+                     answer_ref=''):
         """记录一条用户提问，返回新行id
 
         Args:
@@ -40,6 +42,10 @@ class QuestionRepo:
             keyword_tag: 命中关键词标签
             question_category: 问题分类
             is_convert: 是否转化（0/1）
+            ai_reply_summary: 已知回复摘要；早路由可在发送成功后一次写完整
+            faq_hit_id: 命中的FAQ知识库ID
+            answer_source: preset/faq/direct_access/ai/unresolved/fallback
+            answer_ref: 规则名、FAQ ID、入口目标或其他稳定引用
 
         Returns:
             新插入行的id，失败返回0
@@ -50,11 +56,14 @@ class QuestionRepo:
                 cur.execute(
                     """INSERT INTO user_questions
                        (uid, chat_id, question_text, mode, intent, keyword_tag,
-                        question_category, is_convert, ai_reply_summary, faq_hit_id, ts)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        question_category, is_convert, ai_reply_summary, faq_hit_id,
+                        answer_source, answer_ref, ts)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (int(uid), int(chat_id), str(question_text)[:500],
                      str(mode), str(intent), str(keyword_tag),
-                     str(question_category), int(is_convert), '', 0, int(time.time())),
+                     str(question_category), int(is_convert),
+                     str(ai_reply_summary)[:200], int(faq_hit_id),
+                     str(answer_source)[:32], str(answer_ref)[:128], int(time.time())),
                 )
                 self.conn.commit()
                 return cur.lastrowid
@@ -62,13 +71,16 @@ class QuestionRepo:
                 logger.error(f"记录用户提问失败：{e}")
                 return 0
 
-    def update_question_reply(self, question_id, ai_reply_summary, faq_hit_id=0) -> bool:
-        """更新问题的AI回复摘要和FAQ命中ID
+    def update_question_reply(self, question_id, ai_reply_summary, faq_hit_id=0,
+                              answer_source='', answer_ref='') -> bool:
+        """更新问题回复摘要、FAQ命中与回答来源
 
         Args:
             question_id: 问题记录ID
             ai_reply_summary: AI回复摘要（截断到200字符）
             faq_hit_id: 命中的FAQ知识库ID
+            answer_source: preset/faq/direct_access/ai/unresolved/fallback
+            answer_ref: 稳定来源引用
 
         Returns:
             True=成功，False=失败
@@ -77,9 +89,15 @@ class QuestionRepo:
             try:
                 self.conn.execute(
                     """UPDATE user_questions
-                       SET ai_reply_summary=?, faq_hit_id=?
+                       SET ai_reply_summary=?, faq_hit_id=?, answer_source=?, answer_ref=?
                        WHERE id=?""",
-                    (str(ai_reply_summary)[:200], int(faq_hit_id), int(question_id)),
+                    (
+                        str(ai_reply_summary)[:200],
+                        int(faq_hit_id),
+                        str(answer_source)[:32],
+                        str(answer_ref)[:128],
+                        int(question_id),
+                    ),
                 )
                 self.conn.commit()
                 return True
@@ -109,10 +127,40 @@ class QuestionRepo:
                 hour=0, minute=0, second=0, microsecond=0).timestamp())
             c.execute("SELECT COUNT(*) FROM user_questions WHERE ts>=?", (today_start,))
             today = c.fetchone()[0]
-            # FAQ命中率
+            # FAQ命中率保留原语义；来源分布用于区分预设、入口、AI与待优化。
             c.execute("SELECT COUNT(*) FROM user_questions WHERE faq_hit_id>0")
             faq_hit = c.fetchone()[0]
             faq_hit_rate = (faq_hit / total * 100) if total > 0 else 0.0
+            c.execute(
+                """SELECT COALESCE(answer_source, ''), COUNT(*)
+                   FROM user_questions GROUP BY COALESCE(answer_source, '')"""
+            )
+            source_counts = {str(row[0] or ''): int(row[1]) for row in c.fetchall()}
+            source_distribution = {
+                "faq": source_counts.get("faq", 0),
+                "preset": source_counts.get("preset", 0),
+                "direct_access": source_counts.get("direct_access", 0),
+                "ai": source_counts.get("ai", 0),
+                "unresolved": source_counts.get("unresolved", 0),
+                "fallback": source_counts.get("fallback", 0),
+                "legacy_unclassified": source_counts.get("", 0),
+            }
+            c.execute(
+                """SELECT COUNT(*) FROM user_questions
+                   WHERE COALESCE(answer_source, '')='' AND faq_hit_id>0"""
+            )
+            legacy_faq = int(c.fetchone()[0])
+            source_distribution["faq"] += legacy_faq
+            source_distribution["legacy_unclassified"] -= legacy_faq
+            classified = total - source_distribution["legacy_unclassified"]
+            deterministic = (
+                source_distribution["faq"]
+                + source_distribution["preset"]
+                + source_distribution["direct_access"]
+            )
+            deterministic_coverage_rate = (
+                deterministic / classified * 100 if classified > 0 else 0.0
+            )
             # 分类分布
             c.execute("""SELECT question_category, COUNT(*) FROM user_questions
                          GROUP BY question_category ORDER BY COUNT(*) DESC""")
@@ -125,6 +173,8 @@ class QuestionRepo:
                 "total_count": total,
                 "today_count": today,
                 "faq_hit_rate": round(faq_hit_rate, 2),
+                "answer_source_distribution": source_distribution,
+                "deterministic_coverage_rate": round(deterministic_coverage_rate, 2),
                 "category_distribution": category_distribution,
                 "top_questions": top_questions,
             }
@@ -134,6 +184,11 @@ class QuestionRepo:
                 "total_count": 0,
                 "today_count": 0,
                 "faq_hit_rate": 0.0,
+                "answer_source_distribution": {
+                    "faq": 0, "preset": 0, "direct_access": 0, "ai": 0,
+                    "unresolved": 0, "fallback": 0, "legacy_unclassified": 0,
+                },
+                "deterministic_coverage_rate": 0.0,
                 "category_distribution": {},
                 "top_questions": [],
             }
@@ -194,7 +249,8 @@ class QuestionRepo:
             logger.error(f"获取分类分布失败：{e}")
             return {}
 
-    def get_questions(self, limit=50, offset=0, category='', days=7):
+    def get_questions(self, limit=50, offset=0, category='', days=7,
+                      include_total=False):
         """获取问题列表
 
         Args:
@@ -202,19 +258,36 @@ class QuestionRepo:
             offset: 偏移量
             category: 按分类筛选（空=全部）
             days: 最近N天
+            include_total: True时返回(当前页列表, 符合筛选的真实总数)
 
         Returns:
             [{id, uid, chat_id, question_text, mode, intent, keyword_tag,
-              question_category, is_convert, ai_reply_summary, faq_hit_id, ts}, ...]
+              question_category, is_convert, ai_reply_summary, faq_hit_id,
+              answer_source, answer_ref, ts}, ...]
         """
         try:
             cutoff = int(time.time()) - days * 86400
             c = self.conn.cursor()
+            total = None
+            if include_total:
+                if category:
+                    c.execute(
+                        """SELECT COUNT(*) FROM user_questions
+                           WHERE ts>=? AND question_category=?""",
+                        (cutoff, category),
+                    )
+                else:
+                    c.execute(
+                        "SELECT COUNT(*) FROM user_questions WHERE ts>=?",
+                        (cutoff,),
+                    )
+                total = int(c.fetchone()[0])
             if category:
                 c.execute(
                     """SELECT id, uid, chat_id, question_text, mode, intent,
                               keyword_tag, question_category, is_convert,
-                              ai_reply_summary, faq_hit_id, ts
+                              ai_reply_summary, faq_hit_id, answer_source,
+                              answer_ref, ts
                        FROM user_questions
                        WHERE ts>=? AND question_category=?
                        ORDER BY ts DESC LIMIT ? OFFSET ?""",
@@ -224,23 +297,26 @@ class QuestionRepo:
                 c.execute(
                     """SELECT id, uid, chat_id, question_text, mode, intent,
                               keyword_tag, question_category, is_convert,
-                              ai_reply_summary, faq_hit_id, ts
+                              ai_reply_summary, faq_hit_id, answer_source,
+                              answer_ref, ts
                        FROM user_questions
                        WHERE ts>=?
                        ORDER BY ts DESC LIMIT ? OFFSET ?""",
                     (cutoff, limit, offset),
                 )
             rows = c.fetchall()
-            return [
+            questions = [
                 {
                     "id": r[0], "uid": r[1], "chat_id": r[2],
                     "question_text": r[3], "mode": r[4], "intent": r[5],
                     "keyword_tag": r[6], "question_category": r[7],
                     "is_convert": r[8], "ai_reply_summary": r[9],
-                    "faq_hit_id": r[10], "ts": r[11],
+                    "faq_hit_id": r[10], "answer_source": r[11],
+                    "answer_ref": r[12], "ts": r[13],
                 }
                 for r in rows
             ]
+            return (questions, total) if include_total else questions
         except Exception as e:
             logger.error(f"获取问题列表失败：{e}")
             return []
@@ -614,7 +690,11 @@ class QuestionRepo:
             c = self.conn.cursor()
             c.execute(
                 """SELECT question_text, question_category, mode, intent
-                   FROM user_questions WHERE ts>=?""",
+                   FROM user_questions
+                   WHERE ts>=?
+                     AND faq_hit_id<=0
+                     AND COALESCE(answer_source, '') NOT IN ('preset', 'faq', 'direct_access')
+                     AND LTRIM(question_text) NOT LIKE '/%'""",
                 (cutoff,),
             )
             rows = c.fetchall()
