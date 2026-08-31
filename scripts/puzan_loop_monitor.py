@@ -49,6 +49,10 @@ LOCK_FILE = LOGS_DIR / ".puzan_loop_monitor.lock"
 DEBUG_HISTORY = PROJECT_ROOT / "AI_DEBUG_HISTORY.md"
 HEALTH_URL = "http://localhost:6616/api/health"
 MORY_DB = "/home/ubuntu/mory_assistant/mory.db"
+SCHEDULER_ERROR_SCOPE_SQL = (
+    "CASE WHEN last_status='error' THEN 'current' "
+    "WHEN COALESCE(last_error,'')='' THEN 'none' ELSE 'historical' END"
+)
 
 # ============ .env 加载 ============
 _env = dotenv_values(ENV_PATH)
@@ -833,7 +837,9 @@ def l5_scheduler_check(client):
 
         cumulative_failures, cumulative_failures_err = sqlite_query(
             client, MORY_DB,
-            "SELECT job_id, last_status, fail_count, miss_count, last_run, COALESCE(last_error,'') "
+            "SELECT job_id, last_status, fail_count, miss_count, last_run, "
+            f"{SCHEDULER_ERROR_SCOPE_SQL} AS error_scope, "
+            "COALESCE(last_error,'') "
             "FROM scheduler_metrics WHERE fail_count > 0 OR miss_count > 0 "
             "ORDER BY (fail_count + miss_count) DESC, job_id LIMIT 20;",
         )

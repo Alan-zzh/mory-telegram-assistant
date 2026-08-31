@@ -659,7 +659,7 @@ def test_scheduler_layer_exposes_recovered_jobs_cumulative_failures(monkeypatch)
         if "last_status IN" in sql:
             return "", ""
         if "fail_count > 0" in sql:
-            return "heartbeat|success|18|0|1786200000|historical timeout", ""
+            return "heartbeat|success|18|0|1786200000|historical|historical timeout", ""
         if "ORDER BY id DESC LIMIT 10" in sql:
             return "heartbeat|success|2026-08-31", ""
         raise AssertionError(sql)
@@ -678,8 +678,32 @@ def test_scheduler_layer_exposes_recovered_jobs_cumulative_failures(monkeypatch)
     assert status == "OK"
     assert details["scheduler_metrics_errors"] == ""
     assert details["scheduler_metrics_cumulative_failures"].startswith("heartbeat|success|18|")
+    assert "|historical|historical timeout" in details["scheduler_metrics_cumulative_failures"]
     current_error_sql = next(sql for sql in seen_sql if "last_status IN" in sql)
     assert "-1 hour" in current_error_sql
+    cumulative_sql = next(sql for sql in seen_sql if "fail_count > 0" in sql)
+    assert "AS error_scope" in cumulative_sql
+    assert cumulative_sql.index("last_status='error'") < cumulative_sql.index("COALESCE(last_error,'')=''")
+
+
+def test_scheduler_error_scope_keeps_current_error_when_text_is_empty():
+    from scripts import puzan_loop_monitor as monitor
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE metrics(last_status TEXT, last_error TEXT)")
+    conn.executemany(
+        "INSERT INTO metrics VALUES (?, ?)",
+        [("error", ""), ("success", "old failure"), ("success", "")],
+    )
+
+    scopes = [
+        row[0]
+        for row in conn.execute(
+            f"SELECT {monitor.SCHEDULER_ERROR_SCOPE_SQL} FROM metrics ORDER BY rowid"
+        )
+    ]
+
+    assert scopes == ["current", "historical", "none"]
 
 
 def test_scheduler_layer_fails_closed_when_execution_history_is_unreadable(monkeypatch):

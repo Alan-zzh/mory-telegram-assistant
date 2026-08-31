@@ -9,7 +9,7 @@
 - `task_log`：当天任务抢占与防重锁，不是执行历史；审计器只检查同 key 重复记录。
 - SQLite 查询异常：系统错误，必须上抛给 APScheduler，不能转成 `False`、空列表或“任务缺失”。
 
-Dashboard 的 `last_error` 只表示当前 `last_status=error` 的故障；任务恢复成功后，旧原因保留在 `last_failure_error`，并以 `error_scope=historical` 标明历史范围。累计失败次数不清零，但不得再冒充当前故障；`missed` 仍以 `last_status` 与 `miss_count` 判定。
+Dashboard 的 `last_error` 只表示当前 `last_status=error` 的故障；任务恢复成功后，旧原因保留在 `last_failure_error`，并以 `error_scope=historical` 标明历史范围。生产巡检的累计失败行同样必须输出 `error_scope`，禁止把最新成功 `last_run` 与旧错误同行后冒充刚刚失败。累计失败次数不清零；`missed` 仍以 `last_status` 与 `miss_count` 判定。
 
 ## 重启语义
 
