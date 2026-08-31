@@ -30,6 +30,32 @@ _TASK_PACKAGES = [
 _scheduler_instance: Optional["TaskScheduler"] = None
 
 
+def begin_scheduler_reconciliation(scheduler: Any, mode: str) -> int:
+    """记录一次完整调度重建的开始；用于识别挂起或半完成状态。"""
+    if mode not in {"startup", "reload"}:
+        raise ValueError(f"unsupported scheduler reconciliation mode: {mode}")
+    generation = int(getattr(scheduler, "_reconciliation_generation", 0)) + 1
+    scheduler._reconciliation_generation = generation
+    logger.info(f"SCHEDULER_RECONCILE_BEGIN mode={mode} generation={generation}")
+    return generation
+
+
+def complete_scheduler_reconciliation(scheduler: Any, mode: str, generation: int) -> None:
+    """仅在 BaseTask、场景触发器及启动/刷新步骤全部成功后落最终回执。"""
+    current_generation = int(getattr(scheduler, "_reconciliation_generation", 0))
+    if generation != current_generation:
+        raise RuntimeError(
+            "scheduler reconciliation generation changed "
+            f"expected={generation} current={current_generation}"
+        )
+    managed_jobs = len(getattr(scheduler, "_registered_job_ids", set()))
+    logger.info(
+        "SCHEDULER_RECONCILE_OK "
+        f"mode={mode} generation={generation} managed_jobs={managed_jobs} "
+        "scene_triggers=reconciled dynamic_jobs=not_observed"
+    )
+
+
 def get_scheduler_instance() -> Optional[Any]:
     """返回受生命周期闸门保护的调度控制器（无则返回 None）。"""
     return _scheduler_instance
@@ -390,6 +416,7 @@ def _start_with_task_scheduler(rm):
     # 对外统一暴露带生命周期闸门的控制器；抽奖、签到、场景触发器与动态
     # auto-delete/retry 不得绕过 active-job 计数后在关库阶段继续访问 SQLite。
     _scheduler_instance = scheduler
+    reconciliation_generation = begin_scheduler_reconciliation(scheduler, "startup")
 
     # 场景化触发器注册（与热重载共用同一幂等入口）
     from modules.triggers.base import refresh_trigger_jobs
@@ -409,6 +436,11 @@ def _start_with_task_scheduler(rm):
     # 否则数千人的 Telegram API 调用会在 scheduler.start() 前阻塞数分钟，
     # Dashboard 将旧心跳判为 503，外部 watchdog 还会形成误重启循环。
     scheduler.start()
+    complete_scheduler_reconciliation(
+        scheduler,
+        "startup",
+        reconciliation_generation,
+    )
     _persist_startup_heartbeat(rm)
 
     # 看门狗必须在 scheduler 与首个持久心跳成功后启动，失败则阻止残缺服务继续。

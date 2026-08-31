@@ -7,6 +7,9 @@
 
 ## 反复暗病清单
 
+### 57. 调度巡检关键词无来源认证，且 BaseTask 成功早于场景刷新完成（v5.42.19）
+- 问题|根因|解法|预防：任意日志可伪造成功/失败，场景刷新挂起时旧绿灯仍有效；改为解析 JSON 并校验 logger/function/level，完整重建先写 begin、BaseTask 与场景均成功后才写 final，后续失败或未完成 begin 均阻断。
+
 ### 6.55 正常空资料冒充复审失败
 - 问题 | 25名无Bio新人各产生一次`retry_exhausted` WARNING。根因 | 成功空值与Telegram查询失败共用降级终态。解法 | 保留三次补审并分流确认空值、资料失败、成员失败。预防 | 复审测试必须覆盖完整调度链、空返回与真实失败反例。
 
@@ -141,12 +144,6 @@
 - 根因：单连接串行上传全仓且无重连；顶层异常只打印不传播，`main()` 没有把 `deploy_ok` 映射为进程退出码。
 - 解法：每 40 文件分批上传，断线重连并重传当前批次；最终按双服务/health 验证结果返回 0/1。
 - 预防：发布工具必须测试连接中断恢复与失败非零；任何“异常/待手工检查”都不得以成功码结束。
-
-### 6.8 配置三处同步漏同步 .get() 默认值（v5.38.17 新增）
-- 问题：config.json.example 写了 "AI_REQUEST_TIMEOUT": 30 / "AI_MAX_ATTEMPTS": 2，但代码里 `config.get("AI_REQUEST_TIMEOUT", 15)` / `config.get("AI_MAX_ATTEMPTS", 3)`，example 没配这两项时运行态默认值反而比 example 更激进（更短超时、更多重试），导致高频超时或吞吐下降。
-- 根因：三处同步规则（example + 代码 .get() 默认值 + Dashboard UI）只改了 example 或 UI，代码中的 fallback 默认值没有跟随更新；`config.get(key, FALLBACK)` 的 FALLBACK 是"最终兜底值"，不是"建议初始值"。
-- 解法：统一把代码中的 FALLBACK 值改成与 config.json.example 中声明的一致；优先顺序保持不变（真实 config.json 覆盖 example，example 覆盖代码 FALLBACK）。
-- 预防：① 修改任一配置项的默认值时，必须同时查三处：config.json.example 声明值、代码中 `config.get("KEY", X)` 的 X 与 Dashboard 端点默认值；② 新增配置项必须跑"无 config.json.example 时的代码默认值行为"回归测试，不能只跑 example 存在的 happy path。
 
 ### 6.9 裸 except: pass 吞掉异常导致零可观测性（v5.38.17 新增）
 - 问题：ai_engine.py wave_tilde_daily 更新、dashboard/audit.py 多处长 `except Exception: pass`，发生异常时没有任何日志、没有上下文，用户感知是"功能偶尔失效但查不到原因"，排障成本极高。

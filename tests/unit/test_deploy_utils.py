@@ -37,6 +37,164 @@ def test_dashboard_teardown_filter_is_exact_and_preserves_real_errors():
     assert "database close failed" in filtered
 
 
+def test_scheduler_registry_receipt_tracks_current_state_without_hiding_failures():
+    from core.deploy_utils import scheduler_registry_receipt_from_logs
+
+    import json
+
+    def record(logger, function, level, message):
+        return json.dumps(
+            {
+                "logger": logger,
+                "function": function,
+                "level": level,
+                "message": message,
+            },
+            ensure_ascii=False,
+        )
+
+    begin_1 = record(
+        "tasks.task_scheduler",
+        "begin_scheduler_reconciliation",
+        "INFO",
+        "SCHEDULER_RECONCILE_BEGIN mode=startup generation=1",
+    )
+    complete_1 = record(
+        "tasks.task_scheduler",
+        "complete_scheduler_reconciliation",
+        "INFO",
+        "SCHEDULER_RECONCILE_OK mode=startup generation=1 managed_jobs=41 "
+        "scene_triggers=reconciled dynamic_jobs=not_observed",
+    )
+
+    code, receipt = scheduler_registry_receipt_from_logs(begin_1 + "\n" + complete_1)
+    assert code == 0
+    assert receipt.startswith("SCHEDULER_REGISTRY_OK")
+    assert "managed_jobs=41" in receipt
+    assert "dynamic_jobs:not_observed" in receipt
+    assert "direct_registry:false" in receipt
+
+    assert scheduler_registry_receipt_from_logs("普通启动日志") == (
+        2,
+        "SCHEDULER_RECONCILIATION_RECEIPT_MISSING",
+    )
+    assert scheduler_registry_receipt_from_logs(begin_1) == (
+        1,
+        "SCHEDULER_RECONCILIATION_INCOMPLETE mode=startup generation=1",
+    )
+
+    failure_cases = {
+        "task_registration_failed": record(
+            "tasks.task_scheduler", "_register_tasks", "ERROR", "任意注册错误"
+        ),
+        "scene_trigger_refresh_failed": record(
+            "modules.triggers.base", "refresh_trigger_jobs", "ERROR", "任意触发器错误"
+        ),
+        "scheduler_rollback_failed": record(
+            "bot_initializer", "_apply_reloaded_config", "CRITICAL", "任意回滚错误"
+        ),
+    }
+    for reason, failure_record in failure_cases.items():
+        code, receipt = scheduler_registry_receipt_from_logs(
+            begin_1 + "\n" + complete_1 + "\n" + failure_record
+        )
+        assert code == 1
+        assert reason in receipt
+
+    begin_2 = record(
+        "tasks.task_scheduler",
+        "begin_scheduler_reconciliation",
+        "INFO",
+        "SCHEDULER_RECONCILE_BEGIN mode=reload generation=2",
+    )
+    complete_2 = record(
+        "tasks.task_scheduler",
+        "complete_scheduler_reconciliation",
+        "INFO",
+        "SCHEDULER_RECONCILE_OK mode=reload generation=2 managed_jobs=40 "
+        "scene_triggers=reconciled dynamic_jobs=not_observed",
+    )
+
+    # 新一轮已经开始却未落最终成功回执时必须失败，不能沿用旧绿灯。
+    code, receipt = scheduler_registry_receipt_from_logs(
+        begin_1 + "\n" + complete_1 + "\n" + begin_2
+    )
+    assert code == 1
+    assert receipt == "SCHEDULER_RECONCILIATION_INCOMPLETE mode=reload generation=2"
+
+    # 失败后完整重建成功属于已恢复历史；最后成功回执之后无失败即可通过。
+    code, receipt = scheduler_registry_receipt_from_logs(
+        begin_1
+        + "\n"
+        + complete_1
+        + "\n"
+        + failure_cases["scene_trigger_refresh_failed"]
+        + "\n"
+        + begin_2
+        + "\n"
+        + complete_2
+    )
+    assert code == 0
+    assert "managed_jobs=40" in receipt
+
+    # 用户消息、错误来源、错误级别和非 JSON 行都不能伪造成功或失败。
+    forged_messages = [
+        record(
+            "core.message_dispatcher",
+            "dispatch_message",
+            "INFO",
+            "SCHEDULER_RECONCILE_OK mode=reload generation=999 managed_jobs=999 "
+            "scene_triggers=reconciled dynamic_jobs=not_observed",
+        ),
+        record(
+            "core.message_dispatcher",
+            "dispatch_message",
+            "INFO",
+            "调度回滚失败",
+        ),
+        record(
+            "tasks.task_scheduler",
+            "wrong_function",
+            "INFO",
+            "SCHEDULER_RECONCILE_BEGIN mode=reload generation=999",
+        ),
+        "not-json SCHEDULER_RECONCILE_BEGIN mode=reload generation=999",
+    ]
+    code, receipt = scheduler_registry_receipt_from_logs(
+        begin_1 + "\n" + complete_1 + "\n" + "\n".join(forged_messages)
+    )
+    assert code == 0
+    assert "managed_jobs=41" in receipt
+
+
+def test_scheduler_reconciliation_logs_form_an_authenticated_receipt(caplog):
+    """生产 JsonFormatter 的真实 logger/function/level 必须能被分类器认证。"""
+    import logging
+
+    from core.deploy_utils import scheduler_registry_receipt_from_logs
+    from core.logging_util import JsonFormatter
+    from tasks.task_scheduler import (
+        begin_scheduler_reconciliation,
+        complete_scheduler_reconciliation,
+    )
+
+    scheduler = type("Scheduler", (), {"_registered_job_ids": {"a", "b"}})()
+    caplog.set_level(logging.INFO, logger="tasks.task_scheduler")
+
+    generation = begin_scheduler_reconciliation(scheduler, "startup")
+    complete_scheduler_reconciliation(scheduler, "startup", generation)
+
+    formatter = JsonFormatter()
+    log_text = "\n".join(
+        formatter.format(record)
+        for record in caplog.records
+        if record.name == "tasks.task_scheduler"
+    )
+    code, receipt = scheduler_registry_receipt_from_logs(log_text)
+    assert code == 0
+    assert "managed_jobs=2" in receipt
+
+
 def test_dashboard_runtime_probe_uses_exact_lock_versions():
     """探针命令必须使用 requirements.lock 的精确版本（独立解析 lock，不硬编码）。"""
     import re
@@ -580,8 +738,10 @@ def test_deployment_verification_checks_direct_version_truth_and_permissions():
     assert "bad_metrics" in checks["调度事实"]
     assert "COALESCE(last_run,0) >= ?" in checks["调度事实"]
     assert "cumulative_metrics" in checks["调度事实"]
-    assert "任务调度器准备就绪" in checks["调度注册"]
-    assert "current_api_not_observed" in checks["调度注册"]
+    assert "ActiveEnterTimestamp" in checks["调度注册"]
+    assert "-o cat" in checks["调度注册"]
+    assert "scheduler_registry_receipt_from_logs" in checks["调度注册"]
+    assert "SCHEDULER_REGISTRY_OK" not in checks["调度注册"]
 
 
 def test_deployment_health_200_cannot_hide_version_mismatch():

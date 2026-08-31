@@ -410,10 +410,18 @@ def _load_dynamic_states(cfg: dict, db_instance=None):
 
 def _refresh_scheduled_tasks():
     """让统一任务与场景触发器在热重载后真实增删。"""
-    from tasks.task_scheduler import get_task_scheduler
+    from tasks.task_scheduler import (
+        begin_scheduler_reconciliation,
+        complete_scheduler_reconciliation,
+        get_task_scheduler,
+    )
 
     task_scheduler = get_task_scheduler()
     if task_scheduler is not None:
+        reconciliation_generation = begin_scheduler_reconciliation(
+            task_scheduler,
+            "reload",
+        )
         task_scheduler.refresh_tasks()
         from modules.triggers.base import refresh_trigger_jobs
         from modules.triggers.cold_group import ColdGroupTrigger
@@ -422,6 +430,11 @@ def _refresh_scheduled_tasks():
             task_scheduler,
             task_scheduler.rm,
             (ColdGroupTrigger, NightHintTrigger),
+        )
+        complete_scheduler_reconciliation(
+            task_scheduler,
+            "reload",
+            reconciliation_generation,
         )
 
 

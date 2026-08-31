@@ -75,6 +75,18 @@ def test_scheduler_starts_before_startup_maintenance(monkeypatch):
 
     fake = FakeTaskScheduler()
     monkeypatch.setattr(task_scheduler, "create_scheduler", lambda rm: fake)
+    monkeypatch.setattr(
+        task_scheduler,
+        "begin_scheduler_reconciliation",
+        lambda scheduler, mode: events.append(f"reconcile_begin:{mode}") or 1,
+    )
+    monkeypatch.setattr(
+        task_scheduler,
+        "complete_scheduler_reconciliation",
+        lambda scheduler, mode, generation: events.append(
+            f"reconcile_complete:{mode}:{generation}"
+        ),
+    )
     monkeypatch.setattr(WatchdogTask, "start", lambda self, timeout_sec: events.append("watchdog_started"))
     monkeypatch.setattr(ColdGroupTrigger, "register", lambda self, scheduler, rm: None)
     monkeypatch.setattr(NightHintTrigger, "register", lambda self, scheduler, rm: None)
@@ -85,7 +97,9 @@ def test_scheduler_starts_before_startup_maintenance(monkeypatch):
     task_scheduler._start_with_task_scheduler(SimpleNamespace(db=SimpleNamespace()))
 
     assert task_scheduler._scheduler_instance is fake
+    assert events.index("reconcile_begin:startup") < events.index("scheduler_started")
     assert events.index("scheduler_started") < events.index("heartbeat_persisted")
+    assert events.index("scheduler_started") < events.index("reconcile_complete:startup:1")
     assert events.index("heartbeat_persisted") < events.index("watchdog_started")
     assert events.index("watchdog_started") < events.index("maintenance_started")
 
@@ -323,3 +337,53 @@ def test_apply_reloaded_config_rolls_back_when_scheduler_refresh_fails(monkeypat
     assert calls[0]["enabled"] is True
     assert calls[0]["CURRENT_MODEL_INDEX"] == 3
     assert calls[1]["enabled"] is False
+
+
+def test_hot_reload_reconciliation_receipt_waits_for_scene_triggers(monkeypatch):
+    """最终成功回执必须在 BaseTask 和场景触发器都刷新完成后才出现。"""
+    from core import bot_initializer
+    from modules.triggers import base as trigger_base
+    from tasks import task_scheduler
+
+    events = []
+    controller = SimpleNamespace(
+        rm=SimpleNamespace(config={}),
+        refresh_tasks=lambda: events.append("base_tasks_complete"),
+    )
+    monkeypatch.setattr(task_scheduler, "get_task_scheduler", lambda: controller)
+    monkeypatch.setattr(
+        task_scheduler,
+        "begin_scheduler_reconciliation",
+        lambda scheduler, mode: events.append(f"begin:{mode}") or 7,
+    )
+    monkeypatch.setattr(
+        task_scheduler,
+        "complete_scheduler_reconciliation",
+        lambda scheduler, mode, generation: events.append(
+            f"complete:{mode}:{generation}"
+        ),
+    )
+    monkeypatch.setattr(
+        trigger_base,
+        "refresh_trigger_jobs",
+        lambda *_args: events.append("scene_triggers_complete"),
+    )
+
+    bot_initializer._refresh_scheduled_tasks()
+
+    assert events == [
+        "begin:reload",
+        "base_tasks_complete",
+        "scene_triggers_complete",
+        "complete:reload:7",
+    ]
+
+    events.clear()
+    monkeypatch.setattr(
+        trigger_base,
+        "refresh_trigger_jobs",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("scene refresh hung/failed")),
+    )
+    with pytest.raises(RuntimeError, match="scene refresh hung/failed"):
+        bot_initializer._refresh_scheduled_tasks()
+    assert events == ["begin:reload", "base_tasks_complete"]

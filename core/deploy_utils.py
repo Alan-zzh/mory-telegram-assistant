@@ -9,7 +9,7 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
-import json, logging, os, posixpath, shlex, tempfile, time, uuid
+import json, logging, os, posixpath, re, shlex, tempfile, time, uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -53,6 +53,139 @@ def filter_dashboard_teardown_noise(log_text: str) -> str:
         kept.append(line)
         index += 1
     return "".join(kept)
+
+
+_SCHEDULER_RECONCILE_BEGIN_RE = re.compile(
+    r"SCHEDULER_RECONCILE_BEGIN mode=(?P<mode>startup|reload) generation=(?P<generation>[0-9]+)"
+)
+_SCHEDULER_RECONCILE_OK_RE = re.compile(
+    r"SCHEDULER_RECONCILE_OK mode=(?P<mode>startup|reload) "
+    r"generation=(?P<generation>[0-9]+) managed_jobs=(?P<managed_jobs>[0-9]+) "
+    r"scene_triggers=reconciled dynamic_jobs=not_observed"
+)
+
+
+def _authenticated_scheduler_event(record: object) -> tuple[str, object] | None:
+    """只接受本项目结构化日志中经过来源认证的调度事件。"""
+    if not isinstance(record, dict):
+        return None
+    logger_name = record.get("logger")
+    function = record.get("function")
+    level = record.get("level")
+    message = record.get("message")
+    if not isinstance(message, str):
+        return None
+
+    if (
+        logger_name == "tasks.task_scheduler"
+        and function == "begin_scheduler_reconciliation"
+        and level == "INFO"
+    ):
+        match = _SCHEDULER_RECONCILE_BEGIN_RE.fullmatch(message)
+        if match:
+            return "begin", (
+                match.group("mode"),
+                int(match.group("generation")),
+            )
+
+    if (
+        logger_name == "tasks.task_scheduler"
+        and function == "complete_scheduler_reconciliation"
+        and level == "INFO"
+    ):
+        match = _SCHEDULER_RECONCILE_OK_RE.fullmatch(message)
+        if match:
+            return "complete", (
+                match.group("mode"),
+                int(match.group("generation")),
+                int(match.group("managed_jobs")),
+            )
+
+    if (
+        logger_name == "tasks.task_scheduler"
+        and function == "_register_tasks"
+        and level == "ERROR"
+    ):
+        return "failure", "task_registration_failed"
+    if (
+        logger_name == "modules.triggers.base"
+        and function == "refresh_trigger_jobs"
+        and level == "ERROR"
+    ):
+        return "failure", "scene_trigger_refresh_failed"
+    if (
+        logger_name == "bot_initializer"
+        and function == "_apply_reloaded_config"
+        and level == "CRITICAL"
+    ):
+        return "failure", "scheduler_rollback_failed"
+    return None
+
+
+def scheduler_registry_receipt_from_logs(log_text: str) -> tuple[int, str]:
+    """从 ``journalctl -o cat`` JSON 日志生成来源认证的当前调度回执。"""
+    events: list[tuple[int, str, object]] = []
+    for index, line in enumerate(log_text.splitlines()):
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        event = _authenticated_scheduler_event(record)
+        if event is not None:
+            events.append((index, event[0], event[1]))
+
+    begins = [event for event in events if event[1] == "begin"]
+    completions = [event for event in events if event[1] == "complete"]
+    if not completions:
+        if begins:
+            mode, generation = begins[-1][2]
+            return (
+                1,
+                "SCHEDULER_RECONCILIATION_INCOMPLETE "
+                f"mode={mode} generation={generation}",
+            )
+        return 2, "SCHEDULER_RECONCILIATION_RECEIPT_MISSING"
+
+    complete_index, _, complete_payload = completions[-1]
+    complete_mode, complete_generation, managed_jobs = complete_payload
+    matching_begin = next(
+        (
+            event
+            for event in reversed(begins)
+            if event[0] < complete_index
+            and event[2] == (complete_mode, complete_generation)
+        ),
+        None,
+    )
+    if matching_begin is None:
+        return 2, "SCHEDULER_RECONCILIATION_BEGIN_MISSING"
+
+    if begins and begins[-1][0] > complete_index:
+        mode, generation = begins[-1][2]
+        return (
+            1,
+            "SCHEDULER_RECONCILIATION_INCOMPLETE "
+            f"mode={mode} generation={generation}",
+        )
+
+    reasons = sorted(
+        {
+            str(payload)
+            for index, event_type, payload in events
+            if index > complete_index and event_type == "failure"
+        }
+    )
+    if reasons:
+        return 1, "SCHEDULER_REGISTRY_UNHEALTHY reasons=" + ",".join(reasons)
+
+    return (
+        0,
+        "SCHEDULER_REGISTRY_OK "
+        "coverage=managed_jobs:authenticated_reconcile_receipt "
+        "scene_triggers:authenticated_reconcile_receipt "
+        "dynamic_jobs:not_observed direct_registry:false "
+        f"managed_jobs={managed_jobs}",
+    )
 
 PROTECTED_FIELDS = [
     "TOKEN", "API_KEY", "API_KEYS", "ADMIN_ID", "GROUP_ID",
@@ -506,7 +639,7 @@ print(
 )
 PYEOF"""),
         # 当前进程至少要有启动注册回执，且启动至今不能出现注册/热重载同步失败。
-        ("调度注册", """since=$(systemctl show mory-assistant -p ActiveEnterTimestamp --value) || exit 2; test -n "$since" || { echo SCHEDULER_STARTUP_TIMESTAMP_UNAVAILABLE; exit 2; }; logs=$(journalctl -u mory-assistant --since "$since" --no-pager 2>&1) || { printf '%s\n' "$logs"; exit 2; }; ready=$(printf '%s\n' "$logs" | grep -E '任务调度器准备就绪，共注册 [0-9]+ 个调度任务' | tail -1); test -n "$ready" || { echo SCHEDULER_STARTUP_RECEIPT_MISSING; exit 2; }; failures=$(printf '%s\n' "$logs" | grep -E '任务注册失败|读取任务 .* 调度配置失败|移除已关闭任务 .* 失败' || true); test -z "$failures" || { printf '%s\n' "$failures"; exit 1; }; echo SCHEDULER_REGISTRY_OK coverage=startup_registry+reload_error_scan current_api_not_observed"""),
+        ("调度注册", f"""since=$(systemctl show mory-assistant -p ActiveEnterTimestamp --value) || exit 2; test -n "$since" || {{ echo SCHEDULER_STARTUP_TIMESTAMP_UNAVAILABLE; exit 2; }}; logs=$(journalctl -u mory-assistant --since "$since" --no-pager -o cat 2>&1) || {{ printf '%s\n' "$logs"; exit 2; }}; cd {remote} || exit 2; printf '%s\n' "$logs" | python3 -c 'import sys; from core.deploy_utils import scheduler_registry_receipt_from_logs as f; code, receipt = f(sys.stdin.read()); print(receipt); raise SystemExit(code)'"""),
         # root 执行面和敏感文件权限必须读回，不接受部署命令“应该成功”。
         ("权限", f"""test "$(stat -c '%U:%G %a' /etc/systemd/system/mory-assistant.service)" = 'root:root 644' && test "$(stat -c '%U:%G %a' /etc/systemd/system/mory-dashboard.service)" = 'root:root 644' && test "$(stat -c '%a' {remote}/.env)" = '600' && test "$(stat -c '%a' {remote}/config.json)" = '600' && test "$(stat -c '%a' {remote}/mory.db)" = '600' && test "$(stat -c '%U:%G %a' /usr/local/lib/mory-assistant/vps_watchdog.py)" = 'root:root 755' && echo PERMISSIONS_OK"""),
     ]
