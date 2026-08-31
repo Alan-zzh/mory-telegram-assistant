@@ -125,6 +125,8 @@ def test_cleanup_logrotate_tempfile_uses_linux_lf():
     assert content == cleanup_vps_full.LOGROTATE_CONF.encode("utf-8")
     assert b"\r\n" not in content
     assert content.endswith(b"}\n")
+    assert content.count(b"su root root") == 2
+    assert b"su ubuntu ubuntu" not in content
 
 
 def test_dashboard_main_status_uses_systemd_pid_and_memory(monkeypatch):

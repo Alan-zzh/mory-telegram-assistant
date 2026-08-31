@@ -84,7 +84,9 @@ LOGROTATE_CONF = """\
     notifempty
     create 0644 ubuntu ubuntu
     copytruncate
-    su ubuntu ubuntu
+    # root cron 创建的 watchdog.log 保持 root 所有；轮转必须由 root 读取。
+    # copytruncate 保留各活跃日志原所有权，不会把应用日志改成 root 文件。
+    su root root
 }
 
 /home/ubuntu/mory_assistant/logs/*.txt {
@@ -96,7 +98,7 @@ LOGROTATE_CONF = """\
     notifempty
     create 0644 ubuntu ubuntu
     copytruncate
-    su ubuntu ubuntu
+    su root root
 }
 """
 
