@@ -14,9 +14,13 @@ class _FakeStream:
     def __init__(self, text, exit_code=0):
         self._text = text
         self.channel = SimpleNamespace(recv_exit_status=lambda: exit_code)
+        self.closed = False
 
     def read(self):
         return self._text.encode("utf-8")
+
+    def close(self):
+        self.closed = True
 
 
 def test_dashboard_teardown_filter_is_exact_and_preserves_real_errors():
@@ -317,6 +321,80 @@ def test_resilient_upload_reconnects_and_retries_current_chunk(monkeypatch):
     assert uploaded == ["a.py", "b.py"]
     assert len(calls) == 2
     assert closed == ["sftp-1", "client-1"]
+
+
+def test_deploy_hash_preflight_only_returns_changed_files(monkeypatch, tmp_path):
+    import deploy_vps
+
+    (tmp_path / "same.py").write_text("same\n", encoding="utf-8")
+    (tmp_path / "changed.py").write_text("changed\n", encoding="utf-8")
+    monkeypatch.setattr(deploy_vps, "ROOT", tmp_path)
+    monkeypatch.setattr(deploy_vps, "VPS_PATH", "/remote")
+    monkeypatch.setattr(deploy_vps, "ensure_remote_dir", lambda _sftp, _path: None)
+
+    class ManifestSFTP:
+        def __init__(self):
+            self.manifest = None
+            self.removed = []
+
+        def chmod(self, _path, _mode):
+            pass
+
+        def put(self, local, _remote):
+            self.manifest = json.loads(Path(local).read_text(encoding="utf-8"))
+
+        def remove(self, remote):
+            self.removed.append(remote)
+
+    class Client:
+        def exec_command(self, command, timeout=120):
+            assert "python3 -c" in command
+            return _FakeStream(""), _FakeStream('["changed.py"]'), _FakeStream("")
+
+    sftp = ManifestSFTP()
+    result = deploy_vps._filter_changed_uploads(
+        Client(),
+        sftp,
+        [
+            ("same.py", "/remote/same.py"),
+            ("changed.py", "/remote/changed.py"),
+        ],
+    )
+
+    assert result == [("changed.py", "/remote/changed.py")]
+    assert set(sftp.manifest) == {"same.py", "changed.py"}
+    assert len(sftp.removed) == 1
+
+
+def test_deploy_hash_preflight_rejects_unexpected_remote_path(monkeypatch, tmp_path):
+    import deploy_vps
+
+    (tmp_path / "safe.py").write_text("safe\n", encoding="utf-8")
+    monkeypatch.setattr(deploy_vps, "ROOT", tmp_path)
+    monkeypatch.setattr(deploy_vps, "VPS_PATH", "/remote")
+    monkeypatch.setattr(deploy_vps, "ensure_remote_dir", lambda _sftp, _path: None)
+
+    sftp = SimpleNamespace(
+        chmod=lambda *_args: None,
+        put=lambda *_args: None,
+        remove=lambda *_args: None,
+    )
+    client = SimpleNamespace(
+        exec_command=lambda *_args, **_kwargs: (
+            _FakeStream(""),
+            _FakeStream('["../escape.py"]'),
+            _FakeStream(""),
+        )
+    )
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="清单外路径"):
+        deploy_vps._filter_changed_uploads(
+            client,
+            sftp,
+            [("safe.py", "/remote/safe.py")],
+        )
 
 
 def test_deployment_exit_code_fails_closed():

@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.42.10**：Linux日志轮转配置固定使用LF，Dashboard状态与SSH失败关闭已落地，同机非保留项目已停止并禁用。生产部署状态见 `project_snapshot.md`。
+当前版本 **v5.42.11**：部署前以远端批量SHA-256只上传变更文件；Linux日志轮转LF修复与同机项目收敛均已落地。生产部署状态见 `project_snapshot.md`。
 
 ## 默认关闭功能货架
 

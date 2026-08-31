@@ -11,11 +11,14 @@ import logging
 """
 
 import io
+import hashlib
 import json
 import os
 import re
+import secrets
 import shlex
 import sys
+import tempfile
 import time
 from pathlib import Path, PurePosixPath
 
@@ -71,7 +74,7 @@ def _dashboard_runtime_probe_command() -> str:
 # 导入部署工具
 sys.path.insert(0, str(ROOT))
 from core.deploy_utils import safe_upload_config, upload_files, verify_deployment, sync_runtime_fields_from_vps, sync_env_api_key, ensure_remote_dir
-from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_KEY_FILES, VPS_PATH, ssh_connect
+from core.vps_config import VPS_HOST, VPS_PORT, VPS_PASS, VPS_KEY_FILES, VPS_PATH, ssh_connect
 from scripts.check_deploy_ready import check_git_clean, check_head_contains_main
 
 
@@ -137,6 +140,110 @@ def _upload_files_resilient(client, sftp, files, *, chunk_size=40, max_attempts=
                 time.sleep(attempt * 2)
                 client, sftp = _open_deploy_connection()
     return client, sftp, uploaded
+
+
+def _filter_changed_uploads(client, sftp, files):
+    """在 VPS 本地批量核对 SHA-256，只返回缺失或内容变化的文件。"""
+    manifest = {}
+    files_by_rel = {}
+    root = ROOT.resolve()
+    for local_rel, remote_path in files:
+        normalized = PurePosixPath(local_rel).as_posix()
+        if PurePosixPath(normalized).is_absolute() or normalized.startswith("../"):
+            raise RuntimeError(f"部署清单包含越界路径：{local_rel}")
+        local_path = (root / Path(normalized)).resolve()
+        try:
+            local_path.relative_to(root)
+        except ValueError as exc:
+            raise RuntimeError(f"部署清单包含越界路径：{local_rel}") from exc
+        digest = hashlib.sha256(local_path.read_bytes()).hexdigest()
+        manifest[normalized] = digest
+        files_by_rel[normalized] = (local_rel, remote_path)
+
+    if not manifest:
+        return []
+
+    staging_dir = f"{VPS_PATH}/.deploy-staging"
+    ensure_remote_dir(sftp, staging_dir)
+    sftp.chmod(staging_dir, 0o700)
+    remote_manifest = f"{staging_dir}/upload-manifest-{secrets.token_hex(8)}.json"
+    local_manifest = None
+    probe_code = """\
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+manifest_path = Path(sys.argv[2])
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+changed = []
+for rel, expected in manifest.items():
+    target = (root / rel).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise SystemExit(f"MANIFEST_PATH_ESCAPE:{rel}")
+    if not target.is_file():
+        changed.append(rel)
+        continue
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    if digest != expected:
+        changed.append(rel)
+print(json.dumps(changed, ensure_ascii=True, separators=(",", ":")))
+"""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            delete=False,
+            encoding="utf-8",
+            newline="\n",
+        ) as temp_file:
+            json.dump(manifest, temp_file, ensure_ascii=True, separators=(",", ":"))
+            local_manifest = temp_file.name
+        sftp.put(local_manifest, remote_manifest)
+        sftp.chmod(remote_manifest, 0o600)
+        command = (
+            f"python3 -c {shlex.quote(probe_code)} "
+            f"{shlex.quote(VPS_PATH)} {shlex.quote(remote_manifest)}"
+        )
+        stdin, stdout, stderr = client.exec_command(command, timeout=120)
+        try:
+            output = stdout.read().decode("utf-8", errors="replace").strip()
+            error = stderr.read().decode("utf-8", errors="replace").strip()
+            exit_code = stdout.channel.recv_exit_status()
+        finally:
+            stdin.close()
+            stdout.close()
+            stderr.close()
+        if exit_code != 0:
+            raise RuntimeError(f"远端哈希预检失败（exit={exit_code}）：{(error or output)[:300]}")
+        changed_rel = json.loads(output)
+        if (
+            not isinstance(changed_rel, list)
+            or len(changed_rel) != len(set(changed_rel))
+            or any(
+            not isinstance(rel, str) or rel not in files_by_rel for rel in changed_rel
+            )
+        ):
+            raise RuntimeError("远端哈希预检返回了清单外路径")
+        changed = [files_by_rel[rel] for rel in changed_rel]
+        print(
+            f"  ✅ 哈希预检：{len(files)} 个文件中 {len(changed)} 个需上传，"
+            f"{len(files) - len(changed)} 个内容一致已跳过"
+        )
+        return changed
+    finally:
+        if local_manifest:
+            try:
+                os.unlink(local_manifest)
+            except OSError:
+                pass
+        try:
+            sftp.remove(remote_manifest)
+        except OSError:
+            pass
 
 
 def _deployment_exit_code(success: bool) -> int:
@@ -598,8 +705,9 @@ def main() -> bool:
             for rp, mb in skipped_ul[:3]:
                 print(f"     - {rp} ({mb}MB)")
 
-        client, sftp, uploaded = _upload_files_resilient(client, sftp, files_to_upload)
-        print(f"\r  ✅ 已上传 {len(uploaded)}/{len(files_to_upload)} 个文件" + " " * 20)
+        changed_files = _filter_changed_uploads(client, sftp, files_to_upload)
+        client, sftp, uploaded = _upload_files_resilient(client, sftp, changed_files)
+        print(f"\r  ✅ 已上传 {len(uploaded)}/{len(changed_files)} 个变更文件" + " " * 20)
 
         # 【死代码清理】删除本地已移除的文件，保持服务器整洁
         print("\n  清理服务器死代码文件 ...")
@@ -727,7 +835,7 @@ def main() -> bool:
 
         # 安全上传config.json
         print("\n  安全上传 config.json ...")
-        merged = safe_upload_config(sftp, local_cfg, VPS_PATH)
+        safe_upload_config(sftp, local_cfg, VPS_PATH)
         print("  ✅ config.json 已安全合并上传（密钥字段已保护）")
 
         # 同步.env中的API密钥和Token
