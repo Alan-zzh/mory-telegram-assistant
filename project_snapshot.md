@@ -40,11 +40,11 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.42.9（2026-08-31）· 已部署：Dashboard 按 systemd 主进程判断在线
 
-生产状态：**Mory v5.42.9 已部署：双服务于 19:17:19 重启后 active、NRestarts=0、health 200，新进程启动日志无真实 ERROR/CRITICAL/Traceback，数据库完整；版本与 Dashboard 文件哈希读回一致，SSH helper、Dashboard self-SSH、sudo NOPASSWD 均通过，Dashboard 已返回主 Bot 在线。Steel 客户页上限 2 和访问 allowlist 持续生效，新 cgroup `oom=0/oom_kill=0/swap=0`。**
+生产状态：**Mory v5.42.9 双服务 active、NRestarts=0、health 200，近 10 分钟无 ERROR/CRITICAL/Traceback，数据库 integrity/FK 检查通过；MoryFansBot 与 MediaOps-COO 继续在线。同机非保留的 TokenLab、Steel/浏览器、TokensByte、Singbox/代理、Docker、Nginx 已停止并禁用，相关自启定时和 cron 已清除；当前可用内存约 6.2 GiB。**
 
 ## 最近 3 条大事
-1. 2026-08-31 v5.42.9：Dashboard 改按 systemd 主 PID 判断 Bot 在线。
-2. 2026-08-31 v5.42.8：Steel 双客户页与访问边界通过生产稳定门禁。
+1. 2026-08-31 服务器去混跑：仅保留 Mory、MoryFansBot、MediaOps-COO 与必要巡检。
+2. 2026-08-31 v5.42.9：Dashboard 改按 systemd 主 PID 判断 Bot 在线。
 3. 2026-08-31 v5.42.8：SSH key-first 回退与 sudo 失败关闭完成。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
