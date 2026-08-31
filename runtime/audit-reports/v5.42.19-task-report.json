@@ -1,0 +1,25 @@
+{
+  "title": "Mory v5.42.19 调度真相闭环",
+  "summary": "调度巡检改为来源认证的完整重建回执，用户消息不能伪造绿灯，刷新挂起、场景触发器和回滚失败都会显式阻断；生产已完成版本、哈希、服务、数据库和17项巡检验收。",
+  "status": "verified",
+  "mermaid": "flowchart LR; A[启动或热重载]-->B[认证 BEGIN]; B-->C[BaseTask 刷新]; C-->D[场景触发器刷新]; D-->E[认证 OK]; X[用户消息或非认证日志]-.忽略.->E; B--未完成-->F[FAILED]; C--失败-->F; D--失败-->F;",
+  "details": [
+    {"heading": "纠正误判断", "body": "不再用任意日志关键词判健康；只接受结构化 logger、function、level 匹配的机器回执。只有 BEGIN 没有 OK 属于失败，不是证据缺口。"},
+    {"heading": "生产结果", "body": "v5.42.19 双服务 active/enabled、NRestarts=0，关键哈希一致，数据库完整，认证启动回执管理 41 个任务，生产巡检 17/17。"},
+    {"heading": "服务器边界", "body": "Mory、MoryFansBot、MediaOps-COO 在线；非保留进程为 0，TokenLab/TokenPass masked，Docker/containerd inactive。"}
+  ],
+  "evidence": [
+    "全仓 1454 项单测通过",
+    "独立专家三轮复审最终 PASS",
+    "生产巡检 17 pass / 0 gap / 0 failed",
+    "BEGIN 到 OK 的认证启动回执与三个关键文件哈希一致"
+  ],
+  "risks": [
+    "动态 job 与跨进程直接注册表仍明确标为未观察；task_execution_history 零行不能证明全部任务成功。",
+    "真实 Telegram 自然事件和 12:00 burn_orphan 回执仍待后续 Goal 续巡。"
+  ],
+  "next": [
+    "12:00 后核验 burn_orphan 自然执行与持久化。",
+    "继续等待自然 Telegram 用户事件，不制造假业务回执。"
+  ]
+}

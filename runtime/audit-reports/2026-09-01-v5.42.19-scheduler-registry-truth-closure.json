@@ -1,0 +1,72 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "7a1ad8bf108c147c78c2c0fe0d0345e2f517d551",
+  "deployment_performed": true,
+  "artifact_hash": "sha256-set:9004aaf7-deploy-utils,305bbb4b-bot-initializer,a813304c-task-scheduler",
+  "backup": {
+    "verified": true,
+    "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1788219612.tar.gz",
+    "sha256": "4738e5894737dcd3399a30d9f24b7c4a081719f8031779446eed607d2dcac24a"
+  },
+  "technical_checks": [
+    {
+      "name": "targeted_tests",
+      "passed": true,
+      "evidence": "66 passed"
+    },
+    {
+      "name": "full_unit_suite",
+      "passed": true,
+      "evidence": "1454 passed in 29.61s"
+    },
+    {
+      "name": "independent_review",
+      "passed": true,
+      "evidence": "three review rounds; final PASS with no P0/P1/P2"
+    },
+    {
+      "name": "release_identity_and_integrity",
+      "passed": true,
+      "evidence": "remote v5.42.19; three critical hashes matched; DB integrity ok and foreign-key violations 0; both services active/enabled with NRestarts=0"
+    },
+    {
+      "name": "retained_project_boundary",
+      "passed": true,
+      "evidence": "Mory, MoryFansBot and MediaOps-COO running; no nonretained process; TokenLab/TokenPass masked; Docker and containerd inactive"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "production_truth",
+      "passed": true,
+      "evidence": "17 pass, 0 evidence_gap, 0 failed"
+    },
+    {
+      "name": "authenticated_scheduler_reconciliation",
+      "passed": true,
+      "evidence": "startup generation 1 BEGIN then OK; managed_jobs=41; scene_triggers=reconciled; current error count 0",
+      "coverage": "authenticated structured receipt and post-receipt failures; dynamic jobs and direct registry not observed"
+    },
+    {
+      "name": "natural_ttl_cleanup",
+      "passed": true,
+      "evidence": "07:20 success persisted at 07:23:35; success_count=724; miss_count=0"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "after deployment restart both services remained active with NRestarts=0; authenticated startup receipt remained queryable; 11 jobs persisted success between 07:44:48 and 07:45:48 with zero misses"
+  },
+  "boundaries": [
+    "task_execution_history has zero rows and cannot prove every scheduled job succeeded",
+    "no real Telegram external event was manufactured",
+    "12:00 burn_orphan natural receipt remains pending"
+  ],
+  "result": "verified"
+}
