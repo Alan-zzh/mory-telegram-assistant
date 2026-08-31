@@ -191,22 +191,34 @@ def get_vps_status():
     try:
         # 所有认证统一走 key-first 中央入口，必要时才回退密码。
         ssh_connect(client, timeout=10)
-        # 根据模式选择查询哪个 Bot
+        # 主 Bot 由 systemd 管理；不能再用绝对脚本路径匹配，因为 ExecStart 在
+        # WorkingDirectory 下以 `python3 main.py` 启动，进程参数不含 VPS_PATH。
         if mode == "media":
             ps_cmd = f"ps -ef | grep '{VPS_PATH}/main.py' | grep -v grep | grep mory_media | head -1"
+            stdin, stdout, stderr = client.exec_command(ps_cmd, timeout=5)
+            ps_line = stdout.read().decode("utf-8", errors="replace").strip()
+            if ps_line:
+                results["bot_running"] = True
+                pid = ps_line.split()[1] if len(ps_line.split()) > 1 else ""
+                results["bot_pid"] = pid
+                stdin, stdout, stderr = client.exec_command(f"ps -p {pid} -o rss= 2>/dev/null || echo ''", timeout=5)
+                mem = stdout.read().decode("utf-8", errors="replace").strip()
+                if mem:
+                    results["bot_memory"] = f"{int(mem)//1024} MB"
         else:
-            ps_cmd = f"ps -ef | grep '{VPS_PATH}/main.py' | grep -v grep | grep -v mory_media | head -1"
-        stdin, stdout, stderr = client.exec_command(ps_cmd, timeout=5)
-        ps_line = stdout.read().decode("utf-8", errors="replace").strip()
-        if ps_line:
-            results["bot_running"] = True
-            # 从 ps -ef 输出中提取 PID（第2列）
-            pid = ps_line.split()[1] if len(ps_line.split()) > 1 else ""
-            results["bot_pid"] = pid
-            stdin, stdout, stderr = client.exec_command(f"ps -p {pid} -o rss= 2>/dev/null || echo ''", timeout=5)
-            mem = stdout.read().decode("utf-8", errors="replace").strip()
-            if mem:
-                results["bot_memory"] = f"{int(mem)//1024} MB"
+            status_cmd = (
+                "if systemctl is-active --quiet mory-assistant; then "
+                "pid=$(systemctl show mory-assistant -p MainPID --value); "
+                "case $pid in ''|0|*[!0-9]*) exit 0;; esac; "
+                "ps -p \"$pid\" -o pid=,rss=; fi"
+            )
+            stdin, stdout, stderr = client.exec_command(status_cmd, timeout=5)
+            status_line = stdout.read().decode("utf-8", errors="replace").strip()
+            status_parts = status_line.split()
+            if len(status_parts) == 2 and all(part.isdigit() for part in status_parts):
+                results["bot_running"] = True
+                results["bot_pid"] = status_parts[0]
+                results["bot_memory"] = f"{int(status_parts[1])//1024} MB"
         stdin, stdout, stderr = client.exec_command("uptime -p 2>/dev/null || uptime", timeout=5)
         results["uptime"] = stdout.read().decode("utf-8", errors="replace").strip()
     except Exception as e:

@@ -39,6 +39,34 @@ class _Client:
         self.closed = True
 
 
+class _StatusClient(_Client):
+    def __init__(self, status_output):
+        super().__init__()
+        self.status_output = status_output
+
+    def exec_command(self, *args, **kwargs):
+        self.exec_calls.append((args, kwargs))
+        command = args[0]
+        if command.startswith("if systemctl is-active"):
+            return _Stream(), _Stream(self.status_output), _Stream()
+        if command.startswith("uptime"):
+            return _Stream(), _Stream(b"up 3 days"), _Stream()
+        raise AssertionError(f"unexpected command: {command}")
+
+
+class _MediaStatusClient(_Client):
+    def exec_command(self, *args, **kwargs):
+        self.exec_calls.append((args, kwargs))
+        command = args[0]
+        if "grep mory_media" in command:
+            return _Stream(), _Stream(b"ubuntu 4242 1 0 00:00 ? 00:00 python mory_media /home/ubuntu/mory_assistant/main.py"), _Stream()
+        if command.startswith("ps -p 4242"):
+            return _Stream(), _Stream(b"20480"), _Stream()
+        if command.startswith("uptime"):
+            return _Stream(), _Stream(b"up 3 days"), _Stream()
+        raise AssertionError(f"unexpected command: {command}")
+
+
 def test_dashboard_ssh_exec_uses_central_entrypoint_and_closes_streams(monkeypatch):
     client = _Client()
     calls = []
@@ -83,3 +111,47 @@ def test_cleanup_sudo_rejection_raises_instead_of_reporting_success():
 
     with pytest.raises(RuntimeError, match=r"exit=1"):
         cleanup_vps_full._sudo_run(client, "sudo -n install source target")
+
+
+def test_dashboard_main_status_uses_systemd_pid_and_memory(monkeypatch):
+    client = _StatusClient(b"2971288 51600\n")
+    monkeypatch.setattr(paramiko, "SSHClient", lambda: client)
+    monkeypatch.setattr(helpers, "ssh_connect", lambda value, timeout=10: None)
+    monkeypatch.setenv("DASHBOARD_MODE", "main")
+    helpers._vps_cache.update({"data": None, "updated_at": 0})
+
+    result = helpers.get_vps_status()
+
+    assert result["bot_running"] is True
+    assert result["bot_pid"] == "2971288"
+    assert result["bot_memory"] == "50 MB"
+    assert result["uptime"] == "up 3 days"
+    assert client.exec_calls[0][0][0].startswith("if systemctl is-active --quiet mory-assistant")
+
+
+def test_dashboard_main_status_stays_offline_when_systemd_has_no_pid(monkeypatch):
+    client = _StatusClient(b"")
+    monkeypatch.setattr(paramiko, "SSHClient", lambda: client)
+    monkeypatch.setattr(helpers, "ssh_connect", lambda value, timeout=10: None)
+    monkeypatch.setenv("DASHBOARD_MODE", "main")
+    helpers._vps_cache.update({"data": None, "updated_at": 0})
+
+    result = helpers.get_vps_status()
+
+    assert result["bot_running"] is False
+    assert result["bot_pid"] is None
+
+
+def test_dashboard_media_status_keeps_existing_process_probe(monkeypatch):
+    client = _MediaStatusClient()
+    monkeypatch.setattr(paramiko, "SSHClient", lambda: client)
+    monkeypatch.setattr(helpers, "ssh_connect", lambda value, timeout=10: None)
+    monkeypatch.setenv("DASHBOARD_MODE", "media")
+    helpers._vps_cache.update({"data": None, "updated_at": 0})
+
+    result = helpers.get_vps_status()
+
+    assert result["bot_running"] is True
+    assert result["bot_pid"] == "4242"
+    assert result["bot_memory"] == "20 MB"
+    assert all("systemctl" not in call[0][0] for call in client.exec_calls)

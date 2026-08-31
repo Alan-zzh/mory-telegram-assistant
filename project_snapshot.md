@@ -38,14 +38,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；回复目标消失时无引用直发，日志按实际媒体/文本记账；外部频道不豁免 |
 
 ## 当前版本
-v5.42.8（2026-08-31）· 待部署：SSH key-first 回退、sudo 失败关闭与巡检入口统一
+v5.42.9（2026-08-31）· 待部署：Dashboard systemd 主进程在线判断修复
 
-生产状态：**Mory 当前仍为 v5.42.4，v5.42.8 发布门禁已打开：双服务 active、NRestarts=0、health 200、数据库完整。Steel 以 PID 1 环境和真实拒绝日志确认客户页上限 2；连续 60 分钟以上 `oom=0/oom_kill=0/swap=0`，客户页稳定为 2，第三页被拒绝；3000 仅本机/容器桥，9224 仅实测合法来源和本机/容器桥，规则已持久化。**
+生产状态：**Mory v5.42.8 已部署：双服务于 18:56:34 重启后 active、NRestarts=0、health 200、数据库完整，SSH helper、Dashboard self-SSH 与 sudo NOPASSWD 探针通过；v5.42.9 待修复 Dashboard 仍以绝对脚本路径误报主 Bot 离线。Steel 客户页上限 2 和访问 allowlist 持续生效，新 cgroup 零 OOM。**
 
 ## 最近 3 条大事
-1. 2026-08-31 v5.42.8：Steel 双客户页与访问边界通过生产稳定门禁。
-2. 2026-08-31 v5.42.8：SSH key-first 回退与 sudo 失败关闭完成。
-3. 2026-08-31 v5.42.7：SSH root 无 PTY、引用与输出脱敏修复完成。
+1. 2026-08-31 v5.42.9：Dashboard 改按 systemd 主 PID 判断 Bot 在线。
+2. 2026-08-31 v5.42.8：Steel 双客户页与访问边界通过生产稳定门禁。
+3. 2026-08-31 v5.42.8：SSH key-first 回退与 sudo 失败关闭完成。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
