@@ -14,20 +14,32 @@ from core.telegram_send_utils import delete_all_message_reactions_compat, restri
 logger = get_logger("ad_enforcement")
 
 
-def _delete_message_with_status(bot, db, chat_id: int, msg_id: int) -> str:
-    """删除消息并返回 deleted/already_absent/failed 三态。"""
+def _is_message_already_absent_error(error: Exception) -> bool:
+    """只把 Telegram 明确指出“目标消息不存在”视为幂等完成。"""
+    message = str(error).casefold()
+    return any(
+        token in message
+        for token in (
+            "message to delete not found",
+            "message not found",
+        )
+    )
+
+
+def _delete_message_with_receipt(bot, db, chat_id: int, msg_id: int) -> tuple[str, bool]:
+    """删除消息并返回三态及 ``deleted=1`` 是否已可靠落库。"""
     if not msg_id:
-        return "failed"
+        return "failed", False
     status = "failed"
     should_mark_deleted = False
+    deletion_persisted = False
     try:
         result = bot.delete_message(chat_id, msg_id)
         if result is not False:
             status = "deleted"
             should_mark_deleted = True
     except Exception as e:
-        err = str(e).lower()
-        if "not found" in err:
+        if _is_message_already_absent_error(e):
             logger.debug(f"治理消息已不存在: chat={chat_id} msg={msg_id}")
             status = "already_absent"
             should_mark_deleted = True
@@ -35,10 +47,15 @@ def _delete_message_with_status(bot, db, chat_id: int, msg_id: int) -> str:
             logger.debug(f"删除治理消息失败: chat={chat_id} msg={msg_id} err={e}")
     try:
         if should_mark_deleted and db and hasattr(db, "mark_message_deleted"):
-            db.mark_message_deleted(chat_id, msg_id)
+            deletion_persisted = bool(db.mark_message_deleted(chat_id, msg_id))
     except Exception as e:
         logger.debug(f"标记广告消息删除失败: chat={chat_id} msg={msg_id} err={e}")
-    return status
+    return status, deletion_persisted
+
+
+def _delete_message_with_status(bot, db, chat_id: int, msg_id: int) -> str:
+    """兼容旧调用方，只返回 deleted/already_absent/failed 三态。"""
+    return _delete_message_with_receipt(bot, db, chat_id, msg_id)[0]
 
 
 def _safe_delete(bot, db, chat_id: int, msg_id: int) -> bool:
@@ -60,9 +77,10 @@ def _mark_current_message_ad(db, chat_id: int, msg_id: int) -> bool:
 def delete_confirmed_ad_message(bot, db, chat_id: int, msg_id: int) -> dict:
     """只处理已逐条确证的广告消息；独立于普通删除总闸。"""
     evidence_persisted = _mark_current_message_ad(db, chat_id, msg_id)
-    status = _delete_message_with_status(bot, db, chat_id, msg_id)
+    status, deletion_persisted = _delete_message_with_receipt(bot, db, chat_id, msg_id)
     return {
         "evidence_persisted": evidence_persisted,
+        "deletion_persisted": deletion_persisted,
         "deleted": status == "deleted",
         "status": status,
     }

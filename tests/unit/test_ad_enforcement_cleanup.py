@@ -30,6 +30,11 @@ class _FakeBot:
         return self._me
 
 
+class _MissingChatBot(_FakeBot):
+    def delete_message(self, chat_id, msg_id):
+        raise RuntimeError("Bad Request: chat not found")
+
+
 class _FakeConn:
     def execute(self, *args, **kwargs):
         return []
@@ -89,3 +94,12 @@ def test_cleanup_retries_deleted_marked_rows_and_marks_only_success():
     assert bot.deleted == [(-1001, 99), (-1001, 10), (-1001, 11)]
     assert (-1001, 11) in db.marked
     assert (-1001, 12) not in db.marked
+
+
+def test_chat_not_found_is_not_misclassified_as_message_already_absent():
+    from modules.ad_enforcement import delete_confirmed_ad_message
+
+    result = delete_confirmed_ad_message(_MissingChatBot(), _FakeDB(), -1001, 10)
+
+    assert result["status"] == "failed"
+    assert result["deletion_persisted"] is False

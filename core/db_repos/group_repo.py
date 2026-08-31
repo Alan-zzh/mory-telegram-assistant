@@ -490,6 +490,86 @@ class GroupRepo:
             logger.warning(f"get_user_ad_messages 失败 user_id={user_id} chat_id={chat_id}: {e}")
             return []
 
+    def get_blacklisted_ad_cleanup_candidates(
+        self,
+        chat_id: int,
+        *,
+        include_deleted: bool,
+        limit_per_user: int = 500,
+    ) -> list:
+        """批量返回黑名单用户的逐条确证广告，供启动恢复链使用。
+
+        首次建立可信基线时包含历史 ``deleted=1`` 记录，以修复旧版本可能
+        提前标记删除的问题；基线建立后只返回 ``deleted=0``，避免每次重启
+        对已确认不存在的消息重复调用 Telegram API。
+
+        此方法故意不吞数据库异常：启动恢复链不能把查询失败误报成无候选。
+        """
+        deleted_clause = "" if include_deleted else "AND ms.deleted=0"
+        safe_limit = max(1, int(limit_per_user))
+        query = f"""
+            WITH banned(uid) AS (
+                SELECT uid FROM blacklist
+                UNION
+                SELECT user_id FROM global_blacklist
+            ), ranked AS (
+                SELECT
+                    ms.chat_id,
+                    ms.msg_id,
+                    ms.user_id,
+                    ms.ts,
+                    ms.deleted,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ms.user_id
+                        ORDER BY ms.ts DESC
+                    ) AS row_num
+                FROM message_snapshots AS ms
+                INNER JOIN banned ON banned.uid = ms.user_id
+                WHERE ms.chat_id=? AND ms.is_ad=1 {deleted_clause}
+            )
+            SELECT chat_id, msg_id, user_id, ts, deleted, row_num
+            FROM ranked
+            WHERE row_num <= ?
+            ORDER BY user_id, ts DESC
+        """
+        try:
+            with self.lock:
+                rows = self.conn.execute(
+                    query,
+                    (int(chat_id), safe_limit + 1),
+                ).fetchall()
+        except Exception as e:
+            logger.error(
+                "get_blacklisted_ad_cleanup_candidates 失败 "
+                f"chat_id={chat_id} include_deleted={include_deleted}: {e}"
+            )
+            raise
+        truncated = any(int(row[5]) > safe_limit for row in rows)
+        if truncated and include_deleted:
+            logger.error(
+                "get_blacklisted_ad_cleanup_candidates 拒绝截断完整基线 "
+                f"chat_id={chat_id} limit_per_user={safe_limit}"
+            )
+            raise RuntimeError(
+                "blacklisted ad cleanup candidate limit exceeded; baseline not safe"
+            )
+        if truncated:
+            logger.warning(
+                "get_blacklisted_ad_cleanup_candidates 增量候选超过单批上限，"
+                f"将分批处理 chat_id={chat_id} limit_per_user={safe_limit}"
+            )
+            rows = [row for row in rows if int(row[5]) <= safe_limit]
+        return [
+            {
+                "chat_id": row[0],
+                "msg_id": row[1],
+                "user_id": row[2],
+                "ts": row[3],
+                "deleted": row[4],
+            }
+            for row in rows
+        ]
+
     def is_blacklisted(self, uid: int) -> bool:
         with self.lock:
             c = self.conn.cursor()

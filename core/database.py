@@ -2311,6 +2311,7 @@ class DB:
         'get_user_messages': 'groups',
         'get_user_undeleted_messages': 'groups',
         'get_user_ad_messages': 'groups',
+        'get_blacklisted_ad_cleanup_candidates': 'groups',
         'record_channel_member_snapshot': 'groups', 'get_channel_member_changes': 'groups',
         'get_channel_weekly_member_changes': 'groups', 'get_channel_monthly_member_changes': 'groups',
         'upsert_group_member': 'groups', 'remove_group_member': 'groups',

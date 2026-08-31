@@ -2,7 +2,7 @@
 
 # Mory小助理 项目状态快照（覆盖式）
 
-> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-08-31。
+> 本文件每次整段覆盖对应区块，禁止无限追加。最后更新：2026-09-01。
 
 ## 一句话
 Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS 部署（systemd 唯一）。
@@ -13,7 +13,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 消息总分发 | 在用 | `core/message_dispatcher.py` | 10 个分发函数（9 定义 + 导入 `_dispatch_p10_ai`） |
 | AI 回复 / 人设 | 在用 | `core/handlers/ai_reply_handler.py`、`core/ai_engine.py`、`core/persona_adapter.py` | ReplyContract v1 + 全类型语气合同：`casual/curiosity/flirt/challenge/emotional/convert` 六类均以温情托底，安全保留轻微绿茶感、俏皮和含蓄纯欲；群短私柔，正常追问不讽刺对呛；普通聊天无 CTA，了解→预览，明确购买→自助；近期 CTA 去重；私聊零按钮、群聊单目标。风格参考仅限当前场景，含价格、权益、联系方式、保证性事实或 CTA 的样本不进入普通 AI 提示 |
 | 模型路由 | 在用 | `core/model_router.py`、`core/ai_engine.py` | 当前唯一池为9个文本型号+`qwen3.5-ocr`；严格按到期日升序且同日保留配置顺序；思考型按声明调用。超时、限流和服务异常仅进程内熔断并自动回首选，只有明确额度耗尽永久拉黑；当前索引只认配置，不从数据库复活旧值 |
-| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类（AST 实测，doc_consistency 断言）；`start_background` 引擎同文件 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；legacy `modules/auto_tasks.py` 已于 v5.38.69 拆除收敛 |
+| 定时任务 | 在用 | `tasks/task_scheduler.py` 自动发现 45 个 BaseTask 子类（AST 实测，doc_consistency 断言）；`start_background` 引擎同文件 | 健康检查按真实动态 key 和截止时间核对；重启从 `scheduler_metrics` 恢复累计与最近结果；SQLite/审计失败与任务正文异常上浮；多步骤任务独立执行后聚合失败；旧进程 running 与 task_log 原子回收；FAQ 空候选为 aborted；启动扫描在 scheduler/心跳之后的唯一 daemon 线程运行；广告历史清理逐群建立一次可信基线，之后只重试未删除记录；legacy `modules/auto_tasks.py` 已于 v5.38.69 拆除收敛 |
 | 广告检测 | 在用 | `modules/ad_detector.py`、`modules/ad_patterns_encoded.py`、`modules/ad_profile_signals.py`、`modules/ad_enforcement.py`、`modules/member_ad_scan.py`、`core/handlers/*` | 歧义联系方式仅作弱信号；看简介头像仅与绑定频道的群演招募三锚点联合处置，普通招聘资讯放行；处置事件保留首次根因，高风险/未知状态拒绝自动恢复 |
 | 群管 / 积分 / 娱乐 | 在用 | `modules/*.py` | 102 个业务 `.py`（含子目录，与 METRICS 一致）；繁体“簽到”兼容无符号简体“签到”；已删除无入口的空报表模块与开关 |
 | 销售中心 | 默认关闭 | `modules/sales_center.py`、`core/db_repos/sales_repo.py` | 仅管理员商品管理（/sales 别名 handle_admin_cmd），无用户侧触发；不在 Bot 内收款，咨询承接统一走单目标漏斗 |
@@ -38,13 +38,13 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；回复目标消失时无引用直发，日志按实际媒体/文本记账；外部频道不豁免 |
 
 ## 当前版本
-v5.42.11（2026-08-31）· 已部署：批量哈希预检后仅上传变更文件
+v5.42.12（2026-09-01）· 待部署：启动广告历史清理改为可信基线后的未删除增量重试
 
-生产状态：**Mory v5.42.11双服务active、NRestarts=0、health 200，数据库、启动窗口与生产巡检通过；哈希预检部署把345个上传降为4个，总耗时58.419秒，部署后二次预检345/345一致。MoryFansBot与MediaOps-COO继续在线；同机非保留项目保持停用，可用内存约6.1 GiB。**
+生产状态：**Mory仍为v5.42.11双服务active、NRestarts=0、health 200；v5.42.12尚未部署。MoryFansBot与MediaOps-COO继续在线；同机非保留项目保持停用，历史失败单元已清零。**
 
 ## 最近 3 条大事
-1. 2026-08-31 v5.42.11：部署批量哈希预检，仅上传变更文件。
-2. 2026-08-31 v5.42.10：修复Windows CRLF导致全机logrotate失败。
+1. 2026-09-01 v5.42.12待部署：启动广告清理从永久全量重放改为可信增量。
+2. 2026-08-31 v5.42.11：部署批量哈希预检，仅上传变更文件。
 3. 2026-08-31 服务器去混跑：仅保留Mory、MoryFansBot、MediaOps-COO与必要巡检。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
