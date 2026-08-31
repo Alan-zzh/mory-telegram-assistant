@@ -9,15 +9,11 @@ from pathlib import Path
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"  # [v5.15.4 修复] 项目根目录 .env
 sys.path.insert(0, str(ENV_PATH.parent))
-from core.vps_config import secure_paramiko_connect_kwargs
+from core.vps_config import ssh_connect
 
 env = dotenv_values(ENV_PATH)
 
-HOST = env.get("VPS_HOST", "43.159.168.175")
-PORT = int(env.get("VPS_PORT", "22"))
-USER = env.get("VPS_USER", "ubuntu")
 PASS = env.get("VPS_SSH_PASS", "")
-REMOTE = env.get("VPS_PATH", "/home/ubuntu/mory_assistant")
 
 
 def _redact_secret(value):
@@ -29,11 +25,8 @@ def _redact_secret(value):
 def run_ssh(cmd, timeout=60, as_root=False):
     """执行远程命令，返回 (stdout, stderr, exit_code)"""
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        client.connect(HOST, PORT, USER, PASS, timeout=15, banner_timeout=15,
-                       auth_timeout=15, allow_agent=False, look_for_keys=False,
-                       **secure_paramiko_connect_kwargs())
+        ssh_connect(client, timeout=15)
     except Exception as e:
         try:
             client.close()

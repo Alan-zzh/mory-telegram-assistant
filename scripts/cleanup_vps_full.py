@@ -18,19 +18,30 @@
 
 import logging
 import sys
+import secrets
+import shlex
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH, ssh_connect
+from core.vps_config import VPS_HOST, VPS_PASS, VPS_KEY_FILES, VPS_PATH, ssh_connect
 
 
 def _sudo_run(client, cmd: str, timeout: int = 60) -> str:
-    """执行需要 root 的命令：密码经 stdin 送入（get_pty），不出现在远端命令行/进程列表。"""
-    stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout, get_pty=True)
-    stdin.write(VPS_PASS + "\n")
-    stdin.flush()
-    return stdout.read().decode(errors="replace").strip()
+    """执行服务器既有 NOPASSWD sudo 命令，不分配 PTY、不发送密码。"""
+    stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout, get_pty=False)
+    try:
+        output = stdout.read().decode(errors="replace").strip()
+        error = stderr.read().decode(errors="replace").strip()
+        exit_code = stdout.channel.recv_exit_status()
+    finally:
+        stdin.close()
+        stdout.close()
+        stderr.close()
+    if exit_code != 0:
+        detail = error or output or "no output"
+        raise RuntimeError(f"远端命令失败（exit={exit_code}）：{detail[:300]}")
+    return "\n".join(part for part in (output, error) if part)
 
 # 需要删除的文件（相对 VPS_PATH）
 FILES_TO_DELETE = [
@@ -93,8 +104,8 @@ def main():
     print("  Mory小助理 · VPS 完整清理 (v5.22.0 审计配套)")
     print("=" * 60)
 
-    if not VPS_HOST or not VPS_PASS:
-        print("❌ 错误：VPS_HOST 或 VPS_SSH_PASS 未设置！")
+    if not VPS_HOST or (not VPS_PASS and not VPS_KEY_FILES):
+        print("❌ 错误：VPS_HOST 未设置，或 VPS_SSH_PASS / VPS_SSH_KEY 均不可用！")
         sys.exit(1)
 
     import paramiko
@@ -148,25 +159,26 @@ def main():
             tf.write(LOGROTATE_CONF)
             tmp_path = tf.name
         try:
-            # 上传到 /tmp 再 sudo mv
-            remote_tmp = "/tmp/mory_logrotate.conf"
-            sftp.put(tmp_path, remote_tmp)
-            out = _sudo_run(
-                client,
-                f'sudo -S cp {remote_tmp} {logrotate_path} 2>&1; '
-                f'sudo -S chown root:root {logrotate_path} 2>&1; '
-                f'sudo -S chmod 644 {logrotate_path} 2>&1; '
-                f'rm -f {remote_tmp}; '
-                f'echo LOGROTATE_DONE'
-            )
-            if "LOGROTATE_DONE" in out:
-                print(f"  ✅ logrotate 配置已写入 {logrotate_path}")
-            else:
-                print(f"  ⚠️ logrotate 配置结果：{out}")
+            # 随机 0600 临时文件避免固定 /tmp 路径的竞态与提权窗口。
+            remote_tmp = f"/home/ubuntu/.mory-logrotate-{secrets.token_hex(8)}"
+            try:
+                sftp.put(tmp_path, remote_tmp)
+                sftp.chmod(remote_tmp, 0o600)
+                _sudo_run(
+                    client,
+                    "sudo -n install -o root -g root -m 0644 "
+                    f"{shlex.quote(remote_tmp)} {shlex.quote(logrotate_path)}",
+                )
+            finally:
+                try:
+                    sftp.remove(remote_tmp)
+                except OSError:
+                    pass
+            print(f"  ✅ logrotate 配置已写入 {logrotate_path}")
             # 测试 logrotate 配置
             test_out = _sudo_run(
                 client,
-                f'sudo -S logrotate -d {logrotate_path} 2>&1 | tail -5'
+                f"sudo -n logrotate -d {shlex.quote(logrotate_path)}"
             )
             if "error" in test_out.lower():
                 print(f"  ⚠️ logrotate 配置测试有警告：{test_out}")
@@ -177,7 +189,7 @@ def main():
 
         # ── 步骤 5：清理 systemd journal（保留 7 天）──
         print(f"\n[5/6] 清理 systemd journal 旧日志（保留 7 天）...")
-        out = _sudo_run(client, 'sudo -S journalctl --vacuum-time=7d 2>&1 | tail -5')
+        out = _sudo_run(client, 'sudo -n journalctl --vacuum-time=7d')
         print(f"  {out}")
 
         sftp.close()
@@ -210,7 +222,7 @@ def main():
         # 服务状态最终确认
         print(f"\n  服务状态最终确认：")
         for svc in ['mory-assistant', 'mory-dashboard']:
-            print(f"    {svc}: {_sudo_run(client, f'sudo -S systemctl is-active {svc}')}")
+            print(f"    {svc}: {_sudo_run(client, f'sudo -n systemctl is-active {svc}')}")
 
         print("\n" + "=" * 60)
         print(f"  ✅ VPS 清理完成！")

@@ -33,12 +33,8 @@ def _signal_config_reload():
         logger.debug(f"操作异常: {e}")
 sys.path.insert(0, _MORY_ROOT)
 from core.vps_config import (
-    VPS_HOST,
-    VPS_PORT,
-    VPS_USER,
-    VPS_PASS,
     VPS_PATH,
-    secure_paramiko_connect_kwargs,
+    ssh_connect,
 )
 
 
@@ -157,22 +153,18 @@ def write_config(cfg):
 def ssh_exec(cmd, timeout=15):
     """通过SSH在VPS上执行命令"""
     import paramiko
-    from core.vps_config import get_ssh_policy
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(get_ssh_policy())
     try:
-        client.connect(
-            VPS_HOST,
-            port=VPS_PORT,
-            username=VPS_USER,
-            password=VPS_PASS,
-            timeout=timeout,
-            **secure_paramiko_connect_kwargs(),
-        )
+        ssh_connect(client, timeout=timeout)
         stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout)
-        out = stdout.read().decode("utf-8", errors="replace")
-        err = stderr.read().decode("utf-8", errors="replace")
-        return out, err
+        try:
+            out = stdout.read().decode("utf-8", errors="replace")
+            err = stderr.read().decode("utf-8", errors="replace")
+            return out, err
+        finally:
+            stdin.close()
+            stdout.close()
+            stderr.close()
     except Exception as e:
         return "", str(e)
     finally:
@@ -195,40 +187,10 @@ def get_vps_status():
     results = {"bot_running": False, "bot_pid": None, "bot_memory": "N/A", "uptime": "N/A", "error": None}
     mode = os.environ.get("DASHBOARD_MODE", "main")
     import paramiko
-    from core.vps_config import get_ssh_policy
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(get_ssh_policy())
     try:
-        # SSH 认证：优先 SSH Key（推荐），向后兼容密码模式
-        # 【v5.31.2 hotfix P1-3a】统一环境变量名为 VPS_SSH_KEY（与 core/vps_config.py 一致），
-        # 避免出现 VPS_SSH_KEY_PATH / VPS_SSH_KEY 双命名分裂。
-        # 兼容回退：若已部署用户仍用 VPS_SSH_KEY_PATH，向后兼容读取（不推荐新部署使用）。
-        ssh_key_path = os.environ.get("VPS_SSH_KEY", "") or os.environ.get("VPS_SSH_KEY_PATH", "")
-        if ssh_key_path and os.path.exists(ssh_key_path):
-            client.connect(
-                VPS_HOST,
-                port=VPS_PORT,
-                username=VPS_USER,
-                key_filename=ssh_key_path,
-                timeout=10,
-                **secure_paramiko_connect_kwargs(),
-            )
-        elif VPS_PASS:
-            # 向后兼容：密码模式（不推荐，建议迁移到 SSH Key）
-            logger.warning("VPS SSH 使用密码认证，建议配置 VPS_SSH_KEY 环境变量改用 SSH Key")
-            client.connect(
-                VPS_HOST,
-                port=VPS_PORT,
-                username=VPS_USER,
-                password=VPS_PASS,
-                timeout=10,
-                **secure_paramiko_connect_kwargs(),
-            )
-        else:
-            results["error"] = "无可用 SSH 认证方式（VPS_SSH_KEY 未设置且无密码）"
-            _vps_cache["data"] = results
-            _vps_cache["updated_at"] = time.time()
-            return results
+        # 所有认证统一走 key-first 中央入口，必要时才回退密码。
+        ssh_connect(client, timeout=10)
         # 根据模式选择查询哪个 Bot
         if mode == "media":
             ps_cmd = f"ps -ef | grep '{VPS_PATH}/main.py' | grep -v grep | grep mory_media | head -1"

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # 导入 VPS 配置
 sys.path.insert(0, str(ROOT))
-from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_PATH, ssh_connect
+from core.vps_config import VPS_HOST, VPS_PORT, VPS_USER, VPS_PASS, VPS_KEY_FILES, VPS_PATH, ssh_connect
 
 # 需要删除的文件名模式
 FILES_TO_DELETE = [
@@ -53,9 +53,9 @@ def main():
     print("=" * 60)
 
     # 1. 前置检查
-    if not VPS_HOST or not VPS_PASS:
-        print("❌ 错误：VPS_HOST 或 VPS_SSH_PASS 未设置！")
-        print("   请在 .env 文件中配置 VPS_HOST 和 VPS_SSH_PASS")
+    if not VPS_HOST or (not VPS_PASS and not VPS_KEY_FILES):
+        print("❌ 错误：VPS_HOST 未设置，或 VPS_SSH_PASS / VPS_SSH_KEY 均不可用！")
+        print("   请在 .env 文件中配置 VPS_HOST，并提供密码或密钥")
         sys.exit(1)
 
     # 2. 连接 VPS

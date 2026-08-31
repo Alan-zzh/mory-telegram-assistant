@@ -162,17 +162,18 @@ def get_ssh_policy():
 
 def ssh_connect(client, timeout: int = 15):
     """一键建立 SSH 连接（paramiko client）"""
+    key_files = [path for path in VPS_KEY_FILES if Path(path).is_file()]
     # 【v4.3.2修复F-03】校验必填项
     if not VPS_HOST:
         raise ValueError("VPS_HOST 未设置！请在 .env 文件中配置 VPS_HOST=<IP地址>")
-    if not VPS_PASS and not VPS_KEY_FILES:
+    if not VPS_PASS and not key_files:
         raise ValueError("VPS_SSH_PASS / VPS_SSH_KEY 均未设置，且本机未找到默认SSH key")
     client.set_missing_host_key_policy(_ssh_policy)
     client.connect(
         VPS_HOST, port=VPS_PORT,
         username=VPS_USER,
         password=VPS_PASS or None,
-        key_filename=VPS_KEY_FILES or None,
+        key_filename=key_files or None,
         look_for_keys=False,
         allow_agent=False,
         timeout=timeout,

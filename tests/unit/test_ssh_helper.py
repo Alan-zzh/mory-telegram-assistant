@@ -66,6 +66,11 @@ class _FakeClient:
 def _patch_client(monkeypatch, client, password="unit-sudo-secret"):
     monkeypatch.setattr(ssh_helper, "PASS", password)
     monkeypatch.setattr(ssh_helper.paramiko, "SSHClient", lambda: client)
+    monkeypatch.setattr(
+        ssh_helper,
+        "ssh_connect",
+        lambda value, timeout=15: value.connect("central", timeout=timeout),
+    )
 
 
 def test_root_command_uses_non_pty_and_writes_password_only_to_stdin(monkeypatch):
@@ -143,6 +148,18 @@ def test_connection_failure_is_redacted_and_closes_client(monkeypatch):
     assert exit_code == -1
     assert client.exec_calls == []
     assert client.closed is True
+
+
+def test_connection_uses_central_key_capable_entrypoint(monkeypatch):
+    client = _FakeClient(stdout="ok")
+    _patch_client(monkeypatch, client)
+
+    stdout, stderr, exit_code = ssh_helper.run_ssh("printf ok")
+
+    assert client.connect_calls == [(('central',), {'timeout': 15})]
+    assert stdout == "ok"
+    assert stderr == ""
+    assert exit_code == 0
 
 
 def test_exec_failure_is_redacted(monkeypatch):

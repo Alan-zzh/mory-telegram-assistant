@@ -41,7 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from version import VERSION as EXPECTED_VERSION
-from core.vps_config import secure_paramiko_connect_kwargs
+from core.vps_config import ssh_connect
 
 ENV_PATH = PROJECT_ROOT / ".env"
 LOGS_DIR = PROJECT_ROOT / "logs"
@@ -118,13 +118,7 @@ def log_path():
 def make_ssh_client():
     """创建一个 SSH client（每次复用，避免每次命令都新建连接）"""
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        HOST, PORT, USER, PASS,
-        timeout=15, banner_timeout=15, auth_timeout=15,
-        allow_agent=False, look_for_keys=False,
-        **secure_paramiko_connect_kwargs(),
-    )
+    ssh_connect(client, timeout=15)
     return client
 
 
