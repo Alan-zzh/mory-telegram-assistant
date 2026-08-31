@@ -242,8 +242,42 @@ print(json.dumps(changed, ensure_ascii=True, separators=(",", ":")))
                 pass
         try:
             sftp.remove(remote_manifest)
-        except OSError:
-            pass
+        except Exception as cleanup_error:
+            logging.getLogger("deploy_vps").debug(
+                "清理哈希清单暂存文件失败: %s", cleanup_error
+            )
+
+
+def _filter_changed_uploads_resilient(client, sftp, files, *, max_attempts=3):
+    """哈希预检断线时重连重试，并把当前有效连接返回给后续上传。"""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            changed = _filter_changed_uploads(client, sftp, files)
+            return client, sftp, changed
+        except Exception as exc:
+            try:
+                sftp.close()
+            except Exception as cleanup_error:
+                logging.getLogger("deploy_vps").debug(
+                    "关闭哈希预检SFTP失败: %s", cleanup_error
+                )
+            try:
+                client.close()
+            except Exception as cleanup_error:
+                logging.getLogger("deploy_vps").debug(
+                    "关闭哈希预检SSH失败: %s", cleanup_error
+                )
+            if attempt >= max_attempts:
+                raise RuntimeError(
+                    f"远端哈希预检连续失败 {max_attempts} 次"
+                ) from exc
+            print(
+                f"\n  ⚠️ 哈希预检连接中断，重连后重试 "
+                f"({attempt}/{max_attempts}): {type(exc).__name__}"
+            )
+            time.sleep(attempt * 2)
+            client, sftp = _open_deploy_connection()
+    raise AssertionError("unreachable")
 
 
 def _deployment_exit_code(success: bool) -> int:
@@ -705,7 +739,9 @@ def main() -> bool:
             for rp, mb in skipped_ul[:3]:
                 print(f"     - {rp} ({mb}MB)")
 
-        changed_files = _filter_changed_uploads(client, sftp, files_to_upload)
+        client, sftp, changed_files = _filter_changed_uploads_resilient(
+            client, sftp, files_to_upload
+        )
         client, sftp, uploaded = _upload_files_resilient(client, sftp, changed_files)
         print(f"\r  ✅ 已上传 {len(uploaded)}/{len(changed_files)} 个变更文件" + " " * 20)
 

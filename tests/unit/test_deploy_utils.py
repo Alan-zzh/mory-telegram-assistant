@@ -397,6 +397,43 @@ def test_deploy_hash_preflight_rejects_unexpected_remote_path(monkeypatch, tmp_p
         )
 
 
+def test_deploy_hash_preflight_reconnects_after_connection_drop(monkeypatch):
+    import deploy_vps
+
+    closed = []
+    first_client = SimpleNamespace(close=lambda: closed.append("client-1"))
+    first_sftp = SimpleNamespace(close=lambda: closed.append("sftp-1"))
+    second_client = SimpleNamespace(close=lambda: closed.append("client-2"))
+    second_sftp = SimpleNamespace(close=lambda: closed.append("sftp-2"))
+    calls = []
+
+    def fake_filter(client, sftp, files):
+        calls.append((client, sftp, tuple(files)))
+        if len(calls) == 1:
+            raise ConnectionError("dropped")
+        return [("changed.py", "/remote/changed.py")]
+
+    monkeypatch.setattr(deploy_vps, "_filter_changed_uploads", fake_filter)
+    monkeypatch.setattr(
+        deploy_vps,
+        "_open_deploy_connection",
+        lambda: (second_client, second_sftp),
+    )
+    monkeypatch.setattr(deploy_vps.time, "sleep", lambda _seconds: None)
+
+    client, sftp, changed = deploy_vps._filter_changed_uploads_resilient(
+        first_client,
+        first_sftp,
+        [("changed.py", "/remote/changed.py")],
+        max_attempts=2,
+    )
+
+    assert (client, sftp) == (second_client, second_sftp)
+    assert changed == [("changed.py", "/remote/changed.py")]
+    assert len(calls) == 2
+    assert closed == ["sftp-1", "client-1"]
+
+
 def test_deployment_exit_code_fails_closed():
     import deploy_vps
 
