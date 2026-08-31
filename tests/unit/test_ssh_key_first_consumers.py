@@ -1,5 +1,7 @@
 """SSH 消费者统一 key-first 入口的回归测试。"""
 
+from pathlib import Path
+
 import paramiko
 
 from dashboard import helpers
@@ -111,6 +113,18 @@ def test_cleanup_sudo_rejection_raises_instead_of_reporting_success():
 
     with pytest.raises(RuntimeError, match=r"exit=1"):
         cleanup_vps_full._sudo_run(client, "sudo -n install source target")
+
+
+def test_cleanup_logrotate_tempfile_uses_linux_lf():
+    temp_path = Path(cleanup_vps_full._write_logrotate_tempfile())
+    try:
+        content = temp_path.read_bytes()
+    finally:
+        temp_path.unlink()
+
+    assert content == cleanup_vps_full.LOGROTATE_CONF.encode("utf-8")
+    assert b"\r\n" not in content
+    assert content.endswith(b"}\n")
 
 
 def test_dashboard_main_status_uses_systemd_pid_and_memory(monkeypatch):

@@ -17,9 +17,11 @@
 """
 
 import logging
+import os
 import sys
 import secrets
 import shlex
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,6 +101,19 @@ LOGROTATE_CONF = """\
 """
 
 
+def _write_logrotate_tempfile() -> str:
+    """以 Linux LF 写入待上传配置，避免 Windows CRLF 破坏 logrotate 语法。"""
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".conf",
+        delete=False,
+        encoding="utf-8",
+        newline="\n",
+    ) as temp_file:
+        temp_file.write(LOGROTATE_CONF)
+        return temp_file.name
+
+
 def main():
     print("=" * 60)
     print("  Mory小助理 · VPS 完整清理 (v5.22.0 审计配套)")
@@ -154,10 +169,7 @@ def main():
         print(f"\n[4/6] 配置 logrotate ...")
         logrotate_path = "/etc/logrotate.d/mory-assistant"
         # 先写本地临时文件再上传（用 sftp.put）
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False, encoding='utf-8') as tf:
-            tf.write(LOGROTATE_CONF)
-            tmp_path = tf.name
+        tmp_path = _write_logrotate_tempfile()
         try:
             # 随机 0600 临时文件避免固定 /tmp 路径的竞态与提权窗口。
             remote_tmp = f"/home/ubuntu/.mory-logrotate-{secrets.token_hex(8)}"

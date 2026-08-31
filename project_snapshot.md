@@ -38,14 +38,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；回复目标消失时无引用直发，日志按实际媒体/文本记账；外部频道不豁免 |
 
 ## 当前版本
-v5.42.9（2026-08-31）· 已部署：Dashboard 按 systemd 主进程判断在线
+v5.42.10（2026-08-31）· 待部署：固定Linux日志轮转配置使用LF
 
-生产状态：**Mory v5.42.9 双服务 active、NRestarts=0、health 200，近 10 分钟无 ERROR/CRITICAL/Traceback，数据库 integrity/FK 检查通过；MoryFansBot 与 MediaOps-COO 继续在线。同机非保留的 TokenLab、Steel/浏览器、TokensByte、Singbox/代理、Docker、Nginx 已停止并禁用，相关自启定时和 cron 已清除；当前可用内存约 6.2 GiB。**
+生产状态：**Mory v5.42.9 双服务 active、NRestarts=0、health 200，生产巡检17项当前通过；logrotate线上CRLF已修复且服务执行成功，源头修复待部署。MoryFansBot与MediaOps-COO继续在线，MediaOps最近日报2/2完整投递；同机非保留项目保持停用，当前可用内存约6.2 GiB。**
 
 ## 最近 3 条大事
-1. 2026-08-31 服务器去混跑：仅保留 Mory、MoryFansBot、MediaOps-COO 与必要巡检。
-2. 2026-08-31 v5.42.9：Dashboard 改按 systemd 主 PID 判断 Bot 在线。
-3. 2026-08-31 v5.42.8：SSH key-first 回退与 sudo 失败关闭完成。
+1. 2026-08-31 v5.42.10：修复Windows CRLF导致全机logrotate失败。
+2. 2026-08-31 服务器去混跑：仅保留Mory、MoryFansBot、MediaOps-COO与必要巡检。
+3. 2026-08-31 v5.42.9：Dashboard改按systemd主PID判断Bot在线。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->
