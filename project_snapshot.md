@@ -25,7 +25,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 孤儿清理 | 在用 | `dashboard/api/orphan_api.py`、`tasks/maintenance/burn_orphan_task.py` | 端到端串联 |
 | 关键词延迟删 | 生产开启 | `modules/keyword_auto_delete.py`、`tasks/maintenance/keyword_message_auto_delete_task.py` | 生产精确匹配 `/me@afoolGroupBot` 并延迟 300 秒删除；SQLite 队列支持重启恢复，只删消息不处罚用户 |
 | 入群验证 | 在用 | `modules/verification.py` | button / puzzle / timeout / max_attempts |
-| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单 |
+| Dashboard | 在用 | `dashboard/app.py`、`dashboard/api/*.py` | 163 个路由，端口 6616；健康未知不打分，历史调度不冒充当前注册清单；当前错误与历史失败分字段呈现 |
 | 数据库 | 在用 | `core/database.py`、`core/db_repos/*.py` | 181 张表；运行时 DDL 收归 `core/database.py`，Alembic 0009 升级旧库并把 `funnel_state` 改为 `(uid, bot_id)` 复合主键；业务模块不再按请求懒建表 |
 | 配置 / 部署 | 在用 | `core/settings.py`、`deploy_vps.py` + `config.json` | 密钥仅 `.env`；安全合并保护线上凭据，不上传数据库；部署源必须包含当前 main；Alembic 清除继承的 `DATABASE_URL` 并精确绑定生产 `mory.db`，迁移前生成随机名 0600 在线快照并校验完整性/外键，任一步失败即阻断；运行态验证失败时要求受控人工回滚 |
 | 转化漏斗 | 在用 | `core/db_repos/social_repo.py` + `message_dispatcher` | `conversion_events` 各阶段 |
@@ -38,14 +38,14 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；回复目标消失时无引用直发，日志按实际媒体/文本记账；外部频道不豁免 |
 
 ## 当前版本
-v5.42.13（2026-09-01）· 已部署：启动广告清理增量化并修复root看门狗日志轮转权限
+v5.42.14（2026-09-01）· 待部署：调度接口分离当前错误与历史失败
 
-生产状态：**Mory v5.42.13双服务active/enabled、NRestarts=0、health 200，数据库与17项生产巡检通过；启动广告清理可信基线1、待删0，后续重启候选0并约2秒完成；全机logrotate真实执行success、failed units=0。MoryFansBot与MediaOps-COO继续在线，同机非保留项目保持停用。**
+生产状态：**当前已验证基线仍为Mory v5.42.13：双服务active/enabled、NRestarts=0、health 200，数据库与17项生产巡检通过；v5.42.14尚未部署。MoryFansBot与MediaOps-COO继续在线，同机非保留项目保持停用。**
 
 ## 最近 3 条大事
-1. 2026-09-01 v5.42.13已部署：修复root看门狗日志轮转权限。
-2. 2026-09-01 v5.42.12已部署：二次启动广告清理候选0、约2秒完成。
-3. 2026-08-31 服务器去混跑：仅保留Mory、MoryFansBot、MediaOps-COO与必要巡检。
+1. 2026-09-01 v5.42.14待部署：调度当前错误与历史失败分开呈现。
+2. 2026-09-01 v5.42.13已部署：修复root看门狗日志轮转权限。
+3. 2026-09-01 v5.42.12已部署：二次启动广告清理候选0、约2秒完成。
 
 ## 客观指标（供 `scripts/doc_consistency.py` 断言，勿手改）
 <!-- METRICS:BEGIN -->

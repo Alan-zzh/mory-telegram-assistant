@@ -7,6 +7,9 @@
 
 ## 反复暗病清单
 
+### 6.51 累计失败原因冒充当前调度错误
+- 问题 | 已恢复任务仍显示旧报错。根因 | `scheduler_metrics`有意保留累计失败，却把旧原因继续暴露为`last_error`。解法 | 当前错误仅随`last_status=error`展示，旧原因迁入`last_failure_error`并标`historical`。预防 | 监控接口必须区分当前态、历史累计与覆盖范围。
+
 ### 6.50 运维配置语法正确但运行身份无权读日志
 - 问题 | 午夜logrotate因无权打开root看门狗日志失败。根因 | root cron创建日志，轮转却降权到ubuntu。解法 | 轮转保持root身份，`copytruncate`保留各文件所有权。预防 | 运维门禁同时验证配置语法、真实文件owner和一次完整执行。
 
@@ -226,9 +229,3 @@
 - 根因：收工六件套无触发条件（每次全量同步→流水账）；六文档版本纯人工同步、脚本零覆盖；完成判据只列本地证据，部署无机械出口。
 - 解法：AGENTS 重写为触发式更新矩阵（未达条件不写）+ 部署三选一（已部署/无需部署/门禁阻断，未填视为未完工）；doc_consistency 扩展机械断言（版本五源一致/六文档行数/CHANGELOG 条目 ≤100 字/snapshot 大事 ≤3 条/README 指标一致）；新增 scripts/check_deploy_ready.py 一键检查；CHANGELOG v5.38.15 及之前整体归档。
 - 预防：文档更新按触发矩阵执行；升版五源同改（脚本拦截）；规则不锚历史版本号；收工必填部署三选一。
-
-### 60. verify_deployment 日志检查漏过滤 gevent 停机噪声块，健康部署被误判失败（2026-08-09 修复）
-- 问题：全量部署成功（health=200、双服务 active），verify_deployment 却报日志错误→保险无谓 restart。
-- 根因：gunicorn/gevent 停机噪声是多行块，原过滤只剔末行，Traceback 上下文仍命中 error。
-- 解法：`deploy_utils` 校验改 awk 整块剔除后再 grep。
-- 预防：日志校验按块过滤；改校验后必须 VPS 实测命令本身。

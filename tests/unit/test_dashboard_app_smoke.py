@@ -100,7 +100,11 @@ def test_scheduler_api_does_not_present_scheduler_metrics_as_registry(monkeypatc
     )
     conn.execute(
         "INSERT INTO scheduler_metrics VALUES (?,?,?,?,?,?,?,?,?)",
-        ("cart_recovery", "success", 2, 0, 0, 1782930000, 0, "", 1782930300),
+        ("cart_recovery", "success", 2, 1, 0, 1782930000, 0, "historical timeout", 1782930300),
+    )
+    conn.execute(
+        "INSERT INTO scheduler_metrics VALUES (?,?,?,?,?,?,?,?,?)",
+        ("heartbeat", "error", 3, 1, 0, 1782930200, 0, "current failure", 1782930300),
     )
     conn.commit()
 
@@ -119,7 +123,7 @@ def test_scheduler_api_does_not_present_scheduler_metrics_as_registry(monkeypatc
     assert jobs_json["source"] == "unavailable"
     assert jobs_json["registry_available"] is False
     assert jobs_json["count"] == 0
-    assert jobs_json["historical_metrics_count"] == 1
+    assert jobs_json["historical_metrics_count"] == 2
 
     stats = client.get("/api/scheduler/stats")
     assert stats.status_code == 200
@@ -127,4 +131,70 @@ def test_scheduler_api_does_not_present_scheduler_metrics_as_registry(monkeypatc
     assert stats_json["data"]["source"] == "scheduler_metrics_history"
     assert stats_json["data"]["registry_available"] is False
     assert stats_json["data"]["job_count"] is None
-    assert stats_json["data"]["historical_job_count"] == 1
+    assert stats_json["data"]["historical_job_count"] == 2
+
+    recovered = stats_json["data"]["jobs"]["cart_recovery"]
+    assert recovered["last_status"] == "success"
+    assert recovered["last_error"] == ""
+    assert recovered["last_failure_error"] == "historical timeout"
+    assert recovered["error_scope"] == "historical"
+
+    failing = stats_json["data"]["jobs"]["heartbeat"]
+    assert failing["last_status"] == "error"
+    assert failing["last_error"] == "current failure"
+    assert failing["last_failure_error"] == "current failure"
+    assert failing["error_scope"] == "current"
+
+
+def test_scheduler_api_normalizes_in_memory_error_scopes(monkeypatch):
+    import core.scheduler_monitor as scheduler_monitor
+
+    monkeypatch.setattr(scheduler_monitor, "get_scheduler_stats", lambda: {
+        "job_count": 3,
+        "jobs": {
+            "heartbeat": {
+                "last_status": "success",
+                "last_error": "old database error",
+                "success_count": 10,
+                "fail_count": 1,
+            },
+            "ttl_cleanup": {
+                "last_status": "error",
+                "last_error": "current database error",
+                "success_count": 9,
+                "fail_count": 2,
+            },
+            "daily_report": {
+                "last_status": "missed",
+                "last_error": "older task failure",
+                "success_count": 8,
+                "fail_count": 1,
+                "miss_count": 1,
+            },
+        },
+    })
+
+    app = _build_app()
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["logged_in"] = True
+        session["role"] = "admin"
+
+    response = client.get("/api/scheduler/stats")
+    assert response.status_code == 200
+    info = response.get_json()["data"]["jobs"]["heartbeat"]
+    assert info["last_error"] == ""
+    assert info["last_failure_error"] == "old database error"
+    assert info["error_scope"] == "historical"
+
+    failing = response.get_json()["data"]["jobs"]["ttl_cleanup"]
+    assert failing["last_status"] == "error"
+    assert failing["last_error"] == "current database error"
+    assert failing["error_scope"] == "current"
+
+    missed = response.get_json()["data"]["jobs"]["daily_report"]
+    assert missed["last_status"] == "missed"
+    assert missed["miss_count"] == 1
+    assert missed["last_error"] == ""
+    assert missed["last_failure_error"] == "older task failure"
+    assert missed["error_scope"] == "historical"

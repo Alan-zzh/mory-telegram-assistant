@@ -10,6 +10,34 @@ logger = get_logger(__name__)
 scheduler_bp = Blueprint("scheduler_monitor", __name__)
 
 
+def _normalize_job_metric(info: dict) -> dict:
+    """区分当前错误和已恢复任务的历史失败，避免 Dashboard 把旧错当现错。"""
+    normalized = dict(info)
+    status = str(normalized.get("last_status") or "").lower()
+    last_failure_error = str(normalized.get("last_error") or "")
+    current_error = last_failure_error if status == "error" else ""
+
+    normalized["last_failure_error"] = last_failure_error
+    normalized["last_error"] = current_error
+    if status == "error":
+        normalized["error_scope"] = "current"
+    elif last_failure_error:
+        normalized["error_scope"] = "historical"
+    else:
+        normalized["error_scope"] = "none"
+    return normalized
+
+
+def _normalize_stats_payload(stats: dict) -> dict:
+    normalized = dict(stats)
+    jobs = normalized.get("jobs") or {}
+    normalized["jobs"] = {
+        job_id: _normalize_job_metric(info)
+        for job_id, info in jobs.items()
+    }
+    return normalized
+
+
 def _scheduler_stats_from_db() -> dict:
     """读取持久历史指标；scheduler_metrics 不是当前注册任务表。"""
     db = get_db()
@@ -35,7 +63,7 @@ def _scheduler_stats_from_db() -> dict:
         last_run = int(info.get("last_run") or 0)
         if started_at == 0 or (last_run and last_run < started_at):
             started_at = last_run
-        jobs[job_id] = info
+        jobs[job_id] = _normalize_job_metric(info)
     return {
         "started_at": started_at,
         "uptime_seconds": 0,
@@ -62,7 +90,7 @@ def _scheduler_jobs_from_db() -> list:
     ).fetchall()
     jobs = []
     for row in rows:
-        info = dict(row)
+        info = _normalize_job_metric(dict(row))
         jobs.append({
             "id": info.get("job_id"),
             "name": info.get("job_id"),
@@ -76,6 +104,8 @@ def _scheduler_jobs_from_db() -> list:
             "miss_count": info.get("miss_count") or 0,
             "last_run": info.get("last_run") or 0,
             "last_error": info.get("last_error") or "",
+            "last_failure_error": info.get("last_failure_error") or "",
+            "error_scope": info.get("error_scope") or "none",
         })
     return jobs
 
@@ -89,6 +119,8 @@ def api_scheduler_stats():
         stats = get_scheduler_stats()
         if not stats.get("job_count"):
             stats = _scheduler_stats_from_db()
+        else:
+            stats = _normalize_stats_payload(stats)
         return jsonify({"ok": True, "data": stats})
     except Exception as e:
         logger.exception(f"[scheduler_api] api_scheduler_stats 失败: {e}")
