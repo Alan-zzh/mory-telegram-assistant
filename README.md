@@ -4,7 +4,7 @@
 
 Telegram 群组助手机器人：人设对话、广告检测、群管、积分商城、转化漏斗、传统文化栏目、运营 Dashboard。单机 VPS（systemd）部署。
 
-当前版本 **v5.42.7**：修复 SSH helper 的 sudo PTY 密码回显风险，并延续 FAQ/频道/调度及 VPS OOM 归因真实性治理。生产部署状态见 `project_snapshot.md`。
+当前版本 **v5.42.7**：修复 SSH helper 的 sudo PTY 回显与多行命令引用风险，并延续 FAQ/频道/调度及 VPS OOM 归因真实性治理。生产部署状态见 `project_snapshot.md`。
 
 ## 默认关闭功能货架
 

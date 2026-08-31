@@ -236,5 +236,5 @@
 ### 65. 部署日志过滤过宽 + 运行解释器依赖来源漂移
 - 问题|根因|解法|预防：任意析构异常后的真实启动失败可能被整块过滤，systemd 解释器还同时可见系统包与 user-site；过滤器改为只识别 logging/gevent 确证退出栈，其他异常保留，重启前按 requirements.lock 精确读回 Gunicorn/gevent，漂移或安装失败即阻断。
 
-### 66. SSH helper sudo PTY 可能回显密码
-- 问题|根因|解法|预防：root 分支分配 PTY 后向 stdin 写密码，终端可能回显到输出；改为无 PTY 的 sudo -S，输出与异常统一脱敏，并用 mock 与真实 UID 探针固定密码只走 stdin。
+### 66. SSH helper sudo PTY 回显与命令引用失真
+- 问题|根因|解法|预防：root 分支分配 PTY 可能回显 stdin 密码，且用 Python repr 拼 Bash 多行/单引号命令会语法失败；改为无 PTY 的 sudo -S、POSIX shlex 引用与统一脱敏，并用 mock、真实 UID 和多行探针固定边界。

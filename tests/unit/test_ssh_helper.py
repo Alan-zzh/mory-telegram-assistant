@@ -1,6 +1,7 @@
 """SSH helper 的 sudo 输入与敏感输出回归测试。"""
 
 import importlib.util
+import shlex
 from pathlib import Path
 
 
@@ -90,6 +91,21 @@ def test_root_command_uses_non_pty_and_writes_password_only_to_stdin(monkeypatch
     assert stderr == "warning [REDACTED]"
     assert exit_code == 3
     assert client.closed is True
+
+
+def test_root_command_posix_quotes_multiline_and_single_quotes(monkeypatch):
+    client = _FakeClient(stdout="ok")
+    _patch_client(monkeypatch, client)
+    remote = "printf '%s\\n' \"it's safe\"\nprintf done"
+
+    stdout, stderr, exit_code = ssh_helper.run_ssh(remote, as_root=True)
+
+    command, kwargs = client.exec_calls[0]
+    assert command == (f"sudo -S -p '' bash -c {shlex.quote(remote)}",)
+    assert kwargs == {"timeout": 60, "get_pty": False}
+    assert stdout == "ok"
+    assert stderr == ""
+    assert exit_code == 0
 
 
 def test_non_root_command_does_not_send_sudo_password_and_stays_non_pty(monkeypatch):

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """临时 SSH 助手 - 读取 .env 凭据并执行远程命令"""
+import shlex
 import sys
 import paramiko
 from dotenv import dotenv_values
@@ -43,7 +44,7 @@ def run_ssh(cmd, timeout=60, as_root=False):
     full_cmd = cmd
     if as_root:
         # sudo 密码只经 stdin 写入，不分配 PTY，避免终端回显到 stdout。
-        full_cmd = f"sudo -S -p '' bash -c {cmd!r}"
+        full_cmd = f"sudo -S -p '' bash -c {shlex.quote(cmd)}"
 
     try:
         stdin, stdout, stderr = client.exec_command(full_cmd, timeout=timeout, get_pty=False)
