@@ -49,6 +49,7 @@ def test_startup_member_scan_runs_in_background(monkeypatch):
     thread.join(timeout=2)
     assert not thread.is_alive()
     assert history_ran.is_set()
+    assert task_scheduler.stop_startup_maintenance(join_timeout=1)
 
 
 def test_scheduler_starts_before_startup_maintenance(monkeypatch):

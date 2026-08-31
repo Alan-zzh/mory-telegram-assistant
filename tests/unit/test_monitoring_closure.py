@@ -2,12 +2,35 @@
 """监控与 Windows 验证门禁的回归测试。"""
 
 import os
+import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _healthy_l1_ssh_run(_client, command, timeout=10):
+    """Return a complete L1 fixture so each negative case changes one signal."""
+    if command.startswith("top "):
+        return "%Cpu(s): 10.0 us,  5.0 sy,  0.0 ni, 85.0 id\n", "", 0
+    if command == "free -m":
+        return "Mem: 8000 3000 1000 0 0 4000", "", 0
+    if command.startswith("df -h"):
+        return "/dev/vda1 100G 59G 41G 59% /", "", 0
+    if command.startswith("ss -tn"):
+        return "12", "", 0
+    if command == "uptime":
+        return "up 1 day", "", 0
+    if command == "cat /proc/loadavg":
+        return "1.00 1.20 1.30 1/100 1", "", 0
+    if command.startswith("systemctl show"):
+        return "/system.slice/mory-assistant.service\n/system.slice/mory-dashboard.service", "", 0
+    if "Memory cgroup out of memory" in command:
+        return "__OOM_JOURNAL_OK__=1\n__OOM_CGROUP_TOTAL__=0\n__OOM_GLOBAL_TOTAL__=0\n__OOM_MATCHED_TOTAL__=0", "", 0
+    raise AssertionError(command)
 
 
 def test_loop_monitor_expected_version_tracks_runtime_version():
@@ -370,6 +393,44 @@ def test_vps_layer_zero_oom_keeps_otherwise_healthy_resources_ok(monkeypatch):
     assert "_warn" not in details
 
 
+def test_vps_layer_command_failure_is_visible_as_l1_evidence_gap(monkeypatch):
+    """基础命令返回 127 时不能因其它指标正常而假绿。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    def _ssh_run(client, command, timeout=10):
+        if command.startswith("top "):
+            return "", "top: command not found", 127
+        return _healthy_l1_ssh_run(client, command, timeout)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l1_vps_check(object())
+
+    assert status == "WARN"
+    assert details["l1_evidence_gaps"] == ["top(rc=127,stderr,cpu_missing)"]
+    assert details["l1_evidence_gap_only"] is True
+    assert "l1_evidence_gap=top(" in details["_warn"]
+
+
+def test_vps_layer_empty_resource_output_is_visible_as_l1_evidence_gap(monkeypatch):
+    """命令 exit 0 但关键输出为空时也必须标记证据缺口。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    def _ssh_run(client, command, timeout=10):
+        if command == "free -m":
+            return "", "", 0
+        return _healthy_l1_ssh_run(client, command, timeout)
+
+    monkeypatch.setattr(monitor, "ssh_run", _ssh_run)
+
+    status, details = monitor.l1_vps_check(object())
+
+    assert status == "WARN"
+    assert details["l1_evidence_gaps"] == ["free(mem_available_missing)"]
+    assert details["l1_evidence_gap_only"] is True
+    assert "l1_evidence_gap=free(" in details["_warn"]
+
+
 def test_vps_layer_oom_evidence_failure_is_not_reported_healthy(monkeypatch):
     from scripts import puzan_loop_monitor as monitor
 
@@ -467,6 +528,37 @@ def test_business_layer_uses_execution_history_instead_of_task_lock(monkeypatch)
     task_sql = "\n".join(sql for db_path, sql in seen_sql if db_path == monitor.MORY_DB)
     assert "task_execution_history" in task_sql
     assert "FROM task_log" not in task_sql
+
+
+def test_business_layer_counts_current_second_level_conversion_event(monkeypatch):
+    """conversion_events 的当前事件使用秒级 Unix ts，不能再乘 1000。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE conversion_events (ts REAL)")
+    db.execute("INSERT INTO conversion_events(ts) VALUES (?)", (int(time.time()),))
+    db.commit()
+    seen_sql = []
+
+    def _sqlite_query(_client, _db_path, sql, timeout=20):
+        seen_sql.append(sql)
+        if "FROM conversion_events" in sql:
+            return str(db.execute(sql).fetchone()[0]), ""
+        if "GROUP BY status" in sql:
+            return "success|1", ""
+        if "ORDER BY id DESC LIMIT 10" in sql:
+            return "heartbeat|success|0", ""
+        return "0", ""
+
+    monkeypatch.setattr(monitor, "sqlite_query", _sqlite_query)
+
+    status, details = monitor.l4_biz_check(object())
+
+    conversion_sql = next(sql for sql in seen_sql if "FROM conversion_events" in sql)
+    assert status == "OK"
+    assert details["conversion_1h"] == "1"
+    assert "*1000" not in conversion_sql
+    assert "strftime('%s', datetime('now', '-1 hour'))" in conversion_sql
 
 
 def test_scheduler_layer_warns_from_persisted_failures_without_journal(monkeypatch):

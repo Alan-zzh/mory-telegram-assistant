@@ -3,6 +3,8 @@
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 
 def test_background_start_reuses_the_same_resource_manager(monkeypatch):
     """重复启动必须返回同一锁域，不能再创建第二套 ResourceManager。"""
@@ -171,6 +173,82 @@ def test_main_shutdown_helper_requires_scheduler_drain(monkeypatch):
         drain=lambda *, timeout: calls.append(("drain", timeout)) or False,
     )
     monkeypatch.setattr(task_scheduler, "get_task_scheduler", lambda: controller)
+    monkeypatch.setattr(
+        task_scheduler,
+        "stop_startup_maintenance",
+        lambda *, join_timeout: calls.append(("maintenance", join_timeout)) or True,
+    )
 
     assert main._shutdown_scheduler_for_db(timeout=0.01) is False
-    assert calls == [("shutdown", False), ("drain", 0.01)]
+    assert calls[0] == ("shutdown", False)
+    assert calls[1][0] == "drain"
+    assert calls[1][1] == pytest.approx(0.01, abs=1e-6)
+    assert calls[2][0] == "maintenance"
+    assert 0 <= calls[2][1] <= calls[1][1] + 1e-6
+
+
+def test_main_shutdown_shares_one_timeout_budget(monkeypatch):
+    import main
+    from tasks import task_scheduler
+
+    calls = []
+    monotonic_values = iter((100.0, 100.0, 100.007))
+    monkeypatch.setattr(main.time, "monotonic", lambda: next(monotonic_values))
+    controller = SimpleNamespace(
+        shutdown=lambda *, wait: calls.append(("shutdown", wait)),
+        drain=lambda *, timeout: calls.append(("drain", timeout)) or True,
+    )
+    monkeypatch.setattr(task_scheduler, "get_task_scheduler", lambda: controller)
+    monkeypatch.setattr(
+        task_scheduler,
+        "stop_startup_maintenance",
+        lambda *, join_timeout: calls.append(("maintenance", join_timeout)) or True,
+    )
+
+    assert main._shutdown_scheduler_for_db(timeout=0.01) is True
+    assert calls[0] == ("shutdown", False)
+    assert calls[1][0] == "drain"
+    assert calls[1][1] == pytest.approx(0.01)
+    assert calls[2][0] == "maintenance"
+    assert calls[2][1] == pytest.approx(0.003)
+
+
+def test_main_shutdown_refuses_db_close_while_startup_maintenance_is_blocked(monkeypatch):
+    """启动维护未退出时，关停必须失败可见并阻止调用方关闭数据库。"""
+    import main
+    from tasks import task_scheduler
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def _blocking_maintenance(_rm, stop_event=None, done_event=None):
+        started.set()
+        try:
+            # 故意不读取 stop_event：模拟无法被强杀的 Telegram/DB 调用。
+            release.wait(timeout=2)
+        finally:
+            if done_event is not None:
+                done_event.set()
+
+    monkeypatch.setattr(task_scheduler, "_run_startup_maintenance", _blocking_maintenance)
+    monkeypatch.setattr(task_scheduler, "_startup_maintenance_thread", None)
+    monkeypatch.setattr(task_scheduler, "_startup_maintenance_stop_event", None)
+    monkeypatch.setattr(task_scheduler, "_startup_maintenance_done_event", None)
+    thread = task_scheduler._start_startup_maintenance(object())
+    assert started.wait(timeout=1)
+
+    controller = SimpleNamespace(
+        shutdown=lambda *, wait: None,
+        drain=lambda *, timeout: True,
+    )
+    monkeypatch.setattr(task_scheduler, "get_task_scheduler", lambda: controller)
+
+    try:
+        shutdown_ok = main._shutdown_scheduler_for_db(timeout=0.01)
+        assert shutdown_ok is False
+        assert thread.is_alive()
+        # main.py 只有拿到 True 才会调用 ctx.db.close()。
+    finally:
+        release.set()
+        assert task_scheduler.stop_startup_maintenance(join_timeout=1)
+    assert not thread.is_alive()

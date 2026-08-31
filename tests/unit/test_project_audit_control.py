@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +24,57 @@ def test_receipt_status_and_exit_codes_do_not_fake_green():
     assert control._aggregate([{"status": "pass"}, {"status": "evidence_gap"}]) == "evidence_gap"
     assert control._aggregate([{"status": "pass"}, {"status": "failed"}]) == "failed"
     assert control.EXIT_CODES == {"pass": 0, "evidence_gap": 2, "failed": 3}
+
+
+def test_l1_missing_evidence_maps_to_gap_without_hiding_real_resource_alerts():
+    from scripts import project_audit_control as control
+
+    evidence_only = {
+        "l1_evidence_gaps": ["free(mem_available_missing)"],
+        "l1_evidence_gap_only": True,
+    }
+    real_alert_too = {
+        "l1_evidence_gaps": ["free(mem_available_missing)"],
+        "l1_evidence_gap_only": False,
+        "_warn": "disk_usage_high(95%); l1_evidence_gap=free(mem_available_missing); ",
+    }
+
+    assert control._monitor_receipt_status("l1_resources", "WARN", evidence_only) == "evidence_gap"
+    assert control._monitor_receipt_status("l1_resources", "WARN", real_alert_too) == "failed"
+    assert control._monitor_receipt_status("l1_resources", "CRITICAL", evidence_only) == "failed"
+
+
+def test_production_audit_preserves_l1_evidence_gap_semantics(monkeypatch):
+    from core import deploy_utils
+    from scripts import project_audit_control as control
+    from scripts import puzan_loop_monitor as monitor
+
+    monkeypatch.setattr(control, "_is_deployed_runtime", lambda: False)
+    monkeypatch.setattr(deploy_utils, "_deployment_verification_checks", lambda _path: [])
+    monkeypatch.setattr(
+        monitor,
+        "l1_vps_check",
+        lambda _client: (
+            "WARN",
+            {
+                "l1_evidence_gaps": ["free(mem_available_missing)"],
+                "l1_evidence_gap_only": True,
+                "_warn": "l1_evidence_gap=free(mem_available_missing); ",
+            },
+        ),
+    )
+    monkeypatch.setattr(monitor, "l4_biz_check", lambda _client: ("OK", {}))
+    monkeypatch.setattr(monitor, "l5_scheduler_check", lambda _client: ("OK", {}))
+    monkeypatch.setattr(monitor, "l6_watchdog_check", lambda _client: ("OK", {}))
+
+    checks = control.audit_production_truth(
+        _sample_config(),
+        client_factory=lambda: SimpleNamespace(close=lambda: None),
+    )
+    l1 = next(item for item in checks if item["id"] == "production.l1_resources")
+
+    assert l1["status"] == "evidence_gap"
+    assert l1["evidence"]["l1_evidence_gap_only"] is True
 
 
 def test_health_liveness_cannot_substitute_for_release_identity():
@@ -116,6 +168,8 @@ def test_monitor_receipt_filters_raw_process_and_log_tails():
         "l1_resources",
         {
             "cpu_usage": "10%",
+            "l1_evidence_gaps": ["free(mem_available_missing)"],
+            "l1_evidence_gap_only": True,
             "oom_kills_1h": 7,
             "oom_cgroup_kills_1h": 7,
             "oom_global_kills_1h": 0,
@@ -137,6 +191,8 @@ def test_monitor_receipt_filters_raw_process_and_log_tails():
 
     assert filtered == {
         "cpu_usage": "10%",
+        "l1_evidence_gaps": ["free(mem_available_missing)"],
+        "l1_evidence_gap_only": True,
         "oom_kills_1h": 7,
         "oom_cgroup_kills_1h": 7,
         "oom_global_kills_1h": 0,

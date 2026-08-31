@@ -17,6 +17,10 @@ Dashboard 的 `last_error` 只表示当前 `last_status=error` 的故障；任�
 
 新进程在后台任务启动前调用 `cleanup_zombie_running(timeout_seconds=0)`：旧进程遗留的 running 统一记 failed，duration 使用真实 `now-start_ts`，并在同一事务删除对应 `task_log` 锁。
 
+## 停机语义
+
+启动成员扫描与历史清理运行在独立维护线程，但仍共享 `ResourceManager` 和 SQLite。停机时，调度器 drain 与启动维护线程 join 共用一个单调时钟总预算；只有两者都结束才关闭数据库。维护线程未在时限内退出时必须失败可见并保留数据库连接，禁止强杀线程后假报优雅停机。
+
 ## 任务结果
 
 - 正常完成：success，APScheduler EXECUTED。

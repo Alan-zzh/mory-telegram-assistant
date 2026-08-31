@@ -330,6 +330,9 @@ def create_scheduler(rm: ResourceManager, max_workers: int = 30) -> TaskSchedule
 
 _resource_manager_instance: Optional[ResourceManager] = None
 _startup_maintenance_thread: Optional[threading.Thread] = None
+_startup_maintenance_lock = threading.Lock()
+_startup_maintenance_stop_event: Optional[threading.Event] = None
+_startup_maintenance_done_event: Optional[threading.Event] = None
 _WATCHDOG_TIMEOUT_SEC = 900  # 15 分钟
 
 
@@ -422,32 +425,104 @@ def _persist_startup_heartbeat(rm):
     rm.db.set_system_state("last_heartbeat", str(now))
 
 
-def _run_startup_maintenance(rm):
-    """后台串行执行启动扫描和历史清理，不阻塞 scheduler/polling。"""
-    try:
-        from tasks.maintenance.startup_member_scan_task import StartupMemberScanTask
-        StartupMemberScanTask(rm).run()
-    except Exception as e:
-        logger.warning(f"启动成员扫描失败: {e}")
+def _run_startup_maintenance(
+    rm,
+    stop_event: Optional[threading.Event] = None,
+    done_event: Optional[threading.Event] = None,
+):
+    """后台串行执行启动扫描和历史清理，不阻塞 scheduler/polling。
 
+    ``stop_event`` 只在两个维护阶段之间检查：正在进行的 Telegram/DB
+    调用无法被安全强杀，关停方必须通过 ``done_event`` + ``join`` 确认它
+    已经返回后才允许关闭共享数据库。
+    """
     try:
-        from tasks.maintenance.startup_history_cleanup_task import StartupHistoryCleanupTask
-        StartupHistoryCleanupTask(rm).run()
-    except Exception as e:
-        logger.warning(f"启动历史清理失败: {e}")
+        if stop_event is not None and stop_event.is_set():
+            logger.info("[启动维护] 收到停机请求，跳过尚未开始的启动扫描")
+            return
+
+        try:
+            from tasks.maintenance.startup_member_scan_task import StartupMemberScanTask
+            StartupMemberScanTask(rm).run()
+        except Exception as e:
+            logger.warning(f"启动成员扫描失败: {e}")
+
+        if stop_event is not None and stop_event.is_set():
+            logger.info("[启动维护] 收到停机请求，跳过尚未开始的历史清理")
+            return
+
+        try:
+            from tasks.maintenance.startup_history_cleanup_task import StartupHistoryCleanupTask
+            StartupHistoryCleanupTask(rm).run()
+        except Exception as e:
+            logger.warning(f"启动历史清理失败: {e}")
+    finally:
+        if done_event is not None:
+            done_event.set()
 
 
 def _start_startup_maintenance(rm):
     """启动唯一的后台维护线程；返回线程供测试与诊断。"""
-    global _startup_maintenance_thread
-    if _startup_maintenance_thread is not None and _startup_maintenance_thread.is_alive():
-        logger.warning("启动维护线程已在运行，跳过重复启动")
-        return _startup_maintenance_thread
-    _startup_maintenance_thread = threading.Thread(
-        target=_run_startup_maintenance,
-        args=(rm,),
-        name="mory-startup-maintenance",
-        daemon=True,
-    )
-    _startup_maintenance_thread.start()
-    return _startup_maintenance_thread
+    global _startup_maintenance_thread, _startup_maintenance_stop_event, _startup_maintenance_done_event
+    with _startup_maintenance_lock:
+        if _startup_maintenance_thread is not None and _startup_maintenance_thread.is_alive():
+            logger.warning("启动维护线程已在运行，跳过重复启动")
+            return _startup_maintenance_thread
+
+        stop_event = threading.Event()
+        done_event = threading.Event()
+        thread = threading.Thread(
+            target=_run_startup_maintenance,
+            args=(rm, stop_event, done_event),
+            name="mory-startup-maintenance",
+            daemon=True,
+        )
+        _startup_maintenance_thread = thread
+        _startup_maintenance_stop_event = stop_event
+        _startup_maintenance_done_event = done_event
+        thread.start()
+        return thread
+
+
+def stop_startup_maintenance(join_timeout: float = 20.0) -> bool:
+    """请求停止启动维护并在有界时间内确认线程已完成。
+
+    返回 ``False`` 表示线程仍可能访问 ResourceManager/SQLite；调用方必须
+    保持数据库连接打开，并将该失败状态显式记录给运维面。
+    """
+    global _startup_maintenance_thread, _startup_maintenance_stop_event, _startup_maintenance_done_event
+    timeout = max(0.0, join_timeout)
+    deadline = time.monotonic() + timeout
+    with _startup_maintenance_lock:
+        thread = _startup_maintenance_thread
+        stop_event = _startup_maintenance_stop_event
+        done_event = _startup_maintenance_done_event
+        if thread is None:
+            return True
+        if stop_event is not None:
+            stop_event.set()
+
+    if thread is threading.current_thread():
+        logger.error("[启动维护] 停止请求来自维护线程自身，拒绝自 join；数据库必须保持开启")
+        return False
+
+    # 完成事件是协作协议；join 仍是最终线程状态确认，避免事件已 set 但
+    # 线程尚未真正退出的极窄窗口。
+    if thread.is_alive():
+        if done_event is not None:
+            done_event.wait(timeout=timeout)
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    if thread.is_alive():
+        logger.error(
+            "[启动维护] 线程未在 %.1fs 内退出，数据库连接必须保持开启",
+            timeout,
+        )
+        return False
+
+    with _startup_maintenance_lock:
+        if _startup_maintenance_thread is thread:
+            _startup_maintenance_thread = None
+            _startup_maintenance_stop_event = None
+            _startup_maintenance_done_event = None
+    logger.info("[启动维护] 启动维护线程已完成并退出")
+    return True

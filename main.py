@@ -26,22 +26,36 @@ sys.path.insert(0, base_dir)
 
 
 def _shutdown_scheduler_for_db(timeout: float = 20.0) -> bool:
-    """停止新 job 并有界 drain；未 drain 完成时不得关闭共享数据库。"""
+    """停止新 job 并有界 drain；未全部完成时不得关闭共享数据库。"""
     logger = logging.getLogger("main")
+    deadline = time.monotonic() + max(0.0, timeout)
+
+    def _remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    scheduler_drained = True
     try:
-        from tasks.task_scheduler import get_task_scheduler
+        from tasks.task_scheduler import get_task_scheduler, stop_startup_maintenance
 
         controller = get_task_scheduler()
-        if controller is None:
-            return True
-        controller.shutdown(wait=False)
-        drained = controller.drain(timeout=timeout)
-        if not drained:
-            logger.error("调度任务未在 %.1fs 内结束，保留数据库连接直至进程退出", timeout)
-        return drained
+        if controller is not None:
+            controller.shutdown(wait=False)
+            scheduler_drained = controller.drain(timeout=_remaining())
+            if not scheduler_drained:
+                logger.error("调度任务未在 %.1fs 内结束，保留数据库连接直至进程退出", timeout)
     except Exception as e:
         logger.warning(f"关闭调度器失败，保留数据库连接: {e}")
-        return False
+        scheduler_drained = False
+
+    try:
+        maintenance_drained = stop_startup_maintenance(join_timeout=_remaining())
+    except Exception as e:
+        logger.error(f"停止启动维护线程失败，保留数据库连接: {e}")
+        maintenance_drained = False
+    if not maintenance_drained:
+        logger.error("启动维护线程未完成，保留数据库连接直至进程退出")
+
+    return scheduler_drained and maintenance_drained
 
 
 def main():

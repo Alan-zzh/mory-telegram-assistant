@@ -43,6 +43,8 @@ python scripts/manage_project_audit_timers.py --action uninstall --apply --audit
 ## 证据判读
 
 - health 200 只判 liveness，版本必须读远端 `version.py` 或 hash。
+- L1 的 `top/free/df/ss/uptime/loadavg` 必须同时满足命令成功和关键字段可解析；纯证据不可得为 `evidence_gap`，若同时发现真实资源或 OOM 告警仍为 `failed`。
+- `conversion_events.ts` 使用秒级 Unix 时间，L4 转化窗口不得乘 1000；时间单位以生产写入点和真实样本为准。
 - `task_execution_history` 只覆盖事务任务，`scheduler_metrics` 是持久历史；当前进程 registry 未被观察时必须在 coverage 中明说。
 - journal 无法读取或启动时间缺失是 `evidence_gap`，不能用“无匹配输出”冒充无错误。
 - 配置的业务回执只是 DB 中已完成任务的只读 receipt，不执行真实账号动作；受影响功能需要更强的真实业务探针时，Automation 只报告缺口，由人授权 Agent 执行。

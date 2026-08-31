@@ -149,7 +149,7 @@ def _aggregate(checks: list[dict[str, Any]]) -> str:
 
 
 _MONITOR_EVIDENCE_KEYS = {
-    "l1_resources": {"cpu_usage", "mem_avail_pct", "disk_usage_pct", "load1", "net_conn", "uptime", "oom_kills_1h", "oom_cgroup_kills_1h", "oom_global_kills_1h", "oom_source_mory_1h", "oom_source_external_1h", "oom_source_unknown_1h", "oom_victim_mory_1h", "oom_source_labels_1h", "oom_victim_processes_1h", "oom_external_containers_1h", "oom_attribution_complete", "oom_journal_ok", "oom_control_groups_available", "oom_evidence_truncated", "_warn", "_crit", "_exc"},
+    "l1_resources": {"cpu_usage", "mem_avail_pct", "disk_usage_pct", "load1", "net_conn", "uptime", "l1_evidence_gaps", "l1_evidence_gap_only", "oom_kills_1h", "oom_cgroup_kills_1h", "oom_global_kills_1h", "oom_source_mory_1h", "oom_source_external_1h", "oom_source_unknown_1h", "oom_victim_mory_1h", "oom_source_labels_1h", "oom_victim_processes_1h", "oom_external_containers_1h", "oom_attribution_complete", "oom_journal_ok", "oom_control_groups_available", "oom_evidence_truncated", "_warn", "_crit", "_exc"},
     "l4_business_metrics": {"task_1h", "task_5min", "task_status_1h", "recent_tasks", "token_usage_1h", "token_usage_5min", "token_cost_1h_sum", "conversion_1h", "orphan_1h", "_warn", "_crit", "_exc"},
     "l5_scheduler": {"task_status_1h", "failed_1h", "running_1h", "aborted_1h", "stale_running_30m", "recent_persisted_failures", "scheduler_metrics_errors", "scheduler_metrics_cumulative_failures", "recent_scheduled_tasks", "fail_log_10min_count", "watchdog_usec", "_warn", "_crit", "_exc"},
     "l6_watchdog": {"cron_tasks", "legacy_cron_residue", "watchdog_log_age_sec", "_warn", "_crit", "_exc"},
@@ -159,6 +159,21 @@ _MONITOR_EVIDENCE_KEYS = {
 def _filter_monitor_evidence(layer: str, details: dict[str, Any]) -> dict[str, Any]:
     allowed = _MONITOR_EVIDENCE_KEYS[layer]
     return {key: value for key, value in details.items() if key in allowed}
+
+
+def _monitor_receipt_status(layer: str, raw_status: str, details: dict[str, Any]) -> str:
+    """Map monitor severity without confusing missing evidence with a fault."""
+    if raw_status == "OK":
+        return STATUS_PASS
+    if (
+        layer == "l1_resources"
+        and raw_status == "WARN"
+        and details.get("l1_evidence_gap_only") is True
+    ):
+        return STATUS_GAP
+    if raw_status in {"WARN", "CRITICAL"}:
+        return STATUS_FAILED
+    return STATUS_GAP
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -261,12 +276,7 @@ def audit_production_truth(config: dict[str, Any], client_factory: Callable[[], 
         for layer, collector in monitor_collectors:
             try:
                 raw_status, details = collector(client)
-                if raw_status == "OK":
-                    status = STATUS_PASS
-                elif raw_status in {"WARN", "CRITICAL"}:
-                    status = STATUS_FAILED
-                else:
-                    status = STATUS_GAP
+                status = _monitor_receipt_status(layer, raw_status, details)
                 checks.append(
                     _check(
                         f"production.{layer}",

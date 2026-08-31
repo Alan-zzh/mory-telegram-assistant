@@ -7,6 +7,12 @@
 
 ## 反复暗病清单
 
+### 6.54 启动维护线程未进入停机闸门
+- 问题 | 调度器已drain却仍有维护线程访问SQLite。根因 | 线程不计入活动任务，关库前未join。解法 | 协作停止并在共享总时限内等待，超时保留DB。预防 | 所有后台线程必须纳入资源生命周期负向测试。
+
+### 6.53 监控时间单位与证据状态混淆
+- 问题 | 秒级转化被按毫秒漏计，资源命令失败仍可OK。根因 | schema假设未核写入点，退出码被丢弃。解法 | 秒级查询并校验rc/关键字段；纯缺证据映射evidence_gap。预防 | 每项监控固定真实写入样本和失败/空输出反例。
+
 ### 6.52 运维脚本把帮助参数当成正式执行
 - 问题 | 查询`--help`却进入VPS清理。根因 | 脚本不解析命令行，任何参数都被忽略。解法 | 入口先走argparse，帮助与未知参数在连接服务器前退出。预防 | 有写操作的CLI必须固定参数门并测试帮助、错误参数零副作用。
 
@@ -214,15 +220,3 @@
 
 ### 57. 自有频道媒体转发绕过主分发器后被广告链删除（v5.38.34 新增）
 - 问题 | 自有频道视频转发被删，Telegram 系统号还被误封；正文广告首轮进入 AI。根因 | 联动生产关闭、媒体 handler 早于 P0.1 且广告调用签名错误。解法 | CHANNEL_IDS 精确可信门、媒体复用联动/统一广告链、补正文规则。预防 | 自有/外部频道正反例与文本/媒体入口同测。
-
-### 57. .venv 是 Python 3.14 空壳导致依赖装不上、pytest 缺失（v5.38.23 新增）
-- 问题：本地 .venv 存在但完全为空（无 pip、无任何包），uv sync 静默跳过（pyproject.toml 无 [project] 段，uv 默认 requires-python>=3.14 且无依赖定义）；uv pip install 在 gevent==24.11.1 编译时失败（PyInt_AsLong 等 C API 在 3.14 被移除），pytest 始终不可用。
-- 根因：.venv 由 Python 3.14 创建（版本过新，gevent 等依赖尚无 3.14 wheel），且项目依赖真相源是 requirements.txt（50 行）而非 pyproject.toml（仅 [tool.interrogate]）。
-- 解法：删除空壳 .venv，用 Python 3.12.10 重建（python -m venv .venv），再 uv pip install --python .venv/Scripts/python.exe -r requirements.txt；AGENTS.md 验证门禁补充测试命令与环境要求。
-- 预防：本地环境统一 Python 3.12（与 CI 一致）；venv 重建后用 .venv/Scripts/python.exe -m pytest tests/unit/ -q 冒烟验证；不要在 pyproject.toml 缺 [project] 时依赖 uv sync。
-
-### 58. 线程日志上下文泄漏风险评估结论（v5.38.24 记录）
-- 问题：message_dispatcher 消息入口 set_logging_context 后各分支手动 clear_logging_context（36 处），独立审查提示异常路径可能残留上下文污染下一条消息日志。
-- 根因：thread-local 上下文只在消息线程内有效；telebot 默认每条更新独立线程（线程退出即销毁 thread-local），项目仅有的 ThreadPoolExecutor（append_pool，max_workers=2）不处理消息分发。
-- 解法：评估结论为低风险不重构——telebot 每消息独立线程模型下残留上下文随线程销毁，无线程池复用污染路径；消息分发函数已有 36 处显式清理覆盖正常路径。如需未来改为线程池分发，需同步引入 try/finally 清理。
-- 预防：若引入线程池处理消息，必须先加异常安全清理（try/finally clear_logging_context）再上线；新增异步/池化路径时审查 thread-local 生命周期。

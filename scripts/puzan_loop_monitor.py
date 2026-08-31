@@ -343,9 +343,23 @@ def _resolve_oom_container_names(client, source_counts):
 def l1_vps_check(client):
     details = {}
     status = "OK"
+    l1_evidence_gaps = []
+
+    def _validate_required_command(name, rc, stderr, valid, missing_reason):
+        """Require both command execution and the metric needed by L1."""
+        reasons = []
+        if rc != 0:
+            reasons.append(f"rc={rc}")
+        if stderr:
+            reasons.append("stderr")
+        if not valid:
+            reasons.append(missing_reason)
+        if reasons:
+            l1_evidence_gaps.append(f"{name}({','.join(reasons)})")
+
     try:
         # CPU/进程
-        top, _, _ = ssh_run(client, "top -bn1 | head -20", timeout=15)
+        top, top_err, top_rc = ssh_run(client, "top -bn1 | head -20", timeout=15)
         details["top_head"] = top
         # 提取 CPU idle / mem 行（粗解析）
         cpu_line = ""
@@ -359,17 +373,17 @@ def l1_vps_check(client):
         details["mem_line"] = mem_line
 
         # 内存
-        free_m, _, _ = ssh_run(client, "free -m", timeout=10)
+        free_m, free_err, free_rc = ssh_run(client, "free -m", timeout=10)
         details["free_m"] = free_m
         # 磁盘
-        df_h, _, _ = ssh_run(client, "df -h / /home", timeout=10)
+        df_h, df_err, df_rc = ssh_run(client, "df -h / /home", timeout=10)
         details["disk"] = df_h
         # 连接数
-        conn, _, _ = ssh_run(client, "ss -tn state established | wc -l", timeout=10)
+        conn, conn_err, conn_rc = ssh_run(client, "ss -tn state established | wc -l", timeout=10)
         details["net_conn"] = conn.strip()
         # 负载
-        uptime_o, _, _ = ssh_run(client, "uptime", timeout=10)
-        loadavg_o, _, _ = ssh_run(client, "cat /proc/loadavg", timeout=10)
+        uptime_o, uptime_err, uptime_rc = ssh_run(client, "uptime", timeout=10)
+        loadavg_o, loadavg_err, loadavg_rc = ssh_run(client, "cat /proc/loadavg", timeout=10)
         details["uptime"] = uptime_o
         details["loadavg"] = loadavg_o
         control_group_o, _, control_group_rc = ssh_run(
@@ -526,6 +540,36 @@ def l1_vps_check(client):
                     details["_warn"] = details.get("_warn", "") + f"load1_high({load1}); "
             except ValueError:
                 pass
+
+        # L1 是只读证据层：命令失败或关键指标为空时必须可见，不能假绿。
+        _validate_required_command("top", top_rc, top_err, bool(cpu_usage), "cpu_missing")
+        _validate_required_command(
+            "free", free_rc, free_err, bool(mem_avail_pct), "mem_available_missing"
+        )
+        _validate_required_command("df", df_rc, df_err, bool(disk_usage_pct), "disk_usage_missing")
+        conn_valid = False
+        try:
+            conn_valid = int(conn.strip()) >= 0
+        except (TypeError, ValueError):
+            pass
+        _validate_required_command("ss", conn_rc, conn_err, conn_valid, "established_count_missing")
+        uptime_valid = " up " in f" {uptime_o.strip().lower()} "
+        _validate_required_command("uptime", uptime_rc, uptime_err, uptime_valid, "uptime_missing")
+        loadavg_valid = False
+        try:
+            loadavg_valid = bool(loadavg_o.strip()) and float(loadavg_o.split()[0]) >= 0
+        except (TypeError, ValueError, IndexError):
+            pass
+        _validate_required_command("loadavg", loadavg_rc, loadavg_err, loadavg_valid, "load1_missing")
+        if l1_evidence_gaps:
+            details["l1_evidence_gaps"] = l1_evidence_gaps
+            # 保留跨层语义：纯粹“看不到资源证据”应由审计控制面映射为
+            # evidence_gap；若此前已检测到真实资源/OOM异常，则仍是失败。
+            details["l1_evidence_gap_only"] = status == "OK"
+            status = "WARN" if status != "CRITICAL" else status
+            details["_warn"] = details.get("_warn", "") + (
+                "l1_evidence_gap=" + ",".join(l1_evidence_gaps) + "; "
+            )
     except Exception as e:
         status = "ERROR"
         details["_exc"] = f"{type(e).__name__}: {e}"
@@ -638,7 +682,7 @@ def l4_biz_check(client):
       - task_execution_history: running/success/failed/aborted 四态，任务执行事实真相源
       - task_log: 临时 claim/防重锁，不得用于执行量或成功率统计
       - llm_cost_logs（mory.db）: timestamp(REAL/INTEGER, 秒级 Unix 时间)，LLM 调用与成本真相源
-      - conversion_events: ts(REAL, 毫秒)
+      - conversion_events: ts(REAL, 秒级 Unix 时间)
       - orphan_cleanup_log: run_at(INTEGER, 秒) - 非 ts
     """
     details = {}
@@ -703,10 +747,10 @@ def l4_biz_check(client):
             status = "ERROR"
             details["_crit"] = "llm_cost_logs_query_failed"
 
-        # conversion_events（ts 毫秒）
+        # conversion_events（ts 秒级 Unix 时间；写入方使用 int(time.time())）
         cv, ec = sqlite_query(
             client, MORY_DB,
-            "SELECT COUNT(*) FROM conversion_events WHERE ts >= strftime('%s', datetime('now', '-1 hour'))*1000;",
+            "SELECT COUNT(*) FROM conversion_events WHERE ts >= strftime('%s', datetime('now', '-1 hour'));",
         )
         details["conversion_1h"] = cv.strip() if not ec else f"ERR: {ec}"
 
