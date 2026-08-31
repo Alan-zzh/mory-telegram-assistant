@@ -19,6 +19,12 @@ PASS = env.get("VPS_SSH_PASS", "")
 REMOTE = env.get("VPS_PATH", "/home/ubuntu/mory_assistant")
 
 
+def _redact_secret(value):
+    """在返回给调用方前移除可能回显的 SSH/sudo 密码。"""
+    secret = str(PASS or "")
+    return value.replace(secret, "[REDACTED]") if secret else value
+
+
 def run_ssh(cmd, timeout=60, as_root=False):
     """执行远程命令，返回 (stdout, stderr, exit_code)"""
     client = paramiko.SSHClient()
@@ -28,24 +34,28 @@ def run_ssh(cmd, timeout=60, as_root=False):
                        auth_timeout=15, allow_agent=False, look_for_keys=False,
                        **secure_paramiko_connect_kwargs())
     except Exception as e:
-        return "", f"SSH connect failed: {e}", -1
+        try:
+            client.close()
+        except Exception:
+            pass
+        return "", f"SSH connect failed: {_redact_secret(str(e))}", -1
 
     full_cmd = cmd
     if as_root:
-        # 密码经 stdin 写入（get_pty），不再拼进命令行，避免远端 ps 可见
+        # sudo 密码只经 stdin 写入，不分配 PTY，避免终端回显到 stdout。
         full_cmd = f"sudo -S -p '' bash -c {cmd!r}"
 
     try:
-        stdin, stdout, stderr = client.exec_command(full_cmd, timeout=timeout, get_pty=True)
+        stdin, stdout, stderr = client.exec_command(full_cmd, timeout=timeout, get_pty=False)
         if as_root and PASS:
             stdin.write(PASS + "\n")
             stdin.flush()
-        out = stdout.read().decode("utf-8", errors="replace")
-        err = stderr.read().decode("utf-8", errors="replace")
+        out = _redact_secret(stdout.read().decode("utf-8", errors="replace"))
+        err = _redact_secret(stderr.read().decode("utf-8", errors="replace"))
         exit_code = stdout.channel.recv_exit_status()
         return out, err, exit_code
     except Exception as e:
-        return "", f"exec failed: {e}", -1
+        return "", f"exec failed: {_redact_secret(str(e))}", -1
     finally:
         client.close()
 

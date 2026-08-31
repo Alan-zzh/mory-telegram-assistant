@@ -26,9 +26,9 @@
     {"file": "README.md", "pattern": "v{version}"}
   ],
   "records": [
-    {"file": "CHANGELOG.md", "max_entries": 400, "max_lines": 400, "entry_regex": "^\\| 20", "insert_before": "^\\| 20"},
-    {"file": "VERSION.md", "max_entries": 1, "max_lines": 30, "entry_regex": "^当前版本：", "insert_before": "^当前版本："},
-    {"file": "project_snapshot.md", "max_entries": 1, "max_lines": 150, "entry_regex": "^# Mory", "insert_before": "^# Mory"},
-    {"file": "AI_DEBUG_HISTORY.md", "max_entries": 50, "max_lines": 300, "entry_regex": "^### [0-9]+\\.", "insert_before": "^### [0-9]+\\."}
+    {"file": "CHANGELOG.md", "max_entries": 400, "max_lines": 400, "entry_regex": "^\\| 20", "insert_before": "^\\| 20", "newest_first": true},
+    {"file": "VERSION.md", "max_entries": 1, "max_lines": 30, "entry_regex": "^当前版本：", "insert_before": "^当前版本：", "newest_first": false},
+    {"file": "project_snapshot.md", "max_entries": 1, "max_lines": 150, "entry_regex": "^# Mory", "insert_before": "^# Mory", "newest_first": false},
+    {"file": "AI_DEBUG_HISTORY.md", "max_entries": 50, "max_lines": 300, "entry_regex": "^### [0-9]+\\.", "insert_before": "^### [0-9]+\\.", "newest_first": false}
   ]
 }
