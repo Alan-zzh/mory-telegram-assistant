@@ -25,17 +25,40 @@ def _get_member_bio(bot, user_id):
     """读取 Telegram 私聊资料；失败时显式返回不可用，供延迟复审补偿。"""
     try:
         chat_info = bot.get_chat(user_id)
+        if chat_info is None:
+            return "", "empty_chat_response", None
         return (getattr(chat_info, "bio", "") or "")[:500], "", chat_info
     except Exception as e:
         return "", str(e), None
 
 
-def _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx=None, attempt=0):
+def _schedule_member_profile_retry(
+    bot,
+    user,
+    config,
+    db,
+    chat_id,
+    ctx=None,
+    attempt=0,
+    terminal_reason="",
+):
     """当 Telegram 暂未返回 Bio 时，注册有界定向复审，不做全群扫描。"""
     if attempt >= len(_PROFILE_RETRY_DELAYS_SECONDS):
-        logger.warning(
-            f"[入群资料复审] uid={user.id} chat={chat_id} outcome=degraded reason=retry_exhausted"
-        )
+        if terminal_reason == "bio_empty_confirmed":
+            logger.info(
+                f"[入群资料复审] uid={user.id} chat={chat_id} "
+                "outcome=complete reason=bio_absent_after_retries"
+            )
+        else:
+            reason = (
+                f"{terminal_reason}_retry_exhausted"
+                if terminal_reason
+                else "retry_exhausted"
+            )
+            logger.warning(
+                f"[入群资料复审] uid={user.id} chat={chat_id} "
+                f"outcome=degraded reason={reason}"
+            )
         return False
     try:
         from datetime import datetime, timedelta, timezone
@@ -73,7 +96,11 @@ def _run_delayed_member_profile_review(bot, user, config, db, chat_id, ctx=None,
     user_id = user.id
     try:
         member = bot.get_chat_member(chat_id, user_id)
+        if member is None:
+            raise RuntimeError("empty_member_response")
         member_status = getattr(member, "status", "")
+        if not member_status:
+            raise RuntimeError("empty_member_status")
         if member_status in ("left", "kicked"):
             logger.info(f"[入群资料复审] uid={user_id} chat={chat_id} outcome=skip reason=not_member")
             return False
@@ -82,7 +109,16 @@ def _run_delayed_member_profile_review(bot, user, config, db, chat_id, ctx=None,
             return False
     except Exception as e:
         logger.warning(f"[入群资料复审] uid={user_id} chat={chat_id} membership_unknown={e}")
-        _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx, attempt + 1)
+        _schedule_member_profile_retry(
+            bot,
+            user,
+            config,
+            db,
+            chat_id,
+            ctx,
+            attempt + 1,
+            terminal_reason="membership_query_failed",
+        )
         return False
 
     if _is_member_whitelisted(config, user_id):
@@ -100,7 +136,16 @@ def _run_delayed_member_profile_review(bot, user, config, db, chat_id, ctx=None,
             stage=f"delayed_retry_{attempt + 1}", chat_info=chat_info,
         )
 
-    _schedule_member_profile_retry(bot, user, config, db, chat_id, ctx, attempt + 1)
+    _schedule_member_profile_retry(
+        bot,
+        user,
+        config,
+        db,
+        chat_id,
+        ctx,
+        attempt + 1,
+        terminal_reason="bio_fetch_failed" if bio_error else "bio_empty_confirmed",
+    )
     return False
 
 

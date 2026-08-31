@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """入群资料审核回归：覆盖截图账号、延迟 Bio 与正常语境。"""
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 
@@ -415,6 +416,181 @@ def test_empty_release_bio_schedules_bounded_retry_and_later_blocks(monkeypatch)
     func(*job["args"])
 
     assert len(enforced) == 1
+
+
+def test_empty_bio_after_final_successful_fetch_is_clear_info(monkeypatch):
+    """三次复审均能取到资料但 Bio 为空时，正常结束而非误报 degraded。"""
+    from core.handlers import member_handlers
+
+    bot = _Bot(bio="")
+    bot.get_chat_member = lambda chat_id, uid: SimpleNamespace(status="member")
+    user = _User("普通昵称", uid=8858734301)
+    info = []
+    warnings = []
+    monkeypatch.setattr(member_handlers.logger, "info", lambda message, *args, **kwargs: info.append(message))
+    monkeypatch.setattr(
+        member_handlers.logger,
+        "warning",
+        lambda message, *args, **kwargs: warnings.append(message),
+    )
+
+    result = member_handlers._run_delayed_member_profile_review(
+        bot,
+        user,
+        {},
+        _DB(),
+        -1003004701688,
+        attempt=2,
+    )
+
+    assert result is False
+    assert member_handlers._PROFILE_RETRY_DELAYS_SECONDS == (30, 300, 1800)
+    assert any("outcome=complete reason=bio_absent_after_retries" in message for message in info)
+    assert warnings == []
+
+
+def test_empty_bio_after_final_get_chat_failure_is_degraded_warning(monkeypatch):
+    """最终 get_chat 失败仍是未知状态，必须保留 degraded/retry_exhausted。"""
+    from core.handlers import member_handlers
+
+    bot = _Bot(bio="")
+    bot.get_chat_member = lambda chat_id, uid: SimpleNamespace(status="member")
+
+    def _get_chat_failure(_uid):
+        raise RuntimeError("telegram unavailable")
+
+    bot.get_chat = _get_chat_failure
+    user = _User("普通昵称", uid=8858734302)
+    info = []
+    warnings = []
+    monkeypatch.setattr(member_handlers.logger, "info", lambda message, *args, **kwargs: info.append(message))
+    monkeypatch.setattr(
+        member_handlers.logger,
+        "warning",
+        lambda message, *args, **kwargs: warnings.append(message),
+    )
+
+    result = member_handlers._run_delayed_member_profile_review(
+        bot,
+        user,
+        {},
+        _DB(),
+        -1003004701688,
+        attempt=2,
+    )
+
+    assert result is False
+    assert any(
+        "outcome=degraded reason=bio_fetch_failed_retry_exhausted" in message
+        for message in warnings
+    )
+    assert not any("outcome=complete reason=bio_absent_after_retries" in message for message in info)
+
+
+def test_empty_profile_retry_runs_full_chain_then_completes(monkeypatch):
+    """真实 0→1→2 调度参数链保持有界，最终确认空 Bio 后正常完成。"""
+    from core.handlers import member_handlers
+    from tasks import task_scheduler
+
+    bot = _Bot(bio="")
+    bot.get_chat_member = lambda chat_id, uid: SimpleNamespace(status="member")
+    user = _User("普通昵称", uid=8858734303)
+    pending = []
+    scheduled_delays = []
+    info = []
+    warnings = []
+
+    class _Scheduler:
+        def add_job(self, func, **kwargs):
+            pending.append((func, kwargs["args"]))
+            scheduled_delays.append(
+                int((kwargs["run_date"] - datetime.now(timezone.utc)).total_seconds())
+            )
+
+    monkeypatch.setattr(task_scheduler, "get_scheduler_instance", lambda: _Scheduler())
+    monkeypatch.setattr(member_handlers.logger, "info", lambda message, *args, **kwargs: info.append(message))
+    monkeypatch.setattr(
+        member_handlers.logger,
+        "warning",
+        lambda message, *args, **kwargs: warnings.append(message),
+    )
+
+    member_handlers._run_delayed_member_profile_review(
+        bot, user, {}, _DB(), -1003004701688, attempt=0
+    )
+    while pending:
+        func, args = pending.pop(0)
+        func(*args)
+
+    assert len(scheduled_delays) == 2
+    assert scheduled_delays[0] in (299, 300)
+    assert scheduled_delays[1] in (1799, 1800)
+    assert any("outcome=complete reason=bio_absent_after_retries" in message for message in info)
+    assert warnings == []
+
+
+def test_none_profile_response_remains_degraded(monkeypatch):
+    """Telegram 返回 None 不是成功空 Bio，最终必须保持降级可见。"""
+    from core.handlers import member_handlers
+
+    bot = _Bot(bio="")
+    bot.get_chat = lambda uid: None
+    bot.get_chat_member = lambda chat_id, uid: SimpleNamespace(status="member")
+    warnings = []
+    monkeypatch.setattr(
+        member_handlers.logger,
+        "warning",
+        lambda message, *args, **kwargs: warnings.append(message),
+    )
+
+    member_handlers._run_delayed_member_profile_review(
+        bot, _User("普通昵称", uid=8858734304), {}, _DB(), -1003004701688, attempt=2
+    )
+
+    assert any("reason=bio_fetch_failed_retry_exhausted" in message for message in warnings)
+
+
+def test_none_membership_response_remains_degraded(monkeypatch):
+    """成员查询返回 None 不是普通成员，终态必须保留成员查询失败原因。"""
+    from core.handlers import member_handlers
+
+    bot = _Bot(bio="")
+    bot.get_chat_member = lambda chat_id, uid: None
+    warnings = []
+    monkeypatch.setattr(
+        member_handlers.logger,
+        "warning",
+        lambda message, *args, **kwargs: warnings.append(message),
+    )
+
+    member_handlers._run_delayed_member_profile_review(
+        bot, _User("普通昵称", uid=8858734305), {}, _DB(), -1003004701688, attempt=2
+    )
+
+    assert any("reason=membership_query_failed_retry_exhausted" in message for message in warnings)
+
+
+def test_empty_membership_status_remains_degraded(monkeypatch):
+    """成员对象缺少 status 仍是未知态，不得被空 Bio 覆盖成正常完成。"""
+    from core.handlers import member_handlers
+
+    bot = _Bot(bio="")
+    bot.get_chat_member = lambda chat_id, uid: SimpleNamespace()
+    info = []
+    warnings = []
+    monkeypatch.setattr(member_handlers.logger, "info", lambda message, *args, **kwargs: info.append(message))
+    monkeypatch.setattr(
+        member_handlers.logger,
+        "warning",
+        lambda message, *args, **kwargs: warnings.append(message),
+    )
+
+    member_handlers._run_delayed_member_profile_review(
+        bot, _User("普通昵称", uid=8858734306), {}, _DB(), -1003004701688, attempt=2
+    )
+
+    assert any("reason=membership_query_failed_retry_exhausted" in message for message in warnings)
+    assert not any("outcome=complete" in message for message in info)
 
 
 def test_non_release_member_update_only_tracks_without_repeat_review(monkeypatch):

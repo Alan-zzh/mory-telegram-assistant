@@ -75,6 +75,7 @@ SCORE_THRESHOLD = 3
 - 活入口是 `core/handlers/member_handlers.py`，不是仅在未启用验证码时调用的 `group_mgr.py`。
 - 已有本地或全局广告黑名单账号重入时，在验证码和欢迎语之前直接复用 `enforce_ad_user()`。
 - 首次入群与验证码放行均拿不到 Bio 时，只对该 UID 在 30 秒、5 分钟和 30 分钟做三次有界复审；离群、群管、白名单或调度器不可用均显式跳过/降级，不启动全群扫描。
+- 三次复审后，`get_chat` 成功但 Bio 仍为空属于正常完成，只记 INFO；`get_chat` 或成员查询失败、返回空对象等未知状态才记 WARNING 降级，禁止把正常无 Bio 误报为系统故障。
 - 白名单和群管理员免检先于显示名、Bio、Premium emoji 状态和头像审核，避免资料层误封。
 - 首次入群调用 `get_chat(uid)`；若 Telegram 暂时不给 Bio，验证码通过产生的 `restricted → member` 更新会再次读取最新 Bio 并复审资料与头像。该更新不能只写 `group_members`。
 - 四类资料任一明确命中都会短路验证码和欢迎语，并进入永久禁言、历史清理、本地 `blacklist`、`global_blacklist` 和 `mute_records` 同一处置链。
