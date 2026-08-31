@@ -1,0 +1,52 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "e0eff9342acff3b05bd86e7fcd859a915beb6332",
+  "deployment_performed": true,
+  "artifact_hash": "sha256-set:4f904cb8-main,86df3017-scheduler,7042dce4-monitor,1f23fac3-audit,5ba25139-version",
+  "backup": {
+    "verified": true,
+    "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1788201176.tar.gz",
+    "rollback_command": "cd /home/ubuntu/mory_assistant && tar -xzf backups/code_deploy_1788201176.tar.gz && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "technical_checks": [
+    {
+      "name": "targeted_tests",
+      "passed": true,
+      "evidence": "66 passed"
+    },
+    {
+      "name": "full_unit_suite",
+      "passed": true,
+      "evidence": "1432 passed in 36.74s"
+    },
+    {
+      "name": "release_identity_and_integrity",
+      "passed": true,
+      "evidence": "remote version v5.42.16, five critical hashes matched, DB integrity passed"
+    },
+    {
+      "name": "nonretained_units",
+      "passed": true,
+      "evidence": "six TokenLab/TokenPass units inactive and masked; no nonretained process, cron, or container"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "production_truth",
+      "passed": true,
+      "evidence": "17 pass, 0 evidence_gap, 0 failed after controlled restart",
+      "coverage": "resources, liveness, release identity, startup logs, config, credentials, DB, scheduler, permissions, persisted task receipts"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "controlled mory-assistant restart produced a new PID; maintenance thread exited before DB close; health 200 and production-truth 17/17 passed afterward"
+  },
+  "result": "verified"
+}
