@@ -38,12 +38,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；回复目标消失时无引用直发，日志按实际媒体/文本记账；外部频道不豁免 |
 
 ## 当前版本
-v5.42.18（2026-09-01）· 待部署：投票事务失败可见、过期拒投、踢人中断恢复与调度错误范围修正
+v5.42.18（2026-09-01）· 已部署：投票事务失败可见、过期拒投、踢人中断恢复与调度错误范围修正
 
-生产状态：**Mory仍运行v5.42.17，双服务active/enabled、NRestarts=0、health 200；v5.42.18仅完成本地实现，尚未替换生产。MoryFansBot与MediaOps-COO在线；非保留TokenLab/TokenPass单元均inactive+masked，Docker容器为空。**
+生产状态：**Mory v5.42.18双服务active/enabled、NRestarts=0、health 200，关键文件哈希一致、数据库完整、17项生产巡检通过；部署后`vote_kick_check`成功且旧错误标为historical。MoryFansBot与MediaOps-COO在线；非保留进程为0，TokenLab/TokenPass均masked，Docker/containerd均inactive。**
 
 ## 最近 3 条大事
-1. 2026-09-01 v5.42.18修复投票事务假成功与调度历史错误误导，待生产闭环。
+1. 2026-09-01 v5.42.18已部署，投票事务恢复探针与调度持久复核通过。
 2. 2026-09-01 v5.42.17已部署，空Bio与真实查询失败分流探针通过。
 3. 2026-09-01 v5.42.16完成资源/转化监控与停机生命周期修复。
 

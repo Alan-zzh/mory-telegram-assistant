@@ -1,0 +1,63 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "325d0ebf7b106d6898698e1889cf260f17c0b631",
+  "deployment_performed": true,
+  "artifact_hash": "sha256-set:87b45dc4-vote-kick,f07da294-monitor,03c45297-version",
+  "backup": {
+    "verified": true,
+    "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1788216178.tar.gz",
+    "rollback_command": "cd /home/ubuntu/mory_assistant && tar -xzf backups/code_deploy_1788216178.tar.gz && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "technical_checks": [
+    {
+      "name": "targeted_tests",
+      "passed": true,
+      "evidence": "38 passed"
+    },
+    {
+      "name": "full_unit_suite",
+      "passed": true,
+      "evidence": "1451 passed in 31.20s"
+    },
+    {
+      "name": "independent_review",
+      "passed": true,
+      "evidence": "three review rounds; final verdict ready with no P1/P2 blocker"
+    },
+    {
+      "name": "release_identity_and_integrity",
+      "passed": true,
+      "evidence": "remote v5.42.18; three critical hashes matched; DB integrity ok; both services active with NRestarts=0"
+    },
+    {
+      "name": "retained_project_boundary",
+      "passed": true,
+      "evidence": "Mory, MoryFansBot and MediaOps-COO running; no nonretained process; TokenLab/TokenPass masked; Docker and containerd inactive"
+    }
+  ],
+  "business_probes": [
+    {
+      "name": "production_truth",
+      "passed": true,
+      "evidence": "17 pass, 0 evidence_gap, 0 failed",
+      "coverage": "resources, liveness, release identity, startup logs, config, credentials, DB, scheduler, permissions and persisted task receipts"
+    },
+    {
+      "name": "vote_transaction_isolated_probe",
+      "passed": true,
+      "evidence": "expired callback rejected; processing recovered; unknown send preserved",
+      "coverage": "deployed production code with in-memory DB and fake Telegram client; no real external action"
+    }
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "evidence": "after controlled restart both services remained active with NRestarts=0; vote_kick_check ran successfully at 06:45 and historical failures remained explicitly scoped historical"
+  },
+  "result": "verified"
+}
