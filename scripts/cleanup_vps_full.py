@@ -17,6 +17,7 @@
 """
 
 import logging
+import argparse
 import os
 import sys
 import secrets
@@ -103,6 +104,12 @@ LOGROTATE_CONF = """\
 """
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(
+        description="清理 Mory VPS 的已知垃圾、缓存和旧日志，并刷新 logrotate 配置。",
+    )
+
+
 def _write_logrotate_tempfile() -> str:
     """以 Linux LF 写入待上传配置，避免 Windows CRLF 破坏 logrotate 语法。"""
     with tempfile.NamedTemporaryFile(
@@ -137,7 +144,7 @@ def main():
     sftp = client.open_sftp()
     try:
         # ── 步骤 2：删除垃圾文件 ──
-        print(f"\n[2/6] 删除遗留垃圾文件 ...")
+        print("\n[2/6] 删除遗留垃圾文件 ...")
         deleted = []
         for rel_path in FILES_TO_DELETE:
             remote_path = f"{VPS_PATH}/{rel_path}"
@@ -156,7 +163,7 @@ def main():
             print(f"  小计：删除 {len(deleted)} 个文件")
 
         # ── 步骤 3：清理 __pycache__ ──
-        print(f"\n[3/6] 清理 __pycache__ 目录 ...")
+        print("\n[3/6] 清理 __pycache__ 目录 ...")
         stdin, stdout, stderr = client.exec_command(
             f'find {VPS_PATH} -type d -name __pycache__ -exec rm -rf {{}} + 2>/dev/null; '
             f'echo "PYCACHE_CLEANED"'
@@ -168,7 +175,7 @@ def main():
             print(f"  ⚠️ 清理结果：{out}")
 
         # ── 步骤 4：配置 logrotate ──
-        print(f"\n[4/6] 配置 logrotate ...")
+        print("\n[4/6] 配置 logrotate ...")
         logrotate_path = "/etc/logrotate.d/mory-assistant"
         # 先写本地临时文件再上传（用 sftp.put）
         tmp_path = _write_logrotate_tempfile()
@@ -197,19 +204,19 @@ def main():
             if "error" in test_out.lower():
                 print(f"  ⚠️ logrotate 配置测试有警告：{test_out}")
             else:
-                print(f"  ✅ logrotate 配置测试通过")
+                print("  ✅ logrotate 配置测试通过")
         finally:
             os.unlink(tmp_path)
 
         # ── 步骤 5：清理 systemd journal（保留 7 天）──
-        print(f"\n[5/6] 清理 systemd journal 旧日志（保留 7 天）...")
+        print("\n[5/6] 清理 systemd journal 旧日志（保留 7 天）...")
         out = _sudo_run(client, 'sudo -n journalctl --vacuum-time=7d')
         print(f"  {out}")
 
         sftp.close()
 
         # ── 步骤 6：验证清理结果 ──
-        print(f"\n[6/6] 验证清理结果 ...")
+        print("\n[6/6] 验证清理结果 ...")
         # 重新检查垃圾文件
         remaining = []
         for rel_path in FILES_TO_DELETE:
@@ -226,24 +233,24 @@ def main():
         if remaining:
             print(f"  ⚠️ 以下文件仍存在：{remaining}")
         else:
-            print(f"  ✅ 所有垃圾文件已清理")
+            print("  ✅ 所有垃圾文件已清理")
 
         # 磁盘占用对比
         stdin, stdout, stderr = client.exec_command(f'du -sh {VPS_PATH} 2>/dev/null; df -h / | tail -1')
-        print(f"\n  清理后磁盘占用：")
+        print("\n  清理后磁盘占用：")
         print(f"  {stdout.read().decode().strip()}")
 
         # 服务状态最终确认
-        print(f"\n  服务状态最终确认：")
+        print("\n  服务状态最终确认：")
         for svc in ['mory-assistant', 'mory-dashboard']:
             print(f"    {svc}: {_sudo_run(client, f'sudo -n systemctl is-active {svc}')}")
 
         print("\n" + "=" * 60)
-        print(f"  ✅ VPS 清理完成！")
+        print("  ✅ VPS 清理完成！")
         print(f"     - 删除垃圾文件：{len(deleted)} 个")
-        print(f"     - __pycache__：已清理")
-        print(f"     - logrotate：已配置")
-        print(f"     - journal：已清理 7 天前日志")
+        print("     - __pycache__：已清理")
+        print("     - logrotate：已配置")
+        print("     - journal：已清理 7 天前日志")
         print("=" * 60)
     finally:
         try:
@@ -252,5 +259,11 @@ def main():
             logging.getLogger(__name__).debug(f'非致命忽略: {_e}')
 
 
+def cli(argv=None):
+    """先解析参数；--help/未知参数不得进入任何服务器写操作。"""
+    _build_parser().parse_args(argv)
+    return main()
+
+
 if __name__ == "__main__":
-    main()
+    cli()

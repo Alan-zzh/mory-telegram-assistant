@@ -129,6 +129,33 @@ def test_cleanup_logrotate_tempfile_uses_linux_lf():
     assert b"su ubuntu ubuntu" not in content
 
 
+def test_cleanup_help_exits_before_server_mutation(monkeypatch, capsys):
+    import pytest
+
+    calls = []
+    monkeypatch.setattr(cleanup_vps_full, "main", lambda: calls.append("main"))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cleanup_vps_full.cli(["--help"])
+
+    assert exc_info.value.code == 0
+    assert calls == []
+    assert "清理 Mory VPS" in capsys.readouterr().out
+
+
+def test_cleanup_unknown_argument_exits_before_server_mutation(monkeypatch):
+    import pytest
+
+    calls = []
+    monkeypatch.setattr(cleanup_vps_full, "main", lambda: calls.append("main"))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cleanup_vps_full.cli(["--unknown"])
+
+    assert exc_info.value.code == 2
+    assert calls == []
+
+
 def test_dashboard_main_status_uses_systemd_pid_and_memory(monkeypatch):
     client = _StatusClient(b"2971288 51600\n")
     monkeypatch.setattr(paramiko, "SSHClient", lambda: client)
