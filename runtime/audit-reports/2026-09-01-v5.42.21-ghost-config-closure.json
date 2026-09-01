@@ -1,0 +1,40 @@
+{
+  "schema_version": "mory.production-closure/v1",
+  "version": "v5.42.21",
+  "commit": "fb0fdfe335a4",
+  "deployed_at": "2026-09-01T08:26:00+08:00",
+  "status": "verified",
+  "removed_config": {
+    "declared_total": 11,
+    "production_present": [],
+    "surfaces": ["runtime_save", "safe_deploy", "dashboard", "production_audit"]
+  },
+  "verification": {
+    "targeted_tests": 69,
+    "unit_tests": 1461,
+    "production_pass": 17,
+    "drift_pass": 7,
+    "evidence_gap": 0,
+    "failed": 0,
+    "health_http": 200,
+    "database_integrity": "ok"
+  },
+  "backups": {
+    "code": "backups/code_deploy_1788222347.tar.gz",
+    "code_sha256": "aa25396c65a34ee6eb7e594c375f457e85bdd36031f60f219ad1da8549a18ef7",
+    "config": "backups/config_20260901_082617_11fe1c4236b54381a6addd521a9eb419.json",
+    "database": "backups/mory_pre_migration_1788222382_ac763f420ea385f5.db",
+    "database_sha256": "44f18df17c879d31c9560449f19dc8d5f445479ce65b8973a58a90ecd4250a63"
+  },
+  "retained_projects": {
+    "mory": "active",
+    "moryfansbot": "online",
+    "mediaops_coo": "online"
+  },
+  "nonretained": {
+    "tokenlab_tokenpass_units": "inactive_masked",
+    "docker_containerd": "inactive_disabled",
+    "unexpected_project_processes": 0
+  },
+  "pending_natural_evidence": ["burn_orphan_after_12_00", "natural_telegram_event"]
+}

@@ -38,12 +38,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；回复目标消失时无引用直发，日志按实际媒体/文本记账；外部频道不豁免 |
 
 ## 当前版本
-v5.42.21（2026-09-01）· 待部署：统一退役配置真相源并封死幽灵配置复活入口
+v5.42.21（2026-09-01）· 已部署：统一退役配置真相源并封死幽灵配置复活入口
 
-生产状态：**当前已验证生产仍为Mory v5.42.20；Mory、MoryFansBot、MediaOps-COO在线，TokenLab/TokenPass均masked，Docker/containerd均inactive。v5.42.21通过本地门禁后再发布并刷新本段。**
+生产状态：**Mory v5.42.21双服务active/enabled、NRestarts=0、health 200，关键哈希一致、数据库完整、生产17项与漂移7项巡检通过；11个退役配置生产残留为0。MoryFansBot与MediaOps-COO在线；TokenLab/TokenPass均inactive+masked，Docker/containerd均inactive+disabled。**
 
 ## 最近 3 条大事
-1. 2026-09-01 v5.42.21待部署，统一退役配置真相源并封死四条复活入口。
+1. 2026-09-01 v5.42.21已部署，11个退役配置生产残留为0且四条复活入口已封死。
 2. 2026-09-01 v5.42.20已部署，巡检区分事务窗口与全部调度历史。
 3. 2026-09-01 v5.42.19已部署，调度巡检改用来源认证的完整重建回执。
 
