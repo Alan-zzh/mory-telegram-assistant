@@ -105,12 +105,12 @@ def test_compact_runtime_config_keeps_only_primary_disk_keys():
     assert "enabled" not in compacted["CHECKIN_CONFIG"]
 
 
-def test_compact_runtime_config_removes_every_retired_top_level_field():
-    from core.config_compat import REMOVED_CONFIG_FIELDS, compact_runtime_config
+def test_compact_runtime_config_removes_every_invalid_top_level_field():
+    from core.config_compat import INVALID_TOP_LEVEL_CONFIG_FIELDS, compact_runtime_config
 
-    compacted = compact_runtime_config({key: {"legacy": True} for key in REMOVED_CONFIG_FIELDS})
+    compacted = compact_runtime_config({key: {"legacy": True} for key in INVALID_TOP_LEVEL_CONFIG_FIELDS})
 
-    assert set(compacted).isdisjoint(REMOVED_CONFIG_FIELDS)
+    assert set(compacted).isdisjoint(INVALID_TOP_LEVEL_CONFIG_FIELDS)
 
 
 def test_save_config_skips_when_disk_file_is_newer(tmp_path):

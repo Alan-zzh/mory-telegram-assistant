@@ -24,8 +24,6 @@ def api_group_settings():
         "welcome_text": cfg.get("WELCOME_TEXT", ""),
         "welcome_msg": cfg.get("WELCOME_MSG", False),
         "auto_mute_names": cfg.get("AUTO_MUTE_NAMES", []),
-        "spam_ban_duration": cfg.get("BAN_DURATION_DEFAULT", 5),
-        "max_requests_per_user": cfg.get("MAX_REQUESTS_PER_USER", 100),
     }
     return jsonify({"ok": True, "data": settings})
 
@@ -44,8 +42,7 @@ def api_group_settings_update():
         return jsonify({"ok": False, "msg": "配置项名称不能为空"}), 400
     allowed_keys = {
         "BANNED_WORDS", "HATE_KEYWORDS", "AD_KEYWORDS", "SPAM_LIMIT", "WELCOME_TEXT",
-        "WELCOME_MSG", "AUTO_MUTE_NAMES", "BAN_DURATION_DEFAULT",
-        "MAX_REQUESTS_PER_USER"
+        "WELCOME_MSG", "AUTO_MUTE_NAMES"
     }
     if key not in allowed_keys:
         return jsonify({"ok": False, "msg": f"不允许修改 {key}"}), 403
@@ -73,11 +70,6 @@ def api_group_settings_update():
         value = value[:_TEXT_MAX_LEN]
     elif key == "WELCOME_MSG":
         value = bool(value)
-    elif key == "BAN_DURATION_DEFAULT":
-        value = clamp_int(value, 0, 1000000)
-    elif key == "MAX_REQUESTS_PER_USER":
-        value = clamp_int(value, 1, 100000)
-
     cfg = read_config()
     cfg[key] = value
     if write_config(cfg):

@@ -1533,13 +1533,6 @@ async function loadGroupMgr() {
             <input id="spamBanMin" type="number" value="${spamLimit.ban_minutes || 5}" style="width:100%; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px;">
           </div>
         </div>
-        <div style="margin-bottom:12px;">
-          <label style="color:#94a3b8; font-size:13px; display:block; margin-bottom:6px;">
-            手动封禁默认时长（分钟）
-            <span style="color:#6b7280; font-size:11px;">（管理员手动ban时的默认值，不同于刷屏自动禁言）</span>
-          </label>
-          <input id="banDuration" type="number" value="${s.spam_ban_duration || 5}" style="width:200px; padding:10px; background:#1e1e2e; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:14px;">
-        </div>
         <button class="btn btn-primary" onclick="saveSpamSettings()">保存刷屏设置</button>
       </div>
 
@@ -1591,15 +1584,10 @@ async function saveGroupList(key, inputId) {
 async function saveSpamSettings() {
   const msgLimit = parseInt(document.getElementById('spamMsgLimit').value) || 10;
   const banMin = parseInt(document.getElementById('spamBanMin').value) || 5;
-  const banDuration = parseInt(document.getElementById('banDuration').value) || 5;
   try {
     await api('/api/group/settings/update', {
       method: 'POST',
       body: JSON.stringify({key: 'SPAM_LIMIT', value: {messages_per_minute: msgLimit, ban_minutes: banMin}})
-    });
-    await api('/api/group/settings/update', {
-      method: 'POST',
-      body: JSON.stringify({key: 'BAN_DURATION_DEFAULT', value: banDuration})
     });
     showToast('刷屏设置已保存（⚠️ 需重启Bot或等待自动重载后生效）', 'success');
   } catch(e) { showToast('保存失败', 'error'); }
@@ -2058,7 +2046,7 @@ async function loadConfig() {
     const cc = document.getElementById('configContent');
     if (!cc) return;
     const categories = {
-      '核心互动': ['REPLY_CHANCE', 'REPLY_SPEED', 'REPLY_DELAY_MIN', 'REPLY_DELAY_MAX', 'MAX_MSG_LENGTH', 'RELAY_MODE_ENABLED', 'FAQ_TRACKING_ENABLED', 'FAQ_AUTO_REPLY_ENABLED'],
+      '核心互动': ['REPLY_CHANCE', 'REPLY_SPEED', 'RELAY_MODE_ENABLED', 'FAQ_TRACKING_ENABLED', 'FAQ_AUTO_REPLY_ENABLED'],
       '播报调度': ['GREETING_CONFIG', 'MYSTIC_BROADCAST_CONFIG', 'RELAY_MODE_ENABLED', 'WELCOME_MSG'],
       '安全治理': ['ENABLE_MESSAGE_DELETION', 'ORPHAN_CLEANUP_ENABLED', 'KEYWORD_AUTO_DELETE_CONFIG', 'AD_CLEANUP_REACTIONS', 'AD_SELF_UNBAN_ENABLED', 'RETROACTIVE_SCAN_ENABLED', 'EMOJI_MASK_DETECT', 'EDIT_DETECT_ENABLE', 'AD_DETECT_CONFIG', 'ANTIFLOOD_CONFIG', 'ANTI_DELETE_CONFIG', 'SPAM_LIMIT'],
       '业务配置': ['PROACTIVE_ENGAGE_CONFIG', 'CHECKIN_CONFIG', 'POINTS_RULES', 'POINTS_PER_INVITE', 'PRICE_LIST', 'REPLY_STICKER_CHANCE'],
@@ -2068,8 +2056,7 @@ async function loadConfig() {
       '数据存储': ['LOG_LEVEL', 'LANGUAGE'],
     };
     const friendlyNames = {
-      'REPLY_CHANCE': '群聊回复概率(%)', 'REPLY_DELAY_MIN': '回复延迟下限(秒)', 'REPLY_DELAY_MAX': '回复延迟上限(秒)',
-      'REPLY_SPEED': '回复节奏', 'MAX_MSG_LENGTH': '最大回复长度', 'RELAY_MODE_ENABLED': '私聊中继',
+      'REPLY_CHANCE': '群聊回复概率(%)', 'REPLY_SPEED': '回复节奏', 'RELAY_MODE_ENABLED': '私聊中继',
       'FAQ_TRACKING_ENABLED': '问题历史留存', 'FAQ_AUTO_REPLY_ENABLED': 'FAQ模板自动回复',
       'GREETING_CONFIG': '问候配置', 'MYSTIC_BROADCAST_CONFIG': '传统文化播报配置', 'RELAY_MODE_ENABLED': '私聊中继', 'WELCOME_MSG': '入群欢迎',
       'ENABLE_MESSAGE_DELETION': '消息删除', 'ORPHAN_CLEANUP_ENABLED': '孤儿清理', 'AD_CLEANUP_REACTIONS': '广告反应清理', 'AD_SELF_UNBAN_ENABLED': '广告自助复检解封', 'RETROACTIVE_SCAN_ENABLED': '启动追溯',
@@ -4153,7 +4140,6 @@ async function loadBotCoreConfig() {
     const cfg = d.data; const el = document.getElementById('botcoreContent'); if (!el) return;
     el.innerHTML = `<div class="card"><h3>Bot核心配置</h3>
       <div class="form-group"><label>Bot名称</label><input type="text" id="bcName" value="${cfg.bot_name}" class="input-field"></div>
-      <div class="form-group"><label>每小时请求限制</label><input type="number" id="bcMaxReq" value="${cfg.max_requests_per_user}" min="10" max="1000" class="input-field"></div>
       <div class="toggle-row"><span>允许删除消息</span><label class="toggle-switch"><input type="checkbox" id="bcMsgDel" ${cfg.enable_message_deletion?'checked':''}><span class="slider"></span></label></div>
       <button class="btn btn-primary" onclick="saveBotCoreConfig()">保存设置</button></div>`;
   } catch (e) { document.getElementById('botcoreContent').innerHTML = `<div class="error">加载失败: ${e.message}</div>`; }
@@ -4162,7 +4148,6 @@ async function saveBotCoreConfig() {
   try {
     const res = await api('/api/settings/bot-core', { method: 'POST', body: JSON.stringify({
       bot_name: document.getElementById('bcName').value,
-      max_requests_per_user: parseInt(document.getElementById('bcMaxReq').value),
       enable_message_deletion: document.getElementById('bcMsgDel').checked,
     }) });
     if (res.ok) { showToast('✅ 配置已保存', 'success'); loadBotCoreConfig(); } else { showToast('❌ ' + (res.msg || '保存失败'), 'error'); }

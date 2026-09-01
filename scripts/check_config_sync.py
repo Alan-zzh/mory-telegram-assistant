@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from core.config_compat import REMOVED_CONFIG_FIELDS
+from core.config_compat import NESTED_CONFIG_PSEUDO_FIELDS, REMOVED_CONFIG_FIELDS
 
 CONFIG_EXAMPLE = ROOT / "config.json.example"
 CONFIG_API = ROOT / "dashboard" / "api" / "config_api.py"
@@ -159,6 +159,9 @@ def main() -> int:
     whitelist, all_configs_keys, source = load_whitelist()
     removed_in_example = sorted(example_keys & set(REMOVED_CONFIG_FIELDS))
     removed_in_whitelist = sorted(whitelist & set(REMOVED_CONFIG_FIELDS))
+    removed_in_natural = sorted(all_configs_keys & set(REMOVED_CONFIG_FIELDS))
+    pseudo_in_example = sorted(example_keys & set(NESTED_CONFIG_PSEUDO_FIELDS))
+    pseudo_in_whitelist = sorted(whitelist & set(NESTED_CONFIG_PSEUDO_FIELDS))
 
     # 豁免集合：敏感键 + 下划线开头元键 + 显式 EXEMPT_KEYS（仅统计 example 侧）
     exempt_total = {k for k in example_keys if k.startswith("_")}
@@ -193,17 +196,31 @@ def main() -> int:
     else:
         print("【断言 b 通过】白名单中无 example 不存在的幽灵键。")
 
-    if removed_in_example or removed_in_whitelist:
-        print("【断言 c 失败】已确认退役字段不得出现在 example 或 Dashboard 白名单：")
-        for key in sorted(set(removed_in_example + removed_in_whitelist)):
+    if removed_in_example or removed_in_whitelist or removed_in_natural:
+        print("【断言 c 失败】已确认退役字段不得出现在 example、Dashboard 白名单或自然语言配置表：")
+        for key in sorted(set(removed_in_example + removed_in_whitelist + removed_in_natural)):
             surfaces = []
             if key in removed_in_example:
                 surfaces.append("example")
             if key in removed_in_whitelist:
                 surfaces.append("whitelist")
+            if key in removed_in_natural:
+                surfaces.append("natural")
             print(f"  - {key}: {', '.join(surfaces)}")
     else:
-        print("【断言 c 通过】example 与 Dashboard 白名单均未包含已确认退役字段。")
+        print("【断言 c 通过】example、Dashboard 白名单与自然语言配置表均未包含已确认退役字段。")
+
+    if pseudo_in_example or pseudo_in_whitelist:
+        print("【断言 d 失败】嵌套路由别名只能存在于自然语言配置表：")
+        for key in sorted(set(pseudo_in_example + pseudo_in_whitelist)):
+            surfaces = []
+            if key in pseudo_in_example:
+                surfaces.append("example")
+            if key in pseudo_in_whitelist:
+                surfaces.append("whitelist")
+            print(f"  - {key}: {', '.join(surfaces)}")
+    else:
+        print("【断言 d 通过】嵌套路由别名未进入 example 或 Dashboard 顶层白名单。")
 
     if exempt_total:
         print(f"\n当前 example 侧豁免键（{len(exempt_total)} 个，保持只读）：")
@@ -215,10 +232,20 @@ def main() -> int:
         for k in wl_extra:
             print(f"  - {k}")
 
-    if missing or ghost or removed_in_example or removed_in_whitelist:
+    if (
+        missing
+        or ghost
+        or removed_in_example
+        or removed_in_whitelist
+        or removed_in_natural
+        or pseudo_in_example
+        or pseudo_in_whitelist
+    ):
         issue_count = (
             len(missing) + len(ghost)
             + len(removed_in_example) + len(removed_in_whitelist)
+            + len(removed_in_natural) + len(pseudo_in_example)
+            + len(pseudo_in_whitelist)
         )
         print(f"\n配置三处同步存在 {issue_count} 处问题，请按规则修正配置契约。")
         return 1

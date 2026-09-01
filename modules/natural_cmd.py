@@ -21,6 +21,7 @@ from datetime import datetime, timezone, timedelta
 # 【v5.31.2 修复】VPS 运行在 UTC，显示给用户的时间必须用 CST（UTC+8）
 _CST = timezone(timedelta(hours=8))
 from core.logging_util import get_logger
+from core.config_compat import NESTED_CONFIG_PSEUDO_FIELDS
 
 logger = get_logger("natural_cmd")
 
@@ -121,26 +122,6 @@ ALL_CONFIGS = {
         "examples": ["把回复概率改成20%", "回复几率调成50"]
     },
     
-    "REPLY_DELAY_MIN": {
-        "category": "核心互动",
-        "name": "回复延迟下限",
-        "type": "number",
-        "min": 0, "max": 300,
-        "default": 0,
-        "desc": "机器人回复前的最短延迟(秒)",
-        "examples": ["把回复延迟下限改成5秒"]
-    },
-    
-    "REPLY_DELAY_MAX": {
-        "category": "核心互动",
-        "name": "回复延迟上限",
-        "type": "number",
-        "min": 0, "max": 600,
-        "default": 30,
-        "desc": "机器人回复前的最长延迟(秒)",
-        "examples": ["把回复延迟上限改成60秒"]
-    },
-    
     "REPLY_SPEED": {
         "category": "核心互动",
         "name": "回复速度",
@@ -149,16 +130,6 @@ ALL_CONFIGS = {
         "default": "human",
         "desc": "回复速度模式：fast=秒回, normal=3-5秒, slow=5-12秒, human=智能拟人",
         "examples": ["把回复速度调成慢一点", "回复速度改成human", "调成fast"]
-    },
-    
-    "MAX_MSG_LENGTH": {
-        "category": "核心互动",
-        "name": "最大回复长度",
-        "type": "number",
-        "min": 10, "max": 5000,
-        "default": 500,
-        "desc": "AI单次回复的最大字符数",
-        "examples": ["把最大回复长度改成1000"]
     },
     
     # ═══════════════════════════════════════════════════════════════════════
@@ -228,33 +199,6 @@ ALL_CONFIGS = {
         "examples": ["开启欢迎", "关闭欢迎"]
     },
     
-    "ANTI_REVOKE": {
-        "category": "功能开关",
-        "name": "撤回检测",
-        "type": "boolean",
-        "default": False,
-        "desc": "检测用户撤回的消息",
-        "examples": ["开启防撤回", "关闭撤回检测"]
-    },
-    
-    "BURN_AFTER": {
-        "category": "功能开关",
-        "name": "阅后即焚",
-        "type": "boolean",
-        "default": False,
-        "desc": "敏感消息阅后自动删除",
-        "examples": ["开启阅后即焚", "关闭即焚"]
-    },
-    
-    "RECOVER_ENABLED": {
-        "category": "功能开关",
-        "name": "挽回功能",
-        "type": "boolean",
-        "default": True,
-        "desc": "自动挽回流失用户",
-        "examples": ["开启挽回", "关闭挽回"]
-    },
-    
     # ═══════════════════════════════════════════════════════════════════════
     # 【C】时间调度配置
     # ═══════════════════════════════════════════════════════════════════════
@@ -309,16 +253,6 @@ ALL_CONFIGS = {
         "examples": ["把晚间易经时间改成21点"]
     },
     
-    "SIGNUP_RESET_HOUR": {
-        "category": "时间调度",
-        "name": "签到重置时间",
-        "type": "hour",
-        "min": 0, "max": 23,
-        "default": 0,
-        "desc": "每日签到重置时间(小时)",
-        "examples": ["把签到重置时间改成6点"]
-    },
-    
     # ═══════════════════════════════════════════════════════════════════════
     # 【D】安全与限制配置
     # ═══════════════════════════════════════════════════════════════════════
@@ -330,36 +264,6 @@ ALL_CONFIGS = {
         "default": {"messages_per_minute": 10, "ban_minutes": 5},
         "desc": "防刷屏：消息数/分钟 和 封禁时长",
         "examples": ["把刷屏限制改成5条", "改成每分钟3条"]
-    },
-    
-    "MAX_REQUESTS_PER_USER": {
-        "category": "安全限制",
-        "name": "用户请求限制",
-        "type": "number",
-        "min": 1, "max": 1000,
-        "default": 100,
-        "desc": "单个用户每小时最大请求数",
-        "examples": ["把用户请求限制改成50"]
-    },
-    
-    "RATE_LIMIT_WINDOW": {
-        "category": "安全限制",
-        "name": "限流时间窗口",
-        "type": "number",
-        "min": 1, "max": 3600,
-        "default": 3600,
-        "desc": "限流计算时间窗口(秒)",
-        "examples": ["把限流窗口改成1800秒"]
-    },
-    
-    "BAN_DURATION_DEFAULT": {
-        "category": "安全限制",
-        "name": "默认封禁时长",
-        "type": "number",
-        "min": 1, "max": 10080,
-        "default": 5,
-        "desc": "刷屏默认封禁时长(分钟)",
-        "examples": ["把默认封禁时长改成10分钟"]
     },
     
     # ═══════════════════════════════════════════════════════════════════════
@@ -439,24 +343,6 @@ ALL_CONFIGS = {
         "examples": ["把欢迎语改成欢迎新朋友~", "改成Hello新朋友"]
     },
     
-    "GREETING_TEMPLATE": {
-        "category": "内容互动",
-        "name": "早安模板",
-        "type": "text",
-        "default": "",
-        "desc": "自定义早安问候语模板",
-        "examples": ["把早安模板改成早上好呀~"]
-    },
-    
-    "GOODNIGHT_TEMPLATE": {
-        "category": "内容互动",
-        "name": "晚安模板",
-        "type": "text",
-        "default": "",
-        "desc": "自定义晚安问候语模板",
-        "examples": ["把晚安模板改成晚安好梦~"]
-    },
-    
     "HATE_KEYWORDS": {
         "category": "内容互动",
         "name": "反感关键词",
@@ -473,15 +359,6 @@ ALL_CONFIGS = {
         "default": ["赌博", "贩毒", "诈骗"],
         "desc": "消息包含这些词会被删除",
         "examples": ["增加敏感词菠菜", "删除敏感词诈骗"]
-    },
-    
-    "AUTO_REPLY_TRIGGERS": {
-        "category": "内容互动",
-        "name": "自动回复触发词",
-        "type": "list",
-        "default": [],
-        "desc": "包含这些词时必定回复",
-        "examples": ["增加触发词在吗", "删除触发词你好"]
     },
     
     "IGNORE_BOTS": {
@@ -507,39 +384,9 @@ ALL_CONFIGS = {
         "examples": ["把日志级别改成DEBUG", "改成WARNING"]
     },
     
-    "BACKUP_INTERVAL": {
-        "category": "数据存储",
-        "name": "备份间隔",
-        "type": "number",
-        "min": 1, "max": 168,
-        "default": 24,
-        "desc": "自动备份间隔(小时)",
-        "examples": ["把备份间隔改成12小时"]
-    },
-    
-    "MAX_LOG_SIZE": {
-        "category": "数据存储",
-        "name": "日志大小限制",
-        "type": "number",
-        "min": 1, "max": 1000,
-        "default": 100,
-        "desc": "单日志文件最大MB",
-        "examples": ["把日志大小限制改成50MB"]
-    },
-    
     # ═══════════════════════════════════════════════════════════════════════
     # 【H】价格与业务配置
     # ═══════════════════════════════════════════════════════════════════════
-    
-    "POINTS_PER_SIGNUP": {
-        "category": "业务配置",
-        "name": "签到积分",
-        "type": "number",
-        "min": 0, "max": 1000,
-        "default": 10,
-        "desc": "每次签到获得的积分",
-        "examples": ["把签到积分改成20"]
-    },
     
     "POINTS_PER_INVITE": {
         "category": "业务配置",
@@ -561,16 +408,33 @@ ALL_CONFIGS = {
         "examples": ["把贴纸概率改成30%"]
     },
     
-    "MAX_STICKERS_PER_DAY": {
-        "category": "业务配置",
-        "name": "每日贴纸上限",
-        "type": "number",
-        "min": 0, "max": 1000,
-        "default": 50,
-        "desc": "每天最多发送的贴纸数",
-        "examples": ["把每日贴纸上限定成100"]
-    },
 }
+
+
+_NESTED_CONFIG_PSEUDO_PATHS = {
+    "MYSTIC_BROADCAST_ENABLED": ("MYSTIC_BROADCAST_CONFIG", "enabled"),
+    "MYSTIC_HOUR_MORNING": ("MYSTIC_BROADCAST_CONFIG", "morning_time"),
+    "MYSTIC_HOUR_AFTERNOON": ("MYSTIC_BROADCAST_CONFIG", "afternoon_time"),
+    "MYSTIC_HOUR_EVENING": ("MYSTIC_BROADCAST_CONFIG", "evening_time"),
+}
+assert set(_NESTED_CONFIG_PSEUDO_PATHS) == set(NESTED_CONFIG_PSEUDO_FIELDS)
+
+
+def _get_config_display_value(config: dict, key: str, default):
+    """读取自然语言别名对应的真实嵌套值，禁止展示不存在的顶层默认值。"""
+    path = _NESTED_CONFIG_PSEUDO_PATHS.get(key)
+    if not path:
+        return config.get(key, default)
+    section = config.get(path[0], {})
+    if not isinstance(section, dict):
+        return default
+    value = section.get(path[1], default)
+    if key.startswith("MYSTIC_HOUR_") and isinstance(value, str):
+        try:
+            return int(value.split(":", 1)[0])
+        except (TypeError, ValueError):
+            return default
+    return value
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -631,9 +495,7 @@ def _find_config_key(msg: str) -> str | None:
     aliases = {
         "回复概率": "REPLY_CHANCE",
         "回复几率": "REPLY_CHANCE",
-        "回复延迟": "REPLY_DELAY_MAX",
         "回复速度": "REPLY_SPEED",
-        "回复长度": "MAX_MSG_LENGTH",
         "碎片寻宝": "PUZZLE_ENABLED",
         "寻宝": "PUZZLE_ENABLED",
         "暗号": "PUZZLE_WORD",
@@ -654,9 +516,6 @@ def _find_config_key(msg: str) -> str | None:
         "传统文化播报": "MYSTIC_BROADCAST_ENABLED",
         "易经播报": "MYSTIC_BROADCAST_ENABLED",
         "欢迎": "WELCOME_MSG",
-        "撤回": "ANTI_REVOKE",
-        "即焚": "BURN_AFTER",
-        "挽回": "RECOVER_ENABLED",
         "早安时间": "GREETING_HOUR",
         "晚安时间": "GOODNIGHT_HOUR",
         "刷屏": "SPAM_LIMIT",
@@ -673,12 +532,9 @@ def _find_config_key(msg: str) -> str | None:
         "模型": "CURRENT_MODEL_INDEX",
         "欢迎语": "WELCOME_TEXT",
         "日志": "LOG_LEVEL",
-        "备份": "BACKUP_INTERVAL",
-        "积分": "POINTS_PER_SIGNUP",
         "贴纸": "REPLY_STICKER_CHANCE",
         "反感词": "HATE_KEYWORDS",
         "敏感词": "BANNED_WORDS",
-        "触发词": "AUTO_REPLY_TRIGGERS",
         "忽略": "IGNORE_BOTS",
     }
 
@@ -877,7 +733,7 @@ def _handle_view_all_config(msg: str, config: dict, bot, m, mory_bot=None, is_ad
             lines.append("")
             lines.append(f"【{cat}】")
             for key, info in items:
-                val = config.get(key, info["default"])
+                val = _get_config_display_value(config, key, info["default"])
                 
                 # 格式化显示值
                 if info["type"] == "boolean":
@@ -1070,11 +926,6 @@ def _handle_toggle(msg: str, config: dict, bot, m, save_config_fn, mory_bot=None
         "传统文化播报": "MYSTIC_BROADCAST_ENABLED",
         "易经播报": "MYSTIC_BROADCAST_ENABLED",
         "欢迎": "WELCOME_MSG",
-        "撤回": "ANTI_REVOKE",
-        "防撤回": "ANTI_REVOKE",
-        "即焚": "BURN_AFTER",
-        "阅后即焚": "BURN_AFTER",
-        "挽回": "RECOVER_ENABLED",
         "早间风水": "MYSTIC_BROADCAST_ENABLED",
         "早间黄历": "MYSTIC_BROADCAST_ENABLED",
         "午间塔罗": "MYSTIC_BROADCAST_ENABLED",
@@ -1196,16 +1047,12 @@ def _handle_modify_number(msg: str, config: dict, bot, m, save_config_fn, mory_b
         return True
     
     # 普通数值修改
-    mystic_time_keys = {
-        "MYSTIC_HOUR_MORNING": "morning_time",
-        "MYSTIC_HOUR_AFTERNOON": "afternoon_time",
-        "MYSTIC_HOUR_EVENING": "evening_time",
-    }
-    if key in mystic_time_keys:
-        current = config.setdefault("MYSTIC_BROADCAST_CONFIG", {})
-        old_value = str(current.get(mystic_time_keys[key], "00:00"))
+    nested_path = _NESTED_CONFIG_PSEUDO_PATHS.get(key)
+    if nested_path and key.startswith("MYSTIC_HOUR_"):
+        current = config.setdefault(nested_path[0], {})
+        old_value = str(current.get(nested_path[1], "00:00"))
         minute = old_value.split(":", 1)[1] if ":" in old_value else "00"
-        current[mystic_time_keys[key]] = f"{int(val):02d}:{minute}"
+        current[nested_path[1]] = f"{int(val):02d}:{minute}"
     else:
         config[key] = val
     save_config_fn()
@@ -1225,8 +1072,6 @@ def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn, mory_bot
     """处理文本修改命令"""
     if not ("改成" in msg or "改为" in msg or "改成" in msg):
         return False
-    
-    text_configs = ["WELCOME_TEXT", "GREETING_TEMPLATE", "GOODNIGHT_TEMPLATE", "PUZZLE_WORD"]
     
     # 欢迎语
     if "欢迎语" in msg:
@@ -1263,25 +1108,6 @@ def _handle_modify_text(msg: str, config: dict, bot, m, save_config_fn, mory_bot
             save_config_fn()
             mory_bot.reply_and_track(m, f"✅ 碎片暗号已设为「{word}」")
             logger.info(f"修改暗号: {word}")
-            return True
-    
-    # 早安/晚安模板
-    if "早安模板" in msg:
-        match = re.search(r'[""\']([^"\']+)[""\']', msg)
-        if match:
-            text = match.group(1).strip()
-            config["GREETING_TEMPLATE"] = text
-            save_config_fn()
-            mory_bot.reply_and_track(m, f"✅ 早安模板已更新")
-            return True
-    
-    if "晚安模板" in msg:
-        match = re.search(r'[""\']([^"\']+)[""\']', msg)
-        if match:
-            text = match.group(1).strip()
-            config["GOODNIGHT_TEMPLATE"] = text
-            save_config_fn()
-            mory_bot.reply_and_track(m, f"✅ 晚安模板已更新")
             return True
     
     return False
@@ -1636,8 +1462,6 @@ def _handle_task_control(msg: str, config: dict, bot, m, save_config_fn, mory_bo
         "签到": "SIGNUP_ENABLED",
         "碎片寻宝": "PUZZLE_ENABLED",
         "寻宝": "PUZZLE_ENABLED",
-        "挽回": "RECOVER_ENABLED",
-        "阅后即焚": "BURN_AFTER",
     }
     is_enable = any(msg.startswith(k) for k in ["开启", "打开", "启用"])
     is_disable = any(msg.startswith(k) for k in ["关闭", "禁用", "停用"])

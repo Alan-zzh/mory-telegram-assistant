@@ -48,4 +48,4 @@ python scripts/manage_project_audit_timers.py --action uninstall --apply --audit
 - `task_execution_history` 只覆盖事务任务，`scheduler_metrics` 是持久历史；当前进程 registry 未被观察时必须在 coverage 中明说。
 - journal 无法读取或启动时间缺失是 `evidence_gap`，不能用“无匹配输出”冒充无错误。
 - 配置的业务回执只是 DB 中已完成任务的只读 receipt，不执行真实账号动作；受影响功能需要更强的真实业务探针时，Automation 只报告缺口，由人授权 Agent 执行。
-- 生产配置键审计允许仍被运行代码使用的兼容键继续可见；命中 `core.config_compat.REMOVED_CONFIG_FIELDS` 的已确认废弃键必须判 `failed`，不能因必需键齐全就假绿。审计只输出键名，不读取或回显值。
+- 生产配置键审计允许仍被运行代码使用的兼容键继续可见；命中 `REMOVED_CONFIG_FIELDS` 的已确认废弃键，或把 `NESTED_CONFIG_PSEUDO_FIELDS` 别名写成顶层键，都必须判 `failed`。审计只输出键名，不读取或回显值。

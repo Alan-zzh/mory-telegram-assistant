@@ -1061,7 +1061,6 @@ def api_settings_bot_core():
         cfg = read_config()
         return jsonify({"ok": True, "data": {
             "bot_name": cfg.get("BOT_NAME", "Mory小助理"),
-            "max_requests_per_user": cfg.get("MAX_REQUESTS_PER_USER", 20),
             "enable_message_deletion": cfg.get("ENABLE_MESSAGE_DELETION", False),
         }})
     _adm = _check_admin()
@@ -1070,7 +1069,6 @@ def api_settings_bot_core():
     data = request.get_json() or {}
     cfg = read_config()
     cfg["BOT_NAME"] = data.get("bot_name", cfg.get("BOT_NAME", "Mory小助理"))
-    cfg["MAX_REQUESTS_PER_USER"] = clamp_int(data.get("max_requests_per_user", cfg.get("MAX_REQUESTS_PER_USER", 20)), 0, 100000)
     cfg["ENABLE_MESSAGE_DELETION"] = bool(data.get("enable_message_deletion", cfg.get("ENABLE_MESSAGE_DELETION", False)))
     if write_config(cfg):
         return jsonify({"ok": True, "msg": "Bot核心配置已保存"})

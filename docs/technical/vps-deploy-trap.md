@@ -86,7 +86,7 @@ Mory 小助理部署到腾讯云硅谷 VPS（43.159.168.175, ubuntu@22.04）。�
   vps = set(json.load(open('/home/ubuntu/mory_assistant/config.json')).keys())
   print('example 有但 vps 无:', example - vps)  # 部署后应为空
   ```
-- **修复**：`core/deploy_utils.py` 的 `safe_upload_config()` 已实现 `_patch_missing_keys()`，从 `config.json.example` 自动合并缺失键，并精确移除已确认废弃键。**必须用 `safe_upload_config()` 上传**，禁止 `sftp.put('config.json', ...)` 直接覆盖（会破坏线上运行配置和受保护标识；凭据只存 `.env`）。
+- **修复**：`core/deploy_utils.py` 的 `safe_upload_config()` 已实现 `_patch_missing_keys()`，从 `config.json.example` 自动合并缺失键，并精确移除已确认废弃键和误写的嵌套路由别名。**必须用 `safe_upload_config()` 上传**，禁止 `sftp.put('config.json', ...)` 直接覆盖（会破坏线上运行配置和受保护标识；凭据只存 `.env`）。
 
 #### 陷阱 4：mory.db 被覆盖（数据丢失！）
 

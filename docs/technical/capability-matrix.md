@@ -40,6 +40,7 @@
 ## 4. 配置与部署
 
 - 配置模板：`config.json.example`；生产 `config.json` 含运行态字段但不得持久化凭据，禁止直接覆盖。
+- 只有被运行链读取的字段才可出现在 Dashboard/自然语言配置入口；传统文化播报别名仅路由到 `MYSTIC_BROADCAST_CONFIG`，不得写成顶层键。
 - 新功能默认关闭；动态开关必须覆盖 `false → true → false` 的真实 job 集测试。
 - 部署：`deploy_vps.py`；双 systemd 服务，unit 必须 `root:root 0644`。
 - 凭据：唯一存 `.env`；`.env`、`config.json` 生产权限均为 `0600`，root cron 只执行 root-owned watchdog 副本。

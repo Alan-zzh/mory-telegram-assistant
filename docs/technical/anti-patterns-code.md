@@ -98,6 +98,7 @@ except AttributeError:
   2. `core/settings.py` 或加载逻辑（默认值）
   3. Dashboard 设置面板（如适用）
 - **不能**只改代码不更新 example，否则部署时 VPS 端会缺键
+- 反向同样成立：没有运行消费者的字段不得只因面板或自然语言能写就算“配置”；退役字段和嵌套路由别名必须由统一集合阻断顶层落盘。
 
 ### 铁律 2.2：代码读取配置用 `.get(key, default)`
 

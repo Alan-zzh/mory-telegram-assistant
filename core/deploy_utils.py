@@ -13,7 +13,7 @@ import json, logging, os, posixpath, re, shlex, tempfile, time, uuid
 from datetime import datetime
 from pathlib import Path
 
-from core.config_compat import REMOVED_CONFIG_FIELDS
+from core.config_compat import INVALID_TOP_LEVEL_CONFIG_FIELDS
 
 logger = logging.getLogger("deploy_utils")
 
@@ -260,7 +260,7 @@ def safe_merge_config(local_cfg: dict, vps_cfg: dict) -> dict:
             if field in local_cfg:
                 merged[field] = local_cfg[field]
 
-    for field in REMOVED_CONFIG_FIELDS:
+    for field in INVALID_TOP_LEVEL_CONFIG_FIELDS:
         merged.pop(field, None)
 
     return merged

@@ -48,27 +48,33 @@ def test_dashboard_hides_keyword_rules_from_non_admin(monkeypatch):
 
 
 def test_dashboard_cannot_expose_or_restore_retired_config_fields(monkeypatch):
-    from core.config_compat import REMOVED_CONFIG_FIELDS
+    from core.config_compat import INVALID_TOP_LEVEL_CONFIG_FIELDS
 
     monkeypatch.setattr(
         config_api,
         "read_config",
         lambda: {
             "BOT_NAME": "Mory",
-            **{key: {"legacy": True} for key in REMOVED_CONFIG_FIELDS},
+            **{key: {"legacy": True} for key in INVALID_TOP_LEVEL_CONFIG_FIELDS},
         },
     )
-    assert config_api.ALLOWED_CONFIG_FIELDS.isdisjoint(REMOVED_CONFIG_FIELDS)
+    assert config_api.ALLOWED_CONFIG_FIELDS.isdisjoint(INVALID_TOP_LEVEL_CONFIG_FIELDS)
 
     client = _dashboard_client("admin")
     visible = client.get("/api/config").get_json()["data"]["config"]
-    assert set(visible).isdisjoint(REMOVED_CONFIG_FIELDS)
+    assert set(visible).isdisjoint(INVALID_TOP_LEVEL_CONFIG_FIELDS)
 
     response = client.post(
         "/api/config/update",
         json={"key": "API_KEYS", "value": {"legacy": "secret"}},
     )
     assert response.status_code == 403
+
+    pseudo_response = client.post(
+        "/api/config/update",
+        json={"key": "MYSTIC_BROADCAST_ENABLED", "value": True},
+    )
+    assert pseudo_response.status_code == 403
 
 
 def test_dashboard_admin_save_normalizes_multi_rule_config(monkeypatch):

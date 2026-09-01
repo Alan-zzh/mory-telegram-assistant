@@ -150,17 +150,18 @@ def _aggregate(checks: list[dict[str, Any]]) -> str:
 
 def _classify_config_key_drift(local_keys: list[str], remote_keys: list[str]):
     """区分兼容运行键与已确认废弃键，避免把幽灵配置继续报成 pass。"""
-    from core.config_compat import REMOVED_CONFIG_FIELDS
+    from core.config_compat import NESTED_CONFIG_PSEUDO_FIELDS, REMOVED_CONFIG_FIELDS
 
     missing = sorted(set(local_keys) - set(remote_keys))
     extra = sorted(set(remote_keys) - set(local_keys))
     removed_present = sorted(set(remote_keys) & set(REMOVED_CONFIG_FIELDS))
+    pseudo_present = sorted(set(remote_keys) & set(NESTED_CONFIG_PSEUDO_FIELDS))
     if missing:
         status = STATUS_FAILED
         summary = "production config is missing declared keys"
-    elif removed_present:
+    elif removed_present or pseudo_present:
         status = STATUS_FAILED
-        summary = "production config contains confirmed removed keys"
+        summary = "production config contains invalid top-level keys"
     else:
         status = STATUS_PASS
         summary = "production config key contract matches"
@@ -168,6 +169,7 @@ def _classify_config_key_drift(local_keys: list[str], remote_keys: list[str]):
         "missing_keys": missing,
         "extra_keys": extra,
         "confirmed_removed_keys_present": removed_present,
+        "nested_pseudo_keys_present": pseudo_present,
     }
 
 

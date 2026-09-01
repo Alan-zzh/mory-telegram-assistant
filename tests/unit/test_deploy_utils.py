@@ -261,19 +261,19 @@ def test_safe_merge_config_updates_non_protected_fields_from_local():
     assert merged["MYSTIC_BROADCAST_CONFIG"]["morning_time"] == "09:05"
 
 
-def test_safe_merge_config_removes_confirmed_dead_config_fields():
-    from core.config_compat import REMOVED_CONFIG_FIELDS
+def test_safe_merge_config_removes_invalid_top_level_config_fields():
+    from core.config_compat import INVALID_TOP_LEVEL_CONFIG_FIELDS
     from core.deploy_utils import safe_merge_config
 
-    removed = {key: {"legacy": True} for key in REMOVED_CONFIG_FIELDS}
+    removed = {key: {"legacy": True} for key in INVALID_TOP_LEVEL_CONFIG_FIELDS}
     merged = safe_merge_config(removed, removed)
 
-    assert set(merged).isdisjoint(REMOVED_CONFIG_FIELDS)
+    assert set(merged).isdisjoint(INVALID_TOP_LEVEL_CONFIG_FIELDS)
 
 
 def test_safe_upload_config_uses_private_backup_and_atomic_replace():
     """部署配置必须先私有备份，再通过同文件系统原子替换落盘。"""
-    from core.config_compat import REMOVED_CONFIG_FIELDS
+    from core.config_compat import INVALID_TOP_LEVEL_CONFIG_FIELDS
     from core.deploy_utils import safe_upload_config
 
     class MemorySFTP:
@@ -318,15 +318,15 @@ def test_safe_upload_config_uses_private_backup_and_atomic_replace():
     sftp.files["/remote/config.json"] = json.dumps({
         "TOKEN": "remote",
         "FEATURE": False,
-        **{key: {"legacy": True} for key in REMOVED_CONFIG_FIELDS},
+        **{key: {"legacy": True} for key in INVALID_TOP_LEVEL_CONFIG_FIELDS},
     })
     merged = safe_upload_config(sftp, {"TOKEN": "local", "FEATURE": True}, "/remote")
 
     assert merged["TOKEN"] == "remote"
     assert merged["FEATURE"] is True
-    assert set(merged).isdisjoint(REMOVED_CONFIG_FIELDS)
+    assert set(merged).isdisjoint(INVALID_TOP_LEVEL_CONFIG_FIELDS)
     uploaded = json.loads(sftp.files["/remote/config.json"])
-    assert set(uploaded).isdisjoint(REMOVED_CONFIG_FIELDS)
+    assert set(uploaded).isdisjoint(INVALID_TOP_LEVEL_CONFIG_FIELDS)
     assert "/remote/config.json" not in sftp.put_paths
     assert len(sftp.rename_calls) == 1
     source, target = sftp.rename_calls[0]

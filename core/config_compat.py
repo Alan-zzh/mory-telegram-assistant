@@ -22,7 +22,36 @@ REMOVED_CONFIG_FIELDS = frozenset({
     "COST_STRATEGY",
     # 旧版复数凭据容器；当前凭据只允许由 .env 注入明确的单一运行时键。
     "API_KEYS",
+    # 旧面板/自然语言入口曾允许写入，但业务运行链从不读取；保留只会制造假生效。
+    "ANTI_REVOKE",
+    "BURN_AFTER",
+    "RECOVER_ENABLED",
+    "REPLY_DELAY_MIN",
+    "REPLY_DELAY_MAX",
+    "MAX_MSG_LENGTH",
+    "BAN_DURATION_DEFAULT",
+    "MAX_REQUESTS_PER_USER",
+    "AUTO_REPLY_TRIGGERS",
+    "BACKUP_INTERVAL",
+    "GOODNIGHT_TEMPLATE",
+    "GREETING_TEMPLATE",
+    "MAX_LOG_SIZE",
+    "MAX_STICKERS_PER_DAY",
+    "POINTS_PER_SIGNUP",
+    "SIGNUP_RESET_HOUR",
+    "RATE_LIMIT_WINDOW",
 })
+
+# 这些名称只用于把自然语言指令路由到 MYSTIC_BROADCAST_CONFIG 的嵌套字段，
+# 绝不是合法顶层配置。Dashboard/部署/落盘必须拒绝或清掉顶层副本。
+NESTED_CONFIG_PSEUDO_FIELDS = frozenset({
+    "MYSTIC_BROADCAST_ENABLED",
+    "MYSTIC_HOUR_MORNING",
+    "MYSTIC_HOUR_AFTERNOON",
+    "MYSTIC_HOUR_EVENING",
+})
+
+INVALID_TOP_LEVEL_CONFIG_FIELDS = REMOVED_CONFIG_FIELDS | NESTED_CONFIG_PSEUDO_FIELDS
 _SECRET_KEY_SUFFIXES = (
     "_token",
     "_api_key",
@@ -244,7 +273,7 @@ def compact_runtime_config(cfg: dict | None) -> dict:
     cfg = normalize_runtime_config(copy.deepcopy(cfg or {}))
     cfg = _blank_sensitive_values(cfg)
 
-    for key in REMOVED_CONFIG_FIELDS:
+    for key in INVALID_TOP_LEVEL_CONFIG_FIELDS:
         cfg.pop(key, None)
 
     for section_key, alias_keys in {

@@ -326,7 +326,7 @@ def test_rich_mystic_send_and_single_markup_are_tracked(monkeypatch):
 
 
 def test_natural_admin_toggle_and_time_update_mystic_config():
-    from modules.natural_cmd import _handle_modify_number, _handle_toggle
+    from modules.natural_cmd import _get_config_display_value, _handle_modify_number, _handle_toggle
 
     replies = []
     saved = []
@@ -338,6 +338,8 @@ def test_natural_admin_toggle_and_time_update_mystic_config():
         "MYSTIC_BROADCAST_CONFIG": {
             "enabled": False,
             "morning_time": "09:05",
+            "afternoon_time": "13:05",
+            "evening_time": "20:35",
         },
     }
 
@@ -350,6 +352,7 @@ def test_natural_admin_toggle_and_time_update_mystic_config():
         mory_bot=mory_bot,
     )
     assert cfg["MYSTIC_BROADCAST_CONFIG"]["enabled"] is True
+    assert "MYSTIC_BROADCAST_ENABLED" not in cfg
 
     assert _handle_modify_number(
         "把早间黄历时间改成8点",
@@ -360,4 +363,26 @@ def test_natural_admin_toggle_and_time_update_mystic_config():
         mory_bot=mory_bot,
     )
     assert cfg["MYSTIC_BROADCAST_CONFIG"]["morning_time"] == "08:05"
-    assert len(saved) == 2
+    assert _get_config_display_value(cfg, "MYSTIC_BROADCAST_ENABLED", False) is True
+    assert _get_config_display_value(cfg, "MYSTIC_HOUR_MORNING", 9) == 8
+
+    assert _handle_modify_number(
+        "把午间三张塔罗时间改成14点", cfg, None, message,
+        lambda: saved.append(True), mory_bot=mory_bot,
+    )
+    assert _handle_modify_number(
+        "把晚间易经时间改成21点", cfg, None, message,
+        lambda: saved.append(True), mory_bot=mory_bot,
+    )
+    assert cfg["MYSTIC_BROADCAST_CONFIG"]["afternoon_time"] == "14:05"
+    assert cfg["MYSTIC_BROADCAST_CONFIG"]["evening_time"] == "21:35"
+    assert _get_config_display_value(cfg, "MYSTIC_HOUR_AFTERNOON", 13) == 14
+    assert _get_config_display_value(cfg, "MYSTIC_HOUR_EVENING", 20) == 21
+    assert {key for key in cfg if key.startswith("MYSTIC_HOUR_")} == set()
+
+    assert not _handle_toggle(
+        "开启防撤回", cfg, None, message, lambda: saved.append(True), mory_bot=mory_bot
+    )
+    assert "ANTI_REVOKE" not in cfg
+    assert "ANTI_DELETE_CONFIG" not in cfg
+    assert len(saved) == 4

@@ -9,7 +9,7 @@ from dashboard.helpers import (
     _DashboardFakeMessage, _DashboardReplyProxy
 )
 from core.config_compat import (
-    REMOVED_CONFIG_FIELDS,
+    INVALID_TOP_LEVEL_CONFIG_FIELDS,
     is_sensitive_config_key,
     redact_sensitive_config,
 )
@@ -138,7 +138,7 @@ ALLOWED_CONFIG_FIELDS = {
 
 # 补充 natural_cmd 中 ALL_CONFIGS 的所有键
 ALLOWED_CONFIG_FIELDS.update(ALL_CONFIGS.keys())
-ALLOWED_CONFIG_FIELDS.difference_update(REMOVED_CONFIG_FIELDS)
+ALLOWED_CONFIG_FIELDS.difference_update(INVALID_TOP_LEVEL_CONFIG_FIELDS)
 
 
 @config_bp.route("/config")
@@ -172,7 +172,7 @@ def api_config():
     safe_cfg = {
         k: redact_sensitive_config(v)
         for k, v in cfg.items()
-        if k not in REMOVED_CONFIG_FIELDS and (
+        if k not in INVALID_TOP_LEVEL_CONFIG_FIELDS and (
             (k == "KEYWORD_AUTO_DELETE_CONFIG" and role == "admin")
             or not is_sensitive_config_key(k)
         )
@@ -291,7 +291,7 @@ def api_config_natural():
     safe_cfg = {
         key: redact_sensitive_config(value)
         for key, value in cfg.items()
-        if key not in REMOVED_CONFIG_FIELDS and not is_sensitive_config_key(key)
+        if key not in INVALID_TOP_LEVEL_CONFIG_FIELDS and not is_sensitive_config_key(key)
     }
     return jsonify({
         "ok": True,

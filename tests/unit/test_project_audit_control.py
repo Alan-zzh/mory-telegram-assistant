@@ -35,8 +35,9 @@ def test_config_key_drift_fails_when_confirmed_removed_keys_reappear():
     )
 
     assert status == "failed"
-    assert "confirmed removed" in summary
+    assert "invalid top-level" in summary
     assert evidence["confirmed_removed_keys_present"] == ["API_KEYS"]
+    assert evidence["nested_pseudo_keys_present"] == []
     assert "AD_KEYWORDS" in evidence["extra_keys"]
 
 
@@ -63,6 +64,19 @@ def test_config_key_drift_allows_visible_runtime_compatibility_keys():
 
     assert status == "pass"
     assert evidence["confirmed_removed_keys_present"] == []
+
+
+def test_config_key_drift_fails_when_nested_alias_is_written_top_level():
+    from scripts import project_audit_control as control
+
+    status, summary, evidence = control._classify_config_key_drift(
+        ["MYSTIC_BROADCAST_CONFIG"],
+        ["MYSTIC_BROADCAST_CONFIG", "MYSTIC_BROADCAST_ENABLED"],
+    )
+
+    assert status == "failed"
+    assert "invalid top-level" in summary
+    assert evidence["nested_pseudo_keys_present"] == ["MYSTIC_BROADCAST_ENABLED"]
 
 
 def test_l1_missing_evidence_maps_to_gap_without_hiding_real_resource_alerts():
