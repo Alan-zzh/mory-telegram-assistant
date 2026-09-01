@@ -1,0 +1,18 @@
+{
+  "title": "Mory v5.42.22 配置真相闭环",
+  "summary": "清除17个无消费者假设置，4个播报别名只走真实嵌套配置；生产32个无效顶层键零残留，三个保留项目正常。",
+  "status": "verified",
+  "mermaid": "flowchart LR; A[Dashboard/自然语言] --> B[真实配置入口]; B --> C[运行时消费者]; D[退役字段] --> E[拒绝写入]; F[MYSTIC别名] --> G[MYSTIC_BROADCAST_CONFIG]; E --> H[保存/部署/巡检门禁]; G --> H; H --> I[生产 v5.42.22]",
+  "details": [
+    {"heading": "清理", "body": "17个无消费者字段从自然语言、Dashboard和API入口移除；防撤回假成功被独立复审拦截。"},
+    {"heading": "防复活", "body": "保存、部署、Dashboard白名单、配置同步和生产巡检共同拦截28个退役键与4个伪顶层键。"},
+    {"heading": "生产", "body": "10个受影响文件哈希一致，双服务、数据库、三个保留项目与停用边界均通过独立读回。"}
+  ],
+  "evidence": [
+    "1466 unit tests passed; 86 focused tests passed",
+    "production-truth 17/17; drift 7/7",
+    "runtime/audit-reports/2026-09-01-v5.42.22-config-truth-closure.json"
+  ],
+  "risks": ["自然Telegram事件与12:00 burn_orphan自然执行仍按持续Goal观察，不以隔离探针冒充。"],
+  "next": ["12:00后只读核对burn_orphan自然执行与持久记录。", "等待首个自然Telegram事件回执。"]
+}

@@ -1,0 +1,36 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production:/home/ubuntu/mory_assistant",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "87676ca5a0dc",
+  "deployment_performed": true,
+  "artifact_hash": "sha256:12e99652eae869ad887170fd4debf9e736f9c0cede52313bd7cf3c602ef99006",
+  "technical_checks": [
+    {"name": "production-truth", "passed": true, "detail": "17 pass, 0 gap, 0 failed"},
+    {"name": "drift", "passed": true, "detail": "7 pass, 0 gap, 0 failed"},
+    {"name": "affected-file-hashes", "passed": true, "detail": "10 of 10 local and remote SHA-256 matches"},
+    {"name": "config-contract", "passed": true, "detail": "28 removed plus 4 nested pseudo top-level fields absent"},
+    {"name": "database", "passed": true, "detail": "integrity and foreign-key gate passed"}
+  ],
+  "business_probes": [
+    {"name": "configured-broadcast-receipts", "passed": true, "detail": "mystic morning, afternoon, evening receipts observed"},
+    {"name": "retained-project-endpoints", "passed": true, "detail": "Mory 200, MoryFansBot 302, MediaOps 200 and 200"}
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "detail": "six TokenLab/TokenPass units remain inactive and masked; Docker and containerd remain inactive and disabled; no nonretained process observed"
+  },
+  "backup": {
+    "verified": true,
+    "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1788224058.tar.gz",
+    "sha256": "59ddbf2fc79db5dd05bc69d8d394f1de8ef7ed0c338f745f6254e2e70c9f89c1",
+    "config_path": "/home/ubuntu/mory_assistant/backups/config_20260901_085456_fc5243309bda4a2498f0994ddddbbdef.json",
+    "database_path": "/home/ubuntu/mory_assistant/backups/mory_pre_migration_1788224101_dae142e239ceaa63.db",
+    "rollback_command": "cd /home/ubuntu/mory_assistant && tar -xzf backups/code_deploy_1788224058.tar.gz -C /home/ubuntu/mory_assistant && cp backups/config_20260901_085456_fc5243309bda4a2498f0994ddddbbdef.json config.json && chmod 0600 config.json && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "result": "verified"
+}
