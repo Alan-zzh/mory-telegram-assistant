@@ -8,6 +8,21 @@ import os
 # 启动时由 bot_initializer 以 TG_TOKEN / DASHSCOPE_KEY 环境变量覆盖注入，
 # 因此落盘前剥离不影响运行，仅防止"运行时保存把环境变量里的密钥写回文件"。
 SECRET_CONFIG_KEYS = ("TOKEN", "API_KEY")
+REMOVED_CONFIG_FIELDS = frozenset({
+    # 已确认没有运行入口；部署与运行时保存都必须移除，避免幽灵配置复活。
+    "STATS_REPORT_CONFIG",
+    "NEWS_BROADCAST_CONFIG",
+    "AUTO_NEWS",
+    "NEWS_HOUR_MORNING",
+    "NEWS_HOUR_AFTERNOON",
+    "NEWS_HOUR_EVENING",
+    "CONVERSION_HOOKS",
+    "FLIRT_TEMPLATES",
+    "SHOP_ITEMS",
+    "COST_STRATEGY",
+    # 旧版复数凭据容器；当前凭据只允许由 .env 注入明确的单一运行时键。
+    "API_KEYS",
+})
 _SECRET_KEY_SUFFIXES = (
     "_token",
     "_api_key",
@@ -18,6 +33,9 @@ _SECRET_KEY_SUFFIXES = (
     "_credential",
     "_credentials",
     "_private_key",
+    "_api_keys",
+    "_secrets",
+    "_passwords",
 )
 _SECRET_KEY_NAMES = {
     "token",
@@ -29,6 +47,11 @@ _SECRET_KEY_NAMES = {
     "credential",
     "credentials",
     "private_key",
+    "tokens",
+    "api_keys",
+    "apikeys",
+    "secrets",
+    "passwords",
 }
 _ENV_SECRET_OVERRIDES = {
     ("TOKEN",): "TG_TOKEN",
@@ -220,6 +243,9 @@ def compact_runtime_config(cfg: dict | None) -> dict:
     """
     cfg = normalize_runtime_config(copy.deepcopy(cfg or {}))
     cfg = _blank_sensitive_values(cfg)
+
+    for key in REMOVED_CONFIG_FIELDS:
+        cfg.pop(key, None)
 
     for section_key, alias_keys in {
         "REPORT_CONFIG": ["enable"],

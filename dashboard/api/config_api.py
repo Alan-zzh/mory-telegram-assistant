@@ -8,7 +8,11 @@ from dashboard.helpers import (
     login_required, admin_required, get_current_role, read_config, write_config,
     _DashboardFakeMessage, _DashboardReplyProxy
 )
-from core.config_compat import is_sensitive_config_key, redact_sensitive_config
+from core.config_compat import (
+    REMOVED_CONFIG_FIELDS,
+    is_sensitive_config_key,
+    redact_sensitive_config,
+)
 from modules.natural_cmd import handle_natural_admin, ALL_CONFIGS
 
 logger = logging.getLogger(__name__)
@@ -70,7 +74,7 @@ ALLOWED_CONFIG_FIELDS = {
     "EMOTION_BUCKETS", "EMOTION_TRIGGERS", "EMOTION_TEMP_MAP", "ANTI_TEMPLATES",
     # 业务配置
     "SPAM_LIMIT", "IMAGE_POOL", "LOG_LEVEL", "BOT_NAME",
-    "REPLY_CHANCE", "COST_STRATEGY", "BANNED_WORDS", "HATE_KEYWORDS",
+    "REPLY_CHANCE", "BANNED_WORDS", "HATE_KEYWORDS",
     "IGNORE_BOTS", "KNOWLEDGE", "PHOTO_KEYWORDS", "PRICE_LIST",
     "INPUT_HINTS",  # 私聊输入框占位提示（v5.38.28）
     "SPECIAL_AUTO_REPLIES", "PUZZLE_WORD", "SLANG_DICT", "AD_RULES",
@@ -134,6 +138,7 @@ ALLOWED_CONFIG_FIELDS = {
 
 # 补充 natural_cmd 中 ALL_CONFIGS 的所有键
 ALLOWED_CONFIG_FIELDS.update(ALL_CONFIGS.keys())
+ALLOWED_CONFIG_FIELDS.difference_update(REMOVED_CONFIG_FIELDS)
 
 
 @config_bp.route("/config")
@@ -167,9 +172,10 @@ def api_config():
     safe_cfg = {
         k: redact_sensitive_config(v)
         for k, v in cfg.items()
-        if (
-            k == "KEYWORD_AUTO_DELETE_CONFIG" and role == "admin"
-        ) or not is_sensitive_config_key(k)
+        if k not in REMOVED_CONFIG_FIELDS and (
+            (k == "KEYWORD_AUTO_DELETE_CONFIG" and role == "admin")
+            or not is_sensitive_config_key(k)
+        )
     }
     if role != "admin":
         safe_cfg.pop("KEYWORD_AUTO_DELETE_CONFIG", None)
@@ -285,7 +291,7 @@ def api_config_natural():
     safe_cfg = {
         key: redact_sensitive_config(value)
         for key, value in cfg.items()
-        if not is_sensitive_config_key(key)
+        if key not in REMOVED_CONFIG_FIELDS and not is_sensitive_config_key(key)
     }
     return jsonify({
         "ok": True,

@@ -39,10 +39,10 @@
 
 ## 4. 配置与部署
 
-- 配置模板：`config.json.example`；生产 `config.json` 含运行态与敏感字段，禁止直接覆盖。
+- 配置模板：`config.json.example`；生产 `config.json` 含运行态字段但不得持久化凭据，禁止直接覆盖。
 - 新功能默认关闭；动态开关必须覆盖 `false → true → false` 的真实 job 集测试。
 - 部署：`deploy_vps.py`；双 systemd 服务，unit 必须 `root:root 0644`。
-- 凭据：`.env` 和 `config.json` 生产权限 `0600`；root cron 只执行 root-owned watchdog 副本。
+- 凭据：唯一存 `.env`；`.env`、`config.json` 生产权限均为 `0600`，root cron 只执行 root-owned watchdog 副本。
 - 生产验收：双服务/PID、health liveness、VPS 版本或受影响文件 hash、启动窗口日志和真实业务探针；调度变更另附当前执行与事务四态，详见 `runbook-ship-gate.md`。
 
 ## 5. 代码入口索引

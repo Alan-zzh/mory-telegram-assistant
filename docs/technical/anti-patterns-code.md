@@ -118,7 +118,7 @@ except AttributeError:
 ### 铁律 2.5：config.json 部署用 `safe_upload_config`
 
 - **必须**用 `core/deploy_utils.py` 的 `safe_upload_config()` 上传
-- 禁止直接 `sftp.put('config.json', ...)` —— 覆盖会把 VPS 端的 token 清空
+- 禁止直接 `sftp.put('config.json', ...)` —— 覆盖会破坏 VPS 运行配置和受保护标识；凭据只允许存 `.env`
 
 ### 🔍 验证命令（完整版）
 

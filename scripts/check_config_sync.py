@@ -21,6 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from core.config_compat import REMOVED_CONFIG_FIELDS
+
 CONFIG_EXAMPLE = ROOT / "config.json.example"
 CONFIG_API = ROOT / "dashboard" / "api" / "config_api.py"
 NATURAL_CMD = ROOT / "modules" / "natural_cmd.py"
@@ -38,7 +40,6 @@ EXEMPT_KEYS = {
     # ── 白名单历史遗留键：example 未收录，代码实际使用（config.get 默认），保持白名单合法 ──
     "AD_RULES",  # ad_detector 广告自定义规则
     "ANTI_TEMPLATES",  # ai_engine 人设引擎反模板
-    "COST_STRATEGY",  # 成本策略（deploy_utils MERGE_FIELDS）
     "EMOTION_BUCKETS",  # ai_engine 情绪桶
     "EMOTION_TEMP_MAP",  # ai_engine 动态 LLM 参数映射
     "EMOTION_TRIGGERS",  # ai_engine 情绪触发器
@@ -156,6 +157,8 @@ def is_sensitive(key: str) -> bool:
 def main() -> int:
     example_keys = load_example_keys()
     whitelist, all_configs_keys, source = load_whitelist()
+    removed_in_example = sorted(example_keys & set(REMOVED_CONFIG_FIELDS))
+    removed_in_whitelist = sorted(whitelist & set(REMOVED_CONFIG_FIELDS))
 
     # 豁免集合：敏感键 + 下划线开头元键 + 显式 EXEMPT_KEYS（仅统计 example 侧）
     exempt_total = {k for k in example_keys if k.startswith("_")}
@@ -190,6 +193,18 @@ def main() -> int:
     else:
         print("【断言 b 通过】白名单中无 example 不存在的幽灵键。")
 
+    if removed_in_example or removed_in_whitelist:
+        print("【断言 c 失败】已确认退役字段不得出现在 example 或 Dashboard 白名单：")
+        for key in sorted(set(removed_in_example + removed_in_whitelist)):
+            surfaces = []
+            if key in removed_in_example:
+                surfaces.append("example")
+            if key in removed_in_whitelist:
+                surfaces.append("whitelist")
+            print(f"  - {key}: {', '.join(surfaces)}")
+    else:
+        print("【断言 c 通过】example 与 Dashboard 白名单均未包含已确认退役字段。")
+
     if exempt_total:
         print(f"\n当前 example 侧豁免键（{len(exempt_total)} 个，保持只读）：")
         for k in sorted(exempt_total):
@@ -200,8 +215,12 @@ def main() -> int:
         for k in wl_extra:
             print(f"  - {k}")
 
-    if missing or ghost:
-        print(f"\n配置三处同步存在 {len(missing) + len(ghost)} 处差集，请按规则补齐白名单或加入 EXEMPT_KEYS。")
+    if missing or ghost or removed_in_example or removed_in_whitelist:
+        issue_count = (
+            len(missing) + len(ghost)
+            + len(removed_in_example) + len(removed_in_whitelist)
+        )
+        print(f"\n配置三处同步存在 {issue_count} 处问题，请按规则修正配置契约。")
         return 1
     print("\n配置三处同步一致。")
     return 0

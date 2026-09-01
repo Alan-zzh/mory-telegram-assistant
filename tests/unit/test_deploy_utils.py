@@ -262,15 +262,18 @@ def test_safe_merge_config_updates_non_protected_fields_from_local():
 
 
 def test_safe_merge_config_removes_confirmed_dead_config_fields():
+    from core.config_compat import REMOVED_CONFIG_FIELDS
     from core.deploy_utils import safe_merge_config
 
-    merged = safe_merge_config({}, {"STATS_REPORT_CONFIG": {"enabled": True}})
+    removed = {key: {"legacy": True} for key in REMOVED_CONFIG_FIELDS}
+    merged = safe_merge_config(removed, removed)
 
-    assert "STATS_REPORT_CONFIG" not in merged
+    assert set(merged).isdisjoint(REMOVED_CONFIG_FIELDS)
 
 
 def test_safe_upload_config_uses_private_backup_and_atomic_replace():
     """部署配置必须先私有备份，再通过同文件系统原子替换落盘。"""
+    from core.config_compat import REMOVED_CONFIG_FIELDS
     from core.deploy_utils import safe_upload_config
 
     class MemorySFTP:
@@ -312,10 +315,18 @@ def test_safe_upload_config_uses_private_backup_and_atomic_replace():
             self.files.pop(path, None)
 
     sftp = MemorySFTP()
+    sftp.files["/remote/config.json"] = json.dumps({
+        "TOKEN": "remote",
+        "FEATURE": False,
+        **{key: {"legacy": True} for key in REMOVED_CONFIG_FIELDS},
+    })
     merged = safe_upload_config(sftp, {"TOKEN": "local", "FEATURE": True}, "/remote")
 
     assert merged["TOKEN"] == "remote"
     assert merged["FEATURE"] is True
+    assert set(merged).isdisjoint(REMOVED_CONFIG_FIELDS)
+    uploaded = json.loads(sftp.files["/remote/config.json"])
+    assert set(uploaded).isdisjoint(REMOVED_CONFIG_FIELDS)
     assert "/remote/config.json" not in sftp.put_paths
     assert len(sftp.rename_calls) == 1
     source, target = sftp.rename_calls[0]

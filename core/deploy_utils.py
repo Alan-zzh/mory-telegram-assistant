@@ -13,6 +13,8 @@ import json, logging, os, posixpath, re, shlex, tempfile, time, uuid
 from datetime import datetime
 from pathlib import Path
 
+from core.config_compat import REMOVED_CONFIG_FIELDS
+
 logger = logging.getLogger("deploy_utils")
 
 
@@ -188,7 +190,7 @@ def scheduler_registry_receipt_from_logs(log_text: str) -> tuple[int, str]:
     )
 
 PROTECTED_FIELDS = [
-    "TOKEN", "API_KEY", "API_KEYS", "ADMIN_ID", "GROUP_ID",
+    "TOKEN", "API_KEY", "ADMIN_ID", "GROUP_ID",
     "DASHBOARD_SECRET", "DASHBOARD_PASSWORD",
     "CHANNEL_IDS", "BASE_URL",
 ]
@@ -197,7 +199,7 @@ MERGE_FIELDS = [
     "MODEL_COSTS", "MODEL_POOLS", "MODE_ROUTING",
     "SYSTEM_PROMPT", "BASE_PERSONA", "PROMPT_TEMPLATES",
     "SPAM_LIMIT", "IMAGE_POOL", "LOG_LEVEL",
-    "BOT_NAME", "REPLY_CHANCE", "COST_STRATEGY",
+    "BOT_NAME", "REPLY_CHANCE",
     "BANNED_WORDS", "HATE_KEYWORDS", "IGNORE_BOTS",
     "KNOWLEDGE", "PHOTO_KEYWORDS", "PRICE_LIST",
     "SPECIAL_AUTO_REPLIES",
@@ -234,17 +236,6 @@ LOCAL_AUTHORITATIVE_DEPLOY_FIELDS = {
     "AB_TEST_GROUP_A_MODEL",
     "AB_TEST_GROUP_B_MODEL",
 }
-
-# 已确认没有运行入口的废弃配置；安全合并时也从生产配置移除，避免幽灵开关。
-REMOVED_CONFIG_FIELDS = {
-    "STATS_REPORT_CONFIG",
-    "NEWS_BROADCAST_CONFIG",
-    "AUTO_NEWS",
-    "NEWS_HOUR_MORNING",
-    "NEWS_HOUR_AFTERNOON",
-    "NEWS_HOUR_EVENING",
-}
-
 
 def safe_merge_config(local_cfg: dict, vps_cfg: dict) -> dict:
     """

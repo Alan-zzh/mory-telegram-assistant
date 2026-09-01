@@ -148,6 +148,29 @@ def _aggregate(checks: list[dict[str, Any]]) -> str:
     return max((item["status"] for item in checks), key=STATUS_RANK.__getitem__)
 
 
+def _classify_config_key_drift(local_keys: list[str], remote_keys: list[str]):
+    """区分兼容运行键与已确认废弃键，避免把幽灵配置继续报成 pass。"""
+    from core.config_compat import REMOVED_CONFIG_FIELDS
+
+    missing = sorted(set(local_keys) - set(remote_keys))
+    extra = sorted(set(remote_keys) - set(local_keys))
+    removed_present = sorted(set(remote_keys) & set(REMOVED_CONFIG_FIELDS))
+    if missing:
+        status = STATUS_FAILED
+        summary = "production config is missing declared keys"
+    elif removed_present:
+        status = STATUS_FAILED
+        summary = "production config contains confirmed removed keys"
+    else:
+        status = STATUS_PASS
+        summary = "production config key contract matches"
+    return status, summary, {
+        "missing_keys": missing,
+        "extra_keys": extra,
+        "confirmed_removed_keys_present": removed_present,
+    }
+
+
 _MONITOR_EVIDENCE_KEYS = {
     "l1_resources": {"cpu_usage", "mem_avail_pct", "disk_usage_pct", "load1", "net_conn", "uptime", "l1_evidence_gaps", "l1_evidence_gap_only", "oom_kills_1h", "oom_cgroup_kills_1h", "oom_global_kills_1h", "oom_source_mory_1h", "oom_source_external_1h", "oom_source_unknown_1h", "oom_victim_mory_1h", "oom_source_labels_1h", "oom_victim_processes_1h", "oom_external_containers_1h", "oom_attribution_complete", "oom_journal_ok", "oom_control_groups_available", "oom_evidence_truncated", "_warn", "_crit", "_exc"},
     "l4_business_metrics": {"transactional_task_1h", "transactional_task_5min", "transactional_task_status_1h", "task_1h", "task_5min", "task_status_1h", "task_history_total", "task_history_latest", "task_history_coverage", "recent_tasks", "token_usage_1h", "token_usage_5min", "token_cost_1h_sum", "conversion_1h", "orphan_1h", "_warn", "_crit", "_exc"},
@@ -508,16 +531,14 @@ PYEOF"""
         else:
             try:
                 remote_keys = json.loads(output)
-                missing = sorted(set(local_keys) - set(remote_keys))
-                extra = sorted(set(remote_keys) - set(local_keys))
-                status = STATUS_FAILED if missing else STATUS_PASS
+                status, summary, evidence = _classify_config_key_drift(local_keys, remote_keys)
                 checks.append(
                     _check(
                         "drift.config_keys",
                         status,
-                        "production config key contract matches" if status == STATUS_PASS else "production config is missing declared keys",
-                        evidence={"missing_keys": missing, "extra_keys": extra},
-                        coverage="key names only; no credential or config values are read into the receipt",
+                        summary,
+                        evidence=evidence,
+                        coverage="key names only; intentional runtime extras remain visible, confirmed removed keys fail",
                     )
                 )
             except json.JSONDecodeError:

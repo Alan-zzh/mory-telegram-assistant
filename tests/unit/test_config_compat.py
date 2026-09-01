@@ -105,6 +105,14 @@ def test_compact_runtime_config_keeps_only_primary_disk_keys():
     assert "enabled" not in compacted["CHECKIN_CONFIG"]
 
 
+def test_compact_runtime_config_removes_every_retired_top_level_field():
+    from core.config_compat import REMOVED_CONFIG_FIELDS, compact_runtime_config
+
+    compacted = compact_runtime_config({key: {"legacy": True} for key in REMOVED_CONFIG_FIELDS})
+
+    assert set(compacted).isdisjoint(REMOVED_CONFIG_FIELDS)
+
+
 def test_save_config_skips_when_disk_file_is_newer(tmp_path):
     import core.bot_initializer as bi
 
@@ -166,6 +174,8 @@ def test_compact_runtime_config_strips_plaintext_secrets():
     cfg = {
         "TOKEN": "123456:ABC-real-secret",
         "API_KEY": "sk-real-llm-key",
+        "API_KEYS": {"legacy": "sk-old-secret"},
+        "CONVERSION_HOOKS": {},
         "NSFW_DETECT_CONFIG": {"enabled": True, "api_key": "nsfw-secret"},
         "SPAM_WATCH_CONFIG": {"spamwatch_token": "spam-secret"},
         "nested": [{"private_key": "private-secret", "max_tokens": 2048}],
@@ -177,6 +187,8 @@ def test_compact_runtime_config_strips_plaintext_secrets():
 
     assert compacted["TOKEN"] == ""
     assert compacted["API_KEY"] == ""
+    assert "API_KEYS" not in compacted
+    assert "CONVERSION_HOOKS" not in compacted
     assert compacted["NSFW_DETECT_CONFIG"]["api_key"] == ""
     assert compacted["SPAM_WATCH_CONFIG"]["spamwatch_token"] == ""
     assert compacted["nested"][0]["private_key"] == ""
@@ -184,6 +196,14 @@ def test_compact_runtime_config_strips_plaintext_secrets():
     # 非敏感键不受影响
     assert compacted["GROUP_ID"] == -100123
     assert compacted["REPORT_CONFIG"]["enabled"] is True
+
+
+def test_plural_secret_container_names_are_sensitive():
+    from core.config_compat import is_sensitive_config_key
+
+    assert is_sensitive_config_key("API_KEYS") is True
+    assert is_sensitive_config_key("provider_api_keys") is True
+    assert is_sensitive_config_key("max_tokens") is False
 
 
 def test_environment_secrets_are_injected_only_into_runtime_shape():

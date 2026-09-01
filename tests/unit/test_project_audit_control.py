@@ -26,6 +26,45 @@ def test_receipt_status_and_exit_codes_do_not_fake_green():
     assert control.EXIT_CODES == {"pass": 0, "evidence_gap": 2, "failed": 3}
 
 
+def test_config_key_drift_fails_when_confirmed_removed_keys_reappear():
+    from scripts import project_audit_control as control
+
+    status, summary, evidence = control._classify_config_key_drift(
+        ["MODEL_POOLS"],
+        ["MODEL_POOLS", "API_KEYS", "AD_KEYWORDS"],
+    )
+
+    assert status == "failed"
+    assert "confirmed removed" in summary
+    assert evidence["confirmed_removed_keys_present"] == ["API_KEYS"]
+    assert "AD_KEYWORDS" in evidence["extra_keys"]
+
+
+def test_config_key_drift_fails_even_if_removed_key_is_declared_locally():
+    from scripts import project_audit_control as control
+
+    status, _summary, evidence = control._classify_config_key_drift(
+        ["MODEL_POOLS", "API_KEYS"],
+        ["MODEL_POOLS", "API_KEYS"],
+    )
+
+    assert status == "failed"
+    assert evidence["extra_keys"] == []
+    assert evidence["confirmed_removed_keys_present"] == ["API_KEYS"]
+
+
+def test_config_key_drift_allows_visible_runtime_compatibility_keys():
+    from scripts import project_audit_control as control
+
+    status, _summary, evidence = control._classify_config_key_drift(
+        ["MODEL_POOLS"],
+        ["MODEL_POOLS", "AD_KEYWORDS"],
+    )
+
+    assert status == "pass"
+    assert evidence["confirmed_removed_keys_present"] == []
+
+
 def test_l1_missing_evidence_maps_to_gap_without_hiding_real_resource_alerts():
     from scripts import project_audit_control as control
 
