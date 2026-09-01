@@ -506,6 +506,10 @@ def test_business_layer_uses_execution_history_instead_of_task_lock(monkeypatch)
         seen_sql.append((db_path, sql))
         if "GROUP BY status" in sql:
             return "success|7\nfailed|2\naborted|1", ""
+        if "COUNT(*) FROM task_execution_history;" in sql:
+            return "209", ""
+        if "ORDER BY id DESC LIMIT 1" in sql:
+            return "mystic_evening|success|1788179700", ""
         if "-5 minutes" in sql and "task_execution_history" in sql:
             return "3", ""
         if "task_execution_history" in sql:
@@ -519,6 +523,11 @@ def test_business_layer_uses_execution_history_instead_of_task_lock(monkeypatch)
     assert status == "OK"
     assert details["task_1h"] == "10"
     assert details["task_5min"] == "3"
+    assert details["transactional_task_1h"] == "10"
+    assert details["transactional_task_5min"] == "3"
+    assert details["task_history_total"] == "209"
+    assert details["task_history_latest"] == "mystic_evening|success|1788179700"
+    assert details["task_history_coverage"] == "TaskTransactionManager_only"
     assert details["task_status_1h"] == {
         "success": 7,
         "failed": 2,
@@ -528,6 +537,26 @@ def test_business_layer_uses_execution_history_instead_of_task_lock(monkeypatch)
     task_sql = "\n".join(sql for db_path, sql in seen_sql if db_path == monitor.MORY_DB)
     assert "task_execution_history" in task_sql
     assert "FROM task_log" not in task_sql
+
+
+def test_business_layer_empty_transaction_window_keeps_explicit_coverage(monkeypatch):
+    """事务窗口和历史均为空不等于调度故障，仍须明示有限覆盖。"""
+    from scripts import puzan_loop_monitor as monitor
+
+    def _sqlite_query(_client, _db_path, sql, timeout=20):
+        if "GROUP BY status" in sql or "ORDER BY id DESC LIMIT" in sql:
+            return "", ""
+        return "0", ""
+
+    monkeypatch.setattr(monitor, "sqlite_query", _sqlite_query)
+
+    status, details = monitor.l4_biz_check(object())
+
+    assert status == "OK"
+    assert details["transactional_task_1h"] == "0"
+    assert details["task_history_total"] == "0"
+    assert details["task_history_latest"] == ""
+    assert details["task_history_coverage"] == "TaskTransactionManager_only"
 
 
 def test_business_layer_counts_current_second_level_conversion_event(monkeypatch):
@@ -593,6 +622,9 @@ def test_scheduler_layer_warns_from_persisted_failures_without_journal(monkeypat
 
     assert status == "WARN"
     assert details["failed_1h"] == 2
+    assert details["transactional_failed_1h"] == 2
+    assert details["transactional_task_status_1h"]["failed"] == 2
+    assert details["task_history_coverage"] == "TaskTransactionManager_only"
     assert details["stale_running_30m"] == 0
     assert "persisted_task_failures=2" in details["_warn"]
     assert details["fail_log_10min"] == "(none)"

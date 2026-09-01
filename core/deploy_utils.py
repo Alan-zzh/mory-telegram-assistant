@@ -630,11 +630,14 @@ bad_metrics = conn.execute(
 cumulative_metrics = conn.execute(
     "SELECT COUNT(*) FROM scheduler_metrics WHERE fail_count > 0 OR miss_count > 0"
 ).fetchone()[0]
+history_total = conn.execute("SELECT COUNT(*) FROM task_execution_history").fetchone()[0]
+history_latest_start = conn.execute("SELECT MAX(start_ts) FROM task_execution_history").fetchone()[0]
 if stale or failed or bad_metrics:
     raise SystemExit(f'SCHEDULER_UNHEALTHY stale_running={{stale}} failed_1h={{failed}} bad_metrics={{bad_metrics}}')
 print(
     'SCHEDULER_TRUTH_OK '
-    f'coverage=transactional_history_1h+current_metrics_1h+cumulative_metrics({{cumulative_metrics}}) '
+    f'coverage=transactional_tasks_only_1h+current_metrics_1h+cumulative_metrics({{cumulative_metrics}}) '
+    f'history_total={{history_total}} history_latest_start={{history_latest_start or "none"}} '
     'registry=current_process_not_observed'
 )
 PYEOF"""),

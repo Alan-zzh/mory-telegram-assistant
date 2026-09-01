@@ -683,7 +683,7 @@ def l3_app_check(client):
 # ============ L4 业务指标层 ============
 def l4_biz_check(client):
     """schema 参考 core/database.py + AI_DEBUG_HISTORY.md Loop 13/6：
-      - task_execution_history: running/success/failed/aborted 四态，任务执行事实真相源
+      - task_execution_history: 仅覆盖 TaskTransactionManager 事务任务的四态历史
       - task_log: 临时 claim/防重锁，不得用于执行量或成功率统计
       - llm_cost_logs（mory.db）: timestamp(REAL/INTEGER, 秒级 Unix 时间)，LLM 调用与成本真相源
       - conversion_events: ts(REAL, 秒级 Unix 时间)
@@ -692,33 +692,51 @@ def l4_biz_check(client):
     details = {}
     status = "OK"
     try:
-        # 任务执行量必须来自 task_execution_history；task_log 只是临时防重锁。
+        # 事务任务执行量来自 task_execution_history；task_log 只是临时防重锁。
         q1h, e1 = sqlite_query(
             client, MORY_DB,
             "SELECT COUNT(*) FROM task_execution_history "
             "WHERE start_ts >= strftime('%s', datetime('now', '-1 hour'));",
         )
-        details["task_1h"] = q1h.strip() if not e1 else f"ERR: {e1}"
+        transactional_1h = q1h.strip() if not e1 else f"ERR: {e1}"
+        details["transactional_task_1h"] = transactional_1h
+        # 兼容旧审计消费者；对外展示使用带 coverage 的新字段。
+        details["task_1h"] = transactional_1h
         q5m, e5 = sqlite_query(
             client, MORY_DB,
             "SELECT COUNT(*) FROM task_execution_history "
             "WHERE start_ts >= strftime('%s', datetime('now', '-5 minutes'));",
         )
-        details["task_5min"] = q5m.strip() if not e5 else f"ERR: {e5}"
+        transactional_5m = q5m.strip() if not e5 else f"ERR: {e5}"
+        details["transactional_task_5min"] = transactional_5m
+        details["task_5min"] = transactional_5m
         status_rows, status_err = sqlite_query(
             client, MORY_DB,
             "SELECT status, COUNT(*) FROM task_execution_history "
             "WHERE start_ts >= strftime('%s', datetime('now', '-1 hour')) GROUP BY status;",
         )
-        details["task_status_1h"] = (
+        transactional_status_1h = (
             _parse_status_counts(status_rows) if not status_err else {"error": status_err}
         )
+        details["transactional_task_status_1h"] = transactional_status_1h
+        details["task_status_1h"] = transactional_status_1h
+        total, total_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT COUNT(*) FROM task_execution_history;",
+        )
+        details["task_history_total"] = total.strip() if not total_err else f"ERR: {total_err}"
+        latest, latest_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT task_key, status, start_ts FROM task_execution_history ORDER BY id DESC LIMIT 1;",
+        )
+        details["task_history_latest"] = latest if not latest_err else f"ERR: {latest_err}"
+        details["task_history_coverage"] = "TaskTransactionManager_only"
         recent, er = sqlite_query(
             client, MORY_DB,
             "SELECT task_key, status, start_ts FROM task_execution_history ORDER BY id DESC LIMIT 10;",
         )
         details["recent_tasks"] = recent if not er else f"ERR: {er}"
-        if e1 or e5 or status_err or er:
+        if e1 or e5 or status_err or total_err or latest_err or er:
             status = "ERROR"
             details["_crit"] = "task_execution_history_query_failed"
 
@@ -799,7 +817,10 @@ def l5_scheduler_check(client):
         else:
             history_counts = _parse_status_counts(status_rows)
         details["task_status_1h"] = history_counts
+        details["transactional_task_status_1h"] = history_counts
+        details["task_history_coverage"] = "TaskTransactionManager_only"
         details["failed_1h"] = history_counts["failed"]
+        details["transactional_failed_1h"] = history_counts["failed"]
         details["running_1h"] = history_counts["running"]
         details["aborted_1h"] = history_counts["aborted"]
 
@@ -1104,7 +1125,11 @@ def run_single_round(round_no, total_rounds, log_file):
         # L4
         s4, d4 = l4_biz_check(client)
         layer_statuses.append(s4)
-        line4 = (f"[L4 BIZ] task_1h={d4.get('task_1h','?')} | task_5min={d4.get('task_5min','?')} | "
+        line4 = (f"[L4 BIZ] transactional_task_1h={d4.get('transactional_task_1h','?')} | "
+                 f"transactional_task_5min={d4.get('transactional_task_5min','?')} | "
+                 f"task_history_total={d4.get('task_history_total','?')} | "
+                 f"task_history_latest={_short(d4.get('task_history_latest','?'), 80)} | "
+                 f"coverage={d4.get('task_history_coverage','?')} | "
                  f"token_1h={d4.get('token_usage_1h','?')} | token_5min={d4.get('token_usage_5min','?')} | "
                  f"token_cost_1h={d4.get('token_cost_1h_sum','?')} | "
                  f"conversion_1h={d4.get('conversion_1h','?')} | orphan_1h={d4.get('orphan_1h','?')}")
@@ -1117,7 +1142,9 @@ def run_single_round(round_no, total_rounds, log_file):
         # L5
         s5, d5 = l5_scheduler_check(client)
         layer_statuses.append(s5)
-        line5 = (f"[L5 SCHD] failed_1h={d5.get('failed_1h','?')} | watchdog_usec={d5.get('watchdog_usec','?')}")
+        line5 = (f"[L5 SCHD] transactional_failed_1h={d5.get('transactional_failed_1h','?')} | "
+                 f"coverage={d5.get('task_history_coverage','?')} | "
+                 f"watchdog_usec={d5.get('watchdog_usec','?')}")
         if s5 != "OK":
             line5 += f" | WARN={d5.get('_warn','')}"
         # recent_scheduled_tasks 只取前 3 行避免日志过长

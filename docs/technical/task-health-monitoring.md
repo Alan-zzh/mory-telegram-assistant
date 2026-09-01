@@ -5,11 +5,13 @@
 ## 四类状态
 
 - `scheduler_metrics`：APScheduler 最近状态与累计成功、失败、miss，跨进程恢复。
-- `task_execution_history`：业务执行的 running / success / failed / aborted 四态。
+- `task_execution_history`：仅覆盖进入 `TaskTransactionManager` 的业务事务四态，不覆盖全部 APScheduler job；最近窗口为 0 只表示该窗口无事务任务记录，必须同时看历史总数、最新记录和 `scheduler_metrics`。
 - `task_log`：当天任务抢占与防重锁，不是执行历史；审计器只检查同 key 重复记录。
 - SQLite 查询异常：系统错误，必须上抛给 APScheduler，不能转成 `False`、空列表或“任务缺失”。
 
 Dashboard 的 `last_error` 只表示当前 `last_status=error` 的故障；任务恢复成功后，旧原因保留在 `last_failure_error`，并以 `error_scope=historical` 标明历史范围。生产巡检的累计失败行同样必须输出 `error_scope`，禁止把最新成功 `last_run` 与旧错误同行后冒充刚刚失败。累计失败次数不清零；`missed` 仍以 `last_status` 与 `miss_count` 判定。
+
+生产巡检保留旧 `task_1h/task_5min` 字段供兼容，但人类可读输出使用 `transactional_task_1h/5min`，并固定附带 `coverage=TaskTransactionManager_only`、`task_history_total` 与最新历史记录。`scheduler_metrics` 的 EXECUTED 仅证明 callable 未向外抛异常，不得冒充业务动作完成。
 
 ## 重启语义
 

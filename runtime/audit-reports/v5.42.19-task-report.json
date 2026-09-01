@@ -15,7 +15,7 @@
     "BEGIN 到 OK 的认证启动回执与三个关键文件哈希一致"
   ],
   "risks": [
-    "动态 job 与跨进程直接注册表仍明确标为未观察；task_execution_history 零行不能证明全部任务成功。",
+    "动态 job 与跨进程直接注册表仍明确标为未观察；task_execution_history 只覆盖事务审计任务，不能证明全部调度任务成功。",
     "真实 Telegram 自然事件和 12:00 burn_orphan 回执仍待后续 Goal 续巡。"
   ],
   "next": [

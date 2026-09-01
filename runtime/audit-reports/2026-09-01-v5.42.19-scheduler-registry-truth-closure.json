@@ -64,7 +64,7 @@
     "evidence": "after deployment restart both services remained active with NRestarts=0; authenticated startup receipt remained queryable; 11 jobs persisted success between 07:44:48 and 07:45:48 with zero misses"
   },
   "boundaries": [
-    "task_execution_history has zero rows and cannot prove every scheduled job succeeded",
+    "task_execution_history has 209 total rows but zero in the latest hour because it only covers transaction-audited tasks; it cannot prove every scheduled job succeeded",
     "no real Telegram external event was manufactured",
     "12:00 burn_orphan natural receipt remains pending"
   ],
