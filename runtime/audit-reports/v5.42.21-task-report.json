@@ -1,0 +1,41 @@
+{
+  "title": "Mory v5.42.21 幽灵配置与服务器边界闭环",
+  "summary": "只保留 Mory、MoryFansBot、MediaOps-COO 及必要系统组件；生产 11 个退役配置残留归零，并封死保存、部署、Dashboard、巡检四条复活入口。",
+  "status": "verified",
+  "mermaid": "flowchart LR; A[退役配置单一真相源] --> B[运行时保存剥离]; A --> C[部署原子清理]; A --> D[Dashboard拒绝]; A --> E[生产巡检失败关闭]; C --> F[生产残留 0]; G[保留项目] --> H[Mory]; G --> I[MoryFansBot]; G --> J[MediaOps-COO]; K[非保留项目] --> L[inactive + masked/disabled]",
+  "details": [
+    {
+      "heading": "清理范围",
+      "body": "清除 11 个已确认无运行消费者的顶层配置，包括旧新闻链、空模板、旧成本策略和 API_KEYS 凭据容器；本地忽略配置不覆盖生产。"
+    },
+    {
+      "heading": "防止复活",
+      "body": "运行时保存与安全部署统一剥离，Dashboard 不展示也不允许写回，配置同步门禁和生产漂移巡检在字段重新出现时直接失败。"
+    },
+    {
+      "heading": "服务器边界",
+      "body": "Mory、MoryFansBot、MediaOps-COO 在线；TokenLab/TokenPass 保持 inactive+masked，Docker/containerd 保持 inactive+disabled，项目进程未发现其他项目。"
+    }
+  ],
+  "evidence": [
+    "1461/1461 全仓单元测试通过；聚焦回归 69/69",
+    "生产巡检 17 pass、漂移巡检 7 pass、0 gap、0 failed",
+    "生产 REMOVED_PRESENT=[]，集合总数 11",
+    "代码、配置、数据库均有可回滚备份回执"
+  ],
+  "risks": [
+    "12:00 burn_orphan 部署后首次自然执行尚未到时",
+    "未制造 Telegram 用户消息，首个自然事件仍待观察"
+  ],
+  "next": [
+    "12:00 后只读复核 burn_orphan 自然执行与持久记录",
+    "自然 Telegram 事件到达后核对真实业务路径"
+  ],
+  "files": [
+    "runtime/audit-reports/2026-09-01-v5.42.21-ghost-config-closure.md",
+    "core/config_compat.py",
+    "core/deploy_utils.py",
+    "dashboard/api/config_api.py",
+    "scripts/project_audit_control.py"
+  ]
+}
