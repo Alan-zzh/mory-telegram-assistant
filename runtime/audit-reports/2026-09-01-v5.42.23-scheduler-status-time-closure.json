@@ -1,0 +1,40 @@
+{
+  "schema": "production_closure_receipt_v1",
+  "project": "mory_assistant",
+  "target_environment": "production:/home/ubuntu/mory_assistant",
+  "authorization": {
+    "read_only": false,
+    "deploy_authorized": true
+  },
+  "git_hash": "765a290e0cf581ea5620f78495ab210945901517",
+  "deployment_performed": true,
+  "artifact_hash": "sha256:a3232455026c17c3f09f5472687ceb625ae2c65fbbe91a899363238126d3e74b",
+  "technical_checks": [
+    {"name": "focused-and-full-tests", "passed": true, "detail": "107 focused and 1475 full unit tests passed"},
+    {"name": "migration", "passed": true, "detail": "Alembic 0012 head; idempotent upgrade, downgrade, and re-upgrade verified"},
+    {"name": "production-truth", "passed": true, "detail": "17 pass, 0 gap, 0 failed"},
+    {"name": "drift", "passed": true, "detail": "7 pass, 0 gap, 0 failed"},
+    {"name": "affected-file-hashes", "passed": true, "detail": "8 of 8 local and production SHA-256 values match"},
+    {"name": "scheduler-status-time", "passed": true, "detail": "last_status_at column present; unknown current status time 0; recent error or missed 0"},
+    {"name": "database", "passed": true, "detail": "integrity ok and production deployment schema gate passed"}
+  ],
+  "business_probes": [
+    {"name": "structured-scheduler-history", "passed": true, "detail": "four cumulative rows read back as current_status success and error_scope historical"},
+    {"name": "natural-ttl-execution", "passed": true, "detail": "09:20 success count increased 725 to 726 while fail stayed 1 and miss stayed 0"},
+    {"name": "natural-telegram-event", "passed": true, "detail": "post-v5.42.22 inbound group event was verified as is_bot false without sending a probe message"},
+    {"name": "retained-project-endpoints", "passed": true, "detail": "Mory 200, MoryFansBot 302 with bot and web processes, MediaOps 200 and 200"}
+  ],
+  "persistence_probe": {
+    "passed": true,
+    "detail": "six TokenLab/TokenPass units remain inactive and masked; Docker and containerd remain inactive and disabled; retained project processes remain online"
+  },
+  "backup": {
+    "verified": true,
+    "path": "/home/ubuntu/mory_assistant/backups/code_deploy_1788226483.tar.gz",
+    "sha256": "651fdd8e56b9da202d29c8a74772896f187da2238f8fc23179d1c336052b49b1",
+    "config_path": "/home/ubuntu/mory_assistant/backups/config_20260901_093517_d0981f5c77f64acebf24c8cc2dd817ca.json",
+    "database_path": "/home/ubuntu/mory_assistant/backups/mory_pre_migration_1788226523_1a7d2be1410faf17.db",
+    "rollback_command": "cd /home/ubuntu/mory_assistant && sudo systemctl stop mory-assistant mory-dashboard && tar -xzf backups/code_deploy_1788226483.tar.gz -C /home/ubuntu/mory_assistant && cp backups/config_20260901_093517_d0981f5c77f64acebf24c8cc2dd817ca.json config.json && cp backups/mory_pre_migration_1788226523_1a7d2be1410faf17.db mory.db && chmod 0600 config.json mory.db && sudo systemctl restart mory-assistant mory-dashboard"
+  },
+  "result": "verified"
+}

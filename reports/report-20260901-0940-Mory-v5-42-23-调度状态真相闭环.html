@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>任务完成报告</title>
+<script src="_assets/mermaid.min.js"></script>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--border:#21262d;--fg:#e6edf3;--dim:#8b949e;
+--acc:#58a6ff;--green:#3fb950;--orange:#d29922;--red:#f85149;--purple:#bc8cff;--mono:ui-monospace,Consolas,'Cascadia Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,'Segoe UI','Microsoft YaHei',sans-serif;padding:32px 20px}
+.wrap{max-width:960px;margin:0 auto}
+header{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:8px}
+h1{font-size:24px;font-weight:700;flex:1;min-width:260px}
+.badge{padding:3px 12px;border-radius:999px;font-size:12px;font-weight:600;letter-spacing:.4px;text-transform:uppercase}
+.badge.verified{background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.4)}
+.badge.partial{background:rgba(210,153,34,.15);color:var(--orange);border:1px solid rgba(210,153,34,.4)}
+.badge.failed,.badge.blocked{background:rgba(248,81,73,.15);color:var(--red);border:1px solid rgba(248,81,73,.4)}
+.meta{color:var(--dim);font-size:13px;margin-bottom:24px;display:flex;gap:18px;flex-wrap:wrap}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:20px 22px;margin-bottom:16px}
+.card h2{font-size:13px;color:var(--acc);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card h2::before{content:'';width:8px;height:8px;border-radius:2px;background:var(--acc)}
+p.sum{font-size:15px}
+pre{font-family:var(--mono);font-size:12.5px;background:#010409;border:1px solid var(--border);border-radius:8px;padding:14px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#c9d1d9}
+ul{list-style:none}
+li{padding:7px 0 7px 26px;position:relative;border-bottom:1px dashed var(--border)}
+li:last-child{border-bottom:none}
+li::before{content:'›';position:absolute;left:8px;color:var(--acc);font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;color:var(--dim);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+td{padding:6px 10px;border-bottom:1px solid rgba(33,38,45,.55);font-family:var(--mono)}
+tr:last-child td{border-bottom:none}
+.st{display:inline-block;min-width:30px;text-align:center;padding:1px 7px;border-radius:5px;font-size:11px;font-weight:700;font-family:var(--mono)}
+.st.A{background:rgba(63,185,80,.15);color:var(--green)}.st.M{background:rgba(88,166,255,.15);color:var(--acc)}
+.st.D{background:rgba(248,81,73,.15);color:var(--red)}.st.R{background:rgba(188,140,255,.15);color:var(--purple)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:720px){.grid2{grid-template-columns:1fr}}
+#diagram svg{max-width:100%;height:auto}
+.mmd-fallback{display:none;color:var(--dim);font-size:12px}
+.empty{color:var(--dim);font-style:italic;font-size:13.5px}
+footer{color:var(--dim);font-size:12px;text-align:center;margin-top:28px}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1 id="t-title">…</h1><span class="badge verified" id="t-status"></span></header>
+<div class="meta" id="t-meta"></div>
+
+<section class="card" id="sec-summary"><h2>概览</h2><p class="sum" id="c-summary"></p></section>
+
+<section class="card" id="sec-diagram" style="display:none"><h2>架构 / 流程图</h2>
+<div id="diagram"><pre class="mmd-src" style="display:none"></pre><div class="mmd-fallback" id="mmd-fallback">⚠ Mermaid 运行时不可用（离线且无共享副本），以下为图源码：</div></div></section>
+
+<section class="card" id="sec-files"><h2>这次动了哪些文件</h2>
+<table id="files-table"><thead><tr><th style="width:52px">类型</th><th>文件</th><th style="width:110px">增/删行</th></tr></thead><tbody></tbody></table>
+<pre id="diff-stat" style="margin-top:12px"></pre></section>
+
+<section class="card" id="sec-details" style="display:none"><h2>详细说明</h2><ul id="c-details"></ul></section>
+
+<div class="grid2">
+<section class="card" id="sec-evidence"><h2>验证证据</h2><ul id="c-evidence"></ul>
+<ul id="c-verifications" style="margin-top:8px"></ul></section>
+<section class="card" id="sec-risks"><h2>风险与下一步</h2><ul id="c-risks"></ul><ul id="c-next" style="margin-top:8px"></ul></section>
+</div>
+
+<footer id="t-footer"></footer>
+</div>
+
+<script id="report-data" type="application/json">{"schema": "puzan.task-report/1", "generated_at": "2026-09-01 09:40:24", "workspace": "D:\\Documents\\Syncdisk\\Work\\project\\mory_assistant", "title": "Mory v5.42.23 调度状态真相闭环", "summary": "调度成功、失败和漏调统一记录真实状态事件时间；累计失败改为具名结构，历史错误不再冒充当前故障，首次MISSED也不会漏检。", "status": "verified", "mermaid": "flowchart LR; A[APScheduler事件] --> B{EXECUTED/ERROR/MISSED}; B --> C[last_status_at]; C --> D[scheduler_metrics]; D --> E[生产巡检]; D --> F[部署门禁]; D --> G[Dashboard]; E --> H[当前故障]; E --> I[结构化历史];", "risks": ["12:00 burn_orphan部署后首次自然执行尚未到时，继续由持续Goal观察。"], "next": ["12:00后只读核对burn_orphan自然执行、持久计数和错误窗口。"], "evidence": ["107 focused tests and 1475 full unit tests passed", "production-truth 17/17; drift 7/7", "runtime/audit-reports/2026-09-01-v5.42.23-scheduler-status-time-closure.json"], "details": [{"heading": "状态时间", "body": "新增last_status_at并由三类调度事件真实写入；旧MISSED不拿刷盘时间伪造。"}, {"heading": "防误读", "body": "结构化字段明确当前状态、累计次数、状态时间与历史原因，旧字符串只保留兼容。"}, {"heading": "生产", "body": "Alembic 0012、8个关键哈希、双服务、三个保留项目和非保留防自启边界均已读回。"}], "files_extra": [], "git": {"available": true, "last_commit": "765a290 2026-09-01 09:34 fix: timestamp scheduler status events", "diff_stat": "765a290 fix: timestamp scheduler status events\n AI_DEBUG_HISTORY.md                                |   2 +-\n CHANGELOG.md                                       |   1 +\n README.md                                          |   2 +-\n VERSION.md                                         |   2 +-\n core/database.py                                   |   1 +\n core/deploy_utils.py                               |   8 +-\n core/scheduler_monitor.py                          |  27 +--\n dashboard/api/scheduler_api.py                     |   9 +-\n docs/handoffs/tasks/task-f2c53718bc8aa5b8058d.md   |  18 +-\n docs/technical/task-health-monitoring.md           |   2 +-\n .../0012_scheduler_metrics_last_status_at.py       |  52 +++++\n project_snapshot.md                                |  10 +-\n scripts/project_audit_control.py                   |   2 +-\n scripts/puzan_loop_monitor.py                      |  72 ++++++-\n tests/unit/test_dashboard_app_smoke.py             |  21 +-\n tests/unit/test_deploy_utils.py                    |   4 +-\n tests/unit/test_monitoring_closure.py              | 214 ++++++++++++++++++++-\n tests/unit/test_project_audit_control.py           |  28 ++-\n tests/unit/test_scheduler_metrics_status_time.py   | 100 ++++++++++\n tests/unit/test_scheduler_monitor_persistence.py   |  76 +++++++-\n version.py                                         |   4 +-\n 21 files changed, 596 insertions(+), 59 deletions(-)", "files": [{"status": "M", "path": "project_snapshot.md", "add": "3", "del": "3"}], "dirty": "M project_snapshot.md"}, "manifest": {}, "verifications": [], "_no_mermaid_copy": false}</script>
+<script>
+(function(){
+var D={};try{D=JSON.parse(document.getElementById('report-data').textContent)}catch(e){console.error(e)}
+var $=function(id){return document.getElementById(id)};
+document.title=D.title||'任务完成报告';
+$('t-title').textContent=D.title||'任务完成报告';
+var st=(D.status||'verified').toLowerCase();var b=$('t-status');b.textContent=st;b.className='badge '+st;
+$('t-meta').innerHTML='<span>生成时间 '+D.generated_at+'</span>'+(D.manifest&&D.manifest.version?'<span>Puzan OS v'+D.manifest.version+'</span>':'')+'<span title="'+(D.workspace||'')+'">'+(D.workspace||'')+'</span>';
+$('c-summary').innerHTML=D.summary||(D.summary===' '?'<span class=empty>（无）</span>':D.summary)||'<span class="empty">（未提供摘要）</span>';
+
+if(D.mermaid){$('sec-diagram').style.display='';var src=$('diagram').querySelector('.mmd-src');src.textContent=D.mermaid;
+ function fallback(){src.style.display='';$('mmd-fallback').style.display='block'}
+ if(window.mermaid){try{mermaid.initialize({startOnLoad:false,theme:'dark',securityLevel:'loose'});
+  mermaid.render('mmd'+Date.now(),D.mermaid).then(function(r){var dv=document.createElement('div');dv.innerHTML=r.svg;$('diagram').appendChild(dv)}).catch(fallback)}catch(e){fallback()}}
+ else{fallback()}}
+
+(function(){var files=(D.git&&D.git.files)||[];Array.prototype.push.apply(files,D.files_extra||[]);
+ if(!files.length&&!D.diff_stat_text&&!(D.git&&D.git.diff_stat)){$('sec-files').style.display='none';return}
+ var tb=$('files-table').querySelector('tbody');
+ files.slice(0,200).forEach(function(f){var tr=document.createElement('tr');
+  var s=(f.status||'').toUpperCase();var cls=s.charAt(0)==='A'?'A':s.charAt(0)==='D'?'D':s.charAt(0)==='R'?'R':'M';
+  var delta=(f.add!==undefined&&f.add!=='')?('+'+f.add+' / -'+f.del):'';
+  tr.innerHTML='<td><span class="st '+cls+'">'+cls+'</span></td><td>'+f.path.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</td><td style="color:var(--dim)">'+delta+'</td>';tb.appendChild(tr)});
+ if(D.git&&D.git.dirty){var li=document.createElement('tr');li.innerHTML='<td><span class="st M">~</span></td><td>另有工作区未提交变更（见下方 git status）</td><td></td>';tb.appendChild(li)}
+ $('diff-stat').textContent=[D.git&&D.git.last_commit?'commit: '+D.git.last_commit:'',D.git&&D.git.diff_stat,D.git&&D.git.dirty?'uncommitted:\n'+D.git.dirty:''].filter(Boolean).join('\n\n');})();
+
+(function(){var det=D.details||[];if(!det.length)return;$('sec-details').style.display='';
+ det.forEach(function(x){var li=document.createElement('li');
+  if(typeof x==='object'&&x!==null){var h=document.createElement('strong');h.textContent=(x.heading||'')+(x.heading?'：':'');li.appendChild(h);li.appendChild(document.createTextNode(String(x.body||'')))}else{li.textContent=String(x)}
+  $('c-details').appendChild(li)})})();
+
+function fill(id,arr,prefix){var el=$(id);if(!arr||!arr.length)return;arr.forEach(function(x){var li=document.createElement('li');li.textContent=(prefix||'')+String(x);el.appendChild(li)})}
+fill('c-evidence',D.evidence);
+(D.verifications||[]).slice(0,5).forEach(function(v){var li=document.createElement('li');li.textContent='[runtime] '+(v.task_id||v.file)+(v.status?' → '+v.status:'');$('c-verifications').appendChild(li)});
+if(!D.evidence||!D.evidence.length){if(!(D.verifications||[]).length)$('c-evidence').innerHTML='<span class="empty">（本任务无登记证据）</span>'}
+fill('c-risks',D.risks);fill('c-next',D.next,'→ ');
+if((!D.risks||!D.risks.length)&&(!D.next||!D.next.length))$('c-risks').innerHTML='<span class="empty">（无遗留风险，无后续步骤）</span>';
+$('t-footer').textContent='Puzan OS task-report · schema '+D.schema+' · 由本地数据渲染，样式零 token';
+})();
+</script>
+</body>
+</html>

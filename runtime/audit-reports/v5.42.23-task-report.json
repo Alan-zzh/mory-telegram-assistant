@@ -1,0 +1,18 @@
+{
+  "title": "Mory v5.42.23 调度状态真相闭环",
+  "summary": "调度成功、失败和漏调统一记录真实状态事件时间；累计失败改为具名结构，历史错误不再冒充当前故障，首次MISSED也不会漏检。",
+  "status": "verified",
+  "mermaid": "flowchart LR; A[APScheduler事件] --> B{EXECUTED/ERROR/MISSED}; B --> C[last_status_at]; C --> D[scheduler_metrics]; D --> E[生产巡检]; D --> F[部署门禁]; D --> G[Dashboard]; E --> H[当前故障]; E --> I[结构化历史];",
+  "details": [
+    {"heading": "状态时间", "body": "新增last_status_at并由三类调度事件真实写入；旧MISSED不拿刷盘时间伪造。"},
+    {"heading": "防误读", "body": "结构化字段明确当前状态、累计次数、状态时间与历史原因，旧字符串只保留兼容。"},
+    {"heading": "生产", "body": "Alembic 0012、8个关键哈希、双服务、三个保留项目和非保留防自启边界均已读回。"}
+  ],
+  "evidence": [
+    "107 focused tests and 1475 full unit tests passed",
+    "production-truth 17/17; drift 7/7",
+    "runtime/audit-reports/2026-09-01-v5.42.23-scheduler-status-time-closure.json"
+  ],
+  "risks": ["12:00 burn_orphan部署后首次自然执行尚未到时，继续由持续Goal观察。"],
+  "next": ["12:00后只读核对burn_orphan自然执行、持久计数和错误窗口。"]
+}

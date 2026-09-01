@@ -38,12 +38,12 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 | 关联频道联动 | 生产开启 | `modules/linked_channel_sync.py` | 仅 `CHANNEL_IDS` 自有频道可信：群自动转发即取消置顶并按文案选择私聊/订阅单入口，可回复审核营销图卡；回复目标消失时无引用直发，日志按实际媒体/文本记账；外部频道不豁免 |
 
 ## 当前版本
-v5.42.23（2026-09-01）· 待部署：调度累计失败改为具名结构，保留旧字符串兼容
+v5.42.23（2026-09-01）· 已部署：调度状态使用真实事件时间，累计失败改为具名结构
 
-生产状态：**最近确认 Mory v5.42.22 双服务active/enabled、NRestarts=0、health 200，生产17项与漂移7项巡检通过；v5.42.23尚未发布。部署后首个真人群消息已自然进入处理链。MoryFansBot与MediaOps-COO在线；TokenLab/TokenPass均inactive+masked，Docker/containerd均inactive+disabled。**
+生产状态：**Mory v5.42.23双服务active/enabled、NRestarts=0、health 200，Alembic 0012 head、8个关键文件哈希一致，生产17项与漂移7项巡检通过；当前error/missed为0且结构化历史已读回。MoryFansBot与MediaOps-COO在线；TokenLab/TokenPass均inactive+masked，Docker/containerd均inactive+disabled。**
 
 ## 最近 3 条大事
-1. 2026-09-01 v5.42.23待部署，调度累计失败增加具名结构避免历史错误误读。
+1. 2026-09-01 v5.42.23已部署，状态事件时间与具名累计证据消除漏调和历史错误误读。
 2. 2026-09-01 v5.42.22已部署，清理17个假设置且32个无效顶层键生产残留为0。
 3. 2026-09-01 v5.42.21已部署，11个退役配置生产残留为0且四条复活入口已封死。
 
