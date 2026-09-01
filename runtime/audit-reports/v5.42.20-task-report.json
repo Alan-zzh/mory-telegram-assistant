@@ -1,0 +1,14 @@
+{
+  "title": "Mory v5.42.20 任务历史口径修正",
+  "summary": "生产历史表真实有209行；巡检现已明确最近窗口只覆盖事务任务，不再把0误判成项目停滞。",
+  "status": "verified",
+  "mermaid": "flowchart LR; H[task_execution_history 209]-->T[TaskTransactionManager only]; T-->W[最近1小时 0]; M[scheduler_metrics]-->A[全部调度聚合]; W-->R[明确 coverage 不误判]; A-->R;",
+  "details": [
+    {"heading": "纠正误判", "body": "此前把最近1小时0行说成历史表空是错误的。生产总表209行，最新 mystic_evening 成功；0只代表当前窗口没有事务任务。"},
+    {"heading": "兼容修复", "body": "L4/L5 新增 transactional 字段、历史总数、最新记录和 coverage；旧字段保留给现有消费者，不改变数据库写入语义。"},
+    {"heading": "生产边界", "body": "Mory、MoryFansBot、MediaOps-COO在线；TokenLab/TokenPass保持屏蔽，Docker/containerd保持停用。"}
+  ],
+  "evidence": ["目标测试76项通过", "全仓1455项单测通过", "生产巡检17/17通过", "双服务NRestarts=0且health 200", "本地与远端4个受影响文件SHA-256一致"],
+  "risks": ["12:00 burn_orphan自然执行和真实Telegram自然事件仍待后续取证，Goal保持活动。"],
+  "next": ["12:00后核验burn_orphan首次自然执行", "等待真实Telegram事件，不制造假业务回执"]
+}

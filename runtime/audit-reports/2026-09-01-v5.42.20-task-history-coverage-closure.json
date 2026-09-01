@@ -1,0 +1,31 @@
+{
+  "schema_version": "mory.production-closure/v1",
+  "version": "v5.42.20",
+  "commit": "57949efa4be6",
+  "deployed_at": "2026-09-01T08:02:50+08:00",
+  "status": "verified",
+  "local": {
+    "targeted_tests": "76 passed",
+    "unit_tests": "1455 passed",
+    "gates": ["compileall", "ruff", "mypy", "doc_consistency", "check_deploy_ready", "records-autopilot strict"]
+  },
+  "production": {
+    "audit": {"pass": 17, "evidence_gap": 0, "failed": 0},
+    "services": {"mory-assistant": "active", "mory-dashboard": "active", "nrestarts": 0, "health_http": 200},
+    "task_history": {"coverage": "TaskTransactionManager_only", "total": 209, "transactional_1h": 0, "latest": "mystic_evening|success|1788179700"},
+    "scheduler_registry": {"managed_jobs": 41, "direct_registry": "not_observed"},
+    "retained_projects": {"moryfans_http": 302, "mediaops_livez": 200, "mediaops_health": 200},
+    "nonretained": {"docker": "inactive", "containerd": "inactive", "nginx": "inactive", "sing-box": "inactive", "tokenpass": "masked", "tokenlab-login": "masked"}
+  },
+  "backups": {
+    "code": "backups/code_deploy_1788220934.tar.gz",
+    "code_sha256": "b8295b6436a7d2fa46db2f72fe73ab7863fb4c406475d8c01ae8c66881af41cd",
+    "database": "backups/mory_pre_migration_1788220966_a50b9bce51221935.db",
+    "database_sha256": "140682273a632d57e3261ab1b7d3346fc4aa613e5ede749cf2d05658f8fabb85"
+  },
+  "boundaries": [
+    "No Telegram write probe was manufactured.",
+    "scheduler_metrics execution is not business-success proof.",
+    "12:00 burn_orphan natural execution remains pending."
+  ]
+}
