@@ -610,16 +610,20 @@ required = {{'task_execution_history', 'scheduler_metrics'}}
 missing = required - tables
 if missing:
     raise SystemExit('SCHEDULER_TABLES_MISSING ' + ','.join(sorted(missing)))
+metric_columns = {{row[1] for row in conn.execute("PRAGMA table_info(scheduler_metrics)")}}
+if 'last_status_at' not in metric_columns:
+    raise SystemExit('SCHEDULER_COLUMNS_MISSING last_status_at')
 cutoff = int(time.time()) - 3600
 stale = conn.execute("SELECT COUNT(*) FROM task_execution_history WHERE status='running' AND start_ts < ?", (int(time.time()) - 1800,)).fetchone()[0]
 failed = conn.execute("SELECT COUNT(*) FROM task_execution_history WHERE status='failed' AND start_ts >= ?", (cutoff,)).fetchone()[0]
 bad_metrics = conn.execute(
     "SELECT COUNT(*) FROM scheduler_metrics "
-    "WHERE last_status IN ('error','missed') AND COALESCE(last_run,0) >= ?",
+    "WHERE last_status IN ('error','missed') AND COALESCE(last_status_at,0) >= ?",
     (cutoff,),
 ).fetchone()[0]
 cumulative_metrics = conn.execute(
-    "SELECT COUNT(*) FROM scheduler_metrics WHERE fail_count > 0 OR miss_count > 0"
+    "SELECT COUNT(*) FROM scheduler_metrics "
+    "WHERE COALESCE(fail_count,0) > 0 OR COALESCE(miss_count,0) > 0"
 ).fetchone()[0]
 history_total = conn.execute("SELECT COUNT(*) FROM task_execution_history").fetchone()[0]
 history_latest_start = conn.execute("SELECT MAX(start_ts) FROM task_execution_history").fetchone()[0]

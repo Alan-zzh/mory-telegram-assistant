@@ -604,8 +604,12 @@ def test_scheduler_layer_warns_from_persisted_failures_without_journal(monkeypat
             return "0", ""
         if "status='failed'" in sql:
             return "job_b|failed|upstream timeout|1786200000", ""
-        if "FROM scheduler_metrics" in sql:
+        if "last_status IN" in sql:
             return "job_b|error|2|0|1786200000|upstream timeout", ""
+        if "AS error_scope" in sql and "last_status_at" in sql:
+            return "job_b|error|2|0|1786200000|1786200000|current|upstream timeout", ""
+        if "AS error_scope" in sql:
+            return "job_b|error|2|0|1786200000|current|upstream timeout", ""
         if "ORDER BY id DESC LIMIT 10" in sql:
             return "job_b|failed|2026-08-09", ""
         raise AssertionError(sql)
@@ -646,7 +650,7 @@ def test_scheduler_journal_filter_does_not_treat_failed_false_as_failure(monkeyp
             return "0", ""
         if "status='failed'" in sql:
             return "", ""
-        if "last_status IN" in sql or "fail_count > 0" in sql:
+        if "last_status IN" in sql or "FROM scheduler_metrics" in sql:
             return "", ""
         if "ORDER BY id DESC LIMIT 10" in sql:
             return "heartbeat|success|2026-08-31", ""
@@ -675,7 +679,7 @@ def test_scheduler_journal_filter_does_not_treat_failed_false_as_failure(monkeyp
 
 
 def test_scheduler_layer_exposes_recovered_jobs_cumulative_failures(monkeypatch):
-    """最近已恢复的任务可保持 OK，但累计失败不能从审计证据中消失。"""
+    """持久 ERROR 后恢复 SUCCESS 时，当前状态与历史原因必须明确分栏。"""
     from scripts import puzan_loop_monitor as monitor
 
     seen_sql = []
@@ -690,7 +694,12 @@ def test_scheduler_layer_exposes_recovered_jobs_cumulative_failures(monkeypatch)
             return "", ""
         if "last_status IN" in sql:
             return "", ""
-        if "fail_count > 0" in sql:
+        if "AS error_scope" in sql and "last_status_at" in sql:
+            return (
+                "heartbeat|success|18|0|1786200000|1786200060|historical|historical timeout",
+                "",
+            )
+        if "AS error_scope" in sql:
             return "heartbeat|success|18|0|1786200000|historical|historical timeout", ""
         if "ORDER BY id DESC LIMIT 10" in sql:
             return "heartbeat|success|2026-08-31", ""
@@ -711,11 +720,81 @@ def test_scheduler_layer_exposes_recovered_jobs_cumulative_failures(monkeypatch)
     assert details["scheduler_metrics_errors"] == ""
     assert details["scheduler_metrics_cumulative_failures"].startswith("heartbeat|success|18|")
     assert "|historical|historical timeout" in details["scheduler_metrics_cumulative_failures"]
+    assert details["scheduler_metrics_failure_history"] == [{
+        "job_id": "heartbeat",
+        "current_status": "success",
+        "cumulative_fail_count": 18,
+        "cumulative_miss_count": 0,
+        "last_run": 1786200000,
+        "last_status_at": 1786200060,
+        "error_scope": "historical",
+        "last_failure_error": "historical timeout",
+    }]
     current_error_sql = next(sql for sql in seen_sql if "last_status IN" in sql)
     assert "-1 hour" in current_error_sql
-    cumulative_sql = next(sql for sql in seen_sql if "fail_count > 0" in sql)
+    assert "last_status_at" in current_error_sql
+    assert "last_run" not in current_error_sql
+    cumulative_sql = next(
+        sql for sql in seen_sql
+        if "AS error_scope" in sql and "last_status_at" not in sql
+    )
     assert "AS error_scope" in cumulative_sql
+    assert "COALESCE(last_run,0)" in cumulative_sql
+    assert "COALESCE(fail_count,0)" in cumulative_sql
+    assert "COALESCE(miss_count,0)" in cumulative_sql
+    assert "char(13)" in cumulative_sql
+    assert "char(10)" in cumulative_sql
     assert cumulative_sql.index("last_status='error'") < cumulative_sql.index("COALESCE(last_error,'')=''")
+
+
+def test_scheduler_layer_warns_for_first_missed_event_by_status_time(monkeypatch):
+    from scripts import puzan_loop_monitor as monitor
+
+    seen_sql = []
+
+    def _sqlite_query(_client, _db_path, sql, timeout=20):
+        seen_sql.append(sql)
+        if "GROUP BY status" in sql:
+            return "", ""
+        if "status='running'" in sql:
+            return "0", ""
+        if "status='failed'" in sql:
+            return "", ""
+        if "last_status IN" in sql:
+            return "never_ran|missed|0|1|1786200100|", ""
+        if "AS error_scope" in sql and "last_status_at" in sql:
+            return "never_ran|missed|0|1|0|1786200100|none|", ""
+        if "AS error_scope" in sql:
+            return "never_ran|missed|0|1|0|none|", ""
+        if "ORDER BY id DESC LIMIT 10" in sql:
+            return "", ""
+        raise AssertionError(sql)
+
+    monkeypatch.setattr(monitor, "sqlite_query", _sqlite_query)
+    monkeypatch.setattr(
+        monitor,
+        "ssh_run",
+        lambda _client, command, timeout=10: ("0", "", 0)
+        if "WatchdogUSec" in command else ("", "", 0),
+    )
+
+    status, details = monitor.l5_scheduler_check(object())
+
+    assert status == "WARN"
+    assert details["scheduler_metrics_errors"].startswith("never_ran|missed|0|1|")
+    assert details["scheduler_metrics_failure_history"] == [{
+        "job_id": "never_ran",
+        "current_status": "missed",
+        "cumulative_fail_count": 0,
+        "cumulative_miss_count": 1,
+        "last_run": 0,
+        "last_status_at": 1786200100,
+        "error_scope": "none",
+        "last_failure_error": "",
+    }]
+    current_sql = next(sql for sql in seen_sql if "last_status IN" in sql)
+    assert "COALESCE(last_status_at,0)" in current_sql
+    assert "COALESCE(last_run,0)" not in current_sql
 
 
 def test_scheduler_error_scope_keeps_current_error_when_text_is_empty():
@@ -736,6 +815,131 @@ def test_scheduler_error_scope_keeps_current_error_when_text_is_empty():
     ]
 
     assert scopes == ["current", "historical", "none"]
+
+
+def test_scheduler_failure_history_normalizes_persisted_error_then_success():
+    from scripts import puzan_loop_monitor as monitor
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE scheduler_metrics("
+        "job_id TEXT PRIMARY KEY, last_status TEXT, success_count INTEGER, "
+        "fail_count INTEGER, miss_count INTEGER, last_run INTEGER, "
+        "last_status_at INTEGER, last_error TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO scheduler_metrics VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "heartbeat", "error", 0, 1, 0,
+            1786199900, 1786199900, "database locked",
+        ),
+    )
+    conn.execute(
+        "UPDATE scheduler_metrics SET last_status='success', success_count=1, "
+        "last_run=1786200000, last_status_at=1786200060 WHERE job_id='heartbeat'"
+    )
+    row = conn.execute(
+        "SELECT job_id, last_status, COALESCE(fail_count,0), COALESCE(miss_count,0), "
+        "COALESCE(last_run,0), COALESCE(last_status_at,0), "
+        f"{monitor.SCHEDULER_ERROR_SCOPE_SQL}, COALESCE(last_error,'') "
+        "FROM scheduler_metrics"
+    ).fetchone()
+
+    history = monitor._parse_scheduler_failure_history(
+        "|".join(str(value) for value in row)
+    )
+
+    assert history == [{
+        "job_id": "heartbeat",
+        "current_status": "success",
+        "cumulative_fail_count": 1,
+        "cumulative_miss_count": 0,
+        "last_run": 1786200000,
+        "last_status_at": 1786200060,
+        "error_scope": "historical",
+        "last_failure_error": "database locked",
+    }]
+
+
+def test_scheduler_failure_history_preserves_pipe_in_historical_error():
+    from scripts import puzan_loop_monitor as monitor
+
+    history = monitor._parse_scheduler_failure_history(
+        "vote_kick|success|2|0|1786200001|1786200061|historical|database locked | retry exhausted"
+    )
+
+    assert history == [{
+        "job_id": "vote_kick",
+        "current_status": "success",
+        "cumulative_fail_count": 2,
+        "cumulative_miss_count": 0,
+        "last_run": 1786200001,
+        "last_status_at": 1786200061,
+        "error_scope": "historical",
+        "last_failure_error": "database locked | retry exhausted",
+    }]
+
+
+def test_scheduler_failure_history_coalesces_null_counts():
+    from scripts import puzan_loop_monitor as monitor
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE scheduler_metrics("
+        "job_id TEXT, last_status TEXT, fail_count INTEGER, miss_count INTEGER, "
+        "last_run INTEGER, last_status_at INTEGER, last_error TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO scheduler_metrics VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("null_counts", "missed", None, 1, None, 1786200200, None),
+    )
+    row = conn.execute(
+        "SELECT job_id, last_status, COALESCE(fail_count,0), COALESCE(miss_count,0), "
+        "COALESCE(last_run,0), COALESCE(last_status_at,0), "
+        f"{monitor.SCHEDULER_ERROR_SCOPE_SQL}, COALESCE(last_error,'') "
+        "FROM scheduler_metrics WHERE COALESCE(fail_count,0) > 0 "
+        "OR COALESCE(miss_count,0) > 0"
+    ).fetchone()
+
+    history = monitor._parse_scheduler_failure_history(
+        "|".join(str(value) for value in row)
+    )
+
+    assert history[0]["cumulative_fail_count"] == 0
+    assert history[0]["cumulative_miss_count"] == 1
+    assert history[0]["last_run"] == 0
+    assert history[0]["last_status_at"] == 1786200200
+
+
+def test_scheduler_layer_fails_closed_when_failure_history_is_malformed(monkeypatch):
+    from scripts import puzan_loop_monitor as monitor
+
+    def _sqlite_query(_client, _db_path, sql, timeout=20):
+        if "GROUP BY status" in sql:
+            return "success|1", ""
+        if "status='running'" in sql:
+            return "0", ""
+        if "status='failed'" in sql or "last_status IN" in sql:
+            return "", ""
+        if "AS error_scope" in sql and "last_status_at" in sql:
+            return (
+                "heartbeat|success|not-a-count|0|1786200000|1786200060|historical|old failure",
+                "",
+            )
+        if "AS error_scope" in sql:
+            return "heartbeat|success|1|0|1786200000|historical|old failure", ""
+        if "ORDER BY id DESC LIMIT 10" in sql:
+            return "heartbeat|success|2026-08-31", ""
+        raise AssertionError(sql)
+
+    monkeypatch.setattr(monitor, "sqlite_query", _sqlite_query)
+    monkeypatch.setattr(monitor, "ssh_run", lambda *_args, **_kwargs: ("", "", 0))
+
+    status, details = monitor.l5_scheduler_check(object())
+
+    assert status == "ERROR"
+    assert details["scheduler_metrics_failure_history"] == []
+    assert "scheduler_metrics_failure_history_parse_failed" in details["_crit"]
 
 
 def test_scheduler_layer_fails_closed_when_execution_history_is_unreadable(monkeypatch):

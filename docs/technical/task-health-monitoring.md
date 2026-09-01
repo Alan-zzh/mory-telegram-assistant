@@ -9,7 +9,7 @@
 - `task_log`：当天任务抢占与防重锁，不是执行历史；审计器只检查同 key 重复记录。
 - SQLite 查询异常：系统错误，必须上抛给 APScheduler，不能转成 `False`、空列表或“任务缺失”。
 
-Dashboard 的 `last_error` 只表示当前 `last_status=error` 的故障；任务恢复成功后，旧原因保留在 `last_failure_error`，并以 `error_scope=historical` 标明历史范围。生产巡检的累计失败行同样必须输出 `error_scope`，禁止把最新成功 `last_run` 与旧错误同行后冒充刚刚失败。累计失败次数不清零；`missed` 仍以 `last_status` 与 `miss_count` 判定。
+Dashboard 的 `last_error` 只表示当前 `last_status=error` 的故障；任务恢复成功后，旧原因保留在 `last_failure_error`，并以 `error_scope=historical` 标明历史范围。生产巡检保留 `scheduler_metrics_cumulative_failures` 原始字符串供兼容，同时以 `scheduler_metrics_failure_history` 输出 `job_id`、`current_status`、`cumulative_fail_count`、`cumulative_miss_count`、`last_run`、`last_status_at`、`error_scope` 与 `last_failure_error`。其中 `last_status_at` 才是当前状态事件时间，`0` 表示旧记录时间不可证明；`last_run` 只为旧消费者保留，禁止用刷盘时间 `synced_at` 或最新成功时间冒充当前错误、missed 的发生时间。累计失败次数不清零；当前一小时错误和 missed 必须按 `last_status_at` 判定。
 
 生产巡检保留旧 `task_1h/task_5min` 字段供兼容，但人类可读输出使用 `transactional_task_1h/5min`，并固定附带 `coverage=TaskTransactionManager_only`、`task_history_total` 与最新历史记录。`scheduler_metrics` 的 EXECUTED 仅证明 callable 未向外抛异常，不得冒充业务动作完成。
 

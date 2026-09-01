@@ -28,7 +28,7 @@ _CST = timezone(timedelta(hours=8))
 # 全局指标存储（线程安全）
 _metrics_lock = threading.Lock()
 _metrics = {
-    "jobs": defaultdict(dict),  # {job_id: {last_run, last_duration, last_status, success_count, fail_count, miss_count}}
+    "jobs": defaultdict(dict),  # {job_id: {last_run, last_status_at, last_status, counts...}}
     "total_success": 0,
     "total_fail": 0,
     "total_miss": 0,
@@ -46,7 +46,7 @@ def load_scheduler_metrics(db) -> int:
         with db.lock:
             rows = db.conn.execute(
                 "SELECT job_id, last_status, success_count, fail_count, miss_count, "
-                "last_run, last_duration, last_error FROM scheduler_metrics"
+                "last_run, last_status_at, last_duration, last_error FROM scheduler_metrics"
             ).fetchall()
     except Exception as exc:
         if "no such table: scheduler_metrics" in str(exc).lower():
@@ -81,8 +81,9 @@ def load_scheduler_metrics(db) -> int:
                 "fail_count": int(row[3] or 0),
                 "miss_count": int(row[4] or 0),
                 "last_run": int(row[5] or 0),
-                "last_duration": int(row[6] or 0),
-                "last_error": row[7] or "",
+                "last_status_at": int(row[6] or 0),
+                "last_duration": int(row[7] or 0),
+                "last_error": row[8] or "",
                 "_persisted_loaded": True,
             }
             restored += 1
@@ -138,6 +139,7 @@ def attach_to_scheduler(scheduler, db=None):
                     except Exception as e:
                         logger.debug(f"计算 last_duration 失败: {e}")
                 job_info["last_run"] = now_ts
+                job_info["last_status_at"] = now_ts
                 logger.debug(f"[Scheduler] 任务成功: {job_id}")
 
             elif event.code == EVENT_JOB_ERROR:
@@ -146,6 +148,7 @@ def attach_to_scheduler(scheduler, db=None):
                 job_info["fail_count"] = job_info.get("fail_count", 0) + 1
                 job_info["last_error"] = str(event.exception)[:200] if event.exception else "unknown"
                 job_info["last_run"] = now_ts
+                job_info["last_status_at"] = now_ts
                 _metrics["total_fail"] += 1
                 logger.warning(f"[Scheduler] 任务失败: {job_id} | 错误: {job_info['last_error']}")
 
@@ -154,6 +157,7 @@ def attach_to_scheduler(scheduler, db=None):
                 job_info["last_status"] = "missed"
                 job_info["miss_count"] = job_info.get("miss_count", 0) + 1
                 job_info["last_miss"] = now_ts
+                job_info["last_status_at"] = now_ts
                 _metrics["total_miss"] += 1
                 logger.warning(f"[Scheduler] 任务延误丢弃: {job_id}")
 
@@ -234,16 +238,17 @@ def sync_metrics_to_db(db) -> int:
                 c.execute("""
                     REPLACE INTO scheduler_metrics
                     (job_id, last_status, success_count, fail_count, miss_count,
-                     last_run, last_duration, last_error, synced_at)
-                    VALUES (?,?,?,?,?,?,?,?,?)
+                     last_run, last_status_at, last_duration, last_error, synced_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
                 """, (
                     job_id,
                     info.get("last_status", ""),
-                    info.get("success_count", 0),
-                    info.get("fail_count", 0),
-                    info.get("miss_count", 0),
-                    info.get("last_run", 0),
-                    info.get("last_duration", 0),
+                    int(info.get("success_count") or 0),
+                    int(info.get("fail_count") or 0),
+                    int(info.get("miss_count") or 0),
+                    int(info.get("last_run") or 0),
+                    int(info.get("last_status_at") or 0),
+                    int(info.get("last_duration") or 0),
                     info.get("last_error", "")[:500],
                     now_ts,
                 ))

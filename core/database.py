@@ -2181,6 +2181,7 @@ class DB:
                 fail_count INTEGER DEFAULT 0,
                 miss_count INTEGER DEFAULT 0,
                 last_run INTEGER,
+                last_status_at INTEGER,
                 last_duration INTEGER,
                 last_error TEXT,
                 synced_at INTEGER NOT NULL

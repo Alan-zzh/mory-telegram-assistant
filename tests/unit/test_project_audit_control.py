@@ -366,14 +366,38 @@ def test_scheduler_cumulative_failures_are_kept_in_filtered_evidence():
 
     details = {
         "scheduler_metrics_errors": "",
-        "scheduler_metrics_cumulative_failures": "heartbeat|success|18|0",
+        "scheduler_metrics_cumulative_failures": (
+            "heartbeat|success|18|0|1786200000|historical|historical timeout"
+        ),
+        "scheduler_metrics_failure_history": [{
+            "job_id": "heartbeat",
+            "current_status": "success",
+            "cumulative_fail_count": 18,
+            "cumulative_miss_count": 0,
+            "last_run": 1786200000,
+            "last_status_at": 1786200060,
+            "error_scope": "historical",
+            "last_failure_error": "historical timeout",
+        }],
         "fail_log_10min_count": 0,
         "unrelated": "drop me",
     }
 
     assert control._filter_monitor_evidence("l5_scheduler", details) == {
         "scheduler_metrics_errors": "",
-        "scheduler_metrics_cumulative_failures": "heartbeat|success|18|0",
+        "scheduler_metrics_cumulative_failures": (
+            "heartbeat|success|18|0|1786200000|historical|historical timeout"
+        ),
+        "scheduler_metrics_failure_history": [{
+            "job_id": "heartbeat",
+            "current_status": "success",
+            "cumulative_fail_count": 18,
+            "cumulative_miss_count": 0,
+            "last_run": 1786200000,
+            "last_status_at": 1786200060,
+            "error_scope": "historical",
+            "last_failure_error": "historical timeout",
+        }],
         "fail_log_10min_count": 0,
     }
 

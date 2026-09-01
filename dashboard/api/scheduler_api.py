@@ -44,9 +44,9 @@ def _scheduler_stats_from_db() -> dict:
     rows = db.execute(
         """
         SELECT job_id, last_status, success_count, fail_count, miss_count,
-               last_run, last_duration, last_error, synced_at
+               last_run, last_status_at, last_duration, last_error, synced_at
         FROM scheduler_metrics
-        ORDER BY last_run DESC
+        ORDER BY COALESCE(last_status_at, last_run, 0) DESC
         """
     ).fetchall()
     jobs = {}
@@ -83,9 +83,9 @@ def _scheduler_jobs_from_db() -> list:
     rows = db.execute(
         """
         SELECT job_id, last_status, success_count, fail_count, miss_count,
-               last_run, last_duration, last_error, synced_at
+               last_run, last_status_at, last_duration, last_error, synced_at
         FROM scheduler_metrics
-        ORDER BY last_run DESC
+        ORDER BY COALESCE(last_status_at, last_run, 0) DESC
         """
     ).fetchall()
     jobs = []
@@ -103,6 +103,7 @@ def _scheduler_jobs_from_db() -> list:
             "fail_count": info.get("fail_count") or 0,
             "miss_count": info.get("miss_count") or 0,
             "last_run": info.get("last_run") or 0,
+            "last_status_at": info.get("last_status_at") or 0,
             "last_error": info.get("last_error") or "",
             "last_failure_error": info.get("last_failure_error") or "",
             "error_scope": info.get("error_scope") or "none",

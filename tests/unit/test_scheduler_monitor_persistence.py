@@ -19,15 +19,20 @@ class _Db:
             CREATE TABLE scheduler_metrics (
                 job_id TEXT PRIMARY KEY, last_status TEXT,
                 success_count INTEGER, fail_count INTEGER, miss_count INTEGER,
-                last_run INTEGER, last_duration INTEGER, last_error TEXT,
+                last_run INTEGER, last_status_at INTEGER,
+                last_duration INTEGER, last_error TEXT,
                 synced_at INTEGER NOT NULL
             )
         """)
 
     def seed(self, job_id, status="success", success=1, fail=0, miss=0, last_run=None):
+        event_ts = int(time.time()) if last_run is None else last_run
         self.conn.execute(
-            "INSERT INTO scheduler_metrics VALUES (?,?,?,?,?,?,?,?,?)",
-            (job_id, status, success, fail, miss, last_run or int(time.time()), 1, "", int(time.time())),
+            "INSERT INTO scheduler_metrics VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                job_id, status, success, fail, miss, event_ts,
+                event_ts, 1, "", int(time.time()),
+            ),
         )
         self.conn.commit()
 
@@ -96,6 +101,71 @@ def test_hydrated_counts_continue_monotonically_after_restart():
         "SELECT success_count, last_status FROM scheduler_metrics WHERE job_id='job_a'"
     ).fetchone()
     assert row == (11, "success")
+
+
+def test_error_then_success_persists_and_normalizes_as_historical_failure():
+    from apscheduler.events import EVENT_JOB_EXECUTED
+    from scripts import puzan_loop_monitor as audit_monitor
+
+    db = _Db()
+    db.seed("job_a", status="error", success=0, fail=1)
+    db.conn.execute(
+        "UPDATE scheduler_metrics SET last_error='database locked' WHERE job_id='job_a'"
+    )
+    db.conn.commit()
+
+    class _Scheduler:
+        def add_listener(self, callback, _mask):
+            self.callback = callback
+
+    scheduler = _Scheduler()
+    monitor.attach_to_scheduler(scheduler, db=db)
+    scheduler.callback(SimpleNamespace(job_id="job_a", code=EVENT_JOB_EXECUTED, scheduled_time=None))
+    assert monitor.sync_metrics_to_db(db) == 1
+
+    row = db.conn.execute(
+        "SELECT job_id, last_status, COALESCE(fail_count,0), COALESCE(miss_count,0), "
+        "COALESCE(last_run,0), COALESCE(last_status_at,0), "
+        f"{audit_monitor.SCHEDULER_ERROR_SCOPE_SQL}, COALESCE(last_error,'') "
+        "FROM scheduler_metrics WHERE job_id='job_a'"
+    ).fetchone()
+    history = audit_monitor._parse_scheduler_failure_history(
+        "|".join(str(value) for value in row)
+    )
+
+    assert history == [{
+        "job_id": "job_a",
+        "current_status": "success",
+        "cumulative_fail_count": 1,
+        "cumulative_miss_count": 0,
+        "last_run": row[4],
+        "last_status_at": row[5],
+        "error_scope": "historical",
+        "last_failure_error": "database locked",
+    }]
+
+
+def test_never_executed_missed_event_persists_its_status_time(monkeypatch):
+    from apscheduler.events import EVENT_JOB_MISSED
+
+    now_ts = 1786201234
+    monkeypatch.setattr(monitor.time, "time", lambda: now_ts)
+    db = _Db()
+
+    class _Scheduler:
+        def add_listener(self, callback, _mask):
+            self.callback = callback
+
+    scheduler = _Scheduler()
+    monitor.attach_to_scheduler(scheduler, db=db)
+    scheduler.callback(SimpleNamespace(job_id="never_ran", code=EVENT_JOB_MISSED))
+    assert monitor.sync_metrics_to_db(db) == 1
+
+    row = db.conn.execute(
+        "SELECT last_status, miss_count, last_run, last_status_at "
+        "FROM scheduler_metrics WHERE job_id='never_ran'"
+    ).fetchone()
+    assert row == ("missed", 1, 0, now_ts)
 
 
 def test_late_hydration_keeps_current_error_and_merges_persisted_counts():

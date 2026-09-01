@@ -92,6 +92,7 @@ def test_scheduler_api_does_not_present_scheduler_metrics_as_registry(monkeypatc
             fail_count INTEGER DEFAULT 0,
             miss_count INTEGER DEFAULT 0,
             last_run INTEGER,
+            last_status_at INTEGER,
             last_duration INTEGER,
             last_error TEXT,
             synced_at INTEGER NOT NULL
@@ -99,12 +100,18 @@ def test_scheduler_api_does_not_present_scheduler_metrics_as_registry(monkeypatc
         """
     )
     conn.execute(
-        "INSERT INTO scheduler_metrics VALUES (?,?,?,?,?,?,?,?,?)",
-        ("cart_recovery", "success", 2, 1, 0, 1782930000, 0, "historical timeout", 1782930300),
+        "INSERT INTO scheduler_metrics VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "cart_recovery", "success", 2, 1, 0, 1782930000,
+            1782930000, 0, "historical timeout", 1782930300,
+        ),
     )
     conn.execute(
-        "INSERT INTO scheduler_metrics VALUES (?,?,?,?,?,?,?,?,?)",
-        ("heartbeat", "error", 3, 1, 0, 1782930200, 0, "current failure", 1782930300),
+        "INSERT INTO scheduler_metrics VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "heartbeat", "error", 3, 1, 0, 1782930200,
+            1782930250, 0, "current failure", 1782930300,
+        ),
     )
     conn.commit()
 
@@ -135,12 +142,14 @@ def test_scheduler_api_does_not_present_scheduler_metrics_as_registry(monkeypatc
 
     recovered = stats_json["data"]["jobs"]["cart_recovery"]
     assert recovered["last_status"] == "success"
+    assert recovered["last_status_at"] == 1782930000
     assert recovered["last_error"] == ""
     assert recovered["last_failure_error"] == "historical timeout"
     assert recovered["error_scope"] == "historical"
 
     failing = stats_json["data"]["jobs"]["heartbeat"]
     assert failing["last_status"] == "error"
+    assert failing["last_status_at"] == 1782930250
     assert failing["last_error"] == "current failure"
     assert failing["last_failure_error"] == "current failure"
     assert failing["error_scope"] == "current"
@@ -157,12 +166,14 @@ def test_scheduler_api_normalizes_in_memory_error_scopes(monkeypatch):
                 "last_error": "old database error",
                 "success_count": 10,
                 "fail_count": 1,
+                "last_status_at": 1782930400,
             },
             "ttl_cleanup": {
                 "last_status": "error",
                 "last_error": "current database error",
                 "success_count": 9,
                 "fail_count": 2,
+                "last_status_at": 1782930500,
             },
             "daily_report": {
                 "last_status": "missed",
@@ -170,6 +181,7 @@ def test_scheduler_api_normalizes_in_memory_error_scopes(monkeypatch):
                 "success_count": 8,
                 "fail_count": 1,
                 "miss_count": 1,
+                "last_status_at": 1782930600,
             },
         },
     })
@@ -184,6 +196,7 @@ def test_scheduler_api_normalizes_in_memory_error_scopes(monkeypatch):
     assert response.status_code == 200
     info = response.get_json()["data"]["jobs"]["heartbeat"]
     assert info["last_error"] == ""
+    assert info["last_status_at"] == 1782930400
     assert info["last_failure_error"] == "old database error"
     assert info["error_scope"] == "historical"
 

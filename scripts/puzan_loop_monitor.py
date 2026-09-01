@@ -163,6 +163,38 @@ def _parse_status_counts(rows_str):
     return counts
 
 
+def _parse_scheduler_failure_history(rows_str):
+    """把累计失败行转换为不易混淆当前状态与历史错误的结构化证据。"""
+    history = []
+    for line_no, line in enumerate((rows_str or "").splitlines(), start=1):
+        if not line.strip():
+            continue
+        parts = line.split("|", 7)
+        if len(parts) != 8:
+            raise ValueError(f"row {line_no} has {len(parts)} columns, expected 8")
+        try:
+            fail_count = int(parts[2].strip())
+            miss_count = int(parts[3].strip())
+            last_run = int(parts[4].strip())
+            last_status_at = int(parts[5].strip())
+        except ValueError as exc:
+            raise ValueError(f"row {line_no} has invalid numeric fields") from exc
+        error_scope = parts[6].strip()
+        if error_scope not in {"current", "historical", "none"}:
+            raise ValueError(f"row {line_no} has invalid error_scope")
+        history.append({
+            "job_id": parts[0].strip(),
+            "current_status": parts[1].strip(),
+            "cumulative_fail_count": fail_count,
+            "cumulative_miss_count": miss_count,
+            "last_run": last_run,
+            "last_status_at": last_status_at,
+            "error_scope": error_scope,
+            "last_failure_error": parts[7],
+        })
+    return history
+
+
 def _compact_oom_scope(scope):
     """把内核 cgroup 路径压缩为不泄露主机目录的稳定来源标签。"""
     leaf = (scope or "unknown").rstrip("/").rsplit("/", 1)[-1]
@@ -849,26 +881,50 @@ def l5_scheduler_check(client):
 
         bad_metrics, metrics_err = sqlite_query(
             client, MORY_DB,
-            "SELECT job_id, last_status, fail_count, miss_count, last_run, COALESCE(last_error,'') "
+            "SELECT job_id, last_status, COALESCE(fail_count,0), COALESCE(miss_count,0), "
+            "COALESCE(last_status_at,0), COALESCE(last_error,'') "
             "FROM scheduler_metrics WHERE last_status IN ('error','missed') "
-            "AND COALESCE(last_run,0) >= strftime('%s', datetime('now', '-1 hour')) "
-            "ORDER BY COALESCE(last_run,0) DESC LIMIT 10;",
+            "AND COALESCE(last_status_at,0) >= strftime('%s', datetime('now', '-1 hour')) "
+            "ORDER BY COALESCE(last_status_at,0) DESC LIMIT 10;",
         )
         details["scheduler_metrics_errors"] = bad_metrics if not metrics_err else f"ERR: {metrics_err}"
 
         cumulative_failures, cumulative_failures_err = sqlite_query(
             client, MORY_DB,
-            "SELECT job_id, last_status, fail_count, miss_count, last_run, "
+            "SELECT job_id, last_status, COALESCE(fail_count,0), COALESCE(miss_count,0), "
+            "COALESCE(last_run,0), "
             f"{SCHEDULER_ERROR_SCOPE_SQL} AS error_scope, "
-            "COALESCE(last_error,'') "
-            "FROM scheduler_metrics WHERE fail_count > 0 OR miss_count > 0 "
-            "ORDER BY (fail_count + miss_count) DESC, job_id LIMIT 20;",
+            "REPLACE(REPLACE(COALESCE(last_error,''), char(13), ' '), char(10), ' ') "
+            "FROM scheduler_metrics WHERE COALESCE(fail_count,0) > 0 "
+            "OR COALESCE(miss_count,0) > 0 "
+            "ORDER BY (COALESCE(fail_count,0) + COALESCE(miss_count,0)) DESC, job_id LIMIT 20;",
         )
         details["scheduler_metrics_cumulative_failures"] = (
             cumulative_failures
             if not cumulative_failures_err
             else f"ERR: {cumulative_failures_err}"
         )
+        structured_failures, structured_failures_err = sqlite_query(
+            client, MORY_DB,
+            "SELECT job_id, last_status, COALESCE(fail_count,0), COALESCE(miss_count,0), "
+            "COALESCE(last_run,0), COALESCE(last_status_at,0), "
+            f"{SCHEDULER_ERROR_SCOPE_SQL} AS error_scope, "
+            "REPLACE(REPLACE(COALESCE(last_error,''), char(13), ' '), char(10), ' ') "
+            "FROM scheduler_metrics WHERE COALESCE(fail_count,0) > 0 "
+            "OR COALESCE(miss_count,0) > 0 "
+            "ORDER BY (COALESCE(fail_count,0) + COALESCE(miss_count,0)) DESC, job_id LIMIT 20;",
+        )
+        failure_history_parse_err = ""
+        details["scheduler_metrics_failure_history"] = []
+        if not structured_failures_err:
+            try:
+                details["scheduler_metrics_failure_history"] = (
+                    _parse_scheduler_failure_history(structured_failures)
+                )
+            except ValueError as exc:
+                failure_history_parse_err = (
+                    f"scheduler_metrics_failure_history_parse_failed: {exc}"
+                )
 
         recent, er = sqlite_query(
             client, MORY_DB,
@@ -883,6 +939,8 @@ def l5_scheduler_check(client):
                 recent_failures_err,
                 metrics_err,
                 cumulative_failures_err,
+                structured_failures_err,
+                failure_history_parse_err,
                 er,
             )
             if err
