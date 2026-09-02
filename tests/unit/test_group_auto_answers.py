@@ -737,7 +737,10 @@ def test_example_config_rules_keep_project_topics_and_reject_shared_words():
         "有没有福利": "福利咨询",
         "会员里有什么内容": "内容咨询",
         "积分有什么用": "积分咨询",
+        "积分有什么作用吗": "积分咨询",
+        "积分有什么作用": "积分咨询",
         "签到有什么奖励": "签到奖励咨询",
+        "签到有什么作用吗": "签到奖励咨询",
     }
     for text, name in expected.items():
         rule = trigger._match_special_rule(text)
@@ -802,7 +805,8 @@ def test_external_feature_classifier_covers_only_unowned_operational_topics():
     assert callable(classifier)
     for text in (
         "签到！！！", "签到签到", "什么？我断签了🤪", "补签", "积分可以提现吗",
-        "多少积分兑换", "积分商城", "/checkin", "/points",
+        "多少积分兑换", "积分商城", "/checkin", "/points", "积分有什么作用吗",
+        "积分有啥作用",
     ):
         assert classifier(text), text
 

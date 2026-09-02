@@ -295,6 +295,30 @@ def _looks_like_question(text: str) -> bool:
     return any(marker in compact for marker in _QUESTION_MARKERS)
 
 
+def _should_send_late_night_warning(
+    *,
+    late_night: bool,
+    is_group: bool,
+    is_at: bool,
+    is_reply: bool,
+    mode: str,
+    text: str,
+) -> bool:
+    """深夜劝睡只允许挂在“主动插话”氛围路径上。
+
+    用户点名、回复 Bot、非 normal 模式（tarot/convert/treehole 等）和
+    正经提问（_looks_like_question）都必须走正常回答链；劝睡属于后置
+    氛围话题，不得整条替换真实回答（后置门禁只降级不换义）。
+    """
+    if not late_night or not is_group:
+        return False
+    if is_at or is_reply:
+        return False
+    if mode != "normal":
+        return False
+    return not _looks_like_question(text)
+
+
 def _is_reply_eligible_text(text) -> bool:
     """主动插话质量门槛：空消息/纯表情/纯标点/长度<2 时不插话。
 
@@ -869,7 +893,14 @@ def _dispatch_p10_ai(dctx: DispatchContext):
         return
 
     from modules.content import is_late_night
-    if is_late_night() and is_group:
+    if _should_send_late_night_warning(
+        late_night=is_late_night(),
+        is_group=is_group,
+        is_at=is_at,
+        is_reply=is_reply,
+        mode=mode,
+        text=msg,
+    ):
         late_night_text = _generate_late_night_warning(ai, uname, is_group, uid)
         mory_bot.reply_and_track(m, late_night_text)
         clear_logging_context()
