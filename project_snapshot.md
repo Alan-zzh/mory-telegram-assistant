@@ -40,7 +40,7 @@ Telegram 群组助手机器人 Mory小助理：人设对话、广告检测、群
 ## 当前版本
 v5.42.25（2026-09-03）· 全仓同族暗病收口：机器人词抹空修复、7处抢答分支加豁免、同义问法预设补齐
 
-生产状态：**Mory v5.42.24双服务active/enabled、NRestarts=0、health 200，Alembic 0012 head、关键文件哈希一致，生产17项与漂移7项巡检通过；当前error/missed为0且结构化历史已读回。MoryFansBot与MediaOps-COO在线；TokenLab/TokenPass均inactive+masked，Docker/containerd均inactive+disabled。**
+生产状态：**Mory v5.42.25已部署验收：双服务active/enabled、NRestarts=0、health 200，6个关键文件哈希一致，生产真码13/13问法命中老板底稿，"订阅机器人"业务句保留而真身份声明仍拦截，广告白名单剥标点后带？/！问法均bypass。Alembic 0012 head。MoryFansBot与MediaOps-COO在线；TokenLab/TokenPass均inactive+masked，Docker/containerd均inactive+disabled。**
 
 ## 最近 3 条大事
 1. 2026-09-03 v5.42.25全仓同族暗病收口：机器人词被抹空修复、7处抢答分支加点名/回复/提问豁免、积分签到同义问法预设补齐与白名单归一化。
