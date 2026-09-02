@@ -793,7 +793,8 @@ def test_unconfigured_points_variants_do_not_become_presets():
         "现在不可以用积分兑换了吗",
         "积分现在不能换会员了吗",
         "积分做什么",
-        "签到有啥奖励",
+        # v5.42.25 起 "签到有啥奖励" 已由 config.json.example 显式收录为
+        # "签到奖励咨询" 的 keywords（老板确认），不再是"未配置变体"。
     ):
         assert trigger._match_special_rule(text, is_private=True) is None, text
 

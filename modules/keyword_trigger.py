@@ -63,6 +63,15 @@ def is_external_feature_text(text: str) -> bool:
         return True
     if normalized.startswith("连续签到"):
         return True
+    # v5.42.25：签到/打卡"操作入口"问法交给群内功能机器人承接（Mory 只答
+    # 预设问答；这些短语不会被"预约签到处/签到一份合同"等反例命中）。
+    checkin_operation_phrases = (
+        "怎么签到", "在哪签到", "如何签到", "签到入口",
+        "怎么打卡", "在哪打卡", "如何打卡",
+        "怎么补签", "如何补签",
+    )
+    if any(p in normalized for p in checkin_operation_phrases):
+        return True
     return False
 
 

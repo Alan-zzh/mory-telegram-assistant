@@ -73,8 +73,14 @@ def handle_easter_eggs(mory_bot, m, config: dict, db) -> bool:
     name = m.from_user.first_name or "亲爱的"
     bot_name = config.get("BOT_NAME", "Mory")
 
-    # 契合度测试
-    if "契合度" in msg:
+    # 契合度测试：只对短触发词（≤6字、非提问）生效。
+    # “契合度怎么算的？”这类正经提问不能被固定撩话整条替换
+    # （后置门禁只降级不换义；v5.42.25 修复 A6）。
+    if (
+        "契合度" in msg
+        and len(msg.strip()) <= 6
+        and not any(q in msg for q in ("怎么", "什么", "吗", "?", "？", "多少", "如何", "干嘛", "为啥", "啥"))
+    ):
         mory_bot.reply_and_track(m,
             f"✨ 扫完了。你和Mory契合度99.9%。没救了。💫")
         return True

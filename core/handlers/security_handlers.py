@@ -12,6 +12,7 @@
 """
 
 import concurrent.futures
+import re
 
 from core.helpers import can_delete_message, format_user_mention
 from core.logging_util import get_logger, clear_logging_context
@@ -51,16 +52,38 @@ _BENIGN_AD_BYPASS_TEXTS = {
     "积分有什么用处",
     "积分有什么用处吗",
     "积分作用是什么",
+    # v5.42.25 “有啥用/用途/好处/能做什么”同义族（与预设 keywords 同步）
+    "积分有啥用",
+    "积分有啥用吗",
+    "积分有什么用途",
+    "积分有什么用途吗",
+    "积分用途是什么",
+    "积分能做什么",
+    "积分可以做什么",
+    "积分有什么好处",
+    "积分干嘛用的",
+    "积分是干嘛的",
     "签到有什么作用",
     "签到有什么作用吗",
     "签到有啥作用",
     "签到有啥作用吗",
     "签到有什么用",
+    "签到有什么用吗",
+    "签到有啥用",
+    "签到有啥用吗",
+    "签到有什么用处",
+    "签到有什么用处吗",
+    "签到作用是什么",
     "签到干嘛",
     "签到干嘛用",
     "签到有什么好处",
     "签到干嘛的",
     "签到有什么奖励",
+    "签到有啥奖励",
+    "签到有什么奖励吗",
+    "签到能干嘛",
+    "签到可以干嘛",
+    "签到有什么福利",
     # 积分商城相关（避免误触发自动回复）
     "积分商城",
     "商城",
@@ -68,11 +91,18 @@ _BENIGN_AD_BYPASS_TEXTS = {
 
 
 def _is_benign_ad_bypass_text(text: str) -> bool:
-    """明确的正常业务动作不进入广告检测，防止资料层小分累计误封。"""
+    """明确的正常业务动作不进入广告检测，防止资料层小分累计误封。
+
+    v5.42.25：比对前与预设侧（keyword_trigger._normalize_match_phrase）同款
+    归一化——去空白并剥句末语气标点。此前只 strip().lower() 精确比对，
+    “积分有什么作用？”加个问号就掉出白名单，仍会累计广告检测资料层小分。
+    """
     normalized = (text or "").strip().lower()
     if not normalized:
         return False
-    if normalized in _BENIGN_AD_BYPASS_TEXTS:
+    compact = re.sub(r"\s+", "", normalized)
+    stripped = re.sub(r"[，,。.!！?？~～]+$", "", compact)
+    if stripped in _BENIGN_AD_BYPASS_TEXTS:
         return True
     for prefix in ("/checkin@", "/sign@", "/signin@", "/daily@"):
         if normalized.startswith(prefix):

@@ -1877,17 +1877,25 @@ class AIEngine:
             # 检测拼音级别的穿帮词
             leak_patterns = [
                 'wo shi ai', 'wo shi a i',
-                'ren gong zhi neng', 'ren gong zhi neng',
+                'ren gong zhi neng',
                 'zuo wei ai', 'zuo wei a i',
-                'zuo wei mo xing', 'zuo wei mo xing',
+                'zuo wei mo xing',
                 'wo shi mo xing', 'wo shi ge cheng xu',
                 'zuo wei zhu shou', 'wo shi zhu shou',
-                'wo shi ge ji qi ren', 'ji qi ren',
             ]
             pinyin_lower = pinyin_text.lower()
             for pat in leak_patterns:
                 if pat in pinyin_lower:
                     return True
+            # 机器人身份穿帮必须带"我是/我就是/我是X个(智能)机器人"前导才算；
+            # 裸 "机器人" 是业务高频词（订阅机器人/积分商城机器人/去舞台化白名单），
+            # 曾导致 "订阅机器人在 @MorychannelBot" 这类正常回答被整条抹空。
+            if re.search(
+                r"(?:wo\s+shi|wo\s+jiu\s+shi)\s+(?:ge\s+|yi\s+ge\s+|ge\s+zhen\s+)?"
+                r"(?:zhi\s+neng\s+|ren\s+gong\s+zhi\s+neng\s+)?ji\s+qi\s+ren",
+                pinyin_lower,
+            ):
+                return True
         except ImportError:
             # pinyin_util 未安装，跳过拼音检测（不影响主流程）
             pass

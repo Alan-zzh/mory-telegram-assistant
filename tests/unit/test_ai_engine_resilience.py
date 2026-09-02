@@ -529,6 +529,27 @@ def test_identity_leak_is_never_sent(raw):
     assert triggered is True
 
 
+def test_bot_word_in_business_phrases_not_blanked_by_pinyin_gate():
+    # v5.42.25 A3：含"机器人"三字的正常业务句（订阅机器人/积分商城机器人/
+    # 自述不是机器人）曾被拼音门禁的裸 'ji qi ren' 子串整条抹空、伪装成
+    # "答不上"转人工。现在只有"我是/我就是机器人"式身份声明才拦截。
+    for raw in (
+        "订阅机器人在 @MorychannelBot，你可以直接下单",
+        "我不是冷冰冰的机器人呀，但价格我不乱说",
+        "在群里发送“积分商城”，机器人会提示你下一步",
+        "想订阅就找订阅机器人 @MorychannelBot",
+    ):
+        cleaned, _ = ai_engine.AIEngine._sanitize_reply_v2(raw)
+        assert cleaned != "", raw
+    for raw in (
+        "其实我是机器人，但我答不好",
+        "我就是个机器人，可以帮你查",
+        "我是智能机器人，你问我吧",
+    ):
+        cleaned, triggered = ai_engine.AIEngine._sanitize_reply_v2(raw)
+        assert cleaned == "" and triggered is True, raw
+
+
 def test_persona_fragments_ignore_legacy_body_language_config(monkeypatch):
     cfg = _config()
     cfg["PERSONA_FRAGMENTS"] = {

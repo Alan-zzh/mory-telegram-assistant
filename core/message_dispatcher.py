@@ -35,9 +35,37 @@ from core.handlers.command_handlers import (
 )
 from core.handlers.ai_reply_handler import (
     _dispatch_p10_ai,
+    _looks_like_question,
 )
 
 logger = get_logger("message_dispatcher")
+
+
+def _is_bot_directed(dctx: "DispatchContext") -> bool:
+    """群聊里精确点名或回复了本 Bot 的消息必须由 Mory 正常回答。
+
+    点名（@Bot）与"回复 Bot 的那条消息"是用户明确要求响应的信号，
+    任何氛围型/功能型固定文案都不得在此时整条替换真实回答。
+    """
+    return bool(
+        getattr(dctx, "bot_mentioned", False)
+        or getattr(dctx, "reply_to_bot", False)
+    )
+
+
+def _should_suppress_ambient_trigger(dctx: "DispatchContext") -> bool:
+    """氛围型/闲聊型固定回复（彩蛋、黑话科普、天气共情、自然语言功能词等）
+    的统一豁免门槛：
+
+    - 被点名（@Bot）或回复了本 Bot → 必须回答，不触发氛围文案；
+    - 正文是正经提问（_looks_like_question）→ 也不触发，避免"先答后看"的反问句
+      被一句固定段子整条替换（后置门禁只降级不换义）。
+    """
+    if not getattr(dctx, "is_group", False):
+        return False
+    if _is_bot_directed(dctx):
+        return True
+    return _looks_like_question(str(getattr(dctx, "text", "") or ""))
 
 
 def _strip_direct_bot_mention(text: str, bot_username: str) -> tuple[str, bool]:
@@ -475,6 +503,7 @@ class DispatchContext:
     conversation_history: list = field(default_factory=list)  # 同一用户/聊天最近几轮真实对话
     contextual_purchase: bool = False  # 当前短句是否承接上一轮购买/定制意图
     bot_mentioned: bool = False  # 群聊文本是否精确 @ 当前 Bot
+    reply_to_bot: bool = False  # 本条消息是否回复了本 Bot 的消息（与点名同级强制响应）
     # [TRAE SOLO CN v5.24.0 阶段2-D] 多 Bot 共享上下文（跨 Bot 画像 + 漏斗状态）
     shared_profile: dict = field(default_factory=dict)        # 跨 Bot 用户画像（来自 shared_db）
     shared_funnel_state: str = ""                             # 跨 Bot 漏斗状态（touched/interested/carted/converted/unknown）
@@ -594,12 +623,13 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
         except Exception as e:
             logger.debug(f"路由检查异常 bot={ctx.bot_id} chat={chat_id}: {e}")
 
-    # 新人算术验证答案优先交给验证码模块；无活动会话的纯数字也静默忽略。
+    # 新人算术验证答案优先交给验证码模块；无活动会话的纯数字放行正常链，
+    # 不能无条件吞掉 @Bot 3 或“2024”这类（曾把正经消息静默吞掉连积分都不加）。
     # 必须位于历史、last_active、画像、快照、积分和 AI 之前，避免污染真实聊天数据。
     if is_group and _is_group_verification_number(msg_text):
         try:
             from modules.verification import check_verification_answer
-            check_verification_answer(ctx.bot, m, ctx.config)
+            handled = check_verification_answer(ctx.bot, m, ctx.config)
         except Exception as e:
             logger.warning(
                 "群验证数字处理异常 uid=%s chat=%s: %s",
@@ -607,8 +637,10 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
                 chat_id,
                 e,
             )
-        clear_logging_context()
-        return
+            handled = False
+        if handled:
+            clear_logging_context()
+            return
 
     # 构建分发上下文
     dctx = DispatchContext(
@@ -631,6 +663,18 @@ def _do_dispatch_inner(m, ctx: BotContext, span=None):
         if bot_mentioned:
             dctx.bot_mentioned = True
             dctx.text = cleaned_text
+
+    # 群聊"回复了本 Bot 的那条消息"与点名同级：用户明确要 Bot 接着处理，
+    # 供 P 层各抢答/氛围分支统一豁免（A2/A7/P9.x 等不得再整条替换回答）。
+    _replied_msg = getattr(m, "reply_to_message", None)
+    _replied_user = getattr(_replied_msg, "from_user", None)
+    if (
+        is_group
+        and _replied_user is not None
+        and getattr(_replied_user, "is_bot", False)
+        and getattr(_replied_user, "id", None) == getattr(ctx, "bot_id", None)
+    ):
+        dctx.reply_to_bot = True
 
     # 当前轮进入意图路由和 AI 前，先读取同一用户、同一聊天的最近真实对话。
     # 不能只把历史写进摘要缓冲却不给本轮判断/模型使用。
@@ -813,6 +857,16 @@ def _dispatch_first_group_mention_onboarding(dctx: DispatchContext) -> bool:
     surface = "group_mention"
     try:
         if db.has_onboarding_delivery(dctx.uid, dctx.chat_id, surface):
+            return False
+        # 首次精确 @ 但带着正经提问（如“积分有什么作用吗”）：欢迎卡不能让
+        # 用户的问题石沉大海，本次先放行正常回答链（不 claim，欢迎卡留待
+        # 该用户下一次非提问的 @ 再补发）。
+        if _looks_like_question(str(getattr(dctx, "text", "") or "")):
+            logger.info(
+                "群聊首次@带正经提问，先答问题、欢迎卡延后 uid=%s chat=%s",
+                dctx.uid,
+                dctx.chat_id,
+            )
             return False
         if not db.claim_onboarding_delivery(dctx.uid, dctx.chat_id, surface):
             # 同一用户的并发更新已有一个发送者，当前消息必须停止，避免双卡。
@@ -1601,7 +1655,14 @@ def _dispatch_p4_flood(dctx: DispatchContext) -> bool:
 
 
 def _defer_external_feature(dctx: DispatchContext) -> bool:
-    """未命中审核预设的签到/积分操作留给共存功能机器人，不进入 Mory AI。"""
+    """未命中审核预设的签到/积分操作留给共存功能机器人，不进入 Mory AI。
+
+    v5.42.25：被点名（@Bot）或回复了本 Bot 时不再静默止步——用户明确要
+    Mory 回答时不能装聋（曾导致“积分有啥用”这类问法零回复）。
+    """
+    if _is_bot_directed(dctx):
+        return False
+
     from modules.keyword_trigger import is_external_feature_text
 
     text = str(getattr(dctx, "text", "") or "")
@@ -1858,27 +1919,40 @@ def _dispatch_p5_p9_commands(dctx: DispatchContext) -> bool:
 
     # P9.3：天气/城市共情
     # 只有“消息很短、明显在聊天气”时才直接回复；
-    # “我下周去上海出差”这类正经内容不再被固定共情句顶掉，
-    # 直接放行给 P10 AI 正常承接。
+    # “我下周去上海出差”这类正经内容不再被固定共情句顶掉；
+    # 被点名/回复 Bot/正经提问（“上海下雨？”）也不触发，直接放行 P10 AI。
     if (
         analysis.get("weather_empathy")
         and is_group
         and len(msg.strip()) <= 8
+        and not _should_suppress_ambient_trigger(dctx)
     ):
         mory_bot.reply_and_track(m, analysis["weather_empathy"])
         clear_logging_context()
         return True
 
     # P9.5：黑话/行话自动科普（命中后停止，避免与 P10 AI 双回复）
-    if analysis.get("slang_reply") and is_group:
-        if random.randint(1, 20) == 1:
-            mory_bot.reply_and_track(m, analysis["slang_reply"])
-            clear_logging_context()
-            return True
+    # 1/20 随机是“闲聊氛围”用途，点名/回复/正经提问（“这个门槛是什么？”）不得被科普句整条替换。
+    if (
+        analysis.get("slang_reply")
+        and is_group
+        and not _should_suppress_ambient_trigger(dctx)
+        and random.randint(1, 20) == 1
+    ):
+        mory_bot.reply_and_track(m, analysis["slang_reply"])
+        clear_logging_context()
+        return True
 
     # P9.7：用户反馈/找Mory
     if analysis.get("mode") in ("feedback", "contact_mory"):
-        if _handle_feedback(dctx, analysis):
+        # 被点名/回复 Bot 时用户是在向 Mory 具体描述问题（“我买的套餐打不开”），
+        # 固定安抚句退化为旁路：仍通知管理员，但不再整条替换、让 P10 AI 承接。
+        if _is_bot_directed(dctx):
+            try:
+                _send_feedback_admin_notification(dctx, analysis)
+            except Exception as e:
+                logger.debug(f"反馈通知旁路失败（静默）: {e}")
+        elif _handle_feedback(dctx, analysis):
             return True
 
     # 保存analysis给P10用

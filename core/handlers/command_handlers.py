@@ -759,6 +759,14 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
     chat_id = dctx.chat_id
     is_group = dctx.is_group
 
+    # v5.42.25：群聊被点名/回复本 Bot/正经提问时，自然语言功能路由
+    # （排行/天气/汇率/打赏/转盘等非 / 前缀）让位给 P10 AI，避免用一条
+    # 功能结果整条替换用户真正的问题（如“打赏是什么意思”“汇率怎么算”）。
+    suppressed = False
+    if is_group:
+        from core.message_dispatcher import _should_suppress_ambient_trigger
+        suppressed = _should_suppress_ambient_trigger(dctx)
+
     # 签到：繁体或 QD 只提示正确格式，不执行签到。
     from modules.checkin import CHECKIN_FORMAT_HINT, is_invalid_checkin_command
     if is_invalid_checkin_command(msg):
@@ -865,8 +873,8 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
         clear_logging_context()
         return True
 
-    # 排行榜
-    if msg.startswith("排行"):
+    # 排行榜（被点名/提问时让位给 AI：如“排行榜怎么玩？”）
+    if msg.startswith("排行") and not suppressed:
         from modules.ranking import handle_ranking
         dimension = msg[2:].strip() if len(msg) > 2 else ""
         handle_ranking(bot, m, CONFIG, db, dimension)
@@ -885,16 +893,16 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
         clear_logging_context()
         return True
 
-    # 天气查询
-    if msg.endswith("天气") and len(msg) > 2:
+    # 天气查询（点名/提问时不抢答）
+    if msg.endswith("天气") and len(msg) > 2 and not suppressed:
         from modules.weather import handle_weather_query
         city = msg[:-2].strip()
         handle_weather_query(bot, m, CONFIG, db, city)
         clear_logging_context()
         return True
 
-    # 汇率查询
-    if "汇率" in msg:
+    # 汇率查询（纯子串命中；点名/提问如“汇率是什么”“价格跟汇率有关吗”让位给 AI）
+    if "汇率" in msg and not suppressed:
         from modules.exchange_rate import handle_exchange_rate
         handle_exchange_rate(bot, m, CONFIG, db, msg.replace("汇率", "").strip())
         clear_logging_context()
@@ -917,8 +925,9 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
         clear_logging_context()
         return True
 
-    # 打赏
-    if msg.startswith("打赏 ") or msg.startswith("打赏"):
+    # 打赏（必须带操作对象“打赏 @xx”；“打赏是什么意思”这类提问让位给 AI；
+    # “打赏排行”由下方精确路由承接，不再被子串吞掉）
+    if (msg.startswith("打赏 ") or msg == "打赏") and not suppressed:
         from modules.tip import handle_tip
         from modules.daily_quest import check_quest_completion
         handle_tip(bot, m, CONFIG, db, msg[3:].strip() if len(msg) > 3 else "")
@@ -975,8 +984,8 @@ def _handle_feature_keywords(dctx: DispatchContext) -> bool:
         clear_logging_context()
         return True
 
-    # 幸运转盘
-    if msg.startswith("转盘"):
+    # 幸运转盘（提问式“转盘怎么玩”让位给 AI）
+    if msg.startswith("转盘") and not suppressed:
         from modules.lucky_wheel import handle_lucky_wheel
         args = msg[2:].strip() if len(msg) > 2 else ""
         handle_lucky_wheel(bot, m, CONFIG, db, args)
